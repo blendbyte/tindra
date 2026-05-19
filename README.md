@@ -21,6 +21,10 @@
 
 ---
 
+<p align="center">
+  <img src="dashboard-split.png" alt="Tindra dashboard — light and dark mode">
+</p>
+
 One Go binary. One Postgres database. Compatible with every Sentry SDK: point your DSN at Tindra and nothing else changes.
 
 - **Dashboard** with KPI strip, transaction density heatmap, hottest issues, release health, and recent alerts
