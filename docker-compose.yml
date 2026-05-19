@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tindra
+      POSTGRES_USER: tindra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tindra}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tindra -d tindra"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  tindra:
+    image: ghcr.io/blendbyte/tindra:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgres://tindra:${POSTGRES_PASSWORD:-tindra}@postgres:5432/tindra?sslmode=disable
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      BIND_ADDR: ":8080"
+      DATA_DIR: /data
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: json
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      RETENTION_DAYS: ${RETENTION_DAYS:-90}
+      # CORS_ORIGIN: https://your-domain.com
+      # EMAIL_PROVIDER: smtp
+      # EMAIL_FROM: alerts@your-domain.com
+      # SMTP_HOST: smtp.example.com
+      # SMTP_PORT: 587
+      # SMTP_USERNAME: user
+      # SMTP_PASSWORD: password
+    volumes:
+      - tindra_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  tindra_data:

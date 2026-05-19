@@ -1,0 +1,10 @@
+bin/
+.env
+.context/
+web/node_modules/
+web/package-lock.json
+web/coverage/
+internal/ui/dist/
+/bench-*/
+seed
+tindra

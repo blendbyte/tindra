@@ -1,0 +1,13 @@
+.git
+.github
+.context
+bin/
+seed
+tindra
+web/node_modules/
+web/.vite/
+internal/ui/dist/
+.env
+.env.local
+coverage.out
+*.test

@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# Usage: ./scripts/bench <dsn>
+# Example: ./scripts/bench http://abc123def456@localhost:8080/550e8400-e29b-41d4-a716-446655440000
+#
+# Runs two scenarios, escalating concurrency by 50 until errors exceed 5%:
+#   storm   — identical error event (fixed event_id), tests dedup pressure
+#   traffic — unique transactions (no event_id), tests full write throughput
+#
+# Requires hey: go install github.com/rakyll/hey@latest
+# For clean numbers: start Tindra with RATE_LIMIT_ENVELOPE=0
+
+set -euo pipefail
+
+DURATION="${DURATION:-20}"           # seconds per concurrency level
+STEP="${STEP:-50}"                   # starting concurrency (doubles each level)
+BREAK_AT="${BREAK_AT:-5}"           # stop when error % exceeds this
+PLATEAU_STEPS="${PLATEAU_STEPS:-3}" # stop when rps drops significantly for this many consecutive steps
+PLATEAU_DROP="${PLATEAU_DROP:-0.80}" # fraction of peak below which a step counts as a plateau step
+MAX_CONC="${MAX_CONC:-0}"           # hard concurrency ceiling (0 = unlimited)
+
+RED='\033[0;31m'; GRN='\033[0;32m'; YLW='\033[1;33m'; BLD='\033[1m'; RST='\033[0m'; DIM='\033[2m'
+die()  { echo -e "${RED}error:${RST} $*" >&2; exit 1; }
+dim()  { echo -e "${DIM}$*${RST}"; }
+hr()   { printf '%.0s─' {1..60}; echo; }
+
+# ── Parse DSN ──────────────────────────────────────────────────────────────
+[[ $# -lt 1 ]] && die "usage: $0 <dsn>  (e.g. http://key@host/project-uuid)"
+DSN="$1"
+PROTOCOL="${DSN%%://*}"
+rest="${DSN#*://}"
+PUBLIC_KEY="${rest%%@*}"
+host_path="${rest#*@}"
+HOST="${host_path%%/*}"
+PROJECT_ID="${host_path##*/}"
+TINDRA_URL="${PROTOCOL}://${HOST}"
+ENDPOINT="${TINDRA_URL}/api/${PROJECT_ID}/envelope/"
+AUTH="X-Sentry-Auth: Sentry sentry_version=7, sentry_key=${PUBLIC_KEY}"
+
+[[ -z "$PUBLIC_KEY" || -z "$PROJECT_ID" || -z "$HOST" ]] && \
+    die "could not parse DSN — expected http://key@host/project-uuid"
+
+# ── Load tool ──────────────────────────────────────────────────────────────
+if command -v hey >/dev/null 2>&1; then
+    USE_HEY=1
+else
+    USE_HEY=0
+    echo -e "${YLW}!${RST} hey not found — falling back to parallel curl (no latency percentiles)"
+    echo -e "  ${DIM}go install github.com/rakyll/hey@latest${RST}"
+    echo
+fi
+
+# ── Envelope builders ──────────────────────────────────────────────────────
+TMPDIR_BENCH=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_BENCH"' EXIT
+
+# storm: fixed event_id → DB deduplicates, tests HTTP + ring buffer under flood
+STORM_PAYLOAD='{"timestamp":"2024-06-01T12:00:00Z","level":"error","message":"benchmark load test","platform":"python","exception":{"values":[{"type":"ValueError","value":"TypeError: cannot read property of undefined","stacktrace":{"frames":[{"filename":"app.py","lineno":42,"function":"process_request"},{"filename":"middleware.py","lineno":17,"function":"dispatch"}]}}]}}'
+STORM_LEN=${#STORM_PAYLOAD}
+printf '{"event_id":"aabbccddeeff00112233445566778899","sent_at":"2024-06-01T12:00:00.000Z"}\n{"type":"event","length":%d}\n%s\n' \
+    "$STORM_LEN" "$STORM_PAYLOAD" > "$TMPDIR_BENCH/storm.envelope"
+
+# traffic: no event_id → partial index skips conflict check, every request inserts fresh
+TX_PAYLOAD='{"transaction":"/api/users/:id","start_timestamp":"2024-06-01T12:00:00Z","timestamp":"2024-06-01T12:00:01Z","contexts":{"trace":{"trace_id":"aabbccddeeff00112233445566778899","span_id":"aabbccddeeff0011","op":"http.server","status":"ok"}},"spans":[{"span_id":"aabbccddeeff0022","parent_span_id":"aabbccddeeff0011","op":"db.query","description":"SELECT * FROM users WHERE id = $1","start_timestamp":"2024-06-01T12:00:00.050Z","timestamp":"2024-06-01T12:00:00.120Z","status":"ok"},{"span_id":"aabbccddeeff0033","parent_span_id":"aabbccddeeff0011","op":"http.client","description":"GET /api/profile","start_timestamp":"2024-06-01T12:00:00.130Z","timestamp":"2024-06-01T12:00:00.900Z","status":"ok"}]}'
+TX_LEN=${#TX_PAYLOAD}
+printf '{"sent_at":"2024-06-01T12:00:00.000Z"}\n{"type":"transaction","length":%d}\n%s\n' \
+    "$TX_LEN" "$TX_PAYLOAD" > "$TMPDIR_BENCH/traffic.envelope"
+
+# ── Connectivity check ─────────────────────────────────────────────────────
+printf "Connecting to %s... " "$ENDPOINT"
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    -H "Content-Type: application/x-sentry-envelope" -H "$AUTH" \
+    --data-binary @"$TMPDIR_BENCH/storm.envelope" "$ENDPOINT" 2>/dev/null || echo 000)
+case "$STATUS" in
+    200) echo -e "${GRN}ok${RST}" ;;
+    401) echo; die "HTTP 401 — wrong key or project ID" ;;
+    404) echo; die "HTTP 404 — check DSN host and project ID" ;;
+    429) echo -e "${YLW}429 (rate limited)${RST} — set RATE_LIMIT_ENVELOPE=0 for accurate results" ;;
+    000) echo; die "connection refused — is Tindra running?" ;;
+    *)   echo -e "${YLW}HTTP $STATUS${RST}" ;;
+esac
+[[ "$STATUS" == "401" || "$STATUS" == "404" || "$STATUS" == "000" ]] && exit 1
+
+# ── Results output setup ───────────────────────────────────────────────────
+OUT_DIR="./bench-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$OUT_DIR"
+CSV="$OUT_DIR/results.csv"
+echo "scenario,concurrency,requests,rps,p50_ms,p95_ms,p99_ms,errors_pct" > "$CSV"
+
+# ── Output helpers ─────────────────────────────────────────────────────────
+print_header() {
+    printf "  %-12s  %-10s  %-10s  %-8s  %-8s  %-8s  %s\n" \
+        "concurrency" "req/s" "requests" "p50" "p95" "p99" "errors"
+    hr
+}
+
+print_row() {
+    local conc="$1" rps="$2" reqs="$3" p50="$4" p95="$5" p99="$6" err="$7" broke="$8"
+    local err_col="${err}%"
+    if [[ "$broke" == "1" ]]; then
+        err_col="${RED}${err}% ✗${RST}"
+    fi
+    printf "  %-12s  %-10s  %-10s  %-8s  %-8s  %-8s  %b\n" \
+        "$conc" "$rps" "$reqs" "$p50" "$p95" "$p99" "$err_col"
+}
+
+# ── Run one concurrency level ──────────────────────────────────────────────
+run_level() {
+    local envelope="$1" concurrency="$2"
+
+    if [[ "$USE_HEY" == "1" ]]; then
+        hey -c "$concurrency" -z "${DURATION}s" -m POST \
+            -H "Content-Type: application/x-sentry-envelope" \
+            -H "$AUTH" -D "$envelope" "$ENDPOINT" 2>&1
+    else
+        # Parallel curl fallback
+        local deadline=$(( $(date +%s) + DURATION ))
+        local worker_files=()
+        for i in $(seq 1 "$concurrency"); do
+            local f="$TMPDIR_BENCH/w_${concurrency}_${i}"
+            echo "0 0" > "$f"
+            worker_files+=("$f")
+            ( local ok=0 err=0
+              while [[ $(date +%s) -lt $deadline ]]; do
+                  local code
+                  code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                      -H "Content-Type: application/x-sentry-envelope" -H "$AUTH" \
+                      --data-binary @"$envelope" "$ENDPOINT" 2>/dev/null)
+                  [[ "$code" == "200" ]] && ok=$(( ok+1 )) || err=$(( err+1 ))
+              done
+              echo "$ok $err" > "$f" ) &
+        done
+        wait
+        local total_ok=0 total_err=0
+        for f in "${worker_files[@]}"; do read -r ok err < "$f"; total_ok=$(( total_ok+ok )); total_err=$(( total_err+err )); done
+        local total=$(( total_ok + total_err ))
+        # Emit hey-compatible status distribution so parse_result works for both paths
+        printf "Requests/sec: %.1f\n[200]  %s responses\n[429]  %s responses\n" \
+            "$(awk "BEGIN{printf \"%.1f\",$total/$DURATION}")" "$total_ok" "$total_err"
+    fi
+}
+
+parse_result() {
+    local out="$1"
+    local requests rps p50 p95 p99 ok_count err_pct
+
+    # Sum all "[NNN]  X responses" lines — works for both hey and curl fallback output.
+    # hey's "Total:" line holds elapsed seconds, not request count, so we don't use it.
+    requests=$(echo "$out" | awk '/\[[0-9]+\]/{sum += $2} END{print sum+0}')
+    rps=$(echo "$out"      | awk '/Requests\/sec:/{print $2}')
+    # hey outputs "50%%" (double-percent) on all platforms — match without trailing space
+    p50=$(echo "$out"      | awk '/^ *50%%/{printf "%.0fms", $3*1000}')
+    p95=$(echo "$out"      | awk '/^ *95%%/{printf "%.0fms", $3*1000}')
+    p99=$(echo "$out"      | awk '/^ *99%%/{printf "%.0fms", $3*1000}')
+    ok_count=$(echo "$out" | awk '/\[200\]/{print $2}')
+    ok_count=${ok_count:-0}
+    requests=${requests:-0}
+    err_pct=$(awk "BEGIN{printf \"%.1f\", ($requests+0>0 ? (($requests+0-$ok_count+0)/($requests+0))*100 : 0)}")
+    echo "$requests ${rps:-?} ${p50:--} ${p95:--} ${p99:--} $err_pct"
+}
+
+# ── Main loop ──────────────────────────────────────────────────────────────
+echo
+echo -e "${BLD}Tindra ingest benchmark${RST}"
+dim "  $DSN  •  ${DURATION}s per level  •  start ${STEP} doubling  •  stop at >${BREAK_AT}% errors or ${PLATEAU_STEPS}-step plateau"
+echo
+
+run_scenario() {
+    local name="$1" envelope="$2" label="$3"
+    echo -e "${BLD}▸ ${name}${RST}  ${DIM}${label}${RST}"
+    print_header
+
+    local concurrency=$STEP
+    local peak_rps="0"
+    local plateau_count=0
+
+    while true; do
+        # Hard concurrency ceiling
+        if [[ "$MAX_CONC" -gt 0 && "$concurrency" -gt "$MAX_CONC" ]]; then
+            echo -e "  ${YLW}max concurrency ${MAX_CONC} reached${RST}"
+            break
+        fi
+
+        local raw
+        raw=$(run_level "$envelope" "$concurrency")
+        printf "\n=== %s c=%s ===\n%s\n" "$name" "$concurrency" "$raw" >> "$OUT_DIR/raw.txt"
+
+        read -r reqs rps p50 p95 p99 err_pct <<< "$(parse_result "$raw")"
+
+        local broke=0
+        awk "BEGIN{exit !(${err_pct} > ${BREAK_AT})}" 2>/dev/null && broke=1 || true
+
+        print_row "$concurrency" "$rps" "$reqs" "$p50" "$p95" "$p99" "$err_pct" "$broke"
+        printf "%s,%s,%s,%s,%s,%s,%s,%s\n" \
+            "$name" "$concurrency" "$reqs" "$rps" "$p50" "$p95" "$p99" "$err_pct" >> "$CSV"
+
+        [[ "$broke" == "1" ]] && break
+
+        local rps_val="${rps//[!0-9.]/}"
+        rps_val="${rps_val:-0}"
+
+        # Collapse detection: rps dropped >50% from peak in a single step — OS socket exhaustion
+        if awk "BEGIN{exit !(${peak_rps}+0 > 0 && ${rps_val}+0 < ${peak_rps}+0 * 0.5)}" 2>/dev/null; then
+            echo -e "  ${RED}↓ throughput collapsed (${rps} req/s vs peak ${peak_rps}) — OS socket exhaustion${RST}"
+            echo -e "  ${DIM}macOS fix: sudo sysctl -w net.inet.ip.portrange.first=1024 net.inet.tcp.msl=500${RST}"
+            echo -e "  ${DIM}Linux fix: sudo sysctl -w net.ipv4.ip_local_port_range=\"1024 65535\" net.ipv4.tcp_fin_timeout=15${RST}"
+            break
+        fi
+
+        # Plateau detection: only count a step when rps drops below PLATEAU_DROP×peak.
+        # Normal variance within that band doesn't increment the counter, so noise
+        # doesn't trigger a premature stop.
+        if awk "BEGIN{exit !(${rps_val}+0 > ${peak_rps}+0)}" 2>/dev/null; then
+            peak_rps="$rps_val"
+            plateau_count=0
+        elif awk "BEGIN{exit !(${rps_val}+0 < ${peak_rps}+0 * ${PLATEAU_DROP})}" 2>/dev/null; then
+            plateau_count=$(( plateau_count + 1 ))
+            if [[ "$plateau_count" -ge "$PLATEAU_STEPS" ]]; then
+                echo -e "  ${YLW}~ throughput plateaued at ~${peak_rps} req/s — server saturated${RST}"
+                break
+            fi
+        fi
+
+        concurrency=$(( concurrency * 2 ))
+    done
+    echo
+}
+
+run_scenario "storm" "$TMPDIR_BENCH/storm.envelope" \
+    "identical error, fixed event_id — ring buffer + dedup pressure"
+
+run_scenario "traffic" "$TMPDIR_BENCH/traffic.envelope" \
+    "unique transactions, no event_id — full write throughput"
+
+hr
+dim "Results: $OUT_DIR/results.csv"
