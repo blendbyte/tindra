@@ -42,6 +42,7 @@ type router struct {
 	loginEmailRL           *rateLimiter
 	envelopeRL             *rateLimiter
 	cronPingRL             *rateLimiter
+	startedAt              time.Time
 }
 
 // Handle wraps the HTTP handler returned by NewRouter and exposes SetLimits
@@ -77,6 +78,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		passthroughClient:      alerts.NewWebhookClient(webhookAllowPrivateIPs),
 		webhookAllowPrivateIPs: webhookAllowPrivateIPs,
 		trustedProxies:         trustedProxies,
+		startedAt:              time.Now().UTC(),
 	}
 	ro.projectLimit.Store(int32(projectLimit))
 	ro.eventLimit.Store(int32(eventLimit))

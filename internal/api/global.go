@@ -88,6 +88,8 @@ func (ro *router) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		PeriodStart     string `json:"period_start"`
 		LastPeriodStart string `json:"last_period_start"`
 		EventLimit      int    `json:"event_limit"`
+		Version         string `json:"version"`
+		UptimeSeconds   int64  `json:"uptime_seconds"`
 	}{
 		Projects:        projects,
 		Users:           users,
@@ -96,6 +98,8 @@ func (ro *router) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		PeriodStart:     periodStart.Format(time.RFC3339),
 		LastPeriodStart: lastPeriodStart.Format(time.RFC3339),
 		EventLimit:      int(ro.eventLimit.Load()),
+		Version:         AppVersion,
+		UptimeSeconds:   int64(time.Since(ro.startedAt).Seconds()),
 	})
 }
 
