@@ -22,14 +22,6 @@ func (m *mockEmailSender) Send(_ context.Context, msg alerts.EmailMessage) error
 	return m.err
 }
 
-func (m *mockEmailSender) received() []alerts.EmailMessage {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cp := make([]alerts.EmailMessage, len(m.messages))
-	copy(cp, m.messages)
-	return cp
-}
-
 func TestNewWorker_returnsNonNil(t *testing.T) {
 	w := NewWorker(nil, nil, "https://example.com")
 	if w == nil {

@@ -8,13 +8,6 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
-func truncateCronMonitors(t *testing.T) {
-	t.Helper()
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE cron_monitors CASCADE"); err != nil {
-		t.Fatalf("truncate cron_monitors: %v", err)
-	}
-}
-
 func setupProjectForCron(t *testing.T) *storage.Project {
 	t.Helper()
 	truncateProjects(t)
