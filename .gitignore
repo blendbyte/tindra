@@ -8,3 +8,4 @@ internal/ui/dist/
 /bench-*/
 seed
 tindra
+coverage.out

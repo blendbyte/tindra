@@ -96,9 +96,13 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: bun install --frozen-lockfile
-      - name: Run tests
+      - name: Run tests with coverage
         working-directory: web
-        run: bun run test
+        run: bun run test:coverage
+      - uses: codecov/codecov-action@v5
+        with:
+          files: web/coverage/coverage-final.json
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   docker-dev:
     name: Push dev image
