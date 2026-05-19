@@ -2,6 +2,7 @@ package digest
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -128,6 +129,9 @@ func (w *Worker) send(ctx context.Context, force bool) {
 }
 
 func (w *Worker) buildReport(ctx context.Context, projectIDs []string, from, to time.Time) (*Report, error) {
+	if w.pool == nil {
+		return nil, fmt.Errorf("no database pool")
+	}
 	var (
 		errs []error
 		r    = &Report{
