@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -17,7 +18,7 @@ func usersCmd(cfg config) *cobra.Command {
 		Use:   "users",
 		Short: "Manage users",
 	}
-	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg))
+	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg), usersSendPasswordResetCmd(cfg))
 	return cmd
 }
 
@@ -58,6 +59,63 @@ func usersCreateCmd(cfg config) *cobra.Command {
 	_ = cmd.MarkFlagRequired("email")
 	_ = cmd.MarkFlagRequired("password")
 	return cmd
+}
+
+func usersSendPasswordResetCmd(cfg config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "send-password-reset <email>",
+		Short: "Send a password reset email to a user",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			pool, err := storage.Connect(ctx, cfg.databaseURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			email := strings.ToLower(strings.TrimSpace(args[0]))
+			u, err := storage.GetUserByEmail(ctx, pool, email)
+			if err != nil {
+				return fmt.Errorf("look up user: %w", err)
+			}
+			if u == nil {
+				return fmt.Errorf("no user found with email %q", email)
+			}
+
+			token, err := storage.CreatePasswordResetToken(ctx, pool, u.ID)
+			if err != nil {
+				return fmt.Errorf("create reset token: %w", err)
+			}
+
+			resetURL := strings.TrimRight(cfg.publicURL, "/") + "/reset-password/" + token
+
+			emailSender, err := alerts.NewEmailSenderFromEnv()
+			if err != nil {
+				return fmt.Errorf("email sender: %w", err)
+			}
+			if emailSender == nil {
+				fmt.Printf("Email not configured. Share this reset link manually:\n%s\n", resetURL)
+				return nil
+			}
+
+			html, text, err := alerts.RenderPasswordResetEmail(resetURL, cfg.publicURL)
+			if err != nil {
+				return fmt.Errorf("render email: %w", err)
+			}
+			if err := emailSender.Send(ctx, alerts.EmailMessage{
+				To:      u.Email,
+				Subject: "Reset your Tindra password",
+				HTML:    html,
+				Text:    text,
+			}); err != nil {
+				return fmt.Errorf("send email: %w", err)
+			}
+
+			fmt.Printf("Password reset email sent to %s\n", u.Email)
+			return nil
+		},
+	}
 }
 
 func usersListCmd(cfg config) *cobra.Command {
