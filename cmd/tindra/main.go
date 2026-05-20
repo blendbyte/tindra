@@ -362,11 +362,12 @@ func serveCmd(cfg config) *cobra.Command {
 }
 
 func listen(addr string) (net.Listener, error) {
+	lc := &net.ListenConfig{}
 	if strings.HasPrefix(addr, "unix:") {
 		path := strings.TrimPrefix(addr, "unix:")
 		// Remove stale socket from a previous run.
 		_ = os.Remove(path)
-		ln, err := net.Listen("unix", path)
+		ln, err := lc.Listen(context.Background(), "unix", path)
 		if err != nil {
 			return nil, err
 		}
@@ -377,7 +378,7 @@ func listen(addr string) (net.Listener, error) {
 		}
 		return ln, nil
 	}
-	return net.Listen("tcp", addr)
+	return lc.Listen(context.Background(), "tcp", addr)
 }
 
 func sendDigestCmd(cfg config) *cobra.Command {
