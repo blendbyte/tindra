@@ -7,5 +7,5 @@ web/coverage/
 internal/ui/dist/
 /bench-*/
 seed
-tindra
+/tindra
 coverage.out
