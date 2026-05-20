@@ -331,9 +331,13 @@ func serveCmd(cfg config) *cobra.Command {
 			}()
 
 			srv := &http.Server{
-				Addr:              cfg.bindAddr,
 				Handler:           handler,
 				ReadHeaderTimeout: 10 * time.Second,
+			}
+
+			ln, err := listen(cfg.bindAddr)
+			if err != nil {
+				return fmt.Errorf("listen: %w", err)
 			}
 
 			go func() {
@@ -346,7 +350,7 @@ func serveCmd(cfg config) *cobra.Command {
 			}()
 
 			slog.Info("starting server", "addr", cfg.bindAddr)
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				return fmt.Errorf("serve: %w", err)
 			}
 			<-bufDone
@@ -355,6 +359,25 @@ func serveCmd(cfg config) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func listen(addr string) (net.Listener, error) {
+	if strings.HasPrefix(addr, "unix:") {
+		path := strings.TrimPrefix(addr, "unix:")
+		// Remove stale socket from a previous run.
+		_ = os.Remove(path)
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			return nil, err
+		}
+		// 0660 lets the tindra process owner and group-members (e.g. www-data) connect.
+		if err := os.Chmod(path, 0660); err != nil {
+			_ = ln.Close()
+			return nil, err
+		}
+		return ln, nil
+	}
+	return net.Listen("tcp", addr)
 }
 
 func sendDigestCmd(cfg config) *cobra.Command {
