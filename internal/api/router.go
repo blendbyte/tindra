@@ -284,6 +284,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	dist, _ := fs.Sub(ui.FS, "dist")
 	fileServer := http.FileServer(http.FS(dist))
 	r.Handle("/assets/*", fileServer)
+	r.Handle("/fonts/*", fileServer)
 	r.Handle("/favicon.svg", fileServer)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		f, err := dist.Open("index.html")
