@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -86,6 +87,13 @@ func nullableString(s string) *string {
 	return &s
 }
 
+// sanitizeJSONPayload removes backslash-u0000 escape sequences from a JSON payload.
+// PostgreSQL JSONB rejects the Unicode null escape (SQLSTATE 22P05), which
+// some SDKs (e.g. PHP) embed in exception messages and stack frames.
+func sanitizeJSONPayload(p json.RawMessage) json.RawMessage {
+	return bytes.ReplaceAll(p, []byte("\\u0000"), []byte{})
+}
+
 func writeBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedEvent) {
 	b := &pgx.Batch{}
 	for _, e := range batch {
@@ -93,7 +101,7 @@ func writeBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedEvent) 
 			INSERT INTO events (project_id, event_id, timestamp, payload, trace_id, span_id)
 			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (project_id, event_id) WHERE event_id IS NOT NULL DO NOTHING
-		`, e.ProjectID, e.EventID, e.Timestamp, e.Payload, nullableString(e.TraceID), nullableString(e.SpanID))
+		`, e.ProjectID, e.EventID, e.Timestamp, sanitizeJSONPayload(e.Payload), nullableString(e.TraceID), nullableString(e.SpanID))
 	}
 	results := pool.SendBatch(ctx, b)
 	defer results.Close()
