@@ -569,3 +569,86 @@ func TestAutoResolvePerformanceIssues_includesRegressed(t *testing.T) {
 		t.Errorf("wrong issue resolved")
 	}
 }
+
+// --- user_count ---
+
+func insertEventWithPayload(t *testing.T, projectID, issueID string, payload string) {
+	t.Helper()
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO events (project_id, timestamp, received_at, payload, issue_id)
+		VALUES ($1, NOW(), NOW(), $2::jsonb, $3::uuid)
+	`, projectID, payload, issueID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+}
+
+func TestUserCount_byID(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-uc-id", "UC", "error", "error", "", "", time.Now())
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"id":"u1"}}`)
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"id":"u1"}}`)
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"id":"u2"}}`)
+
+	got, err := storage.GetIssue(ctx, testPool, iss.ID)
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	if got.UserCount != 2 {
+		t.Errorf("user_count: got %d, want 2", got.UserCount)
+	}
+}
+
+func TestUserCount_byEmailFallback(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-uc-email", "UC email", "error", "error", "", "", time.Now())
+	// No user.id — only email
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"email":"alice@example.com"}}`)
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"email":"alice@example.com"}}`)
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"email":"bob@example.com"}}`)
+
+	got, err := storage.GetIssue(ctx, testPool, iss.ID)
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	if got.UserCount != 2 {
+		t.Errorf("user_count: got %d, want 2 (email fallback)", got.UserCount)
+	}
+}
+
+func TestUserCount_byUsernameFallback(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-uc-uname", "UC username", "error", "error", "", "", time.Now())
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"username":"alice"}}`)
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"username":"bob"}}`)
+
+	got, err := storage.GetIssue(ctx, testPool, iss.ID)
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	if got.UserCount != 2 {
+		t.Errorf("user_count: got %d, want 2 (username fallback)", got.UserCount)
+	}
+}
+
+func TestUserCount_noUserField(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-uc-none", "UC none", "error", "error", "", "", time.Now())
+	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","message":"no user"}`)
+
+	got, err := storage.GetIssue(ctx, testPool, iss.ID)
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	if got.UserCount != 0 {
+		t.Errorf("user_count: got %d, want 0", got.UserCount)
+	}
+}

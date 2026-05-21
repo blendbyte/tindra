@@ -350,8 +350,13 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 		i.first_seen, i.last_seen, i.event_count, i.status,
 		i.assignee_id, i.environment,
 		i.ignore_until, i.ignore_count_limit, i.ignore_count,
-		(SELECT COUNT(DISTINCT payload->'user'->>'id') FROM events
-		 WHERE issue_id = i.id AND payload->'user'->>'id' IS NOT NULL) AS user_count
+		(SELECT COUNT(DISTINCT COALESCE(
+		     payload->'user'->>'id',
+		     payload->'user'->>'username',
+		     payload->'user'->>'email',
+		     payload->'user'->>'ip_address'
+		 )) FROM events
+		 WHERE issue_id = i.id AND payload->>'user' IS NOT NULL) AS user_count
 	FROM issues i WHERE TRUE`
 	q, args := addCommonFilters(q, []any{}, filter)
 
@@ -406,9 +411,14 @@ func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error
 		) e ON TRUE
 		LEFT JOIN releases r ON r.project_id = i.project_id AND r.version = e.release
 		LEFT JOIN LATERAL (
-		    SELECT COUNT(DISTINCT payload->'user'->>'id') AS cnt
+		    SELECT COUNT(DISTINCT COALESCE(
+		        payload->'user'->>'id',
+		        payload->'user'->>'username',
+		        payload->'user'->>'email',
+		        payload->'user'->>'ip_address'
+		    )) AS cnt
 		    FROM events
-		    WHERE issue_id = i.id AND payload->'user'->>'id' IS NOT NULL
+		    WHERE issue_id = i.id AND payload->>'user' IS NOT NULL
 		) u ON TRUE
 		WHERE i.id = $1
 	`, id).Scan(

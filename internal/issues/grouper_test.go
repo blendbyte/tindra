@@ -163,3 +163,64 @@ func TestGrouper_setsEventIssueID(t *testing.T) {
 		t.Error("expected issue_id to be set on event after grouping")
 	}
 }
+
+func TestGrouper_storesImplicitTags(t *testing.T) {
+	truncateIssuesAndEvents(t)
+
+	payload := json.RawMessage(`{
+		"level": "warning",
+		"environment": "staging",
+		"message": "implicit tag test",
+		"timestamp": "2024-01-01T00:00:00Z",
+		"server_name": "web-01",
+		"contexts": {
+			"browser": {"name": "Chrome", "version": "120.0"},
+			"runtime": {"name": "php", "version": "8.2.0"}
+		},
+		"exception": {
+			"values": [{"mechanism": {"type": "generic", "handled": false}}]
+		}
+	}`)
+	insertRawEvent(t, payload)
+
+	g := issues.NewGrouper(testPool)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go g.Run(ctx)
+	time.Sleep(700 * time.Millisecond)
+
+	issueList, err := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+	if err != nil || len(issueList) == 0 {
+		t.Fatalf("expected 1 issue after grouping, got %d (err: %v)", len(issueList), err)
+	}
+
+	tags, err := storage.GetIssueTags(context.Background(), testPool, issueList[0].ID)
+	if err != nil {
+		t.Fatalf("get issue tags: %v", err)
+	}
+
+	tagMap := make(map[string]string)
+	for _, ts := range tags {
+		if len(ts.Values) > 0 {
+			tagMap[ts.Key] = ts.Values[0].Value
+		}
+	}
+
+	want := map[string]string{
+		"level":           "warning",
+		"environment":     "staging",
+		"server_name":     "web-01",
+		"browser":         "Chrome 120.0",
+		"browser.name":    "Chrome",
+		"browser.version": "120.0",
+		"runtime.name":    "php",
+		"runtime.version": "8.2.0",
+		"mechanism":       "generic",
+		"handled":         "no",
+	}
+	for k, v := range want {
+		if got := tagMap[k]; got != v {
+			t.Errorf("tag %q: got %q, want %q", k, got, v)
+		}
+	}
+}

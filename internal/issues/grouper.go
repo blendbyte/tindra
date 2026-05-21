@@ -94,7 +94,8 @@ func (g *Grouper) processBatch(ctx context.Context) {
 			slog.Error("link event", "err", err)
 			continue
 		}
-		if tags := storage.ParseTags(partial.Tags); len(tags) > 0 {
+		tags := mergeImplicitTags(storage.ParseTags(partial.Tags), extractImplicitTags(e.Payload))
+		if len(tags) > 0 {
 			if err := storage.InsertEventTags(ctx, g.pool, e.ID, issue.ID, e.ProjectID, tags); err != nil {
 				slog.Error("insert tags", "err", err)
 				// Non-fatal: tagging failure must not stall grouping.
