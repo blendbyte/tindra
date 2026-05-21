@@ -105,4 +105,36 @@ describe('apiFetch', () => {
     vi.mocked(fetch).mockResolvedValue(new Response('bad credentials', { status: 401 }))
     await expect(apiFetch('/api/auth/login')).rejects.toBeInstanceOf(ApiError)
   })
+
+  it('does not redirect on 401 when already on a public page', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('unauthorized', { status: 401 }))
+    const assign = vi.fn()
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { pathname: '/login', href: '' },
+    })
+    Object.defineProperty(window.location, 'href', {
+      set: assign,
+      get: () => '',
+    })
+    const result = await apiFetch('/api/issues')
+    expect(assign).not.toHaveBeenCalled()
+    expect(result).toBeUndefined()
+  })
+
+  it('does not redirect on 401 when on an invite page', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('unauthorized', { status: 401 }))
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { pathname: '/invite/abc', href: '' },
+    })
+    const result = await apiFetch('/api/issues')
+    expect(result).toBeUndefined()
+  })
+
+  it('returns undefined when response has no content-type header', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('body', { status: 200, headers: {} }))
+    const result = await apiFetch('/api/test')
+    expect(result).toBeUndefined()
+  })
 })

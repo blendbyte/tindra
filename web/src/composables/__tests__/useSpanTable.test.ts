@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive, nextTick } from 'vue'
 import type { SpanSummary } from '@/api/types'
 
 vi.mock('@tanstack/vue-query', () => ({
@@ -308,6 +308,39 @@ describe('useSpanTable', () => {
       const { refetchFn } = setupMocks()
       const { refetch } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
       expect(refetch).toBe(refetchFn)
+    })
+  })
+
+  describe('sorted string desc', () => {
+    it('sorts description column descending when direction toggled to desc', () => {
+      const data = [
+        makeSummary({ description: 'apple' }),
+        makeSummary({ description: 'zebra' }),
+        makeSummary({ description: 'mango' }),
+      ]
+      setupMocks(data)
+      const { filtered, toggleSort } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
+      toggleSort('description') // sets asc
+      toggleSort('description') // toggles to desc
+      expect(filtered.value[0].description).toBe('zebra')
+      expect(filtered.value[2].description).toBe('apple')
+    })
+  })
+
+  describe('watch resets search when spanParams changes', () => {
+    it('clears search value when env filter changes', async () => {
+      const perfMock = reactive({ windowHrs: '24h', envFilter: 'All' })
+      vi.mocked(usePerformanceStore).mockReturnValue(perfMock as any)
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
+
+      const { search } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
+      search.value = 'my query'
+      perfMock.envFilter = 'production'
+      await nextTick()
+      expect(search.value).toBe('')
     })
   })
 })

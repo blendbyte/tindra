@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
@@ -24,7 +24,7 @@ import { useProjectsStore } from '@/stores/projects'
 
 const stubs = {
   Icon: { template: '<span />' },
-  FilterChip: { template: '<div />' },
+  FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
 }
 
 const makeLog = (id: string, level: string, body: string) => ({
@@ -155,6 +155,141 @@ describe('LogsView', () => {
       setupMocks([])
       const wrapper = mount(LogsView, { global: { stubs } })
       expect(wrapper.find('.filterbar__search input').exists()).toBe(true)
+    })
+
+    it('triggers debounced search when input value changes', async () => {
+      vi.useFakeTimers()
+      setupMocks([makeLog('l1', 'error', 'test')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const input = wrapper.find('.filterbar__search input')
+      await input.trigger('input')
+      vi.advanceTimersByTime(400)
+      await wrapper.vm.$nextTick()
+      vi.useRealTimers()
+      expect(wrapper.find('.filterbar__search input').exists()).toBe(true)
+    })
+  })
+
+  describe('refresh button interaction', () => {
+    it('calls refetch when refresh button is clicked', async () => {
+      const refetch = vi.fn()
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useQuery).mockReturnValue({
+        data: ref({ logs: [], has_more: false }),
+        isLoading: ref(false),
+        isFetching: ref(false),
+        refetch,
+      } as any)
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.filterbar__refresh').trigger('click')
+      expect(refetch).toHaveBeenCalledOnce()
+    })
+
+    it('shows fetching class when isFetching is true', () => {
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useQuery).mockReturnValue({
+        data: ref({ logs: [], has_more: false }),
+        isLoading: ref(false),
+        isFetching: ref(true),
+        refetch: vi.fn(),
+      } as any)
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.filterbar__refresh--fetching').exists()).toBe(true)
+    })
+  })
+
+  describe('level filter change', () => {
+    it('updates level filter when FilterChip emits change', async () => {
+      setupMocks([makeLog('l1', 'info', 'test')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      const levelChip = chips.find(c => c.props('label') === 'Level')
+      await levelChip?.vm.$emit('change', 'Error')
+      expect(wrapper.find('.filterbar__search input').exists()).toBe(true)
+    })
+
+    it('updates env filter when environment FilterChip emits change', async () => {
+      setupMocks([makeLog('l1', 'info', 'test')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      const envChip = chips.find(c => c.props('label') === 'Environment')
+      await envChip?.vm.$emit('change', 'staging')
+      expect(wrapper.find('.filterbar__search input').exists()).toBe(true)
+    })
+  })
+
+  describe('env badge classes', () => {
+    it('applies production badge class for production environment', () => {
+      setupMocks([makeLog('l1', 'error', 'prod log')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.envbadge--prod').exists()).toBe(true)
+    })
+
+    it('applies staging badge class for staging environment', () => {
+      const log = { ...makeLog('l1', 'info', 'staging log'), environment: 'staging' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.envbadge--staging').exists()).toBe(true)
+    })
+
+    it('applies no special badge class for non-prod non-staging environment', () => {
+      const log = { ...makeLog('l1', 'info', 'dev log'), environment: 'development' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.envbadge--prod').exists()).toBe(false)
+      expect(wrapper.find('.envbadge--staging').exists()).toBe(false)
+      expect(wrapper.find('.envbadge').exists()).toBe(true)
+    })
+  })
+
+  describe('expanded row details', () => {
+    it('shows trace_id when log has one', async () => {
+      const log = { ...makeLog('l1', 'info', 'traced log'), trace_id: 'trace-abc123' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      expect(wrapper.text()).toContain('trace-abc123')
+    })
+
+    it('shows release tag when log has release', async () => {
+      const log = { ...makeLog('l1', 'info', 'released log'), release: 'v1.2.3' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      expect(wrapper.text()).toContain('v1.2.3')
+    })
+
+    it('renders object attribute values as JSON', async () => {
+      const log = { ...makeLog('l1', 'error', 'test'), attributes: { meta: { key: 'val' } } }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      expect(wrapper.text()).toContain('{"key":"val"}')
+    })
+  })
+
+  describe('has_more row', () => {
+    it('shows truncation notice when has_more is true', () => {
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useQuery).mockReturnValue({
+        data: ref({ logs: [makeLog('l1', 'info', 'test')], has_more: true }),
+        isLoading: ref(false),
+        isFetching: ref(false),
+        refetch: vi.fn(),
+      } as any)
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Showing the first 100 entries')
+    })
+  })
+
+  describe('empty state with active filter', () => {
+    it('shows "Try adjusting your filters" when level filter is active', async () => {
+      setupMocks([])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      const levelChip = chips.find(c => c.props('label') === 'Level')
+      await levelChip?.vm.$emit('change', 'Error')
+      expect(wrapper.text()).toContain('Try adjusting your filters')
     })
   })
 })

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
@@ -31,10 +31,10 @@ import { usePerformanceStore } from '@/stores/performance'
 
 const stubs = {
   Icon: { template: '<span />' },
-  FilterChip: { template: '<div />' },
+  FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
   TimeseriesChart: { template: '<div />' },
   PerformanceSubnav: { template: '<div />' },
-  SpanSamplesPanel: { template: '<div />' },
+  SpanSamplesPanel: { name: 'SpanSamplesPanel', emits: ['close'], template: '<div />' },
 }
 
 const makeSpan = (description: string, op = 'cache.get') => ({
@@ -48,7 +48,15 @@ const makeSpan = (description: string, op = 'cache.get') => ({
   miss_rate: 20,
 })
 
-function setupMocks(summaries: unknown[] = [], isLoading = false, isError = false) {
+const makeTimeseries = () => ({
+  buckets: [
+    { time: '2024-01-01T00:00:00Z', count: 10, p50: 12 },
+    { time: '2024-01-01T01:00:00Z', count: 20, p50: 15 },
+  ],
+  bucket_size: 'hour' as const,
+})
+
+function setupMocks(summaries: unknown[] = [], isLoading = false, isError = false, timeseries?: unknown) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
   vi.mocked(usePerformanceStore).mockReturnValue({
     windowHrs: '24h',
@@ -57,7 +65,7 @@ function setupMocks(summaries: unknown[] = [], isLoading = false, isError = fals
 
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
-    .mockReturnValueOnce({ data: ref(undefined) } as any)
+    .mockReturnValueOnce({ data: ref(timeseries) } as any)
 }
 
 beforeEach(() => {
@@ -150,6 +158,86 @@ describe('CachesView', () => {
       await p50btn.trigger('click')
       await p50btn.trigger('click')
       expect(wrapper.text()).toBeTruthy()
+    })
+  })
+
+  describe('timeseries chart section', () => {
+    it('renders the timeseries section when data is available', () => {
+      setupMocks([makeSpan('a')], false, false, makeTimeseries())
+      const wrapper = mount(CachesView, { global: { stubs } })
+      expect(wrapper.find('.txcharts').exists()).toBe(true)
+    })
+
+    it('does not render the timeseries section when data is empty', () => {
+      setupMocks([makeSpan('a')], false, false, { buckets: [], bucket_size: 'hour' })
+      const wrapper = mount(CachesView, { global: { stubs } })
+      expect(wrapper.find('.txcharts').exists()).toBe(false)
+    })
+  })
+
+  describe('row click', () => {
+    it('renders clickable rows', () => {
+      setupMocks([makeSpan('user:profile:123'), makeSpan('session:abc')])
+      const wrapper = mount(CachesView, { global: { stubs } })
+      const rows = wrapper.findAll('.perf-table__row--clickable')
+      expect(rows.length).toBe(2)
+    })
+  })
+
+  describe('retry button', () => {
+    it('calls refetch when Retry is clicked', async () => {
+      setupMocks([], false, true)
+      const wrapper = mount(CachesView, { global: { stubs } })
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(wrapper.text()).toContain('Retry')
+    })
+  })
+
+  describe('FilterChip interactions', () => {
+    it('updates windowHrs when Window FilterChip changes', async () => {
+      setupMocks([])
+      const wrapper = mount(CachesView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips[0].vm.$emit('change', '7d')
+      expect(chips[0].exists()).toBe(true)
+    })
+
+    it('updates envFilter when Env FilterChip changes', async () => {
+      setupMocks([])
+      const wrapper = mount(CachesView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips[1].vm.$emit('change', 'production')
+      expect(chips[1].exists()).toBe(true)
+    })
+  })
+
+  describe('row click and panel', () => {
+    it('opens SpanSamplesPanel when a row is clicked', async () => {
+      setupMocks([makeSpan('user:profile:123')])
+      const wrapper = mount(CachesView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      expect(wrapper.findComponent({ name: 'SpanSamplesPanel' }).exists()).toBe(true)
+    })
+
+    it('closes SpanSamplesPanel on close event', async () => {
+      setupMocks([makeSpan('user:profile:123')])
+      const wrapper = mount(CachesView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      const panel = wrapper.findComponent({ name: 'SpanSamplesPanel' })
+      await panel.vm.$emit('close')
+      expect(wrapper.findComponent({ name: 'SpanSamplesPanel' }).exists()).toBe(false)
+    })
+
+    it('calls refetch when Retry is clicked on error', async () => {
+      const refetchFn = vi.fn()
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+      const wrapper = mount(CachesView, { global: { stubs } })
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(refetchFn).toHaveBeenCalled()
     })
   })
 })

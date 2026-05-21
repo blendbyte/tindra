@@ -88,4 +88,30 @@ describe('ui store', () => {
     store.closeCmd()
     expect(store.cmdOpen).toBe(false)
   })
+
+  it('falls back to null when localStorage.getItem throws', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => { throw new Error('security error') },
+      setItem: () => {},
+      removeItem: () => {},
+      clear: () => {},
+      get length() { return 0 },
+      key: () => null,
+    })
+    mockMatchMedia(false)
+    const { useUiStore } = await import('../ui')
+    const store = useUiStore()
+    expect(store.theme).toBeNull()
+  })
+
+  it('updates systemTheme when OS preference changes', async () => {
+    const mql = mockMatchMedia(false)
+    const { useUiStore } = await import('../ui')
+    const store = useUiStore()
+    expect(store.resolvedTheme).toBe('light')
+
+    const listener = (mql.addEventListener as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    listener({ matches: true } as MediaQueryListEvent)
+    expect(store.resolvedTheme).toBe('dark')
+  })
 })

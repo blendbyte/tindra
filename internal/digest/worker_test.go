@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/blendbyte/tindra/internal/alerts"
+	"github.com/blendbyte/tindra/internal/storage"
 )
 
 type mockEmailSender struct {
@@ -103,4 +104,58 @@ func TestWorker_buildReport_nilPool_returnsError(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when pool is nil")
 	}
+}
+
+func TestUserDigestSlot_inRange(t *testing.T) {
+	ids := []string{"user-1", "user-2", "user-abc", "a", "", "x"}
+	for _, id := range ids {
+		slot := userDigestSlot(id)
+		if slot < 0 || slot >= digestWindowHours {
+			t.Errorf("userDigestSlot(%q) = %d, out of range [0, %d)", id, slot, digestWindowHours)
+		}
+	}
+}
+
+func TestUserDigestSlot_deterministic(t *testing.T) {
+	id := "some-stable-user-id"
+	s1 := userDigestSlot(id)
+	s2 := userDigestSlot(id)
+	if s1 != s2 {
+		t.Errorf("expected same slot on repeated calls, got %d then %d", s1, s2)
+	}
+}
+
+func TestUserDigestSlot_distributes(t *testing.T) {
+	seen := make(map[int]bool)
+	for i := 0; i < 200; i++ {
+		id := "user-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i%10))
+		seen[userDigestSlot(id)] = true
+	}
+	if len(seen) < digestWindowHours {
+		t.Errorf("expected all %d slots covered across 200 IDs, only saw %d", digestWindowHours, len(seen))
+	}
+}
+
+func TestWorker_send_nilPool_returnsWithoutPanic(t *testing.T) {
+	w := NewWorker(nil, &mockEmailSender{}, "https://example.com")
+	// nil pool returns early before any DB call
+	w.send(context.Background(), false)
+	w.send(context.Background(), true)
+}
+
+func TestWorker_sendToUsers_emptyList(t *testing.T) {
+	sender := &mockEmailSender{}
+	w := NewWorker(nil, sender, "https://example.com")
+	// empty/nil slice should return without sending anything
+	w.sendToUsers(context.Background(), nil)
+	w.sendToUsers(context.Background(), []storage.DigestUser{})
+	if len(sender.messages) != 0 {
+		t.Errorf("expected 0 emails for empty user list, got %d", len(sender.messages))
+	}
+}
+
+func TestWorker_SendNow_nilPool_returnsWithoutPanic(t *testing.T) {
+	w := NewWorker(nil, &mockEmailSender{}, "https://example.com")
+	w.SendNow(context.Background(), false)
+	w.SendNow(context.Background(), true)
 }

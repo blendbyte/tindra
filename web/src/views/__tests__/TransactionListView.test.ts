@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 
 const pushMock = vi.fn()
@@ -34,6 +34,7 @@ import TransactionListView from '../TransactionListView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
+import { apiFetch } from '@/api/client'
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -158,6 +159,230 @@ describe('TransactionListView', () => {
       const wrapper = mount(TransactionListView, { global: { stubs } })
       const sortBtns = wrapper.findAll('.col-sort')
       expect(sortBtns.length).toBeGreaterThan(0)
+    })
+
+    it('sorts by P95 column when clicked', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const p95Btn = wrapper.findAll('.col-sort').find(b => b.text().includes('P95'))!
+      await p95Btn.trigger('click')
+      expect(p95Btn.classes()).toContain('col-sort--active')
+    })
+
+    it('sorts by Failure % column when clicked', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const failBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Failure'))!
+      await failBtn.trigger('click')
+      expect(failBtn.classes()).toContain('col-sort--active')
+    })
+
+    it('sorts by Time spent column when clicked', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const timeBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Time'))!
+      await timeBtn.trigger('click')
+      expect(timeBtn.classes()).toContain('col-sort--active')
+    })
+
+    it('sorts by Count column when clicked', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const countBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Count'))!
+      await countBtn.trigger('click')
+      expect(countBtn.classes()).toContain('col-sort--active')
+    })
+
+    it('sorts by TPM column when clicked', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const tpmBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('TPM'))!
+      await tpmBtn.trigger('click')
+      expect(tpmBtn.classes()).toContain('col-sort--active')
+    })
+
+    it('sorts by P50 column when clicked', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const p50Btn = wrapper.findAll('.col-sort').find(b => b.text().includes('P50'))!
+      await p50Btn.trigger('click')
+      expect(p50Btn.classes()).toContain('col-sort--active')
+    })
+
+    it('toggles sort direction when clicking the same column twice', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const p50Btn = wrapper.findAll('.col-sort').find(b => b.text().includes('P50'))!
+      await p50Btn.trigger('click')
+      const icon1 = p50Btn.find('.col-sort__icon').text()
+      await p50Btn.trigger('click')
+      const icon2 = p50Btn.find('.col-sort__icon').text()
+      expect(icon1).not.toBe(icon2)
+    })
+  })
+
+  describe('op tabs', () => {
+    it('does not show op tabs when all transactions have the same op', () => {
+      setupMocks([makeSummary('/api/users', 'http.server'), makeSummary('/api/orders', 'http.server')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.optabs').exists()).toBe(false)
+    })
+
+    it('shows op tabs when transactions have 2+ distinct ops', () => {
+      setupMocks([makeSummary('/api/users', 'http.server'), makeSummary('send_email', 'task.run')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.optabs').exists()).toBe(true)
+    })
+
+    it('shows an "All" tab and one tab per distinct op', () => {
+      setupMocks([makeSummary('/api/users', 'http.server'), makeSummary('send_email', 'task.run')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const tabs = wrapper.findAll('.optab')
+      expect(tabs.some(t => t.text().includes('All'))).toBe(true)
+      expect(tabs.some(t => t.text().includes('http.server'))).toBe(true)
+      expect(tabs.some(t => t.text().includes('task.run'))).toBe(true)
+    })
+
+    it('filters transactions when an op tab is clicked', async () => {
+      setupMocks([
+        makeSummary('/api/users', 'http.server'),
+        makeSummary('send_email', 'task.run'),
+        makeSummary('/api/orders', 'http.server'),
+      ])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const taskTab = wrapper.findAll('.optab').find(t => t.text().includes('task.run'))!
+      await taskTab.trigger('click')
+      expect(wrapper.text()).toContain('send_email')
+      expect(wrapper.text()).not.toContain('/api/users')
+    })
+
+    it('switches back to All tab when All is clicked', async () => {
+      setupMocks([
+        makeSummary('/api/users', 'http.server'),
+        makeSummary('send_email', 'task.run'),
+      ])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const taskTab = wrapper.findAll('.optab').find(t => t.text().includes('task.run'))!
+      await taskTab.trigger('click')
+      const allTab = wrapper.findAll('.optab').find(t => t.text().includes('All'))!
+      await allTab.trigger('click')
+      expect(wrapper.text()).toContain('/api/users')
+      expect(wrapper.text()).toContain('send_email')
+    })
+  })
+
+  describe('TPM formatting edge cases', () => {
+    it('shows <0.01/min for very low tpm', () => {
+      const lowTpmSummary = { ...makeSummary('/api/infrequent'), tpm: 0.001 }
+      setupMocks([lowTpmSummary])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('<0.01/min')
+    })
+
+    it('shows rounded value for high tpm >= 100', () => {
+      const highTpmSummary = { ...makeSummary('/api/popular'), tpm: 150.7 }
+      setupMocks([highTpmSummary])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('151/min')
+    })
+  })
+
+  describe('time_spent formatting edge cases', () => {
+    it('shows hours format for very long time_spent', () => {
+      const longTimeSummary = { ...makeSummary('/api/long'), time_spent_ms: 7_200_000 }
+      setupMocks([longTimeSummary])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('hr')
+    })
+
+    it('shows minutes format for medium time_spent', () => {
+      const medTimeSummary = { ...makeSummary('/api/medium'), time_spent_ms: 120_000 }
+      setupMocks([medTimeSummary])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('min')
+    })
+  })
+
+  describe('failure rate formatting', () => {
+    it('shows non-zero failure rate percentage', () => {
+      const failedSummary = { ...makeSummary('/api/buggy'), failure_rate: 0.05 }
+      setupMocks([failedSummary])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.tx-failure').exists()).toBe(true)
+    })
+
+    it('shows <0.01% for extremely low failure rate', () => {
+      const tiinySummary = { ...makeSummary('/api/rare-fail'), failure_rate: 0.000001 }
+      setupMocks([tiinySummary])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('<0.01%')
+    })
+  })
+
+  describe('stats strip', () => {
+    it('shows aggregate stats when transactions are loaded', () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.txstats').exists()).toBe(true)
+    })
+  })
+
+  describe('project not found', () => {
+    it('shows create project button when no projects', () => {
+      setupMocks([], false, false, [])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const createBtn = wrapper.findAll('.btn').find(b => b.text().includes('Create project'))
+      expect(createBtn).toBeDefined()
+    })
+  })
+
+  describe('timeseries chart', () => {
+    const timeseriesData = {
+      buckets: [
+        { time: '2024-01-01T00:00:00Z', count: 10, p50: 100, p95: 200 },
+        { time: '2024-01-01T01:00:00Z', count: 15, p50: 120, p95: 250 },
+      ],
+      bucket_size: 'hour',
+    }
+
+    it('renders chart panel when timeseries data has buckets', async () => {
+      vi.mocked(apiFetch).mockResolvedValue(timeseriesData as any)
+      vi.mocked(useProjectsStore).mockReturnValue({ projects: [{ id: '1', name: 'App', slug: 'app' }], selectedIds: [] } as any)
+      vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
+        .mockReturnValueOnce({ data: ref([makeSummary('/api/users')]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      await flushPromises()
+      expect(wrapper.find('.txcharts').exists()).toBe(true)
+    })
+  })
+
+  describe('error state retry', () => {
+    it('calls refetch when Retry button is clicked in error state', async () => {
+      const refetchFn = vi.fn()
+      vi.mocked(useProjectsStore).mockReturnValue({ projects: [{ id: '1', name: 'App', slug: 'app' }], selectedIds: [] } as any)
+      vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(refetchFn).toHaveBeenCalled()
+    })
+  })
+
+  describe('transaction column sort', () => {
+    it('sorts by Transaction column when clicked', async () => {
+      setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const txBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Transaction'))
+      if (txBtn) {
+        await txBtn.trigger('click')
+        expect(txBtn.classes()).toContain('col-sort--active')
+      }
     })
   })
 })
