@@ -155,6 +155,7 @@ func githubAPIGet[T any](ctx context.Context, accessToken, url string) (*T, erro
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "Tindra/"+AppVersion+" (+https://tindra.sh)")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("github api: %w", err)

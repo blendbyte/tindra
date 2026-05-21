@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/blendbyte/tindra/internal/version"
 )
 
 // newWebhookClient returns an HTTP client whose DialContext validates the
@@ -45,5 +47,15 @@ func NewWebhookClient(allowPrivate bool) *http.Client {
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
 		},
 	}
-	return &http.Client{Timeout: 10 * time.Second, Transport: transport}
+	return &http.Client{Timeout: 10 * time.Second, Transport: userAgentTransport{rt: transport}}
+}
+
+type userAgentTransport struct {
+	rt http.RoundTripper
+}
+
+func (t userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("User-Agent", "Tindra/"+version.App+" (+https://tindra.sh)")
+	return t.rt.RoundTrip(req)
 }

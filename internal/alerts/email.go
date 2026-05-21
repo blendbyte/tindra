@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/blendbyte/tindra/internal/version"
 )
 
 // EmailMessage is the provider-agnostic envelope passed to an EmailSender.
@@ -185,6 +187,7 @@ func (s *httpSender) Send(ctx context.Context, msg EmailMessage) error {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Tindra/"+version.App+" (+https://tindra.sh)")
 	for k, v := range s.headers {
 		req.Header.Set(k, v)
 	}

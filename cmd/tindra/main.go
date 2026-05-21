@@ -25,6 +25,7 @@ import (
 	"github.com/blendbyte/tindra/internal/retention"
 	"github.com/blendbyte/tindra/internal/sourcemaps"
 	"github.com/blendbyte/tindra/internal/storage"
+	"github.com/blendbyte/tindra/internal/version"
 )
 
 // Version and Commit are injected at build time via -ldflags.
@@ -58,6 +59,7 @@ func main() {
 	// Load .env if present - no-op in production where env vars are set externally.
 	_ = godotenv.Load()
 
+	version.App = Version
 	api.AppVersion = Version
 	api.AppCommit = Commit
 
