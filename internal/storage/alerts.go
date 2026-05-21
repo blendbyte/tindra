@@ -26,7 +26,7 @@ type AlertRule struct {
 	FilterLevel       *string    `json:"filter_level,omitempty"`
 	FilterEnvironment *string    `json:"filter_environment,omitempty"`
 	MinOccurrences    *int       `json:"min_occurrences,omitempty"`
-	LastFiredAt       *time.Time `json:"last_fired_at,omitempty"`
+	LastFiredAt       *time.Time `json:"last_fired_at"`
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
