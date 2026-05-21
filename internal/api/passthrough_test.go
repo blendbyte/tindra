@@ -3,11 +3,13 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,8 +84,22 @@ func TestHandleEnvelope_passthroughForwards(t *testing.T) {
 		t.Fatal("upstream did not receive passthrough request within 2s")
 	}
 
-	if string(gotBody) != body {
-		t.Errorf("forwarded body mismatch:\ngot  %q\nwant %q", string(gotBody), body)
+	// The envelope header must have the upstream DSN injected; items are unchanged.
+	lines := strings.SplitN(string(gotBody), "\n", 2)
+	if len(lines) < 2 {
+		t.Fatalf("forwarded body has fewer than 2 lines: %q", string(gotBody))
+	}
+	var hdr map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lines[0]), &hdr); err != nil {
+		t.Fatalf("envelope header is not valid JSON: %v", err)
+	}
+	var gotDSN string
+	if err := json.Unmarshal(hdr["dsn"], &gotDSN); err != nil || gotDSN != dsn {
+		t.Errorf("envelope header dsn: got %q, want %q", gotDSN, dsn)
+	}
+	wantItems := strings.SplitN(body, "\n", 2)[1]
+	if lines[1] != wantItems {
+		t.Errorf("envelope items changed:\ngot  %q\nwant %q", lines[1], wantItems)
 	}
 	if want := "Sentry sentry_version=7, sentry_key=upstreamkey"; gotAuth != want {
 		t.Errorf("X-Sentry-Auth: got %q, want %q", gotAuth, want)
