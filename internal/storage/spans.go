@@ -90,10 +90,10 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 			COALESCE(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY s.duration_ms), 0) AS p50,
 			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY s.duration_ms), 0) AS p95,
 			SUM(s.duration_ms) AS total_ms,
-			ROUND(
+			COALESCE(ROUND(
 				SUM(s.duration_ms) * 100.0 / NULLIF(SUM(SUM(s.duration_ms)) OVER (), 0),
 				1
-			) AS time_pct,
+			), 0) AS time_pct,
 			ROUND(
 				COUNT(*) FILTER (WHERE s.status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded')) * 100.0
 				/ NULLIF(COUNT(*), 0),
