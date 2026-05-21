@@ -1,11 +1,13 @@
 package ingest_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ func buildDSN(srv *httptest.Server, publicKey, projectID string) string {
 }
 
 func TestForwardEnvelope_sendsRawBytesWithCorrectHeaders(t *testing.T) {
+	// Envelope header without a dsn field; items follow unchanged.
 	raw := []byte("{\"event_id\":\"abc\"}\n{\"type\":\"event\",\"length\":2}\n{}\n")
 
 	var (
@@ -38,7 +41,8 @@ func TestForwardEnvelope_sendsRawBytesWithCorrectHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ingest.ForwardEnvelope(&http.Client{Timeout: 5 * time.Second}, buildDSN(srv, "mykey", "proj1"), raw)
+	dsn := buildDSN(srv, "mykey", "proj1")
+	ingest.ForwardEnvelope(&http.Client{Timeout: 5 * time.Second}, dsn, raw)
 
 	select {
 	case <-done:
@@ -55,8 +59,23 @@ func TestForwardEnvelope_sendsRawBytesWithCorrectHeaders(t *testing.T) {
 	if gotContentType != "application/x-sentry-envelope" {
 		t.Errorf("Content-Type: got %q", gotContentType)
 	}
-	if string(gotBody) != string(raw) {
-		t.Errorf("body mismatch:\ngot  %q\nwant %q", string(gotBody), string(raw))
+
+	// The envelope header must have the upstream DSN injected; items are unchanged.
+	lines := strings.SplitN(string(gotBody), "\n", 2)
+	if len(lines) < 2 {
+		t.Fatalf("forwarded body has fewer than 2 lines: %q", string(gotBody))
+	}
+	var hdr map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lines[0]), &hdr); err != nil {
+		t.Fatalf("envelope header is not valid JSON: %v", err)
+	}
+	var gotDSN string
+	if err := json.Unmarshal(hdr["dsn"], &gotDSN); err != nil || gotDSN != dsn {
+		t.Errorf("envelope header dsn: got %q, want %q", gotDSN, dsn)
+	}
+	wantItems := strings.SplitN(string(raw), "\n", 2)[1]
+	if lines[1] != wantItems {
+		t.Errorf("envelope items changed:\ngot  %q\nwant %q", lines[1], wantItems)
 	}
 }
 
