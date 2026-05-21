@@ -79,6 +79,7 @@ beforeEach(() => {
   vi.mocked(useProjectsStore).mockReset()
   pushMock.mockReset()
   replaceMock.mockReset()
+  try { localStorage.clear() } catch { /* unavailable in some jsdom environments */ }
 })
 
 describe('IssueListView', () => {
