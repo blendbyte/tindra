@@ -66,7 +66,7 @@ const releaseSelectSQL = `
 		COUNT(t.id)                                                                          AS tx_count,
 		COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY t.duration_ms), 0)             AS tx_p50,
 		COALESCE(ROUND(
-			COUNT(t.id) FILTER (WHERE t.status != 'ok') * 100.0 / NULLIF(COUNT(t.id), 0), 1
+			COUNT(t.id) FILTER (WHERE t.status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded')) * 100.0 / NULLIF(COUNT(t.id), 0), 1
 		), 0)                                                                                AS tx_error_rate
 	FROM releases r
 	LEFT JOIN transactions t ON t.project_id = r.project_id AND t.release = r.version`
@@ -171,7 +171,7 @@ func GetReleaseTransactions(ctx context.Context, pool *pgxpool.Pool, releaseID s
 			COUNT(*) AS sample_count,
 			COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms), 0) AS p50,
 			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 0) AS p95,
-			ROUND(COUNT(*) FILTER (WHERE status != 'ok') * 100.0 / NULLIF(COUNT(*), 0), 2) AS error_rate
+			ROUND(COUNT(*) FILTER (WHERE status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS error_rate
 		FROM transactions
 		WHERE project_id = $1 AND release = $2
 		GROUP BY transaction, op

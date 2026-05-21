@@ -374,7 +374,7 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 			COUNT(*)::float8 / $1 AS tpm,
 			COALESCE(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY duration_ms), 0) AS p50,
 			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 0) AS p95,
-			COUNT(CASE WHEN status != 'ok' THEN 1 END)::float8 / COUNT(*) AS failure_rate,
+			COUNT(CASE WHEN status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded') THEN 1 END)::float8 / COUNT(*) AS failure_rate,
 			SUM(duration_ms)::bigint AS time_spent_ms
 		FROM transactions
 		`+where+`
