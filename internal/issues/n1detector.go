@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,9 +16,30 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
-// n1Threshold is the minimum number of identical db spans in a single transaction
-// before it is classified as an N+1 query.
+// n1Threshold is the minimum number of repeated db spans per transaction.
 const n1Threshold = 5
+
+// n1MinTotalMs is the minimum combined duration of the repeated spans.
+// Matches Sentry's N_PLUS_ONE_DB_DURATION_THRESHOLD — fast queries that
+// happen to repeat are not worth surfacing as issues.
+const n1MinTotalMs = 50
+
+// sqlLiterals replaces single-quoted string literals and bare numeric
+// literals with ? so that queries differing only in bound values are
+// treated as the same query (e.g. WHERE id = 1 and WHERE id = 2 group
+// together instead of being counted separately).
+var (
+	reSQLString  = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
+	reSQLNumber  = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	reWhitespace = regexp.MustCompile(`\s+`)
+)
+
+func normalizeSQL(s string) string {
+	s = reSQLString.ReplaceAllString(s, "?")
+	s = reSQLNumber.ReplaceAllString(s, "?")
+	s = strings.ToLower(strings.TrimSpace(s))
+	return reWhitespace.ReplaceAllString(s, " ")
+}
 
 type N1Detector struct {
 	pool *pgxpool.Pool
@@ -39,8 +61,9 @@ func (d *N1Detector) ProcessBatch(ctx context.Context, pool *pgxpool.Pool, txs [
 
 func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction, txID string) {
 	type group struct {
-		count   int
-		totalMs int
+		count       int
+		totalMs     int
+		exampleDesc string // un-normalized form for the issue title
 	}
 	groups := make(map[string]*group)
 	for _, sp := range tx.Spans {
@@ -51,21 +74,25 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 		if desc == "" {
 			continue
 		}
-		if g, ok := groups[desc]; ok {
+		key := normalizeSQL(desc)
+		if g, ok := groups[key]; ok {
 			g.count++
 			g.totalMs += sp.DurationMs
 		} else {
-			groups[desc] = &group{count: 1, totalMs: sp.DurationMs}
+			groups[key] = &group{count: 1, totalMs: sp.DurationMs, exampleDesc: desc}
 		}
 	}
 
-	for desc, g := range groups {
+	for _, g := range groups {
 		if g.count < n1Threshold {
 			continue
 		}
+		if g.totalMs < n1MinTotalMs {
+			continue
+		}
 
-		fp := n1Fingerprint(tx.ProjectID, tx.Transaction, desc)
-		title := fmt.Sprintf("N+1 Query: %s in %s", truncate(desc, 120), truncate(tx.Transaction, 80))
+		fp := n1Fingerprint(tx.ProjectID, tx.Transaction, g.exampleDesc)
+		title := fmt.Sprintf("N+1 Query: %s in %s", truncate(g.exampleDesc, 120), truncate(tx.Transaction, 80))
 
 		issue, _, _, err := storage.UpsertIssue(ctx, d.pool,
 			tx.ProjectID, fp, title, "performance", "n1_query",
@@ -82,7 +109,7 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 }
 
 func n1Fingerprint(projectID, transactionName, queryDesc string) string {
-	h := sha256.Sum256([]byte("n1:" + projectID + ":" + transactionName + ":" + queryDesc))
+	h := sha256.Sum256([]byte("n1:" + projectID + ":" + transactionName + ":" + normalizeSQL(queryDesc)))
 	return hex.EncodeToString(h[:])
 }
 

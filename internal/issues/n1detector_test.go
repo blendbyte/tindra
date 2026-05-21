@@ -56,10 +56,11 @@ func TestN1Detector_createsIssueForRepeatedDbSpans(t *testing.T) {
 	txID := insertTestTransaction(t, "GET /api/users")
 	detector := issues.NewN1Detector(testPool)
 
+	// 8 spans × 10ms = 80ms — above both count and duration thresholds.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/users",
-		Spans:       dbSpans("SELECT * FROM users WHERE id = ?", 8, 5),
+		Spans:       dbSpans("SELECT * FROM users WHERE id = ?", 8, 10),
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
@@ -88,6 +89,7 @@ func TestN1Detector_recordsPerfEvent(t *testing.T) {
 	txID := insertTestTransaction(t, "GET /api/orders")
 	detector := issues.NewN1Detector(testPool)
 
+	// 7 spans × 12ms = 84ms.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/orders",
@@ -122,23 +124,101 @@ func TestN1Detector_recordsPerfEvent(t *testing.T) {
 	}
 }
 
-func TestN1Detector_belowThreshold_noIssue(t *testing.T) {
+func TestN1Detector_belowCountThreshold_noIssue(t *testing.T) {
 	truncateForN1(t)
 
 	txID := insertTestTransaction(t, "GET /api/products")
 	detector := issues.NewN1Detector(testPool)
 
-	// 4 identical spans - one below the threshold of 5
+	// 4 spans — one below the count threshold of 5.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/products",
-		Spans:       dbSpans("SELECT * FROM products WHERE id = ?", 4, 5),
+		Spans:       dbSpans("SELECT * FROM products WHERE id = ?", 4, 20),
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
 	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
 	if len(list) != 0 {
 		t.Errorf("expected 0 issues for 4 repeated spans, got %d", len(list))
+	}
+}
+
+func TestN1Detector_belowDurationThreshold_noIssue(t *testing.T) {
+	truncateForN1(t)
+
+	txID := insertTestTransaction(t, "GET /api/fast")
+	detector := issues.NewN1Detector(testPool)
+
+	// 6 spans × 5ms = 30ms — count passes but total duration is below 50ms.
+	tx := ingest.BufferedTransaction{
+		ProjectID:   testProject.ID,
+		Transaction: "GET /api/fast",
+		Spans:       dbSpans("SELECT * FROM cache_entries WHERE key = ?", 6, 5),
+	}
+	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
+
+	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	if len(list) != 0 {
+		t.Errorf("expected 0 issues for fast repeated queries (total < 50ms), got %d", len(list))
+	}
+}
+
+func TestN1Detector_normalizesQueryLiterals(t *testing.T) {
+	truncateForN1(t)
+
+	txID := insertTestTransaction(t, "GET /api/posts")
+	detector := issues.NewN1Detector(testPool)
+
+	// Each span has a different literal value — a real N+1 from an ORM that
+	// embeds values in query text. They should normalize to the same key.
+	spans := []ingest.BufferedSpan{
+		{Op: "db.query", Description: `select * from "posts" where "id" = 1`, DurationMs: 12},
+		{Op: "db.query", Description: `select * from "posts" where "id" = 2`, DurationMs: 11},
+		{Op: "db.query", Description: `select * from "posts" where "id" = 3`, DurationMs: 13},
+		{Op: "db.query", Description: `select * from "posts" where "id" = 4`, DurationMs: 12},
+		{Op: "db.query", Description: `select * from "posts" where "id" = 5`, DurationMs: 14},
+		{Op: "db.query", Description: `select * from "posts" where "id" = 6`, DurationMs: 11},
+	}
+	tx := ingest.BufferedTransaction{
+		ProjectID:   testProject.ID,
+		Transaction: "GET /api/posts",
+		Spans:       spans,
+	}
+	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
+
+	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	if len(list) != 1 {
+		t.Fatalf("expected 1 issue (queries normalized), got %d", len(list))
+	}
+	if list[0].Kind != "n1_query" {
+		t.Errorf("kind: got %q", list[0].Kind)
+	}
+}
+
+func TestN1Detector_normalizesStringLiterals(t *testing.T) {
+	truncateForN1(t)
+
+	txID := insertTestTransaction(t, "GET /api/users/by-name")
+	detector := issues.NewN1Detector(testPool)
+
+	spans := []ingest.BufferedSpan{
+		{Op: "db.query", Description: `SELECT * FROM users WHERE email = 'alice@example.com'`, DurationMs: 15},
+		{Op: "db.query", Description: `SELECT * FROM users WHERE email = 'bob@example.com'`, DurationMs: 14},
+		{Op: "db.query", Description: `SELECT * FROM users WHERE email = 'carol@example.com'`, DurationMs: 13},
+		{Op: "db.query", Description: `SELECT * FROM users WHERE email = 'dan@example.com'`, DurationMs: 12},
+		{Op: "db.query", Description: `SELECT * FROM users WHERE email = 'eve@example.com'`, DurationMs: 16},
+	}
+	tx := ingest.BufferedTransaction{
+		ProjectID:   testProject.ID,
+		Transaction: "GET /api/users/by-name",
+		Spans:       spans,
+	}
+	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
+
+	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	if len(list) != 1 {
+		t.Fatalf("expected 1 issue (string literals normalized), got %d", len(list))
 	}
 }
 
@@ -177,7 +257,7 @@ func TestN1Detector_ignoresEmptyDescription(t *testing.T) {
 
 	spans := make([]ingest.BufferedSpan, 8)
 	for i := range spans {
-		spans[i] = ingest.BufferedSpan{Op: "db.query", Description: "", DurationMs: 5}
+		spans[i] = ingest.BufferedSpan{Op: "db.query", Description: "", DurationMs: 20}
 	}
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
@@ -199,7 +279,8 @@ func TestN1Detector_groupsSameQueryAcrossTransactions(t *testing.T) {
 	txID2 := insertTestTransaction(t, "GET /api/dashboard")
 	detector := issues.NewN1Detector(testPool)
 
-	spans := dbSpans("SELECT * FROM widgets WHERE user_id = ?", 6, 4)
+	// 6 spans × 10ms = 60ms per transaction.
+	spans := dbSpans("SELECT * FROM widgets WHERE user_id = ?", 6, 10)
 	txs := []ingest.BufferedTransaction{
 		{ProjectID: testProject.ID, Transaction: "GET /api/dashboard", Spans: spans},
 		{ProjectID: testProject.ID, Transaction: "GET /api/dashboard", Spans: spans},
@@ -226,9 +307,11 @@ func TestN1Detector_differentQueriesSeparateIssues(t *testing.T) {
 	txID := insertTestTransaction(t, "GET /api/reports")
 	detector := issues.NewN1Detector(testPool)
 
+	// Both groups need to clear the 50ms total threshold.
+	// users: 6 × 10ms = 60ms, roles: 7 × 10ms = 70ms.
 	mixed := append(
-		dbSpans("SELECT * FROM users WHERE id = ?", 6, 3),
-		dbSpans("SELECT * FROM roles WHERE id = ?", 7, 2)...,
+		dbSpans("SELECT * FROM users WHERE id = ?", 6, 10),
+		dbSpans("SELECT * FROM roles WHERE id = ?", 7, 10)...,
 	)
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
@@ -251,7 +334,7 @@ func TestN1Detector_skipsEmptyTxID(t *testing.T) {
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/skip",
-		Spans:       dbSpans("SELECT * FROM tags WHERE id = ?", 8, 3),
+		Spans:       dbSpans("SELECT * FROM tags WHERE id = ?", 8, 10),
 	}
 	// Empty txID should be skipped entirely - no panic, no issue.
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{""})
@@ -274,10 +357,11 @@ func TestN1Detector_kindFilterReturnsOnlyPerfIssues(t *testing.T) {
 
 	txID := insertTestTransaction(t, "GET /api/mix")
 	detector := issues.NewN1Detector(testPool)
+	// 5 spans × 12ms = 60ms — clears both thresholds.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/mix",
-		Spans:       dbSpans("SELECT * FROM items WHERE id = ?", 5, 4),
+		Spans:       dbSpans("SELECT * FROM items WHERE id = ?", 5, 12),
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
