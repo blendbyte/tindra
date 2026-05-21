@@ -48,7 +48,7 @@ jobs:
         env:
           TESTCONTAINERS_RYUK_DISABLED: "true"
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           files: coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -99,7 +99,7 @@ jobs:
       - name: Run tests with coverage
         working-directory: web
         run: bun run test:coverage
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           files: web/coverage/coverage-final.json
           token: ${{ secrets.CODECOV_TOKEN }}
