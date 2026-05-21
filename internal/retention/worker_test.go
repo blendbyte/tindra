@@ -208,6 +208,43 @@ func TestWorker_deletesOldLogs(t *testing.T) {
 	}
 }
 
+func TestWorker_purgesExpiredOAuthStates(t *testing.T) {
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "DELETE FROM oauth_states")
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM oauth_states")
+	})
+
+	// Insert an expired state and a still-valid one.
+	testPool.Exec(ctx, `
+		INSERT INTO oauth_states (token, provider, verifier, expires_at)
+		VALUES ('expired-oauth-state', 'github', 'verifier1', NOW() - INTERVAL '1 minute')
+	`)
+	testPool.Exec(ctx, `
+		INSERT INTO oauth_states (token, provider, verifier, expires_at)
+		VALUES ('valid-oauth-state', 'github', 'verifier2', NOW() + INTERVAL '10 minutes')
+	`)
+
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
+	<-done
+
+	var expiredCount int
+	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM oauth_states WHERE token = 'expired-oauth-state'`).Scan(&expiredCount)
+	if expiredCount != 0 {
+		t.Errorf("expected expired oauth state to be deleted, got count=%d", expiredCount)
+	}
+
+	var validCount int
+	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM oauth_states WHERE token = 'valid-oauth-state'`).Scan(&validCount)
+	if validCount != 1 {
+		t.Errorf("expected valid oauth state to survive, got count=%d", validCount)
+	}
+}
+
 func TestWorker_purgesExpiredMFAChallenges(t *testing.T) {
 	ctx := context.Background()
 

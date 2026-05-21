@@ -155,5 +155,47 @@ describe('ReleaseDetailView', () => {
       await wrapper.find('.detail-breadcrumb__back').trigger('click')
       expect(pushMock).toHaveBeenCalledWith('/releases')
     })
+
+    it('renders regressed issues section when present', async () => {
+      const issue = { id: 'iss-r1', title: 'Regressed error', level: 'error', category: 'regressed', event_count: 2, last_seen: '2024-01-01' }
+      setupMocks(baseRelease, false, false, [issue], [])
+      const wrapper = mount(ReleaseDetailView, { global: { stubs } })
+      const issuesTab = wrapper.findAll('.optab').find(t => t.text().includes('Issues'))!
+      await issuesTab.trigger('click')
+      expect(wrapper.find('.rel-category-badge--regressed').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Regressed error')
+    })
+
+    it('navigates to issue when regressed issue row is clicked', async () => {
+      const issue = { id: 'iss-r2', title: 'Regressed crash', level: 'error', category: 'regressed', event_count: 1, last_seen: '2024-01-01' }
+      setupMocks(baseRelease, false, false, [issue], [])
+      const wrapper = mount(ReleaseDetailView, { global: { stubs } })
+      const issuesTab = wrapper.findAll('.optab').find(t => t.text().includes('Issues'))!
+      await issuesTab.trigger('click')
+      const row = wrapper.findAll('.rel-issue-row').find(r => r.text().includes('Regressed crash'))!
+      await row.trigger('click')
+      expect(pushMock).toHaveBeenCalledWith('/issues/iss-r2')
+    })
+
+    it('renders ongoing issues section when present', async () => {
+      const issue = { id: 'iss-o1', title: 'Ongoing warning', level: 'warning', category: 'ongoing', event_count: 5, last_seen: '2024-01-01' }
+      setupMocks(baseRelease, false, false, [issue], [])
+      const wrapper = mount(ReleaseDetailView, { global: { stubs } })
+      const issuesTab = wrapper.findAll('.optab').find(t => t.text().includes('Issues'))!
+      await issuesTab.trigger('click')
+      expect(wrapper.find('.rel-category-badge--ongoing').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Ongoing warning')
+    })
+
+    it('navigates to issue when ongoing issue row is clicked', async () => {
+      const issue = { id: 'iss-o2', title: 'Ongoing slow query', level: 'warning', category: 'ongoing', event_count: 3, last_seen: '2024-01-01' }
+      setupMocks(baseRelease, false, false, [issue], [])
+      const wrapper = mount(ReleaseDetailView, { global: { stubs } })
+      const issuesTab = wrapper.findAll('.optab').find(t => t.text().includes('Issues'))!
+      await issuesTab.trigger('click')
+      const row = wrapper.findAll('.rel-issue-row').find(r => r.text().includes('Ongoing slow query'))!
+      await row.trigger('click')
+      expect(pushMock).toHaveBeenCalledWith('/issues/iss-o2')
+    })
   })
 })

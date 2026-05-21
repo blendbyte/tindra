@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { ref, nextTick } from 'vue'
 
@@ -21,10 +21,15 @@ describe('projects store', () => {
   let projectsData: ReturnType<typeof ref<Project[]>>
 
   beforeEach(() => {
+    vi.unstubAllGlobals()
     sessionStorage.clear()
     projectsData = ref<Project[]>([])
     vi.mocked(useQuery).mockReturnValue({ data: projectsData } as any)
     setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   describe('toggleProject', () => {
@@ -78,6 +83,22 @@ describe('projects store', () => {
       const { useProjectsStore } = await import('../projects')
       const store = useProjectsStore()
       expect(store.selectedIds).toEqual(['p1', 'p2'])
+    })
+  })
+
+  describe('sessionStorage error handling', () => {
+    it('falls back to empty array when sessionStorage.getItem throws', async () => {
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => { throw new Error('security error') },
+        setItem: () => {},
+        removeItem: () => {},
+        clear: () => {},
+        get length() { return 0 },
+        key: () => null,
+      })
+      const { useProjectsStore } = await import('../projects')
+      const store = useProjectsStore()
+      expect(store.selectedIds).toEqual([])
     })
   })
 

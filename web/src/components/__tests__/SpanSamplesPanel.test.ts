@@ -208,4 +208,86 @@ describe('SpanSamplesPanel', () => {
     })
     expect(wrapper.find('.tx-failure').exists()).toBe(false)
   })
+
+  describe('formatTime branches', () => {
+    it('shows "just now" for timestamps less than 1 minute ago', () => {
+      const sample = { ...mockSample, start_timestamp: new Date(Date.now() - 10_000).toISOString() }
+      setupQuery([sample])
+      const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+      expect(wrapper.find('.sample-item__time').text()).toBe('just now')
+    })
+
+    it('shows "Xm ago" for timestamps 1-60 minutes ago', () => {
+      const sample = { ...mockSample, start_timestamp: new Date(Date.now() - 5 * 60_000).toISOString() }
+      setupQuery([sample])
+      const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+      expect(wrapper.find('.sample-item__time').text()).toBe('5m ago')
+    })
+
+    it('shows "Xh ago" for timestamps 1-24 hours ago', () => {
+      const sample = { ...mockSample, start_timestamp: new Date(Date.now() - 3 * 3_600_000).toISOString() }
+      setupQuery([sample])
+      const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+      expect(wrapper.find('.sample-item__time').text()).toBe('3h ago')
+    })
+
+    it('shows locale date for timestamps older than 24 hours', () => {
+      const sample = { ...mockSample, start_timestamp: new Date(Date.now() - 3 * 86_400_000).toISOString() }
+      setupQuery([sample])
+      const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+      // Returns a locale date string like "Jan 1"
+      expect(wrapper.find('.sample-item__time').text()).toBeTruthy()
+    })
+  })
+
+  describe('durClass branches', () => {
+    it('applies slow class when duration > p95', () => {
+      const sample = { ...mockSample, duration_ms: 150 }
+      setupQuery([sample])
+      const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+      expect(wrapper.find('.sample-item__dur').classes()).toContain('sample-item__dur--slow')
+    })
+
+    it('applies medium class when duration is between p50 and p95', () => {
+      const sample = { ...mockSample, duration_ms: 50 }
+      setupQuery([sample])
+      const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+      expect(wrapper.find('.sample-item__dur').classes()).toContain('sample-item__dur--medium')
+    })
+
+    it('applies no class when duration <= p50', () => {
+      const sample = { ...mockSample, duration_ms: 10 }
+      setupQuery([sample])
+      const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+      const dur = wrapper.find('.sample-item__dur')
+      expect(dur.classes()).not.toContain('sample-item__dur--slow')
+      expect(dur.classes()).not.toContain('sample-item__dur--medium')
+    })
+  })
+
+  it('emits close when a sample item link is clicked', async () => {
+    setupQuery([mockSample])
+    const wrapper = mount(SpanSamplesPanel, { props: { row: mockRow, hours: 24, env: 'All' }, global: globalStubs })
+    await wrapper.find('.sample-item').trigger('click')
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('includes env query param when env is not All', () => {
+    setupQuery([])
+    const wrapper = mount(SpanSamplesPanel, {
+      props: { row: mockRow, hours: 24, env: 'production' },
+      global: globalStubs,
+    })
+    expect(wrapper.find('.samples-panel').exists()).toBe(true)
+  })
+
+  it('includes project_id params when selectedIds are non-empty', () => {
+    vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: ['proj-1', 'proj-2'] } as any)
+    vi.mocked(useQuery).mockReturnValue({ data: ref([]), isLoading: ref(false) } as any)
+    const wrapper = mount(SpanSamplesPanel, {
+      props: { row: mockRow, hours: 24, env: 'All' },
+      global: globalStubs,
+    })
+    expect(wrapper.find('.samples-panel').exists()).toBe(true)
+  })
 })

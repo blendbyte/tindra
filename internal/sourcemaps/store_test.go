@@ -322,6 +322,76 @@ func TestStore_ResolveEventPayload_invalidJSON(t *testing.T) {
 	}
 }
 
+// --- Store.Delete ---
+
+func TestStore_Delete_notFound(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
+	store := sourcemaps.NewStore(testDataDir, testPool)
+
+	ok, err := store.Delete(context.Background(), "00000000-0000-0000-0000-000000000000", testProject.ID)
+	if err != nil {
+		t.Fatalf("delete non-existent: %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false for non-existent record")
+	}
+}
+
+func TestStore_Delete_removesRecord(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
+	store := sourcemaps.NewStore(testDataDir, testPool)
+
+	content := `{"version":3,"sources":["src/del.js"],"mappings":"AAAA"}`
+	sm, err := store.Upload(context.Background(), testProject.ID, "v3.0.0", "~/dist/del.js", strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+
+	ok, err := store.Delete(context.Background(), sm.ID, testProject.ID)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if !ok {
+		t.Error("expected ok=true after deleting existing record")
+	}
+
+	// The file on disk should also be removed (no other record shares the hash).
+	path := testDataDir + "/sourcemaps/" + testProject.ID + "/" + sm.ContentHash + ".map"
+	if _, err := os.Stat(path); err == nil {
+		t.Error("expected file to be removed from disk after delete")
+	}
+}
+
+func TestStore_Delete_keepsFileWhenHashShared(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
+	store := sourcemaps.NewStore(testDataDir, testPool)
+
+	// Upload identical content under two different releases — same hash, two records.
+	content := `{"version":3,"sources":["src/shared.js"],"mappings":"AAAA"}`
+	sm1, err := store.Upload(context.Background(), testProject.ID, "vA", "~/dist/shared.js", strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("upload v1: %v", err)
+	}
+	_, err = store.Upload(context.Background(), testProject.ID, "vB", "~/dist/shared.js", strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("upload v2: %v", err)
+	}
+
+	// Delete the first record — file must stay because vB still references it.
+	ok, err := store.Delete(context.Background(), sm1.ID, testProject.ID)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if !ok {
+		t.Error("expected ok=true")
+	}
+
+	path := testDataDir + "/sourcemaps/" + testProject.ID + "/" + sm1.ContentHash + ".map"
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("file should remain on disk while another record shares the hash: %v", err)
+	}
+}
+
 func TestStore_ResolveEventPayload_noSourcemapInDB(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
 	store := sourcemaps.NewStore(testDataDir, testPool)

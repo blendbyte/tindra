@@ -31,10 +31,10 @@ import { usePerformanceStore } from '@/stores/performance'
 
 const stubs = {
   Icon: { template: '<span />' },
-  FilterChip: { template: '<div />' },
+  FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
   TimeseriesChart: { template: '<div />' },
   PerformanceSubnav: { template: '<div />' },
-  SpanSamplesPanel: { template: '<div />' },
+  SpanSamplesPanel: { name: 'SpanSamplesPanel', emits: ['close'], template: '<div />' },
 }
 
 const makeJob = (description: string, op = 'task.run') => ({
@@ -47,7 +47,15 @@ const makeJob = (description: string, op = 'task.run') => ({
   error_rate: 0,
 })
 
-function setupMocks(summaries: unknown[] = [], isLoading = false, isError = false) {
+const makeTimeseries = () => ({
+  buckets: [
+    { time: '2024-01-01T00:00:00Z', count: 5, p50: 30 },
+    { time: '2024-01-01T01:00:00Z', count: 8, p50: 35 },
+  ],
+  bucket_size: 'hour' as const,
+})
+
+function setupMocks(summaries: unknown[] = [], isLoading = false, isError = false, timeseries?: unknown) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
   vi.mocked(usePerformanceStore).mockReturnValue({
     windowHrs: '24h',
@@ -56,7 +64,7 @@ function setupMocks(summaries: unknown[] = [], isLoading = false, isError = fals
 
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
-    .mockReturnValueOnce({ data: ref(undefined) } as any)
+    .mockReturnValueOnce({ data: ref(timeseries) } as any)
 }
 
 beforeEach(() => {
@@ -138,6 +146,69 @@ describe('JobsView', () => {
       const wrapper = mount(JobsView, { global: { stubs } })
       await wrapper.find('input[aria-label="Filter jobs"]').setValue('nonexistent_zzz')
       expect(wrapper.text()).toContain('No jobs match')
+    })
+  })
+
+  describe('timeseries chart section', () => {
+    it('renders the timeseries section when data is available', () => {
+      setupMocks([makeJob('worker')], false, false, makeTimeseries())
+      const wrapper = mount(JobsView, { global: { stubs } })
+      expect(wrapper.find('.txcharts').exists()).toBe(true)
+    })
+
+    it('does not render the timeseries section when data is empty', () => {
+      setupMocks([makeJob('worker')], false, false, { buckets: [], bucket_size: 'hour' })
+      const wrapper = mount(JobsView, { global: { stubs } })
+      expect(wrapper.find('.txcharts').exists()).toBe(false)
+    })
+  })
+
+  describe('FilterChip interactions', () => {
+    it('updates windowHrs when Window FilterChip changes', async () => {
+      setupMocks([])
+      const wrapper = mount(JobsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips[0].vm.$emit('change', '7d')
+      expect(chips[0].exists()).toBe(true)
+    })
+
+    it('updates envFilter when Env FilterChip changes', async () => {
+      setupMocks([])
+      const wrapper = mount(JobsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips[1].vm.$emit('change', 'production')
+      expect(chips[1].exists()).toBe(true)
+    })
+  })
+
+  describe('row click and panel', () => {
+    it('opens SpanSamplesPanel when a row is clicked', async () => {
+      setupMocks([makeJob('send_email_job')])
+      const wrapper = mount(JobsView, { global: { stubs } })
+      const row = wrapper.find('.perf-table__row--clickable')
+      await row.trigger('click')
+      expect(wrapper.findComponent({ name: 'SpanSamplesPanel' }).exists()).toBe(true)
+    })
+
+    it('closes SpanSamplesPanel on close event', async () => {
+      setupMocks([makeJob('send_email_job')])
+      const wrapper = mount(JobsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      const panel = wrapper.findComponent({ name: 'SpanSamplesPanel' })
+      await panel.vm.$emit('close')
+      expect(wrapper.findComponent({ name: 'SpanSamplesPanel' }).exists()).toBe(false)
+    })
+
+    it('calls refetch when Retry button is clicked', async () => {
+      const refetchFn = vi.fn()
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+      const wrapper = mount(JobsView, { global: { stubs } })
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(refetchFn).toHaveBeenCalled()
     })
   })
 })
