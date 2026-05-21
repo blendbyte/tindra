@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -18,6 +19,17 @@ import (
 	"github.com/blendbyte/tindra/internal/sourcemaps"
 	"github.com/blendbyte/tindra/internal/ui"
 )
+
+func init() {
+	// Distroless and other minimal container images lack a system mime.types
+	// database, causing http.FileServer to fall back to text/plain for JS/CSS.
+	// Register the types we serve explicitly so they are always correct.
+	mime.AddExtensionType(".js", "text/javascript; charset=utf-8")
+	mime.AddExtensionType(".mjs", "text/javascript; charset=utf-8")
+	mime.AddExtensionType(".css", "text/css; charset=utf-8")
+	mime.AddExtensionType(".woff2", "font/woff2")
+	mime.AddExtensionType(".svg", "image/svg+xml")
+}
 
 type router struct {
 	pool                   *pgxpool.Pool
