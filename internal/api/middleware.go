@@ -57,7 +57,7 @@ func (ro *router) securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:")
+		h.Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src blob: 'self'; object-src 'none'; base-uri 'self'")
 		if ro.cookieSecure {
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
