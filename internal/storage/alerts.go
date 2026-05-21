@@ -166,6 +166,27 @@ func ListDueAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, e
 	return rules, rows.Err()
 }
 
+// ListEnabledAlertRules returns all enabled alert rules regardless of cooldown.
+// Used for one-shot notifications that bypass the normal evaluation cycle.
+func ListEnabledAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, error) {
+	rows, err := pool.Query(ctx,
+		alertRuleQuery+` WHERE ar.enabled = TRUE GROUP BY ar.id`)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []*AlertRule
+	for rows.Next() {
+		r, err := scanAlertRule(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
+}
+
 func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*AlertRule, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {

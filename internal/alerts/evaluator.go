@@ -433,6 +433,68 @@ func (e *Evaluator) fire(ctx context.Context, rule *storage.AlertRule, details m
 	storage.MarkAlertFired(ctx, e.pool, rule.ID)
 }
 
+// NotifyAutoResolved fires all enabled alert rules with an "issue_auto_resolved"
+// payload for the given issues. It does not update last_fired_at so it does not
+// interfere with the regular alert evaluation cycle.
+func (e *Evaluator) NotifyAutoResolved(ctx context.Context, issues []*storage.Issue) {
+	if len(issues) == 0 {
+		return
+	}
+
+	byProject := make(map[string][]*storage.Issue)
+	for _, iss := range issues {
+		byProject[iss.ProjectID] = append(byProject[iss.ProjectID], iss)
+	}
+
+	rules, err := storage.ListEnabledAlertRules(ctx, e.pool)
+	if err != nil {
+		slog.Error("notify auto-resolved: list rules", "err", err)
+		return
+	}
+
+	for _, rule := range rules {
+		var ruleIssues []*storage.Issue
+		if len(rule.ProjectIDs) == 0 {
+			ruleIssues = issues
+		} else {
+			for _, pid := range rule.ProjectIDs {
+				ruleIssues = append(ruleIssues, byProject[pid]...)
+			}
+		}
+		if len(ruleIssues) == 0 {
+			continue
+		}
+
+		payload := AlertPayload{
+			RuleID:    rule.ID,
+			RuleName:  rule.Name,
+			ProjectID: firstProjectID(rule),
+			Trigger:   "issue_auto_resolved",
+			FiredAt:   time.Now().UTC(),
+			Details:   map[string]any{"resolved_count": len(ruleIssues)},
+			Issues:    ruleIssues,
+		}
+		if payload.ProjectID != "" {
+			_ = e.pool.QueryRow(ctx, `SELECT name FROM projects WHERE id = $1`, payload.ProjectID).Scan(&payload.ProjectName)
+		}
+
+		var deliveryErr error
+		switch rule.Channel {
+		case "webhook":
+			deliveryErr = e.fireWebhook(ctx, rule, payload)
+		case "slack":
+			deliveryErr = e.fireSlack(ctx, rule, payload)
+		case "discord":
+			deliveryErr = e.fireDiscord(ctx, rule, payload)
+		case "email":
+			deliveryErr = e.fireEmail(ctx, rule, payload)
+		}
+		if deliveryErr != nil {
+			slog.Error("auto-resolve notification failed", "rule", rule.ID, "channel", rule.Channel, "err", deliveryErr)
+		}
+	}
+}
+
 func (e *Evaluator) fireWebhook(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) error {
 	if rule.WebhookURL == nil || *rule.WebhookURL == "" {
 		return fmt.Errorf("webhook_url is empty")
@@ -458,12 +520,13 @@ func (e *Evaluator) fireWebhook(ctx context.Context, rule *storage.AlertRule, pa
 }
 
 var alertTriggerLabels = map[string]string{
-	"new_issue":        "New issue",
-	"regressed":        "Regression",
-	"new_or_regressed": "New issue or regression",
-	"event_count":      "Event count",
-	"cron_missed":      "Cron monitor missed",
-	"cron_error":       "Cron monitor error",
+	"new_issue":           "New issue",
+	"regressed":           "Regression",
+	"new_or_regressed":    "New issue or regression",
+	"event_count":         "Event count",
+	"cron_missed":         "Cron monitor missed",
+	"cron_error":          "Cron monitor error",
+	"issue_auto_resolved": "Performance issue auto-resolved",
 }
 
 func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) error {
@@ -726,6 +789,12 @@ func buildAlertSubject(p AlertPayload) string {
 			return "[Tindra] 1 cron check-in error" + suffix
 		}
 		return fmt.Sprintf("[Tindra] %d cron check-in errors%s", count, suffix)
+	case "issue_auto_resolved":
+		count, _ := p.Details["resolved_count"].(int)
+		if count == 1 {
+			return "[Tindra] 1 performance issue auto-resolved" + suffix
+		}
+		return fmt.Sprintf("[Tindra] %d performance issues auto-resolved%s", count, suffix)
 	default:
 		return fmt.Sprintf("[Tindra] %s%s", p.RuleName, suffix)
 	}

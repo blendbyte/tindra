@@ -968,3 +968,135 @@ func TestEmailSubject_eventCount(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestAlertSubject_autoResolved_single(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:     "issue_auto_resolved",
+		ProjectName: "myapp",
+		Details:     map[string]any{"resolved_count": 1},
+	})
+	if got != "[Tindra] 1 performance issue auto-resolved - myapp" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestAlertSubject_autoResolved_multiple(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:     "issue_auto_resolved",
+		ProjectName: "myapp",
+		Details:     map[string]any{"resolved_count": 5},
+	})
+	if got != "[Tindra] 5 performance issues auto-resolved - myapp" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// --- NotifyAutoResolved ---
+
+func TestNotifyAutoResolved_noIssues_noFire(t *testing.T) {
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.NotifyAutoResolved(context.Background(), nil)
+	if called {
+		t.Error("expected no webhook call for empty issue list")
+	}
+}
+
+func TestNotifyAutoResolved_firesWebhook(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
+
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	_, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "notify-test",
+		Enabled: true, Trigger: "new_issue", Channel: "webhook",
+		WebhookURL: &url, CooldownMins: 60,
+	})
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+
+	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000001", ProjectID: testProject.ID, Title: "N+1 query"}}
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.NotifyAutoResolved(context.Background(), issues)
+
+	if received == nil {
+		t.Fatal("expected webhook to be called")
+	}
+	var payload AlertPayload
+	if err := json.Unmarshal(received, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload.Trigger != "issue_auto_resolved" {
+		t.Errorf("trigger: got %q, want issue_auto_resolved", payload.Trigger)
+	}
+	count, _ := payload.Details["resolved_count"].(float64)
+	if count != 1 {
+		t.Errorf("resolved_count: got %v, want 1", payload.Details["resolved_count"])
+	}
+}
+
+func TestNotifyAutoResolved_skipsUnmatchedProject(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
+
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "scoped-rule",
+		Enabled: true, Trigger: "new_issue", Channel: "webhook",
+		WebhookURL: &url, CooldownMins: 60,
+	})
+
+	// Issue belongs to a different project — rule should not fire.
+	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000002", ProjectID: "00000000-0000-0000-0000-000000000099", Title: "N+1"}}
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.NotifyAutoResolved(context.Background(), issues)
+
+	if called {
+		t.Error("expected no webhook call when issue project doesn't match rule's project filter")
+	}
+}
+
+func TestNotifyAutoResolved_globalRule_firesForAnyProject(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
+
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{}, Name: "global-rule",
+		Enabled: true, Trigger: "new_issue", Channel: "webhook",
+		WebhookURL: &url, CooldownMins: 60,
+	})
+
+	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000003", ProjectID: "00000000-0000-0000-0000-000000000099", Title: "N+1"}}
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.NotifyAutoResolved(context.Background(), issues)
+
+	if received == nil {
+		t.Fatal("expected global rule to fire for any project's issues")
+	}
+}

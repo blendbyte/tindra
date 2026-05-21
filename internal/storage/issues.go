@@ -691,6 +691,39 @@ func BulkUpdateIssueStatus(ctx context.Context, pool *pgxpool.Pool, ids []string
 	return tag.RowsAffected(), nil
 }
 
+// AutoResolvePerformanceIssues resolves all open/regressed performance issues
+// (kind != 'error') that have not been seen within olderThan. Returns the
+// issues that were just resolved so callers can send notifications.
+func AutoResolvePerformanceIssues(ctx context.Context, pool *pgxpool.Pool, olderThan time.Duration) ([]*Issue, error) {
+	rows, err := pool.Query(ctx, `
+		UPDATE issues
+		SET status = 'resolved'
+		WHERE kind != 'error'
+		  AND status IN ('open', 'regressed')
+		  AND last_seen < NOW() - make_interval(secs => $1::float8)
+		RETURNING `+issueSelectCols,
+		olderThan.Seconds())
+	if err != nil {
+		return nil, fmt.Errorf("auto-resolve performance issues: %w", err)
+	}
+	defer rows.Close()
+
+	var issues []*Issue
+	for rows.Next() {
+		var iss Issue
+		if err := rows.Scan(
+			&iss.ID, &iss.ProjectID, &iss.Fingerprint, &iss.Title,
+			&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
+			&iss.AssigneeID, &iss.Environment,
+			&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount, &iss.FirstRelease,
+		); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		issues = append(issues, &iss)
+	}
+	return issues, rows.Err()
+}
+
 // ExpireIgnoredIssues transitions any time-limited ignored issues past their expiry to regressed.
 // Intended to be called by a background goroutine every ~60 seconds.
 func ExpireIgnoredIssues(ctx context.Context, pool *pgxpool.Pool) (int64, error) {

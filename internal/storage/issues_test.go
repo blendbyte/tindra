@@ -464,3 +464,108 @@ func TestBulkUpdateIssueStatus_invalidStatus(t *testing.T) {
 		t.Error("expected error for invalid status")
 	}
 }
+
+// --- AutoResolvePerformanceIssues ---
+
+func TestAutoResolvePerformanceIssues_resolvesStale(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	stale := time.Now().Add(-15 * 24 * time.Hour)
+	iss, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-stale-perf", "Slow query", "performance", "n1_query", "", "", stale)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	resolved, err := storage.AutoResolvePerformanceIssues(ctx, testPool, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("auto-resolve: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved, got %d", len(resolved))
+	}
+	if resolved[0].ID != iss.ID {
+		t.Errorf("wrong issue: got %s, want %s", resolved[0].ID, iss.ID)
+	}
+
+	var status string
+	testPool.QueryRow(ctx, `SELECT status FROM issues WHERE id = $1`, iss.ID).Scan(&status)
+	if status != "resolved" {
+		t.Errorf("status in DB: got %q, want resolved", status)
+	}
+}
+
+func TestAutoResolvePerformanceIssues_skipsErrorKind(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	stale := time.Now().Add(-15 * 24 * time.Hour)
+	_, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-stale-error", "JS error", "error", "error", "", "", stale)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	resolved, err := storage.AutoResolvePerformanceIssues(ctx, testPool, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("auto-resolve: %v", err)
+	}
+	if len(resolved) != 0 {
+		t.Errorf("expected 0 resolved, got %d (error issues must not be auto-resolved)", len(resolved))
+	}
+}
+
+func TestAutoResolvePerformanceIssues_skipsRecentPerf(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	recent := time.Now().Add(-5 * 24 * time.Hour)
+	_, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-recent-perf", "Slow query", "performance", "n1_query", "", "", recent)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	resolved, err := storage.AutoResolvePerformanceIssues(ctx, testPool, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("auto-resolve: %v", err)
+	}
+	if len(resolved) != 0 {
+		t.Errorf("expected 0 resolved, got %d (issue seen 5 days ago must not be auto-resolved)", len(resolved))
+	}
+}
+
+func TestAutoResolvePerformanceIssues_skipsAlreadyResolved(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	stale := time.Now().Add(-15 * 24 * time.Hour)
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-already-res", "Slow query", "performance", "n1_query", "", "", stale)
+	storage.UpdateIssueStatus(ctx, testPool, project.ID, iss.ID, "resolved", nil)
+
+	resolved, err := storage.AutoResolvePerformanceIssues(ctx, testPool, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("auto-resolve: %v", err)
+	}
+	if len(resolved) != 0 {
+		t.Errorf("expected 0 resolved (already resolved), got %d", len(resolved))
+	}
+}
+
+func TestAutoResolvePerformanceIssues_includesRegressed(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	stale := time.Now().Add(-15 * 24 * time.Hour)
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-regressed-perf", "Slow query", "performance", "n1_query", "", "", stale)
+	testPool.Exec(ctx, `UPDATE issues SET status = 'regressed' WHERE id = $1`, iss.ID)
+
+	resolved, err := storage.AutoResolvePerformanceIssues(ctx, testPool, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("auto-resolve: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved (regressed perf issues qualify), got %d", len(resolved))
+	}
+	if resolved[0].ID != iss.ID {
+		t.Errorf("wrong issue resolved")
+	}
+}

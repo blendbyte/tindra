@@ -298,6 +298,25 @@ func serveCmd(cfg config) *cobra.Command {
 				}
 			}()
 
+			go func() {
+				ticker := time.NewTicker(24 * time.Hour)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						resolved, err := storage.AutoResolvePerformanceIssues(ctx, pool, 14*24*time.Hour)
+						if err != nil {
+							slog.Error("auto-resolve performance issues", "err", err)
+						} else if len(resolved) > 0 {
+							slog.Info("auto-resolved performance issues", "count", len(resolved))
+							evaluator.NotifyAutoResolved(ctx, resolved)
+						}
+					}
+				}
+			}()
+
 			slog.Info("starting tindra",
 				"version", Version,
 				"commit", Commit,
