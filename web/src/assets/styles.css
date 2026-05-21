@@ -1672,13 +1672,17 @@ a { color: inherit; text-decoration: none; }
   margin-left: 6px;
 }
 .crumb {
-  display: grid;
-  grid-template-columns: 165px 80px 1fr;
-  gap: 14px;
-  align-items: baseline;
+  display: flex;
+  flex-direction: column;
   padding: 8px 0 8px 16px;
   font-size: var(--text-sm);
   position: relative;
+}
+.crumb__row {
+  display: grid;
+  grid-template-columns: 165px 80px 1fr auto;
+  gap: 14px;
+  align-items: baseline;
 }
 .crumb::before {
   content: '';
@@ -1701,6 +1705,42 @@ a { color: inherit; text-decoration: none; }
 }
 .crumb__msg { color: var(--text-1); font-family: var(--mono); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumb--error .crumb__msg { color: var(--danger); }
+.crumb__toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  align-self: center;
+}
+.crumb__toggle:hover { border-color: var(--accent); color: var(--accent); }
+.crumb__toggle--open { border-color: var(--accent); color: var(--accent); }
+.crumb__detail {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 2px 12px;
+}
+.crumb__detail-key {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.crumb__detail-val {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-1);
+  word-break: break-all;
+}
 
 /* Contexts section */
 .ctx-grid {
@@ -5724,7 +5764,7 @@ select.field__input {
   .login__card { width: min(380px, calc(100vw - 32px)); }
 
   /* Breadcrumbs: tighten fixed columns */
-  .crumb { grid-template-columns: 100px 56px 1fr; gap: 8px; }
+  .crumb__row { grid-template-columns: 100px 56px 1fr auto; gap: 8px; }
 
   /* Context cards: single column below 768px */
   .ctx-grid { grid-template-columns: 1fr; }

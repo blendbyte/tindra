@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, reactive, watchEffect, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, watch, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/vue-query'
 import { useToast } from '@/composables/useToast'
@@ -238,6 +238,15 @@ const breadcrumbs = computed(() => {
   const bc = currentEvent.value?.payload?.breadcrumbs as { values?: unknown[] } | undefined
   return bc?.values ?? []
 })
+
+const expandedCrumbs = ref(new Set<number>())
+watch(currentEvent, () => { expandedCrumbs.value = new Set() })
+
+function toggleCrumb(i: number) {
+  const s = new Set(expandedCrumbs.value)
+  if (s.has(i)) s.delete(i); else s.add(i)
+  expandedCrumbs.value = s
+}
 
 const CONTEXT_LABELS: Record<string, string> = {
   runtime: 'Runtime',
@@ -902,9 +911,27 @@ onUnmounted(() => {
             class="crumb"
             :class="{ 'crumb--error': c['type'] === 'error' }"
           >
-            <span class="crumb__time">{{ c['timestamp'] }}</span>
-            <span class="crumb__type">{{ c['type'] ?? c['category'] }}</span>
-            <span class="crumb__msg">{{ c['message'] ?? c['data'] }}</span>
+            <div class="crumb__row">
+              <span class="crumb__time">{{ c['timestamp'] }}</span>
+              <span class="crumb__type">{{ c['type'] ?? c['category'] }}</span>
+              <span class="crumb__msg">{{ c['message'] ?? (typeof c['data'] !== 'object' ? c['data'] : '') }}</span>
+              <button
+                v-if="c['data'] !== null && c['data'] !== undefined && typeof c['data'] === 'object'"
+                class="crumb__toggle"
+                :class="{ 'crumb__toggle--open': expandedCrumbs.has(i) }"
+                @click="toggleCrumb(i)"
+              >{…}</button>
+            </div>
+            <div v-if="expandedCrumbs.has(i)" class="crumb__detail">
+              <div
+                v-for="[k, v] in Object.entries(c['data'] as Record<string, unknown>)"
+                :key="k"
+                class="crumb__detail-row"
+              >
+                <span class="crumb__detail-key">{{ k }}</span>
+                <span class="crumb__detail-val">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
