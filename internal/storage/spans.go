@@ -95,7 +95,7 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 				1
 			) AS time_pct,
 			ROUND(
-				COUNT(*) FILTER (WHERE s.status != 'ok') * 100.0
+				COUNT(*) FILTER (WHERE s.status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded')) * 100.0
 				/ NULLIF(COUNT(*), 0),
 				2
 			) AS error_rate,
