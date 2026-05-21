@@ -89,7 +89,7 @@ watchEffect(() => {
 const { data: currentEvent } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'events', eventIndex.value]),
   queryFn: () => apiFetch<TindraEvent>(`/api/issues/${issueId.value}/events/latest?offset=${eventIndex.value}`),
-  enabled: computed(() => !!issueId.value && issue.value?.kind !== 'n1_query'),
+  enabled: computed(() => !!issueId.value && !!issue.value && issue.value.kind !== 'n1_query'),
   placeholderData: keepPreviousData,
 })
 
