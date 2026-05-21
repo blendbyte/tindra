@@ -2381,7 +2381,7 @@ function actionKindOf(action: string) {
             <label class="toggle-row">
               <span class="toggle-row__label">
                 Weekly digest
-                <span class="toggle-row__hint">Receive a summary of errors and performance every Monday morning.</span>
+                <span class="toggle-row__hint">Receive a weekly summary of errors and performance.</span>
               </span>
               <button
                 class="toggle"

@@ -3,6 +3,7 @@ package digest
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"time"
 
@@ -11,6 +12,21 @@ import (
 	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/storage"
 )
+
+// digestWindowStart and digestWindowHours define the Monday UTC send window.
+// Users are spread evenly across the window by a stable hash of their ID.
+const (
+	digestWindowStart = 7 // 07:00 UTC
+	digestWindowHours = 4 // 07:00–11:00 UTC
+)
+
+// userDigestSlot returns which hour-slot [0, digestWindowHours) a user belongs
+// to, derived deterministically from their ID so it never changes.
+func userDigestSlot(userID string) int {
+	h := fnv.New32a()
+	h.Write([]byte(userID))
+	return int(h.Sum32()) % digestWindowHours
+}
 
 // Worker sends weekly digest emails to opted-in users.
 // It ticks hourly and fires only within the 07:00–09:00 UTC send window to
@@ -55,11 +71,32 @@ func (w *Worker) SendNow(ctx context.Context, force bool) {
 }
 
 func (w *Worker) sendDue(ctx context.Context) {
-	hour := time.Now().UTC().Hour()
-	if hour < 7 || hour >= 9 {
+	now := time.Now().UTC()
+	if now.Weekday() != time.Monday {
 		return
 	}
-	w.send(ctx, false)
+	slot := now.Hour() - digestWindowStart
+	if slot < 0 || slot >= digestWindowHours {
+		return
+	}
+	w.sendSlot(ctx, slot)
+}
+
+func (w *Worker) sendSlot(ctx context.Context, slot int) {
+	users, err := storage.ListDigestDueUsers(ctx, w.pool, false)
+	if err != nil {
+		slog.Error("digest: list due users", "err", err)
+		return
+	}
+	var slotUsers []storage.DigestUser
+	for _, u := range users {
+		if userDigestSlot(u.ID) == slot {
+			slotUsers = append(slotUsers, u)
+		}
+	}
+	if len(slotUsers) > 0 {
+		w.sendToUsers(ctx, slotUsers)
+	}
 }
 
 func (w *Worker) send(ctx context.Context, force bool) {
@@ -71,6 +108,10 @@ func (w *Worker) send(ctx context.Context, force bool) {
 		slog.Error("digest: list due users", "err", err)
 		return
 	}
+	w.sendToUsers(ctx, users)
+}
+
+func (w *Worker) sendToUsers(ctx context.Context, users []storage.DigestUser) {
 	if len(users) == 0 {
 		return
 	}
