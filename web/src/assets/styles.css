@@ -1745,8 +1745,12 @@ a { color: inherit; text-decoration: none; }
 /* Contexts section */
 .ctx-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 12px;
+}
+
+.ctx-grid:has(.ctx-card:only-child) {
+  grid-template-columns: 1fr 1fr;
 }
 
 .ctx-card {
