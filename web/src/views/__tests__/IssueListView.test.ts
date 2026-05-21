@@ -646,6 +646,7 @@ describe('IssueListView', () => {
     it('navigates to settings when View project DSNs is clicked', async () => {
       setupMocks({ projects: [{ id: '1', name: 'App' }] })
       const wrapper = mount(IssueListView, { global: { stubs } })
+      await flushPromises()
       const dsnBtn = wrapper.findAll('.btn').find(b => b.text().includes('View project DSNs'))!
       await dsnBtn.trigger('click')
       expect(pushMock).toHaveBeenCalledWith('/settings')
@@ -654,6 +655,7 @@ describe('IssueListView', () => {
     it('navigates to project creation when Create project is clicked', async () => {
       setupMocks({ projects: [] })
       const wrapper = mount(IssueListView, { global: { stubs } })
+      await flushPromises()
       const createBtn = wrapper.findAll('.btn--primary').find(b => b.text().includes('Create project'))!
       await createBtn.trigger('click')
       expect(pushMock).toHaveBeenCalledWith('/settings/projects?new=1')

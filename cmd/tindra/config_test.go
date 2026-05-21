@@ -243,4 +243,3 @@ func clearEnv(t *testing.T, keys ...string) {
 		os.Unsetenv(k)
 	}
 }
-

@@ -2,6 +2,7 @@ package digest
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -128,7 +129,7 @@ func TestUserDigestSlot_deterministic(t *testing.T) {
 func TestUserDigestSlot_distributes(t *testing.T) {
 	seen := make(map[int]bool)
 	for i := 0; i < 200; i++ {
-		id := "user-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i%10))
+		id := fmt.Sprintf("user-%d", i)
 		seen[userDigestSlot(id)] = true
 	}
 	if len(seen) < digestWindowHours {
