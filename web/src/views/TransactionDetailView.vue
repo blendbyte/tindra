@@ -11,10 +11,18 @@ const route = useRoute()
 const router = useRouter()
 const txId = computed(() => route.params.id as string)
 
-const openSpans = ref<Set<string>>(new Set())
+const collapsedBranches = ref<Set<string>>(new Set())
+const openDetails = ref<Set<string>>(new Set())
+const expandedGroups = ref<Set<string>>(new Set())
 const focusedIdx = ref<number | null>(null)
 const copiedTraceId = ref(false)
 const searchInputRef = ref<HTMLInputElement | null>(null)
+
+const AUTO_GROUP_THRESHOLD = 4
+
+type SpanRow = { kind: 'span'; span: Span; depth: number }
+type GroupRow = { kind: 'group'; key: string; op: string; count: number; depth: number; spans: Span[] }
+type DisplayRow = SpanRow | GroupRow
 
 const {
   data: tx,
@@ -113,19 +121,117 @@ function opColor(op: string) {
 // Amber used consistently for all critical path markers.
 const CRITICAL_COLOR = 'oklch(0.76 0.16 60)'
 
-function toggleSpan(id: string) {
-  const s = new Set(openSpans.value)
+// Set of span_ids that have at least one child span in this transaction.
+const spanHasChildren = computed((): Set<string> => {
+  const allIds = new Set(spanList.value.map(s => s.span_id))
+  const parents = new Set<string>()
+  for (const span of spanList.value) {
+    if (span.parent_span_id && allIds.has(span.parent_span_id)) {
+      parents.add(span.parent_span_id)
+    }
+  }
+  return parents
+})
+
+// Hierarchical span tree with branch collapse and auto-grouping of repeated op patterns.
+const spanTree = computed((): DisplayRow[] => {
+  const spans = spanList.value
+  if (!spans.length) return []
+
+  const bySpanId = new Map(spans.map(s => [s.span_id, s]))
+  const children = new Map<string, Span[]>()
+  const roots: Span[] = []
+
+  for (const s of spans) {
+    if (!s.parent_span_id || !bySpanId.has(s.parent_span_id)) {
+      roots.push(s)
+    } else {
+      const kids = children.get(s.parent_span_id) ?? []
+      kids.push(s)
+      children.set(s.parent_span_id, kids)
+    }
+  }
+
+  function walkChildren(s: Span, depth: number): DisplayRow[] {
+    const kids = children.get(s.span_id) ?? []
+    return processLevel(kids, depth)
+  }
+
+  // Groups consecutive siblings sharing the same op base into a single collapsible row
+  // when there are AUTO_GROUP_THRESHOLD or more of them.
+  function processLevel(siblings: Span[], depth: number): DisplayRow[] {
+    const rows: DisplayRow[] = []
+    let i = 0
+    while (i < siblings.length) {
+      const s = siblings[i]
+      const base = s.op.split('.')[0]
+      let j = i + 1
+      while (j < siblings.length && siblings[j].op.split('.')[0] === base) j++
+      const runLen = j - i
+
+      if (runLen >= AUTO_GROUP_THRESHOLD) {
+        const groupSpans = siblings.slice(i, j)
+        const key = `grp:${groupSpans[0].span_id}:${groupSpans[groupSpans.length - 1].span_id}`
+        rows.push({ kind: 'group', key, op: base, count: runLen, depth, spans: groupSpans })
+        if (expandedGroups.value.has(key)) {
+          for (const gs of groupSpans) {
+            rows.push({ kind: 'span', span: gs, depth })
+            if (!collapsedBranches.value.has(gs.span_id)) {
+              rows.push(...walkChildren(gs, depth + 1))
+            }
+          }
+        }
+        i = j
+      } else {
+        rows.push({ kind: 'span', span: s, depth })
+        if (!collapsedBranches.value.has(s.span_id)) {
+          rows.push(...walkChildren(s, depth + 1))
+        }
+        i++
+      }
+    }
+    return rows
+  }
+
+  return processLevel(roots, 0)
+})
+
+// displayRows: hierarchical (with grouping) when no search active, flat filtered list during search.
+const displayRows = computed((): DisplayRow[] => {
+  if (spanQuery.value.trim()) {
+    return filteredSpans.value.map(s => ({ kind: 'span' as const, span: s, depth: 0 }))
+  }
+  return spanTree.value
+})
+
+function toggleBranch(spanId: string) {
+  const s = new Set(collapsedBranches.value)
+  if (s.has(spanId)) s.delete(spanId)
+  else s.add(spanId)
+  collapsedBranches.value = s
+}
+
+function toggleDetail(id: string) {
+  const s = new Set(openDetails.value)
   if (s.has(id)) s.delete(id)
   else s.add(id)
-  openSpans.value = s
+  openDetails.value = s
+}
+
+function toggleGroup(key: string) {
+  const s = new Set(expandedGroups.value)
+  if (s.has(key)) s.delete(key)
+  else s.add(key)
+  expandedGroups.value = s
 }
 
 function expandAll() {
-  openSpans.value = new Set(displaySpans.value.map(({ span }) => span.id))
+  collapsedBranches.value = new Set()
 }
 
 function collapseAll() {
-  openSpans.value = new Set()
+  collapsedBranches.value = new Set(spanHasChildren.value)
+  expandedGroups.value = new Set()
 }
 
 async function copyTraceId() {
@@ -153,7 +259,7 @@ function handleKeydown(e: KeyboardEvent) {
 
   if (inInput) return
 
-  const n = displaySpans.value.length
+  const n = displayRows.value.length
   if (n === 0) return
 
   if (e.key === 'j' || e.key === 'ArrowDown') {
@@ -164,7 +270,9 @@ function handleKeydown(e: KeyboardEvent) {
     focusedIdx.value = focusedIdx.value === null ? n - 1 : Math.max(focusedIdx.value - 1, 0)
   } else if (e.key === 'Enter' && focusedIdx.value !== null) {
     e.preventDefault()
-    toggleSpan(displaySpans.value[focusedIdx.value].span.id)
+    const row = displayRows.value[focusedIdx.value]
+    if (row.kind === 'span') toggleDetail(row.span.id)
+    else toggleGroup(row.key)
   } else if (e.key === 'Escape') {
     focusedIdx.value = null
   }
@@ -207,43 +315,6 @@ const errorsBySpanId = computed(() => {
     m.set(e.span_id, list)
   }
   return m
-})
-
-// Hierarchical span tree, built from parent_span_id relationships.
-// Falls back to flat display when a search query is active.
-const spanTree = computed((): { span: Span; depth: number }[] => {
-  const spans = spanList.value
-  if (!spans.length) return []
-
-  const bySpanId = new Map(spans.map(s => [s.span_id, s]))
-  const children = new Map<string, Span[]>()
-  const roots: Span[] = []
-
-  for (const s of spans) {
-    if (!s.parent_span_id || !bySpanId.has(s.parent_span_id)) {
-      roots.push(s)
-    } else {
-      const kids = children.get(s.parent_span_id) ?? []
-      kids.push(s)
-      children.set(s.parent_span_id, kids)
-    }
-  }
-
-  const result: { span: Span; depth: number }[] = []
-  function walk(s: Span, depth: number) {
-    result.push({ span: s, depth })
-    for (const child of (children.get(s.span_id) ?? [])) walk(child, depth + 1)
-  }
-  for (const root of roots) walk(root, 0)
-  return result
-})
-
-// displaySpans: hierarchical when no search active, flat filtered list during search.
-const displaySpans = computed((): { span: Span; depth: number }[] => {
-  if (spanQuery.value.trim()) {
-    return filteredSpans.value.map(s => ({ span: s, depth: 0 }))
-  }
-  return spanTree.value
 })
 
 function traceLogOffset(log: Log): string {
@@ -453,56 +524,95 @@ function traceErrorOffset(e: TraceError): string {
         </div>
 
         <template v-else>
-          <template v-for="({ span: s, depth }, i) in displaySpans" :key="s.id">
+          <template v-for="(row, i) in displayRows" :key="row.kind === 'span' ? row.span.id : row.key">
+
+            <!-- Group row: collapsed set of repeated op spans -->
             <div
-              class="span-row"
-              :class="{
-                'span-row--open': openSpans.has(s.id),
-                'span-row--focused': focusedIdx === i,
-              }"
-              :style="{ opacity: hasCriticalPath && !s.is_critical ? 0.45 : 1 }"
-              @click="toggleSpan(s.id)"
+              v-if="row.kind === 'group'"
+              class="span-row span-row--group"
+              :class="{ 'span-row--focused': focusedIdx === i }"
+              @click="toggleGroup(row.key)"
             >
-              <div class="span-name" :style="{ paddingLeft: depth * 12 + 'px' }">
-                <span class="span-name__caret" :class="{ 'span-name__caret--open': openSpans.has(s.id) }">
-                  <Icon :name="openSpans.has(s.id) ? 'chevron-down' : 'chevron-right'" :size="10" />
+              <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
+                <span class="span-name__caret" :class="{ 'span-name__caret--open': expandedGroups.has(row.key) }">
+                  <Icon :name="expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
                 </span>
-                <span
-                  class="span-name__dot"
-                  :style="{
-                    background: opColor(s.op),
-                    outline: s.is_critical ? `2px solid ${CRITICAL_COLOR}` : 'none',
-                    outlineOffset: '1px',
-                  }"
-                />
-                <span class="span-name__text">{{ s.description || s.op }}</span>
-                <span
-                  v-if="errorsBySpanId.get(s.span_id)?.length"
-                  class="span-error-badge"
-                  :title="`${errorsBySpanId.get(s.span_id)!.length} error(s) on this span`"
-                >{{ errorsBySpanId.get(s.span_id)!.length }}</span>
+                <span class="span-name__dot" :style="{ background: opColor(row.op) }" />
+                <span class="span-name__text">{{ row.count }} × {{ row.op }}</span>
               </div>
-              <span class="span-row__dur" :class="{ 'span-row__dur--crit': s.id === maxDurationSpanId }">
-                {{ formatDuration(s.duration_ms) }}
-              </span>
+              <span class="span-row__dur">{{ row.count }} spans</span>
             </div>
-            <div v-if="openSpans.has(s.id)" class="span-detail">
-              <span class="span-detail__k">description</span>
-              <span class="span-detail__v">{{ s.description || '–' }}</span>
-              <span class="span-detail__k">op</span>
-              <span class="span-detail__v">{{ s.op }}</span>
-              <span class="span-detail__k">duration</span>
-              <span class="span-detail__v">
-                {{ formatDuration(s.duration_ms) }}
-                <span style="color: var(--text-3)"> ({{ ((s.duration_ms / total) * 100).toFixed(1) }}% of total)</span>
-              </span>
-              <span class="span-detail__k">start offset</span>
-              <span class="span-detail__v">+{{ s.start_offset_ms }}ms</span>
-              <span class="span-detail__k">status</span>
-              <span class="span-detail__v">{{ s.status }}</span>
-              <span v-if="s.is_critical" class="span-detail__k">critical path</span>
-              <span v-if="s.is_critical" class="span-detail__v" :style="{ color: CRITICAL_COLOR }">yes</span>
-            </div>
+
+            <!-- Span row -->
+            <template v-else-if="row.kind === 'span'">
+              <div
+                class="span-row"
+                :class="{
+                  'span-row--open': openDetails.has(row.span.id),
+                  'span-row--focused': focusedIdx === i,
+                }"
+                :style="{ opacity: hasCriticalPath && !row.span.is_critical ? 0.45 : 1 }"
+                @click="toggleDetail(row.span.id)"
+              >
+                <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
+                  <!-- Chevron: only rendered for parent spans; click collapses/expands children -->
+                  <span
+                    v-if="spanHasChildren.has(row.span.span_id)"
+                    class="span-name__caret"
+                    :class="{ 'span-name__caret--open': !collapsedBranches.has(row.span.span_id) }"
+                    @click.stop="toggleBranch(row.span.span_id)"
+                  >
+                    <Icon :name="collapsedBranches.has(row.span.span_id) ? 'chevron-right' : 'chevron-down'" :size="10" />
+                  </span>
+                  <span v-else class="span-name__caret" />
+                  <span
+                    class="span-name__dot"
+                    :style="{
+                      background: opColor(row.span.op),
+                      outline: row.span.is_critical ? `2px solid ${CRITICAL_COLOR}` : 'none',
+                      outlineOffset: '1px',
+                    }"
+                  />
+                  <span class="span-name__text">{{ row.span.description || row.span.op }}</span>
+                  <span
+                    v-if="errorsBySpanId.get(row.span.span_id)?.length"
+                    class="span-error-badge"
+                    :title="`${errorsBySpanId.get(row.span.span_id)!.length} error(s) on this span`"
+                  >{{ errorsBySpanId.get(row.span.span_id)!.length }}</span>
+                </div>
+                <div class="span-row__right">
+                  <button
+                    class="span-detail-btn"
+                    :class="{ 'span-detail-btn--active': openDetails.has(row.span.id) }"
+                    :title="openDetails.has(row.span.id) ? 'Close details' : 'Open details'"
+                    @click.stop="toggleDetail(row.span.id)"
+                  >
+                    <Icon name="info" :size="10" />
+                  </button>
+                  <span class="span-row__dur" :class="{ 'span-row__dur--crit': row.span.id === maxDurationSpanId }">
+                    {{ formatDuration(row.span.duration_ms) }}
+                  </span>
+                </div>
+              </div>
+              <div v-if="openDetails.has(row.span.id)" class="span-detail">
+                <span class="span-detail__k">description</span>
+                <span class="span-detail__v">{{ row.span.description || '–' }}</span>
+                <span class="span-detail__k">op</span>
+                <span class="span-detail__v">{{ row.span.op }}</span>
+                <span class="span-detail__k">duration</span>
+                <span class="span-detail__v">
+                  {{ formatDuration(row.span.duration_ms) }}
+                  <span style="color: var(--text-3)"> ({{ ((row.span.duration_ms / total) * 100).toFixed(1) }}% of total)</span>
+                </span>
+                <span class="span-detail__k">start offset</span>
+                <span class="span-detail__v">+{{ row.span.start_offset_ms }}ms</span>
+                <span class="span-detail__k">status</span>
+                <span class="span-detail__v">{{ row.span.status }}</span>
+                <span v-if="row.span.is_critical" class="span-detail__k">critical path</span>
+                <span v-if="row.span.is_critical" class="span-detail__v" :style="{ color: CRITICAL_COLOR }">yes</span>
+              </div>
+            </template>
+
           </template>
         </template>
 
@@ -550,36 +660,52 @@ function traceErrorOffset(e: TraceError): string {
         </div>
 
         <div
-          v-for="({ span: s }, i) in displaySpans"
-          :key="s.id"
+          v-for="(row, i) in displayRows"
+          :key="row.kind === 'span' ? row.span.id : row.key"
           class="timeline__row"
           :class="{ 'timeline__row--focused': focusedIdx === i }"
-          @click="toggleSpan(s.id)"
+          @click="row.kind === 'group' ? toggleGroup(row.key) : toggleDetail(row.span.id)"
         >
-          <div
-            class="timeline__bar"
-            :class="{ 'timeline__bar--crit': s.id === maxDurationSpanId }"
-            :style="{
-              left: `${(s.start_offset_ms / total) * 100}%`,
-              width: `max(4px, ${(s.duration_ms / total) * 100}%)`,
-              background: opColor(s.op),
-              opacity: hasCriticalPath && !s.is_critical ? 0.3 : (openSpans.has(s.id) ? 1 : 0.85),
-              outline: s.is_critical ? `1.5px solid ${CRITICAL_COLOR}` : 'none',
-              outlineOffset: '1px',
-            }"
-            :title="`${s.description || s.op} · ${formatDuration(s.duration_ms)}`"
-          >
-            <span v-if="(s.duration_ms / total) * 100 > 8" class="timeline__bar-label">
-              {{ formatDuration(s.duration_ms) }}
-            </span>
-          </div>
-          <!-- Error dot: pinned to the right edge of the bar for each error on this span -->
-          <span
-            v-if="errorsBySpanId.get(s.span_id)?.length"
-            class="timeline__error-dot"
-            :style="{ left: `calc(${(s.start_offset_ms / total) * 100}% + max(4px, ${(s.duration_ms / total) * 100}%) - 2px)` }"
-            :title="`${errorsBySpanId.get(s.span_id)!.length} error(s)`"
-          />
+          <!-- Group: single bar spanning the full op group range -->
+          <template v-if="row.kind === 'group'">
+            <div
+              class="timeline__bar"
+              :style="{
+                left: `${(Math.min(...row.spans.map(s => s.start_offset_ms)) / total) * 100}%`,
+                width: `max(4px, ${((Math.max(...row.spans.map(s => s.start_offset_ms + s.duration_ms)) - Math.min(...row.spans.map(s => s.start_offset_ms))) / total) * 100}%)`,
+                background: opColor(row.op),
+                opacity: 0.45,
+              }"
+            >
+              <span class="timeline__bar-label">{{ row.count }} × {{ row.op }}</span>
+            </div>
+          </template>
+          <!-- Span: standard bar -->
+          <template v-else>
+            <div
+              class="timeline__bar"
+              :class="{ 'timeline__bar--crit': row.span.id === maxDurationSpanId }"
+              :style="{
+                left: `${(row.span.start_offset_ms / total) * 100}%`,
+                width: `max(4px, ${(row.span.duration_ms / total) * 100}%)`,
+                background: opColor(row.span.op),
+                opacity: hasCriticalPath && !row.span.is_critical ? 0.3 : (openDetails.has(row.span.id) ? 1 : 0.85),
+                outline: row.span.is_critical ? `1.5px solid ${CRITICAL_COLOR}` : 'none',
+                outlineOffset: '1px',
+              }"
+              :title="`${row.span.description || row.span.op} · ${formatDuration(row.span.duration_ms)}`"
+            >
+              <span v-if="(row.span.duration_ms / total) * 100 > 8" class="timeline__bar-label">
+                {{ formatDuration(row.span.duration_ms) }}
+              </span>
+            </div>
+            <span
+              v-if="errorsBySpanId.get(row.span.span_id)?.length"
+              class="timeline__error-dot"
+              :style="{ left: `calc(${(row.span.start_offset_ms / total) * 100}% + max(4px, ${(row.span.duration_ms / total) * 100}%) - 2px)` }"
+              :title="`${errorsBySpanId.get(row.span.span_id)!.length} error(s)`"
+            />
+          </template>
         </div>
 
         <!-- Critical path summary row -->

@@ -361,16 +361,19 @@ const loading = computed(
           </div>
           <template v-else>
             <div class="db-tx-head">
+              <span>Op</span>
               <span>Transaction</span>
               <span>P50</span>
               <span>P95</span>
               <span>Error rate</span>
             </div>
-            <div
+            <RouterLink
               v-for="tx in slowTx"
               :key="`${tx.transaction}-${tx.op}`"
+              :to="{ name: 'transaction-profile', query: { name: tx.transaction, op: tx.op } }"
               class="db-tx-row"
             >
+              <span class="optag" :class="`optag--${tx.op.split('.')[0]}`">{{ tx.op.split('.')[0] }}</span>
               <span class="db-tx-row__name">{{ tx.transaction }}</span>
               <span
                 class="db-tx-row__val"
@@ -393,7 +396,7 @@ const loading = computed(
                   :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 2 }"
                 >{{ tx.failure_rate.toFixed(1) }}%</span>
               </div>
-            </div>
+            </RouterLink>
           </template>
         </div>
 
@@ -831,7 +834,8 @@ const loading = computed(
 
 .db-tx-head {
   display: grid;
-  grid-template-columns: 1fr 72px 72px 120px;
+  grid-template-columns: 80px 1fr 72px 72px 120px;
+  column-gap: 12px;
   padding: 7px 16px;
   font-size: var(--text-xs);
   color: var(--text-3);
@@ -839,13 +843,18 @@ const loading = computed(
   letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border);
 }
+.db-tx-head span:nth-child(n+3) { text-align: right; }
 
 .db-tx-row {
   display: grid;
-  grid-template-columns: 1fr 72px 72px 120px;
+  grid-template-columns: 80px 1fr 72px 72px 120px;
+  column-gap: 12px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   align-items: center;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
 }
 
 .db-tx-row:last-of-type { border-bottom: none; }
@@ -928,15 +937,15 @@ const loading = computed(
   }
   .db-heatmap__row { flex-shrink: 0; }
 
-  /* Transactions table: drop P50 + error-rate bar, keep name + P95 */
+  /* Transactions table: drop P50 + error-rate bar, keep op + name + P95 */
   .db-tx-head,
   .db-tx-row {
-    grid-template-columns: 1fr 72px;
+    grid-template-columns: 80px 1fr 72px;
   }
-  .db-tx-head > :nth-child(2),
-  .db-tx-row > :nth-child(2) { display: none; } /* P50 */
-  .db-tx-head > :nth-child(4),
-  .db-tx-row > :nth-child(4) { display: none; } /* error rate bar */
+  .db-tx-head > :nth-child(3),
+  .db-tx-row > :nth-child(3) { display: none; } /* P50 */
+  .db-tx-head > :nth-child(5),
+  .db-tx-row > :nth-child(5) { display: none; } /* error rate bar */
 }
 
 @media (max-width: 480px) {

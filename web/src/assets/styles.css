@@ -2138,7 +2138,7 @@ a { color: inherit; text-decoration: none; }
 
 .txrow {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 90px 56px 64px 90px 90px 68px 80px;
+  grid-template-columns: 80px minmax(0, 1fr) 90px 56px 64px 90px 90px 68px 80px;
   text-decoration: none;
   color: inherit;
   gap: 16px;
@@ -2897,6 +2897,34 @@ a { color: inherit; text-decoration: none; }
   white-space: nowrap;
 }
 .span-row__dur--crit { color: var(--warning); }
+
+.span-row__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.span-detail-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-3);
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.span-row:hover .span-detail-btn { opacity: 1; }
+.span-detail-btn--active {
+  opacity: 1 !important;
+  color: var(--accent);
+}
+.span-detail-btn:hover { color: var(--text-1); }
+
+.span-row--group { opacity: 0.8; }
+.span-row--group .span-name__text { font-style: italic; }
 
 .span-empty {
   padding: 20px 16px;
@@ -5574,7 +5602,7 @@ select.field__input {
 
   /* Transaction list: remove TPM (col 5) + Time spent (col 9) */
   .txrow {
-    grid-template-columns: 46px minmax(0, 1fr) 90px 56px 90px 90px 68px;
+    grid-template-columns: 80px minmax(0, 1fr) 90px 56px 90px 90px 68px;
   }
   .txrow > :nth-child(5),
   .txrow > :nth-child(9) { display: none; }
@@ -5631,7 +5659,7 @@ select.field__input {
   /* Transaction list: also remove Project (col 3) + Failure (col 8)
      Combined with 1023px: also hiding tpm(5) + timeSpent(9) */
   .txrow {
-    grid-template-columns: 46px minmax(0, 1fr) 56px 90px 90px;
+    grid-template-columns: 80px minmax(0, 1fr) 56px 90px 90px;
     padding: 0 12px;
     gap: 10px;
   }
