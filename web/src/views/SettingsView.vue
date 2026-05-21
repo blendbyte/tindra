@@ -2080,6 +2080,7 @@ function actionKindOf(action: string) {
                 <option value="error">Error and above</option>
                 <option value="warning">Warning and above</option>
                 <option value="info">Info and above</option>
+                <option value="performance">Performance issues only</option>
               </select>
             </div>
             <div class="field">
@@ -2201,6 +2202,7 @@ function actionKindOf(action: string) {
                     <option value="error">Error and above</option>
                     <option value="warning">Warning and above</option>
                     <option value="info">Info and above</option>
+                    <option value="performance">Performance issues only</option>
                   </select>
                 </div>
                 <div class="field">
@@ -2254,7 +2256,7 @@ function actionKindOf(action: string) {
                 <span class="rule__detail-v">{{ rule.cooldown_mins }}m</span>
                 <template v-if="rule.filter_level">
                   <span class="rule__detail-k">Min. level</span>
-                  <span class="rule__detail-v">{{ rule.filter_level }} and above</span>
+                  <span class="rule__detail-v">{{ rule.filter_level === 'performance' ? 'Performance issues only' : `${rule.filter_level} and above` }}</span>
                 </template>
                 <template v-if="rule.filter_environment">
                   <span class="rule__detail-k">Environment</span>

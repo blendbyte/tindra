@@ -66,7 +66,12 @@ func (e *Evaluator) evaluate(ctx context.Context) {
 
 // levelsAtOrAbove returns all severity levels >= minLevel.
 // Order (most to least severe): fatal, error, warning, info, debug.
+// "performance" is a separate category (N+1 and other perf issues) and
+// is never included in error-severity queries; it must be selected explicitly.
 func levelsAtOrAbove(minLevel string) []string {
+	if minLevel == "performance" {
+		return []string{"performance"}
+	}
 	all := []string{"fatal", "error", "warning", "info", "debug"}
 	for i, l := range all {
 		if l == minLevel {
@@ -81,7 +86,9 @@ func levelsAtOrAbove(minLevel string) []string {
 func appendIssueFilters(rule *storage.AlertRule, where string, args []any) (string, []any) {
 	if rule.FilterLevel != nil {
 		args = append(args, levelsAtOrAbove(*rule.FilterLevel))
-		where += fmt.Sprintf(" AND level = ANY($%d::text[])", len(args))
+		// Level filter applies only to error-kind issues; performance issues
+		// (N+1, etc.) are a separate category and always pass through.
+		where += fmt.Sprintf(" AND (kind != 'error' OR level = ANY($%d::text[]))", len(args))
 	}
 	if rule.FilterEnvironment != nil {
 		args = append(args, *rule.FilterEnvironment)
