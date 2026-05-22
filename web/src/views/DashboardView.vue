@@ -128,9 +128,8 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
 const dayLabels = computed(() => {
   const today = new Date()
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(today)
-    d.setDate(d.getDate() - (6 - i))
-    return d.toLocaleDateString('en-US', { weekday: 'short' })
+    const ts = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (6 - i))
+    return new Date(ts).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
   })
 })
 
@@ -138,12 +137,14 @@ const heatGrid = computed((): number[][] => {
   const grid: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0))
   const buckets = txTs.value?.buckets
   if (!buckets?.length) return grid
-  const now = Date.now()
+  const now = new Date()
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
   for (const b of buckets) {
     const t = new Date(b.time)
-    const daysAgo = Math.floor((now - t.getTime()) / 86_400_000)
+    const bucketDayUTC = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate())
+    const daysAgo = Math.round((todayUTC - bucketDayUTC) / 86_400_000)
     if (daysAgo < 0 || daysAgo > 6) continue
-    grid[6 - daysAgo][t.getHours()] += b.count
+    grid[6 - daysAgo][t.getUTCHours()] += b.count
   }
   return grid
 })
