@@ -48,21 +48,32 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: tindra
+          POSTGRES_PASSWORD: tindra
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-      - name: Pre-pull postgres image
-        run: docker pull postgres:18
-        timeout-minutes: 5
       - name: Create UI stub for embed
         run: mkdir -p internal/ui/dist && printf '<!doctype html>' > internal/ui/dist/index.html
       - name: Run tests
         env:
-          TESTCONTAINERS_RYUK_DISABLED: "true"
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          TINDRA_TEST_DSN: postgres://tindra:tindra@localhost:5432/postgres?sslmode=disable
+        run: go test -race -p 8 -coverprofile=coverage.out -covermode=atomic ./...
       - uses: codecov/codecov-action@v6
         with:
           files: coverage.out

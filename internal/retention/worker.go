@@ -19,6 +19,14 @@ func NewWorker(pool *pgxpool.Pool, retentionDays int) *Worker {
 	return &Worker{pool: pool, retentionDays: retentionDays}
 }
 
+// RunOnce runs a single purge cycle and returns. Useful for testing.
+func (w *Worker) RunOnce(ctx context.Context) {
+	if w.retentionDays <= 0 {
+		return
+	}
+	w.purge(ctx)
+}
+
 // Run starts the retention loop. Call in a dedicated goroutine.
 // Runs one purge immediately on startup, then every hour.
 func (w *Worker) Run(ctx context.Context) {

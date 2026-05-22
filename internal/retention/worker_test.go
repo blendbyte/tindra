@@ -47,7 +47,6 @@ func TestWorker_deletesOldEvents(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
-	// Insert one fresh event and one stale event (91 days old).
 	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, testProject.ID, "fp-stale", "Stale Error", "error", "error", "", "", time.Now().AddDate(0, 0, -91))
 	staleTS := time.Now().AddDate(0, 0, -91)
 	testPool.Exec(ctx, `
@@ -61,13 +60,7 @@ func TestWorker_deletesOldEvents(t *testing.T) {
 		VALUES ($1, NOW(), NOW(), '{"level":"error"}'::jsonb, 'fp-fresh', $2)
 	`, testProject.ID, fresh.ID)
 
-	// Run purges once immediately before entering the ticker loop, so a short-lived
-	// context is enough to trigger one purge cycle and then exit cleanly.
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	var count int
 	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM events WHERE project_id = $1", testProject.ID).Scan(&count)
@@ -75,7 +68,6 @@ func TestWorker_deletesOldEvents(t *testing.T) {
 		t.Errorf("expected 1 event (fresh only), got %d", count)
 	}
 
-	// Open stale issue should survive as a shell (event_count=0) even after its events are purged.
 	staleIss, _ := storage.GetIssue(ctx, testPool, iss.ID)
 	if staleIss == nil {
 		t.Error("open stale issue shell should be kept after events are purged")
@@ -84,7 +76,6 @@ func TestWorker_deletesOldEvents(t *testing.T) {
 		t.Errorf("open stale issue event_count: got %d, want 0", staleIss.EventCount)
 	}
 
-	// Fresh issue should still exist.
 	freshIss, _ := storage.GetIssue(ctx, testPool, fresh.ID)
 	if freshIss == nil {
 		t.Error("fresh issue should still exist")
@@ -95,17 +86,13 @@ func TestWorker_disabled(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
-	// Insert a stale event.
 	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, testProject.ID, "fp-dis", "Disabled", "error", "error", "", "", time.Now().AddDate(0, 0, -200))
 	testPool.Exec(ctx, `
 		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
 		VALUES ($1, $2, $2, '{"level":"error"}'::jsonb, 'fp-dis', $3)
 	`, testProject.ID, time.Now().AddDate(0, 0, -200), iss.ID)
 
-	// Worker with retentionDays=0 returns immediately without touching the DB.
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 0).Run(ctx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 0).RunOnce(ctx)
 
 	var count int
 	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM events WHERE project_id = $1", testProject.ID).Scan(&count)
@@ -128,11 +115,7 @@ func TestWorker_deletesOldTransactions(t *testing.T) {
 		VALUES ($1, '/new', 'http.server', 'ok', 50, NOW(), NOW())
 	`, testProject.ID)
 
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	var count int
 	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&count)
@@ -144,7 +127,6 @@ func TestWorker_deletesOldTransactions(t *testing.T) {
 func TestWorker_deletesOldLogs(t *testing.T) {
 	ctx := context.Background()
 
-	// Clean up logs before and after so we don't interfere with other tests.
 	testPool.Exec(ctx, "DELETE FROM logs")
 	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM logs") })
 
@@ -158,11 +140,7 @@ func TestWorker_deletesOldLogs(t *testing.T) {
 		VALUES ($1, NOW(), NOW(), 'info', 'fresh log')
 	`, testProject.ID)
 
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	var count int
 	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&count)
@@ -179,7 +157,6 @@ func TestWorker_purgesExpiredOAuthStates(t *testing.T) {
 		testPool.Exec(context.Background(), "DELETE FROM oauth_states")
 	})
 
-	// Insert an expired state and a still-valid one.
 	testPool.Exec(ctx, `
 		INSERT INTO oauth_states (token, provider, verifier, expires_at)
 		VALUES ('expired-oauth-state', 'github', 'verifier1', NOW() - INTERVAL '1 minute')
@@ -189,11 +166,7 @@ func TestWorker_purgesExpiredOAuthStates(t *testing.T) {
 		VALUES ('valid-oauth-state', 'github', 'verifier2', NOW() + INTERVAL '10 minutes')
 	`)
 
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	var expiredCount int
 	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM oauth_states WHERE token = 'expired-oauth-state'`).Scan(&expiredCount)
@@ -211,7 +184,6 @@ func TestWorker_purgesExpiredOAuthStates(t *testing.T) {
 func TestWorker_purgesExpiredMFAChallenges(t *testing.T) {
 	ctx := context.Background()
 
-	// Create a throwaway user to satisfy the FK on mfa_challenges.
 	var userID string
 	err := testPool.QueryRow(ctx, `
 		INSERT INTO users (email, password_hash)
@@ -226,7 +198,6 @@ func TestWorker_purgesExpiredMFAChallenges(t *testing.T) {
 		testPool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
 	})
 
-	// Insert an already-expired challenge and a still-valid one.
 	testPool.Exec(ctx, `
 		INSERT INTO mfa_challenges (token, user_id, expires_at)
 		VALUES ('expired-token-retention', $1, NOW() - INTERVAL '1 minute')
@@ -236,13 +207,8 @@ func TestWorker_purgesExpiredMFAChallenges(t *testing.T) {
 		VALUES ('valid-token-retention', $1, NOW() + INTERVAL '10 minutes')
 	`, userID)
 
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
-	// Expired challenge must be gone.
 	var expiredCount int
 	testPool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM mfa_challenges WHERE token = 'expired-token-retention'
@@ -251,7 +217,6 @@ func TestWorker_purgesExpiredMFAChallenges(t *testing.T) {
 		t.Errorf("expected expired MFA challenge to be deleted, got count=%d", expiredCount)
 	}
 
-	// Valid challenge must survive.
 	var validCount int
 	testPool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM mfa_challenges WHERE token = 'valid-token-retention'
@@ -265,20 +230,14 @@ func TestWorker_keepsOpenIssueShellAfterEventsPurged(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
-	// Open issue whose only event is stale.
 	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, testProject.ID, "fp-open-shell", "Open Shell", "error", "error", "", "", time.Now().AddDate(0, 0, -91))
 	testPool.Exec(ctx, `
 		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
 		VALUES ($1, $2, $2, '{"level":"error"}'::jsonb, 'fp-open-shell', $3)
 	`, testProject.ID, time.Now().AddDate(0, 0, -91), iss.ID)
 
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
-	// Issue shell must survive.
 	survived, _ := storage.GetIssue(ctx, testPool, iss.ID)
 	if survived == nil {
 		t.Fatal("open issue shell should be kept after events are purged")
@@ -299,11 +258,7 @@ func TestWorker_deletesResolvedIssueAfterEventsPurged(t *testing.T) {
 	`, testProject.ID, time.Now().AddDate(0, 0, -91), iss.ID)
 	testPool.Exec(ctx, `UPDATE issues SET status = 'resolved' WHERE id = $1`, iss.ID)
 
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	gone, _ := storage.GetIssue(ctx, testPool, iss.ID)
 	if gone != nil {
@@ -322,11 +277,7 @@ func TestWorker_deletesIgnoredIssueAfterEventsPurged(t *testing.T) {
 	`, testProject.ID, time.Now().AddDate(0, 0, -91), iss.ID)
 	testPool.Exec(ctx, `UPDATE issues SET status = 'ignored' WHERE id = $1`, iss.ID)
 
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
-	<-done
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	gone, _ := storage.GetIssue(ctx, testPool, iss.ID)
 	if gone != nil {
