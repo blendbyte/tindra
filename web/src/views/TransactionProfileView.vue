@@ -199,9 +199,7 @@ function projectName(projectId: string) {
         <Icon name="arrow-left" :size="12" />
         Transactions
       </a>
-      <div class="detail-breadcrumb__title mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-        {{ txName }}
-      </div>
+      <div class="detail-breadcrumb__title"><span>{{ txName }}</span></div>
       <div class="detail-breadcrumb__actions">
         <span class="optag" :class="`optag--${txOp.split('.')[0]}`">{{ txOp.split('.')[0] }}</span>
       </div>

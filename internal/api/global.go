@@ -973,16 +973,18 @@ func (ro *router) handleGetTransactionGlobal(w http.ResponseWriter, r *http.Requ
 }
 
 type spanResponse struct {
-	ID            string `json:"id"`
-	TransactionID string `json:"transaction_id"`
-	SpanID        string `json:"span_id"`
-	ParentSpanID  string `json:"parent_span_id,omitempty"`
-	Op            string `json:"op"`
-	Description   string `json:"description"`
-	Status        string `json:"status"`
-	StartOffsetMs int64  `json:"start_offset_ms"`
-	DurationMs    int    `json:"duration_ms"`
-	IsCritical    bool   `json:"is_critical"`
+	ID               string          `json:"id"`
+	TransactionID    string          `json:"transaction_id"`
+	SpanID           string          `json:"span_id"`
+	ParentSpanID     string          `json:"parent_span_id,omitempty"`
+	Op               string          `json:"op"`
+	Description      string          `json:"description"`
+	Status           string          `json:"status"`
+	StartOffsetMs    int64           `json:"start_offset_ms"`
+	DurationMs       int             `json:"duration_ms"`
+	IsCritical       bool            `json:"is_critical"`
+	StartTimestampMs int64           `json:"start_timestamp_ms"`
+	Data             json.RawMessage `json:"data,omitempty"`
 }
 
 // computeCriticalPath returns the set of span_ids on the critical path.
@@ -1090,16 +1092,18 @@ func (ro *router) handleGetSpansGlobal(w http.ResponseWriter, r *http.Request) {
 	out := make([]spanResponse, 0, len(spans))
 	for _, s := range spans {
 		out = append(out, spanResponse{
-			ID:            s.ID,
-			TransactionID: s.TransactionID,
-			SpanID:        s.SpanID,
-			ParentSpanID:  s.ParentSpanID,
-			Op:            s.Op,
-			Description:   s.Description,
-			Status:        s.Status,
-			StartOffsetMs: s.StartTimestamp.Sub(tx.StartTimestamp).Milliseconds(),
-			DurationMs:    s.DurationMs,
-			IsCritical:    critical[s.SpanID],
+			ID:               s.ID,
+			TransactionID:    s.TransactionID,
+			SpanID:           s.SpanID,
+			ParentSpanID:     s.ParentSpanID,
+			Op:               s.Op,
+			Description:      s.Description,
+			Status:           s.Status,
+			StartOffsetMs:    s.StartTimestamp.Sub(tx.StartTimestamp).Milliseconds(),
+			DurationMs:       s.DurationMs,
+			IsCritical:       critical[s.SpanID],
+			StartTimestampMs: s.StartTimestamp.UnixMilli(),
+			Data:             s.Data,
 		})
 	}
 	writeJSON(w, out)

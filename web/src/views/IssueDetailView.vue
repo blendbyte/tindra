@@ -530,7 +530,7 @@ onUnmounted(() => {
           <Icon name="chevron-right" :size="14" />
         </button>
       </div>
-      <div class="detail-breadcrumb__title">{{ issue.id }}</div>
+      <div class="detail-breadcrumb__title"><span>{{ issue.id }}</span></div>
       <div class="detail-breadcrumb__actions">
         <!-- Assign button -->
         <div ref="assignEl" style="position: relative">

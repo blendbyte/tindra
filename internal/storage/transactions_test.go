@@ -173,6 +173,58 @@ func TestGetSpansForTransaction_empty(t *testing.T) {
 	}
 }
 
+func TestGetSpansForTransaction_dataField(t *testing.T) {
+	p := setupProjectForTxns(t)
+	tx := seedTransaction(t, p.ID, "/api/spandata", 100, time.Now().UTC())
+	start := tx.StartTimestamp.Add(5 * time.Millisecond)
+	end := start.Add(10 * time.Millisecond)
+
+	// Span with JSONB data
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, data)
+		VALUES ($1, 'with-data', 'db.query', $2, $3, 10, 'ok', '{"db.system":"postgresql","rows":42}')
+	`, tx.ID, start, end); err != nil {
+		t.Fatalf("insert span with data: %v", err)
+	}
+
+	// Span with NULL data — COALESCE should return '{}'
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status)
+		VALUES ($1, 'null-data', 'http.client', $2, $3, 10, 'ok')
+	`, tx.ID, start, end); err != nil {
+		t.Fatalf("insert span without data: %v", err)
+	}
+
+	spans, err := storage.GetSpansForTransaction(context.Background(), testPool, tx.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(spans) != 2 {
+		t.Fatalf("expected 2 spans, got %d", len(spans))
+	}
+
+	byID := make(map[string]*storage.Span, 2)
+	for _, s := range spans {
+		byID[s.SpanID] = s
+	}
+
+	withData := byID["with-data"]
+	if withData == nil {
+		t.Fatal("span with-data not found")
+	}
+	if len(withData.Data) == 0 || string(withData.Data) == "null" {
+		t.Errorf("expected non-empty Data, got %q", withData.Data)
+	}
+
+	nullData := byID["null-data"]
+	if nullData == nil {
+		t.Fatal("span null-data not found")
+	}
+	if string(nullData.Data) != "{}" {
+		t.Errorf("expected '{}' for null data via COALESCE, got %q", nullData.Data)
+	}
+}
+
 func TestGetTransactionPercentiles_noData(t *testing.T) {
 	p := setupProjectForTxns(t)
 

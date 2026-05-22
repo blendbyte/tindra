@@ -602,6 +602,88 @@ func TestGetSpansGlobal_notFound(t *testing.T) {
 	}
 }
 
+func TestGetSpansGlobal_returnsStartTimestampAndData(t *testing.T) {
+	truncateTransactions(t)
+	tx := seedTransactionRow(t, "/api/span-fields", 100)
+
+	start := tx.StartTimestamp.Add(5 * time.Millisecond)
+	end := start.Add(20 * time.Millisecond)
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, data)
+		VALUES ($1, 'sp-fields', 'db.query', $2, $3, 20, 'ok', '{"db.system":"postgres"}')
+	`, tx.ID, start, end); err != nil {
+		t.Fatalf("insert span: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+tx.ID+"/spans", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var spans []struct {
+		SpanID             string          `json:"span_id"`
+		StartTimestampMs   int64           `json:"start_timestamp_ms"`
+		Data               json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&spans); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	s := spans[0]
+	if s.StartTimestampMs == 0 {
+		t.Error("expected non-zero start_timestamp_ms")
+	}
+	wantMs := start.UnixMilli()
+	if s.StartTimestampMs != wantMs {
+		t.Errorf("start_timestamp_ms: got %d, want %d", s.StartTimestampMs, wantMs)
+	}
+	if len(s.Data) == 0 || string(s.Data) == "null" {
+		t.Errorf("expected non-empty data, got %q", s.Data)
+	}
+}
+
+func TestGetSpansGlobal_nullDataReturnsEmptyObject(t *testing.T) {
+	truncateTransactions(t)
+	tx := seedTransactionRow(t, "/api/span-nulldata", 50)
+
+	start := tx.StartTimestamp.Add(2 * time.Millisecond)
+	end := start.Add(5 * time.Millisecond)
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status)
+		VALUES ($1, 'sp-null', 'http.client', $2, $3, 5, 'ok')
+	`, tx.ID, start, end); err != nil {
+		t.Fatalf("insert span: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+tx.ID+"/spans", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var spans []struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&spans); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	if string(spans[0].Data) == "null" || len(spans[0].Data) == 0 {
+		t.Errorf("expected '{}' for null data, got %q", spans[0].Data)
+	}
+}
+
 // --- handleListAllTokens ---
 
 func TestListAllTokens_empty(t *testing.T) {

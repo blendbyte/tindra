@@ -182,6 +182,8 @@ export interface Span {
   start_offset_ms: number
   duration_ms: number
   is_critical: boolean
+  start_timestamp_ms: number
+  data?: Record<string, unknown>
 }
 
 export interface TraceError {

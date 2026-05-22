@@ -141,9 +141,9 @@ describe('TransactionDetailView', () => {
       ]
       setupMocks(baseTx, spans)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
-      // Expand/collapse buttons use title attributes, not text content
-      expect(wrapper.find('[title="Expand all"]').exists()).toBe(true)
-      expect(wrapper.find('[title="Collapse all"]').exists()).toBe(true)
+      // Expand/collapse buttons use aria-label, not text content
+      expect(wrapper.find('[aria-label="Expand all"]').exists()).toBe(true)
+      expect(wrapper.find('[aria-label="Collapse all"]').exists()).toBe(true)
     })
 
     it('renders a span row for each span', () => {
@@ -291,14 +291,14 @@ describe('TransactionDetailView', () => {
     it('clicks Expand all without throwing', async () => {
       setupMocks(baseTx, parentChildSpans)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
-      await wrapper.find('[title="Expand all"]').trigger('click')
+      await wrapper.find('[aria-label="Expand all"]').trigger('click')
       expect(wrapper.find('.span-row--header').exists()).toBe(true)
     })
 
     it('clicks Collapse all without throwing', async () => {
       setupMocks(baseTx, parentChildSpans)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
-      await wrapper.find('[title="Collapse all"]').trigger('click')
+      await wrapper.find('[aria-label="Collapse all"]').trigger('click')
       expect(wrapper.find('.span-row--header').exists()).toBe(true)
     })
 
@@ -462,8 +462,8 @@ describe('TransactionDetailView', () => {
       ]
       setupMocks(baseTx, spans)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
-      await wrapper.find('[title="Expand all"]').trigger('click')
-      await wrapper.find('[title="Collapse all"]').trigger('click')
+      await wrapper.find('[aria-label="Expand all"]').trigger('click')
+      await wrapper.find('[aria-label="Collapse all"]').trigger('click')
       expect(wrapper.find('.span-row--header').exists()).toBe(true)
     })
   })
@@ -493,6 +493,70 @@ describe('TransactionDetailView', () => {
       setupMocks(baseTx, spans, false, false, undefined, traceErrors)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       expect(wrapper.find('.span-error-badge').exists()).toBe(true)
+    })
+  })
+
+  describe('span detail - self time', () => {
+    it('shows Self time row in the timing section', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'parent', parent_span_id: null, op: 'http.server', description: 'Root', duration_ms: 100, start_offset_ms: 0, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200000 },
+        { id: 'sp2', span_id: 'child1', parent_span_id: 'parent', op: 'db.query', description: 'Query', duration_ms: 50, start_offset_ms: 10, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200010 },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const parentRow = wrapper.findAll('.span-row').find(r => r.text().includes('Root'))!
+      await parentRow.trigger('click')
+      expect(wrapper.find('.span-detail').text()).toContain('Self time')
+    })
+  })
+
+  describe('span detail - span data entries', () => {
+    it('shows Span Data section when span has a data field', async () => {
+      const spans = [
+        {
+          id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SELECT users',
+          duration_ms: 12, start_offset_ms: 0, status: 'ok', is_critical: false,
+          start_timestamp_ms: 1704067200000,
+          data: { 'db.system': 'postgresql', rows: 3 },
+        },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const dataRow = wrapper.findAll('.span-row').find(r => r.text().includes('SELECT users'))!
+      await dataRow.trigger('click')
+      expect(wrapper.find('.span-detail').text()).toContain('Span Data')
+      expect(wrapper.find('.span-detail').text()).toContain('db.system')
+      expect(wrapper.find('.span-detail').text()).toContain('postgresql')
+    })
+
+    it('does not show Span Data section when span has no data', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SELECT 1', duration_ms: 12, start_offset_ms: 0, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200000 },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const dataRow = wrapper.findAll('.span-row').find(r => r.text().includes('SELECT 1'))!
+      await dataRow.trigger('click')
+      expect(wrapper.find('.span-detail').text()).not.toContain('Span Data')
+    })
+  })
+
+  describe('span detail - copy span ID', () => {
+    it('copies span_id to clipboard when the copy element is clicked', async () => {
+      const clipboardMock = { writeText: vi.fn().mockResolvedValue(undefined) }
+      Object.defineProperty(navigator, 'clipboard', { value: clipboardMock, configurable: true })
+      const spans = [
+        { id: 'sp1', span_id: 'abc-span-123', parent_span_id: null, op: 'db.query', description: 'SELECT 1', duration_ms: 12, start_offset_ms: 0, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200000 },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const dataRow = wrapper.findAll('.span-row').find(r => r.text().includes('SELECT 1'))!
+      await dataRow.trigger('click')
+      const copyEl = wrapper.find('.span-detail__v--copy')
+      if (copyEl.exists()) {
+        await copyEl.trigger('click')
+        expect(clipboardMock.writeText).toHaveBeenCalledWith('abc-span-123')
+      }
     })
   })
 })

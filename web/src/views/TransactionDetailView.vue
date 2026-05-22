@@ -18,6 +18,7 @@ const openDetails = ref<Set<string>>(new Set())
 const expandedGroups = ref<Set<string>>(new Set())
 const focusedIdx = ref<number | null>(null)
 const copiedTraceId = ref(false)
+const copiedSpanId = ref<string | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 
 const AUTO_GROUP_THRESHOLD = 4
@@ -66,7 +67,12 @@ watchEffect(() => {
   if (tx.value?.transaction) document.title = `${tx.value.transaction} - Tindra`
 })
 
-const total = computed(() => tx.value?.duration_ms ?? 1)
+const total = computed(() => {
+  const txMs = tx.value?.duration_ms ?? 1
+  if (!spanList.value.length) return txMs
+  const maxSpanEnd = Math.max(...spanList.value.map(s => s.start_offset_ms + s.duration_ms))
+  return Math.max(txMs, maxSpanEnd)
+})
 
 const criticalSpanCount = computed(() => spanList.value.filter(s => s.is_critical).length)
 
@@ -97,6 +103,71 @@ const presentOps = computed(() => {
   return [...ops].sort()
 })
 
+// Number of direct children for each span_id, used for the child-count badge.
+const childCounts = computed((): Map<string, number> => {
+  const m = new Map<string, number>()
+  for (const s of spanList.value) {
+    if (s.parent_span_id) m.set(s.parent_span_id, (m.get(s.parent_span_id) ?? 0) + 1)
+  }
+  return m
+})
+
+// Self time = span's own duration minus the wall-clock coverage of its direct children.
+// Children may overlap, so we merge intervals rather than naively summing durations.
+function selfTimeMs(span: Span): number {
+  const kids = spanList.value.filter(s => s.parent_span_id === span.span_id)
+  if (!kids.length) return span.duration_ms
+  const intervals = kids
+    .map(k => [k.start_offset_ms, k.start_offset_ms + k.duration_ms] as [number, number])
+    .sort((a, b) => a[0] - b[0])
+  let childMs = 0
+  let [cur0, cur1] = intervals[0]
+  const spanEnd = span.start_offset_ms + span.duration_ms
+  for (let i = 1; i < intervals.length; i++) {
+    const [s, e] = intervals[i]
+    if (s <= cur1) { cur1 = Math.max(cur1, e) }
+    else { childMs += cur1 - cur0; cur0 = s; cur1 = e }
+  }
+  childMs += cur1 - cur0
+  return Math.max(0, span.duration_ms - childMs)
+}
+
+function formatAbsTimestamp(ms: number): string {
+  return new Date(ms).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    fractionalSecondDigits: 3,
+    hour12: false,
+    timeZone: tz.value,
+  })
+}
+
+async function copySpanId(id: string) {
+  await navigator.clipboard.writeText(id)
+  copiedSpanId.value = id
+  setTimeout(() => { copiedSpanId.value = null }, 1500)
+}
+
+function opLabel(op: string): string {
+  return op.split('.')[0]
+}
+
+function opSuffix(op: string): string {
+  const idx = op.indexOf('.')
+  return idx >= 0 ? op.slice(idx + 1) : ''
+}
+
+function spanDataEntries(span: Span): [string, string][] {
+  if (!span.data) return []
+  try {
+    const obj = typeof span.data === 'string' ? JSON.parse(span.data) : span.data
+    return Object.entries(obj)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])
+  } catch {
+    return []
+  }
+}
 
 function opColor(op: string) {
   const base = op.split('.')[0]
@@ -380,8 +451,8 @@ function traceErrorOffset(e: TraceError): string {
       <Icon name="search" :size="13" class="trace-search__icon" />
       <span class="skel" style="width: 240px; height: 10px" />
     </div>
-    <div style="flex: 1; min-height: 0; display: grid; grid-template-columns: 35% 1fr">
-      <div style="border-right: 1px solid var(--border); overflow: hidden">
+    <div class="waterfall-grid">
+      <div class="waterfall-left" style="overflow: hidden">
         <div class="span-row span-row--header"><span>Span</span><span>Duration</span></div>
         <div v-for="i in 8" :key="i" class="span-row" style="cursor: default">
           <span class="skel" :style="{ width: `${55 + (i % 3) * 15}%`, height: '10px' }" />
@@ -405,9 +476,7 @@ function traceErrorOffset(e: TraceError): string {
         <Icon name="arrow-left" :size="12" />
         Transactions
       </a>
-      <div class="detail-breadcrumb__title mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-        {{ tx.transaction }}
-      </div>
+      <div class="detail-breadcrumb__title"><span>{{ tx.transaction }}</span></div>
       <div class="detail-breadcrumb__actions">
         <span class="tag">{{ tx.environment ?? '-' }}</span>
       </div>
@@ -447,7 +516,7 @@ function traceErrorOffset(e: TraceError): string {
           </div>
           <div class="stat__sub">{{ new Date(tx.start_timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: tz }) }}</div>
         </div>
-        <div class="stat stat--copyable" :title="copiedTraceId ? 'Copied!' : 'Click to copy full trace ID'" @click="copyTraceId">
+        <div class="stat stat--copyable" v-tooltip="copiedTraceId ? 'Copied!' : 'Click to copy full trace ID'" @click="copyTraceId">
           <div class="stat__label">Trace ID</div>
           <div class="stat__value stat__value--mono stat__value--sm">
             {{ copiedTraceId ? 'Copied!' : tx.trace_id.slice(0, 16) + '…' }}
@@ -488,19 +557,19 @@ function traceErrorOffset(e: TraceError): string {
     </div>
 
     <!-- Waterfall -->
-    <div v-if="!isSpansError" style="flex: 1; min-height: 0; display: grid; grid-template-columns: 35% 1fr">
+    <div v-if="!isSpansError" class="waterfall-grid">
 
       <!-- Left: span tree -->
-      <div style="border-right: 1px solid var(--border); overflow: auto; display: flex; flex-direction: column">
+      <div class="waterfall-left">
         <div class="span-row span-row--header">
           <span>Span</span>
           <div style="display: flex; align-items: center; gap: 8px">
             <span>Duration</span>
             <template v-if="spanList.length > 0">
-              <button class="span-tree-btn" title="Expand all" @click="expandAll">
+              <button class="span-tree-btn" aria-label="Expand all" v-tooltip="'Expand all'" @click="expandAll">
                 <Icon name="chevrons-down" :size="11" />
               </button>
-              <button class="span-tree-btn" title="Collapse all" @click="collapseAll">
+              <button class="span-tree-btn" aria-label="Collapse all" v-tooltip="'Collapse all'" @click="collapseAll">
                 <Icon name="chevrons-up" :size="11" />
               </button>
             </template>
@@ -536,11 +605,12 @@ function traceErrorOffset(e: TraceError): string {
               @click="toggleGroup(row.key)"
             >
               <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
-                <span class="span-name__caret" :class="{ 'span-name__caret--open': expandedGroups.has(row.key) }">
+                <span class="span-name__caret">
                   <Icon :name="expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
                 </span>
-                <span class="span-name__dot" :style="{ background: opColor(row.op) }" />
-                <span class="span-name__text">{{ row.count }} × {{ row.op }}</span>
+                <span class="span-autogroup-badge">Autogrouped</span>
+                <span class="span-name__arrow">→</span>
+                <span class="span-name__op-label" :style="{ color: opColor(row.op) }">{{ row.op }}</span>
               </div>
               <span class="span-row__dur">{{ row.count }} spans</span>
             </div>
@@ -552,16 +622,16 @@ function traceErrorOffset(e: TraceError): string {
                 :class="{
                   'span-row--open': openDetails.has(row.span.id),
                   'span-row--focused': focusedIdx === i,
+                  'span-row--critical': row.span.is_critical,
                 }"
-                :style="{ opacity: hasCriticalPath && !row.span.is_critical ? 0.45 : 1 }"
+                :style="{ opacity: hasCriticalPath && !row.span.is_critical ? 0.6 : 1 }"
                 @click="toggleDetail(row.span.id)"
               >
                 <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
-                  <!-- Chevron: only rendered for parent spans; click collapses/expands children -->
+                  <!-- Chevron for parent spans -->
                   <span
                     v-if="spanHasChildren.has(row.span.span_id)"
                     class="span-name__caret"
-                    :class="{ 'span-name__caret--open': !collapsedBranches.has(row.span.span_id) }"
                     @click.stop="toggleBranch(row.span.span_id)"
                   >
                     <Icon :name="collapsedBranches.has(row.span.span_id) ? 'chevron-right' : 'chevron-down'" :size="10" />
@@ -571,70 +641,92 @@ function traceErrorOffset(e: TraceError): string {
                     class="span-name__dot"
                     :style="{
                       background: opColor(row.span.op),
-                      outline: row.span.is_critical ? `2px solid ${CRITICAL_COLOR}` : 'none',
-                      outlineOffset: '1px',
+                      boxShadow: row.span.is_critical ? `0 0 0 2px ${CRITICAL_COLOR}` : 'none',
                     }"
                   />
-                  <span class="span-name__text">{{ row.span.description || row.span.op }}</span>
+                  <span class="span-name__op-prefix" :style="{ color: opColor(row.span.op) }">{{ opLabel(row.span.op) }}</span>
+                  <span v-if="opSuffix(row.span.op)" class="span-name__op-suffix">.{{ opSuffix(row.span.op) }}</span>
+                  <span class="span-name__desc">{{ row.span.description }}</span>
                   <span
                     v-if="errorsBySpanId.get(row.span.span_id)?.length"
                     class="span-error-badge"
-                    :title="`${errorsBySpanId.get(row.span.span_id)!.length} error(s) on this span`"
+                    v-tooltip="`${errorsBySpanId.get(row.span.span_id)!.length} error(s) on this span`"
                   >{{ errorsBySpanId.get(row.span.span_id)!.length }}</span>
+                  <span
+                    v-if="(childCounts.get(row.span.span_id) ?? 0) > 0"
+                    class="span-child-count"
+                    v-tooltip="`${childCounts.get(row.span.span_id)} child span(s)`"
+                  >{{ childCounts.get(row.span.span_id) }}</span>
                 </div>
                 <div class="span-row__right">
-                  <button
-                    class="span-detail-btn"
-                    :class="{ 'span-detail-btn--active': openDetails.has(row.span.id) }"
-                    :title="openDetails.has(row.span.id) ? 'Close details' : 'Open details'"
-                    @click.stop="toggleDetail(row.span.id)"
-                  >
-                    <Icon name="info" :size="10" />
-                  </button>
                   <span class="span-row__dur" :class="{ 'span-row__dur--crit': row.span.id === maxDurationSpanId }">
                     {{ formatDuration(row.span.duration_ms) }}
                   </span>
                 </div>
               </div>
+              <!-- Span detail panel -->
               <div v-if="openDetails.has(row.span.id)" class="span-detail">
-                <span class="span-detail__k">description</span>
-                <span class="span-detail__v">{{ row.span.description || '–' }}</span>
-                <span class="span-detail__k">op</span>
-                <span class="span-detail__v">{{ row.span.op }}</span>
-                <span class="span-detail__k">duration</span>
-                <span class="span-detail__v">
-                  {{ formatDuration(row.span.duration_ms) }}
-                  <span style="color: var(--text-3)"> ({{ ((row.span.duration_ms / total) * 100).toFixed(1) }}% of total)</span>
-                </span>
-                <span class="span-detail__k">start offset</span>
-                <span class="span-detail__v">+{{ row.span.start_offset_ms }}ms</span>
-                <span class="span-detail__k">status</span>
-                <span class="span-detail__v">{{ row.span.status }}</span>
-                <span v-if="row.span.is_critical" class="span-detail__k">critical path</span>
-                <span v-if="row.span.is_critical" class="span-detail__v" :style="{ color: CRITICAL_COLOR }">yes</span>
+                <div class="span-detail__section">
+                  <div class="span-detail__section-title">General</div>
+                  <div class="span-detail__grid">
+                    <span class="span-detail__k">Span ID</span>
+                    <span class="span-detail__v span-detail__v--copy" @click="copySpanId(row.span.span_id)">
+                      <span class="span-detail__mono">{{ row.span.span_id }}</span>
+                      <span class="span-detail__copy-hint">{{ copiedSpanId === row.span.span_id ? 'Copied!' : 'Copy' }}</span>
+                    </span>
+                    <span v-if="row.span.parent_span_id" class="span-detail__k">Parent Span ID</span>
+                    <span v-if="row.span.parent_span_id" class="span-detail__v span-detail__mono span-detail__v--muted">{{ row.span.parent_span_id }}</span>
+                    <span class="span-detail__k">Op</span>
+                    <span class="span-detail__v">
+                      <span class="span-detail__op-pill" :style="{ background: opColor(row.span.op) + '22', color: opColor(row.span.op) }">{{ row.span.op }}</span>
+                    </span>
+                    <span v-if="row.span.description" class="span-detail__k">Description</span>
+                    <span v-if="row.span.description" class="span-detail__v span-detail__v--wrap">{{ row.span.description }}</span>
+                    <span class="span-detail__k">Status</span>
+                    <span class="span-detail__v">
+                      <span class="span-detail__status" :class="`span-detail__status--${row.span.status}`">{{ row.span.status }}</span>
+                    </span>
+                  </div>
+                </div>
+                <div class="span-detail__section">
+                  <div class="span-detail__section-title">Timing</div>
+                  <div class="span-detail__grid">
+                    <span class="span-detail__k">Duration</span>
+                    <span class="span-detail__v">
+                      {{ formatDuration(row.span.duration_ms) }}
+                      <span class="span-detail__muted">({{ ((row.span.duration_ms / total) * 100).toFixed(1) }}% of total)</span>
+                    </span>
+                    <span class="span-detail__k">Self time</span>
+                    <span class="span-detail__v">{{ formatDuration(selfTimeMs(row.span)) }}</span>
+                    <span class="span-detail__k">Start</span>
+                    <span class="span-detail__v span-detail__mono">{{ formatAbsTimestamp(row.span.start_timestamp_ms) }}</span>
+                    <span class="span-detail__k">End</span>
+                    <span class="span-detail__v span-detail__mono">{{ formatAbsTimestamp(row.span.start_timestamp_ms + row.span.duration_ms) }}</span>
+                    <span class="span-detail__k">Offset</span>
+                    <span class="span-detail__v span-detail__muted">+{{ row.span.start_offset_ms }}ms from tx start</span>
+                    <span v-if="row.span.is_critical" class="span-detail__k">Critical path</span>
+                    <span v-if="row.span.is_critical" class="span-detail__v" :style="{ color: CRITICAL_COLOR, fontWeight: 600 }">Yes</span>
+                  </div>
+                </div>
+                <div v-if="spanDataEntries(row.span).length" class="span-detail__section">
+                  <div class="span-detail__section-title">Span Data</div>
+                  <div class="span-detail__grid">
+                    <template v-for="[k, v] in spanDataEntries(row.span)" :key="k">
+                      <span class="span-detail__k span-detail__mono">{{ k }}</span>
+                      <span class="span-detail__v span-detail__v--wrap span-detail__mono">{{ v }}</span>
+                    </template>
+                  </div>
+                </div>
               </div>
             </template>
 
           </template>
         </template>
 
-        <!-- Summary label aligned with the timeline summary row -->
-        <div v-if="hasCriticalPath" class="span-row" style="opacity: 1; cursor: default; border-top: 1px solid var(--border); margin-top: 2px">
-          <div class="span-name">
-            <span class="span-name__caret" style="opacity: 0" />
-            <span class="span-name__dot" :style="{ background: CRITICAL_COLOR }" />
-            <span class="span-name__text" :style="{ color: CRITICAL_COLOR, fontWeight: 500 }">
-              Critical path
-            </span>
-          </div>
-          <span class="span-row__dur" :style="{ color: CRITICAL_COLOR }">
-            {{ criticalSpanCount }} spans
-          </span>
-        </div>
       </div>
 
       <!-- Right: timeline -->
-      <div class="timeline" style="overflow-x: hidden; overflow-y: auto; position: relative">
+      <div class="timeline" style="overflow-x: auto; overflow-y: auto; position: relative">
         <div
           v-for="v in ticks"
           :key="`tl-${v}`"
@@ -695,7 +787,7 @@ function traceErrorOffset(e: TraceError): string {
                 outline: row.span.is_critical ? `1.5px solid ${CRITICAL_COLOR}` : 'none',
                 outlineOffset: '1px',
               }"
-              :title="`${row.span.description || row.span.op} · ${formatDuration(row.span.duration_ms)}`"
+              v-tooltip="`${row.span.description || row.span.op} · ${formatDuration(row.span.duration_ms)}`"
             >
               <span v-if="(row.span.duration_ms / total) * 100 > 8" class="timeline__bar-label">
                 {{ formatDuration(row.span.duration_ms) }}
@@ -705,36 +797,11 @@ function traceErrorOffset(e: TraceError): string {
               v-if="errorsBySpanId.get(row.span.span_id)?.length"
               class="timeline__error-dot"
               :style="{ left: `calc(${(row.span.start_offset_ms / total) * 100}% + max(4px, ${(row.span.duration_ms / total) * 100}%) - 2px)` }"
-              :title="`${errorsBySpanId.get(row.span.span_id)!.length} error(s)`"
+              v-tooltip="`${errorsBySpanId.get(row.span.span_id)!.length} error(s) on this span`"
             />
           </template>
         </div>
 
-        <!-- Critical path summary row -->
-        <div
-          v-if="hasCriticalPath"
-          class="timeline__row"
-          style="cursor: default; border-top: 1px solid var(--border); margin-top: 2px"
-        >
-          <div
-            class="timeline__bar"
-            :style="{
-              left: '0%',
-              width: `${(critPathEndMs / total) * 100}%`,
-              background: CRITICAL_COLOR,
-              opacity: 0.18,
-              outline: `1.5px solid ${CRITICAL_COLOR}`,
-              outlineOffset: '0px',
-            }"
-          >
-            <span
-              class="timeline__bar-label"
-              :style="{ color: CRITICAL_COLOR, fontWeight: 600, opacity: 1 }"
-            >
-              critical path · {{ criticalSpanCount }} spans · {{ formatDuration(critPathEndMs) }}
-            </span>
-          </div>
-        </div>
       </div>
     </div>
 

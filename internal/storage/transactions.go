@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -28,16 +29,17 @@ type Transaction struct {
 }
 
 type Span struct {
-	ID             string    `json:"id"`
-	TransactionID  string    `json:"transaction_id"`
-	SpanID         string    `json:"span_id"`
-	ParentSpanID   string    `json:"parent_span_id,omitempty"`
-	Op             string    `json:"op"`
-	Description    string    `json:"description,omitempty"`
-	StartTimestamp time.Time `json:"start_timestamp"`
-	Timestamp      time.Time `json:"timestamp"`
-	DurationMs     int       `json:"duration_ms"`
-	Status         string    `json:"status"`
+	ID             string          `json:"id"`
+	TransactionID  string          `json:"transaction_id"`
+	SpanID         string          `json:"span_id"`
+	ParentSpanID   string          `json:"parent_span_id,omitempty"`
+	Op             string          `json:"op"`
+	Description    string          `json:"description,omitempty"`
+	StartTimestamp time.Time       `json:"start_timestamp"`
+	Timestamp      time.Time       `json:"timestamp"`
+	DurationMs     int             `json:"duration_ms"`
+	Status         string          `json:"status"`
+	Data           json.RawMessage `json:"data,omitempty"`
 }
 
 // TraceError is a single error event that occurred within a trace, used to correlate
@@ -215,7 +217,8 @@ func GetTransaction(ctx context.Context, pool *pgxpool.Pool, id string) (*Transa
 func GetSpansForTransaction(ctx context.Context, pool *pgxpool.Pool, transactionID string) ([]*Span, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT id, transaction_id, span_id, COALESCE(parent_span_id,''), op,
-		       COALESCE(description,''), start_timestamp, timestamp, duration_ms, status
+		       COALESCE(description,''), start_timestamp, timestamp, duration_ms, status,
+		       COALESCE(data, '{}')
 		FROM spans WHERE transaction_id = $1 ORDER BY start_timestamp ASC
 	`, transactionID)
 	if err != nil {
@@ -229,6 +232,7 @@ func GetSpansForTransaction(ctx context.Context, pool *pgxpool.Pool, transaction
 		if err := rows.Scan(
 			&s.ID, &s.TransactionID, &s.SpanID, &s.ParentSpanID, &s.Op,
 			&s.Description, &s.StartTimestamp, &s.Timestamp, &s.DurationMs, &s.Status,
+			&s.Data,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}

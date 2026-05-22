@@ -116,7 +116,7 @@ function levelClass(level: string) {
         <Icon name="arrow-left" :size="12" />
         Releases
       </a>
-      <div class="detail-breadcrumb__title mono">{{ release.version }}</div>
+      <div class="detail-breadcrumb__title"><span>{{ release.version }}</span></div>
     </div>
 
     <div class="detail-body">
