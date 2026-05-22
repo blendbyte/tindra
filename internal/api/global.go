@@ -118,20 +118,27 @@ func (ro *router) handleGetInstanceHealth(w http.ResponseWriter, r *http.Request
 
 // handleGetSettings returns server-wide limits and version info for use by the UI.
 func (ro *router) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	latest, releaseURL := ro.getLatestRelease()
 	writeJSON(w, struct {
-		ProjectLimit int    `json:"project_limit"`
-		EventLimit   int    `json:"event_limit"`
-		UserLimit    int    `json:"user_limit"`
-		Version      string `json:"version"`
-		Commit       string `json:"commit"`
-		BillingURL   string `json:"billing_url,omitempty"`
+		ProjectLimit    int    `json:"project_limit"`
+		EventLimit      int    `json:"event_limit"`
+		UserLimit       int    `json:"user_limit"`
+		Version         string `json:"version"`
+		Commit          string `json:"commit"`
+		BillingURL      string `json:"billing_url,omitempty"`
+		LatestVersion   string `json:"latest_version,omitempty"`
+		UpdateAvailable bool   `json:"update_available"`
+		ReleaseURL      string `json:"release_url,omitempty"`
 	}{
-		ProjectLimit: int(ro.projectLimit.Load()),
-		EventLimit:   int(ro.eventLimit.Load()),
-		UserLimit:    int(ro.userLimit.Load()),
-		Version:      AppVersion,
-		Commit:       AppCommit,
-		BillingURL:   ro.billingURL,
+		ProjectLimit:    int(ro.projectLimit.Load()),
+		EventLimit:      int(ro.eventLimit.Load()),
+		UserLimit:       int(ro.userLimit.Load()),
+		Version:         AppVersion,
+		Commit:          AppCommit,
+		BillingURL:      ro.billingURL,
+		LatestVersion:   latest,
+		UpdateAvailable: semverGT(latest, AppVersion),
+		ReleaseURL:      releaseURL,
 	})
 }
 

@@ -58,6 +58,9 @@ export interface ServerSettings {
   version: string
   commit: string
   billing_url?: string
+  latest_version?: string
+  update_available: boolean
+  release_url?: string
 }
 
 /** Returned by GET /api/stats - for the managed hosting control plane. */

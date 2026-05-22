@@ -1040,6 +1040,7 @@ function actionKindOf(action: string) {
             <div class="pane-head__title">Instance</div>
             <div class="pane-head__sub mono" style="letter-spacing: 0">
               {{ settings?.version ?? 'dev' }}<template v-if="settings?.commit && settings.commit !== 'unknown'"> &middot; {{ settings.commit }}</template>
+              <a v-if="settings?.update_available && settings.release_url" :href="settings.release_url" target="_blank" rel="noopener noreferrer" class="update-avail">{{ settings.latest_version }} available</a>
             </div>
           </div>
           <div class="overview-chips">

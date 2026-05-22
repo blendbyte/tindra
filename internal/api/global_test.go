@@ -169,6 +169,41 @@ func TestGetSettings_unauthenticated(t *testing.T) {
 	}
 }
 
+func TestGetSettings_updateAvailable(t *testing.T) {
+	prev := api.AppVersion
+	api.AppVersion = "v1.0.0"
+	defer func() { api.AppVersion = prev }()
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	api.SetLatestVersionForTest(h, "v9.9.9", "https://example.com/releases/v9.9.9")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		UpdateAvailable bool   `json:"update_available"`
+		LatestVersion   string `json:"latest_version"`
+		ReleaseURL      string `json:"release_url"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.UpdateAvailable {
+		t.Error("expected update_available: true when latest > current")
+	}
+	if resp.LatestVersion != "v9.9.9" {
+		t.Errorf("latest_version: got %q, want v9.9.9", resp.LatestVersion)
+	}
+	if resp.ReleaseURL == "" {
+		t.Error("expected non-empty release_url")
+	}
+}
+
 // --- handleListAllIssues ---
 
 func TestListAllIssues_success(t *testing.T) {

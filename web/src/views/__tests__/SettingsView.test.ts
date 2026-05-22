@@ -1264,4 +1264,76 @@ describe('SettingsView', () => {
       }
     })
   })
+
+  describe('overview tab - update badge', () => {
+    function setupWithSettings(settings: unknown) {
+      currentTab = 'overview'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 1. tokens
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 2. projects
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 3. users
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 4. auditLogData
+        .mockReturnValueOnce({ data: ref(adminUser) } as any)    // 5. me
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 6. invites
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 7. alertRules
+        .mockReturnValueOnce({ data: ref(settings) } as any)     // 8. settings
+        .mockReturnValueOnce({ data: ref(undefined) } as any)    // 9. health
+        .mockReturnValueOnce({ data: ref(undefined) } as any)    // 10. quota
+        .mockReturnValue({ data: ref(undefined) } as any)
+    }
+
+    it('shows update badge when update is available', () => {
+      setupWithSettings({
+        version: 'v1.0.0',
+        commit: 'abc123',
+        project_limit: 0,
+        event_limit: 0,
+        user_limit: 0,
+        update_available: true,
+        latest_version: 'v2.0.0',
+        release_url: 'https://github.com/blendbyte/tindra/releases/v2.0.0',
+      })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const badge = wrapper.find('.update-avail')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('v2.0.0')
+    })
+
+    it('badge links to release_url', () => {
+      setupWithSettings({
+        version: 'v1.0.0',
+        commit: 'abc123',
+        project_limit: 0,
+        event_limit: 0,
+        user_limit: 0,
+        update_available: true,
+        latest_version: 'v2.0.0',
+        release_url: 'https://github.com/blendbyte/tindra/releases/v2.0.0',
+      })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.find('.update-avail').attributes('href')).toBe(
+        'https://github.com/blendbyte/tindra/releases/v2.0.0',
+      )
+    })
+
+    it('hides update badge when update_available is false', () => {
+      setupWithSettings({
+        version: 'v1.0.0',
+        commit: 'abc123',
+        project_limit: 0,
+        event_limit: 0,
+        user_limit: 0,
+        update_available: false,
+      })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.find('.update-avail').exists()).toBe(false)
+    })
+
+    it('hides update badge when settings are not yet loaded', () => {
+      setupMocks()
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.find('.update-avail').exists()).toBe(false)
+    })
+  })
 })

@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,6 +62,9 @@ type router struct {
 	envelopeRL             *rateLimiter
 	cronPingRL             *rateLimiter
 	startedAt              time.Time
+	versionMu              sync.RWMutex
+	latestVersion          string
+	releaseURL             string
 }
 
 // Handle wraps the HTTP handler returned by NewRouter and exposes SetLimits

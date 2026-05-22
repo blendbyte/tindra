@@ -53,6 +53,7 @@ type config struct {
 	webhookAllowPrivateIPs bool
 	trustedProxies         []*net.IPNet
 	skipAutoMigrate        bool
+	disableVersionCheck    bool
 }
 
 func main() {
@@ -183,6 +184,7 @@ func loadConfig() config {
 		webhookAllowPrivateIPs: os.Getenv("WEBHOOK_ALLOW_PRIVATE_IPS") == "true",
 		trustedProxies:         trustedProxies,
 		skipAutoMigrate:        os.Getenv("SKIP_AUTO_MIGRATE") == "true",
+		disableVersionCheck:    os.Getenv("DISABLE_VERSION_CHECK") == "true",
 	}
 }
 
@@ -330,6 +332,9 @@ func serveCmd(cfg config) *cobra.Command {
 			)
 
 			handler := api.NewRouter(pool, buf, txBuf, logBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.trustedProxies)
+			if !cfg.disableVersionCheck {
+				handler.StartVersionChecker(ctx)
+			}
 
 			sighup := make(chan os.Signal, 1)
 			signal.Notify(sighup, syscall.SIGHUP)
