@@ -98,8 +98,15 @@ func (w *Worker) purgeEvents(ctx context.Context, cutoff time.Time) (eventsDelet
 		slog.Error("retention: update issue counts", "err", err)
 	}
 
-	// Step 3: delete issues that now have no events.
-	tag, err := w.pool.Exec(ctx, `DELETE FROM issues WHERE event_count = 0 AND id = ANY($1::uuid[])`, ids)
+	// Step 3: delete resolved/ignored issues that now have no remaining events.
+	// Open and regressed issues are kept as shells so users retain a record
+	// that the problem existed even after their events age out.
+	tag, err := w.pool.Exec(ctx, `
+		DELETE FROM issues
+		WHERE event_count = 0
+		  AND status IN ('resolved', 'ignored')
+		  AND id = ANY($1::uuid[])
+	`, ids)
 	if err != nil {
 		slog.Error("retention: delete empty issues", "err", err)
 	} else {

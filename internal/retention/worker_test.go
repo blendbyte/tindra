@@ -115,10 +115,13 @@ func TestWorker_deletesOldEvents(t *testing.T) {
 		t.Errorf("expected 1 event (fresh only), got %d", count)
 	}
 
-	// Stale issue should be gone (its only event was deleted).
+	// Open stale issue should survive as a shell (event_count=0) even after its events are purged.
 	staleIss, _ := storage.GetIssue(ctx, testPool, iss.ID)
-	if staleIss != nil {
-		t.Error("stale issue should have been deleted")
+	if staleIss == nil {
+		t.Error("open stale issue shell should be kept after events are purged")
+	}
+	if staleIss != nil && staleIss.EventCount != 0 {
+		t.Errorf("open stale issue event_count: got %d, want 0", staleIss.EventCount)
 	}
 
 	// Fresh issue should still exist.
@@ -295,5 +298,78 @@ func TestWorker_purgesExpiredMFAChallenges(t *testing.T) {
 	`).Scan(&validCount)
 	if validCount != 1 {
 		t.Errorf("expected valid MFA challenge to survive, got count=%d", validCount)
+	}
+}
+
+func TestWorker_keepsOpenIssueShellAfterEventsPurged(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	// Open issue whose only event is stale.
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, testProject.ID, "fp-open-shell", "Open Shell", "error", "error", "", "", time.Now().AddDate(0, 0, -91))
+	testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
+		VALUES ($1, $2, $2, '{"level":"error"}'::jsonb, 'fp-open-shell', $3)
+	`, testProject.ID, time.Now().AddDate(0, 0, -91), iss.ID)
+
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
+	<-done
+
+	// Issue shell must survive.
+	survived, _ := storage.GetIssue(ctx, testPool, iss.ID)
+	if survived == nil {
+		t.Fatal("open issue shell should be kept after events are purged")
+	}
+	if survived.EventCount != 0 {
+		t.Errorf("event_count: got %d, want 0", survived.EventCount)
+	}
+}
+
+func TestWorker_deletesResolvedIssueAfterEventsPurged(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, testProject.ID, "fp-resolved-stale", "Resolved Stale", "error", "error", "", "", time.Now().AddDate(0, 0, -91))
+	testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
+		VALUES ($1, $2, $2, '{"level":"error"}'::jsonb, 'fp-resolved-stale', $3)
+	`, testProject.ID, time.Now().AddDate(0, 0, -91), iss.ID)
+	testPool.Exec(ctx, `UPDATE issues SET status = 'resolved' WHERE id = $1`, iss.ID)
+
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
+	<-done
+
+	gone, _ := storage.GetIssue(ctx, testPool, iss.ID)
+	if gone != nil {
+		t.Error("resolved issue with no remaining events should be deleted")
+	}
+}
+
+func TestWorker_deletesIgnoredIssueAfterEventsPurged(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, testProject.ID, "fp-ignored-stale", "Ignored Stale", "error", "error", "", "", time.Now().AddDate(0, 0, -91))
+	testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
+		VALUES ($1, $2, $2, '{"level":"error"}'::jsonb, 'fp-ignored-stale', $3)
+	`, testProject.ID, time.Now().AddDate(0, 0, -91), iss.ID)
+	testPool.Exec(ctx, `UPDATE issues SET status = 'ignored' WHERE id = $1`, iss.ID)
+
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { retention.NewWorker(testPool, 90).Run(runCtx); close(done) }()
+	<-done
+
+	gone, _ := storage.GetIssue(ctx, testPool, iss.ID)
+	if gone != nil {
+		t.Error("ignored issue with no remaining events should be deleted")
 	}
 }
