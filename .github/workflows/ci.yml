@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,12 +16,13 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     outputs:
-      go: ${{ steps.filter.outputs.go }}
-      frontend: ${{ steps.filter.outputs.frontend }}
+      go: ${{ steps.decide.outputs.go }}
+      frontend: ${{ steps.decide.outputs.frontend }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
         id: filter
+        if: github.event_name != 'workflow_dispatch'
         with:
           filters: |
             go:
@@ -30,6 +32,16 @@ jobs:
               - 'migrations/**'
             frontend:
               - 'web/**'
+      - name: Resolve change flags
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=${{ steps.filter.outputs.go }}" >> "$GITHUB_OUTPUT"
+            echo "frontend=${{ steps.filter.outputs.frontend }}" >> "$GITHUB_OUTPUT"
+          fi
 
   go-test:
     name: Go tests
