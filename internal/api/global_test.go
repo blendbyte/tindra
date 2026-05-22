@@ -625,9 +625,9 @@ func TestGetSpansGlobal_returnsStartTimestampAndData(t *testing.T) {
 	}
 
 	var spans []struct {
-		SpanID             string          `json:"span_id"`
-		StartTimestampMs   int64           `json:"start_timestamp_ms"`
-		Data               json.RawMessage `json:"data"`
+		SpanID           string          `json:"span_id"`
+		StartTimestampMs int64           `json:"start_timestamp_ms"`
+		Data             json.RawMessage `json:"data"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&spans); err != nil {
 		t.Fatalf("decode: %v", err)
