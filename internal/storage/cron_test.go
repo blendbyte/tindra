@@ -784,7 +784,8 @@ func TestRecordCheckin_setsReceivedAt(t *testing.T) {
 	}
 	after := time.Now().UTC()
 
-	if ci.ReceivedAt.Before(before) || ci.ReceivedAt.After(after) {
+	// Allow 2s tolerance for clock skew between Go and Postgres.
+	if ci.ReceivedAt.Before(before.Add(-2*time.Second)) || ci.ReceivedAt.After(after.Add(2*time.Second)) {
 		t.Errorf("received_at %v outside expected window [%v, %v]", ci.ReceivedAt, before, after)
 	}
 }

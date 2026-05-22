@@ -59,7 +59,7 @@ func UsePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 	if len(newPassword) > maxPasswordLen {
 		return nil, fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), BcryptCost)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
@@ -100,7 +100,7 @@ func AdminSetPassword(ctx context.Context, pool *pgxpool.Pool, userID, newPasswo
 	if len(newPassword) > maxPasswordLen {
 		return fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), BcryptCost)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}

@@ -15,6 +15,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// BcryptCost is the work factor used when hashing passwords.
+// Tests lower this to bcrypt.MinCost for speed.
+var BcryptCost = 12
+
 // dummyHash is pre-computed so we can run a constant-time bcrypt comparison
 // when a user is not found or their account is locked, preventing user
 // enumeration and lockout detection via response timing.
@@ -64,7 +68,7 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, email, password string)
 	if len(password) > maxPasswordLen {
 		return nil, fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
@@ -97,7 +101,7 @@ func CreateAdminUser(ctx context.Context, pool *pgxpool.Pool, email, name, passw
 	if len(password) > maxPasswordLen {
 		return nil, fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
@@ -342,7 +346,7 @@ func ChangeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, current
 		return ErrInvalidPassword
 	}
 
-	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), BcryptCost)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}

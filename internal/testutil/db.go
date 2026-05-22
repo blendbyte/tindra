@@ -14,7 +14,9 @@ import (
 	testcontainers "github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/crypto/bcrypt"
 
+	"github.com/blendbyte/tindra/internal/storage"
 	"github.com/blendbyte/tindra/migrations"
 )
 
@@ -25,6 +27,7 @@ import (
 // a short-lived database is created on that server instead of starting a container.
 // This makes repeated local runs near-instant — just keep `make db` running.
 func SetupDB(ctx context.Context) (*pgxpool.Pool, func()) {
+	storage.BcryptCost = bcrypt.MinCost
 	if dsn := os.Getenv("TINDRA_TEST_DSN"); dsn != "" {
 		return setupFromDSN(ctx, dsn)
 	}
