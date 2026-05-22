@@ -141,11 +141,11 @@
   --bg: oklch(0.12 0.018 285);
   --surface: oklch(0.16 0.016 285);
   --surface-2: oklch(0.19 0.018 285);
-  --border: oklch(0.30 0.022 285);
-  --border-soft: oklch(0.24 0.020 285);
+  --border: oklch(0.34 0.022 285);
+  --border-soft: oklch(0.27 0.020 285);
   --text-1: oklch(0.97 0.008 285);
-  --text-2: oklch(0.74 0.028 285);
-  --text-3: oklch(0.58 0.024 285);
+  --text-2: oklch(0.82 0.022 285);
+  --text-3: oklch(0.68 0.022 285);
   --accent: oklch(0.74 0.16 285);
   --accent-hi: oklch(0.80 0.16 285);
   --accent-soft: oklch(0.74 0.16 285 / 0.14);
@@ -196,11 +196,11 @@
     --bg: oklch(0.12 0.018 285);
     --surface: oklch(0.16 0.016 285);
     --surface-2: oklch(0.19 0.018 285);
-    --border: oklch(0.30 0.022 285);
-    --border-soft: oklch(0.24 0.020 285);
+    --border: oklch(0.34 0.022 285);
+    --border-soft: oklch(0.27 0.020 285);
     --text-1: oklch(0.97 0.008 285);
-    --text-2: oklch(0.74 0.028 285);
-    --text-3: oklch(0.58 0.024 285);
+    --text-2: oklch(0.82 0.022 285);
+    --text-3: oklch(0.68 0.022 285);
     --accent: oklch(0.74 0.16 285);
     --accent-hi: oklch(0.80 0.16 285);
     --accent-soft: oklch(0.74 0.16 285 / 0.14);
@@ -2880,6 +2880,22 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-3);
   white-space: nowrap;
 }
+.trace-search__zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.trace-search__zoom-level {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-3);
+  min-width: 20px;
+  text-align: center;
+  user-select: none;
+}
 
 /* ---- Span rows ---- */
 .span-row {
@@ -2895,7 +2911,8 @@ a { color: inherit; text-decoration: none; }
   position: relative;
   transition: background 0.08s;
 }
-.span-row:hover { background: var(--surface); }
+.span-row:hover,
+.span-row.is-hovered { background: var(--surface); }
 .span-row--open { background: var(--surface); }
 .span-row--focused { background: color-mix(in oklch, var(--accent) 7%, transparent) !important; outline: none; }
 .span-row--header {
@@ -3081,6 +3098,7 @@ a { color: inherit; text-decoration: none; }
   z-index: 2;
 }
 
+
 .timeline__tick {
   position: absolute;
   top: 0;
@@ -3104,7 +3122,8 @@ a { color: inherit; text-decoration: none; }
   border-bottom: 1px solid var(--border-soft);
   cursor: pointer;
 }
-.timeline__row:hover { background: var(--surface); }
+.timeline__row:hover,
+.timeline__row.is-hovered { background: var(--surface); }
 .timeline__row--focused { background: color-mix(in oklch, var(--accent) 7%, transparent) !important; }
 
 .timeline__bar {

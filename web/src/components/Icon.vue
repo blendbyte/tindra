@@ -37,6 +37,7 @@ defineProps<{ name: string; size?: number }>()
       <path d="M10 5l4 3-4 3M5 8h9" />
     </template>
     <path v-else-if="name === 'plus'" d="M8 3v10M3 8h10" />
+    <path v-else-if="name === 'minus'" d="M3 8h10" />
     <template v-else-if="name === 'more'">
       <circle cx="4" cy="8" r="0.75" fill="currentColor" stroke="none" />
       <circle cx="8" cy="8" r="0.75" fill="currentColor" stroke="none" />

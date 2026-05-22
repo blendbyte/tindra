@@ -20,6 +20,8 @@ const focusedIdx = ref<number | null>(null)
 const copiedTraceId = ref(false)
 const copiedSpanId = ref<string | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
+const hoveredRowKey = ref<string | null>(null)
+const zoomLevel = ref(1)
 
 const AUTO_GROUP_THRESHOLD = 4
 
@@ -298,6 +300,13 @@ function toggleGroup(key: string) {
   expandedGroups.value = s
 }
 
+function rowKey(row: DisplayRow): string {
+  return row.kind === 'span' ? row.span.id : row.key
+}
+
+function zoomIn() { zoomLevel.value = Math.round(Math.min(8, zoomLevel.value + 0.25) * 100) / 100 }
+function zoomOut() { zoomLevel.value = Math.round(Math.max(0.1, zoomLevel.value - 0.25) * 100) / 100 }
+
 function expandAll() {
   collapsedBranches.value = new Set()
 }
@@ -348,6 +357,24 @@ function handleKeydown(e: KeyboardEvent) {
     else toggleGroup(row.key)
   } else if (e.key === 'Escape') {
     focusedIdx.value = null
+  } else if (e.key === '+' || e.key === '=') {
+    e.preventDefault()
+    zoomIn()
+  } else if (e.key === '-' || e.key === '_') {
+    e.preventDefault()
+    zoomOut()
+  }
+}
+
+const wheelAccum = ref(0)
+function handleTimelineWheel(e: WheelEvent) {
+  if (!e.metaKey && !e.ctrlKey) return
+  e.preventDefault()
+  wheelAccum.value += e.deltaY
+  if (Math.abs(wheelAccum.value) >= 50) {
+    if (wheelAccum.value < 0) zoomIn()
+    else zoomOut()
+    wheelAccum.value = 0
   }
 }
 
@@ -554,6 +581,21 @@ function traceErrorOffset(e: TraceError): string {
           {{ op }}
         </span>
       </div>
+      <div v-if="spanList.length > 0" class="trace-search__zoom">
+        <button
+          class="span-tree-btn"
+          :disabled="zoomLevel <= 0.1"
+          v-tooltip="'Zoom out (-)'"
+          @click="zoomOut"
+        ><Icon name="minus" :size="10" /></button>
+        <span class="trace-search__zoom-level">{{ zoomLevel }}×</span>
+        <button
+          class="span-tree-btn"
+          :disabled="zoomLevel >= 8"
+          v-tooltip="'Zoom in (+)'"
+          @click="zoomIn"
+        ><Icon name="plus" :size="10" /></button>
+      </div>
     </div>
 
     <!-- Waterfall -->
@@ -601,8 +643,10 @@ function traceErrorOffset(e: TraceError): string {
             <div
               v-if="row.kind === 'group'"
               class="span-row span-row--group"
-              :class="{ 'span-row--focused': focusedIdx === i }"
+              :class="{ 'span-row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
               @click="toggleGroup(row.key)"
+              @mouseenter="hoveredRowKey = rowKey(row)"
+              @mouseleave="hoveredRowKey = null"
             >
               <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
                 <span class="span-name__caret">
@@ -623,9 +667,12 @@ function traceErrorOffset(e: TraceError): string {
                   'span-row--open': openDetails.has(row.span.id),
                   'span-row--focused': focusedIdx === i,
                   'span-row--critical': row.span.is_critical,
+                  'is-hovered': hoveredRowKey === rowKey(row),
                 }"
                 :style="{ opacity: hasCriticalPath && !row.span.is_critical ? 0.6 : 1 }"
                 @click="toggleDetail(row.span.id)"
+                @mouseenter="hoveredRowKey = rowKey(row)"
+                @mouseleave="hoveredRowKey = null"
               >
                 <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
                   <!-- Chevron for parent spans -->
@@ -726,7 +773,8 @@ function traceErrorOffset(e: TraceError): string {
       </div>
 
       <!-- Right: timeline -->
-      <div class="timeline" style="overflow-x: auto; overflow-y: auto; position: relative">
+      <div class="timeline" style="overflow-x: auto; overflow-y: auto; position: relative" @wheel="handleTimelineWheel">
+        <div :style="{ width: (zoomLevel * 100) + '%', minWidth: zoomLevel >= 1 ? '100%' : undefined, position: 'relative' }">
         <div
           v-for="v in ticks"
           :key="`tl-${v}`"
@@ -757,8 +805,10 @@ function traceErrorOffset(e: TraceError): string {
           v-for="(row, i) in displayRows"
           :key="row.kind === 'span' ? row.span.id : row.key"
           class="timeline__row"
-          :class="{ 'timeline__row--focused': focusedIdx === i }"
+          :class="{ 'timeline__row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
           @click="row.kind === 'group' ? toggleGroup(row.key) : toggleDetail(row.span.id)"
+          @mouseenter="hoveredRowKey = rowKey(row)"
+          @mouseleave="hoveredRowKey = null"
         >
           <!-- Group: single bar spanning the full op group range -->
           <template v-if="row.kind === 'group'">
@@ -802,6 +852,7 @@ function traceErrorOffset(e: TraceError): string {
           </template>
         </div>
 
+        </div><!-- end timeline__inner (zoom) -->
       </div>
     </div>
 
