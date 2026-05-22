@@ -4,15 +4,22 @@ import { useRouter, useRoute } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { useToast } from '@/composables/useToast'
 import { useConfig } from '@/composables/useConfig'
+import { useFormatters } from '@/composables/useFormatters'
+import { useTimezone } from '@/composables/useTimezone'
 import { apiFetch } from '@/api/client'
-import { formatRel } from '@/utils/formatters'
 import type { ApiToken, Invite, InstanceHealth, Project, ProjectQuota, ScrubPattern, ServerSettings, User, UserPermissions, AuditRow, AlertRule, AlertTrigger, AlertChannel } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 
 const ui = useUiStore()
+const auth = useAuthStore()
 const { show: showToast } = useToast()
+const { formatRel } = useFormatters()
+const tz = useTimezone()
+
+const allTimezones: string[] = (Intl as any).supportedValuesOf?.('timeZone') ?? ['UTC']
 const qc = useQueryClient()
 const router = useRouter()
 const route = useRoute()
@@ -379,11 +386,13 @@ function copyInviteURL(url: string) {
 const profileName = ref('')
 const profileEmail = ref('')
 const profileWeeklyDigest = ref(true)
+const profileTimezone = ref('UTC')
 
 function initProfile() {
   profileName.value = me.value?.name ?? ''
   profileEmail.value = me.value?.email ?? ''
   profileWeeklyDigest.value = me.value?.weekly_digest ?? true
+  profileTimezone.value = me.value?.timezone ?? 'UTC'
 }
 
 // Initialize profile fields whenever me loads or the profile tab becomes active.
@@ -392,9 +401,10 @@ watch([tab, me], () => {
 }, { immediate: true })
 
 const { mutate: updateProfile } = useMutation({
-  mutationFn: ({ name, email, weekly_digest }: { name: string; email: string; weekly_digest: boolean }) =>
-    apiFetch('/api/me', { method: 'PATCH', body: JSON.stringify({ name, email, weekly_digest }) }),
-  onSuccess: () => {
+  mutationFn: ({ name, email, weekly_digest, timezone }: { name: string; email: string; weekly_digest: boolean; timezone: string }) =>
+    apiFetch<User>('/api/me', { method: 'PATCH', body: JSON.stringify({ name, email, weekly_digest, timezone }) }),
+  onSuccess: (updated) => {
+    auth.setUser(updated)
     qc.invalidateQueries({ queryKey: ['me'] })
     showToast('Profile saved')
   },
@@ -967,7 +977,7 @@ function copyDsn(key: string, projectId: string) {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString()
+  return new Date(iso).toLocaleDateString(undefined, { timeZone: tz.value })
 }
 
 
@@ -1597,7 +1607,7 @@ function actionKindOf(action: string) {
                       <span class="proj-usage__count">{{ quotaData.rate_limit_used.toLocaleString() }}</span>
                       <span class="proj-usage__sep">of {{ quotaData.rate_limit_per_min.toLocaleString() }} / min</span>
                       <span v-if="quotaData.rate_limit_reset_at" class="proj-usage__reset">
-                        resets {{ new Date(quotaData.rate_limit_reset_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
+                        resets {{ new Date(quotaData.rate_limit_reset_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: tz }) }}
                       </span>
                     </div>
                     <div class="proj-quota-bar">
@@ -2366,8 +2376,14 @@ function actionKindOf(action: string) {
                 <label class="field__label">Email</label>
                 <input v-model="profileEmail" class="field__input" type="email" :placeholder="me?.email ?? 'you@example.com'" />
               </div>
+              <div class="field" style="grid-column: 1 / -1">
+                <label class="field__label">Timezone</label>
+                <select v-model="profileTimezone" class="field__input">
+                  <option v-for="z in allTimezones" :key="z" :value="z">{{ z }}</option>
+                </select>
+              </div>
               <div style="grid-column: 1 / -1; display: flex; gap: 8px">
-                <button class="btn btn--primary" @click="updateProfile({ name: profileName, email: profileEmail, weekly_digest: profileWeeklyDigest })">Save changes</button>
+                <button class="btn btn--primary" @click="updateProfile({ name: profileName, email: profileEmail, weekly_digest: profileWeeklyDigest, timezone: profileTimezone })">Save changes</button>
                 <button class="btn btn--ghost" @click="initProfile">Cancel</button>
               </div>
             </div>
@@ -2388,7 +2404,7 @@ function actionKindOf(action: string) {
                 :class="{ 'toggle--on': profileWeeklyDigest }"
                 role="switch"
                 :aria-checked="profileWeeklyDigest"
-                @click="profileWeeklyDigest = !profileWeeklyDigest; updateProfile({ name: profileName, email: profileEmail, weekly_digest: profileWeeklyDigest })"
+                @click="profileWeeklyDigest = !profileWeeklyDigest; updateProfile({ name: profileName, email: profileEmail, weekly_digest: profileWeeklyDigest, timezone: profileTimezone })"
               >
                 <span class="toggle__knob" />
               </button>

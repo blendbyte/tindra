@@ -6,6 +6,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import type { TransactionSummary, TxTimeseries, TxListPage } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
+import { useTimezone } from '@/composables/useTimezone'
 import FilterChip from '@/components/FilterChip.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import Icon from '@/components/Icon.vue'
@@ -13,6 +14,7 @@ import Icon from '@/components/Icon.vue'
 const route = useRoute()
 const router = useRouter()
 const projects = useProjectsStore()
+const tz = useTimezone()
 
 const txName = computed(() => route.query.name as string)
 const txOp = computed(() => route.query.op as string)
@@ -180,6 +182,7 @@ function formatTime(iso: string) {
   return d.toLocaleString('en-US', {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    timeZone: tz.value,
   })
 }
 

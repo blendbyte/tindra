@@ -33,11 +33,16 @@ vi.mock('@/utils/formatters', () => ({
   formatRel: vi.fn(() => '2m ago'),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import IssueDetailView from '../IssueDetailView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { apiFetch } from '@/api/client'
 import { flushPromises } from '@vue/test-utils'
+import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -93,6 +98,8 @@ function setupQueries(issue = baseIssue as unknown, overrides: any[] = []) {
 
 beforeEach(() => {
   vi.mocked(useQuery).mockReset()
+  vi.mocked(useAuthStore).mockReset()
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
   pushMock.mockReset()
 })
 

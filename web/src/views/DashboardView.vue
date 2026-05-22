@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
-import { formatDuration, formatRel } from '@/utils/formatters'
+import { formatDuration } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
+import { useTimezone } from '@/composables/useTimezone'
 import type {
   IssueListPage,
   TransactionSummary,
@@ -18,12 +20,24 @@ import Sparkline from '@/components/Sparkline.vue'
 
 const router = useRouter()
 const projects = useProjectsStore()
+const { formatRel } = useFormatters()
+const timezone = useTimezone()
 
 const { data: me } = useQuery({
   queryKey: ['me'],
   queryFn: () => apiFetch<User>('/api/me'),
 })
 const canManageAlerts = computed(() => me.value?.permissions.manage_alerts ?? false)
+
+// ── Heatmap timezone helpers ──────────────────────────────────────────────────
+
+function tzDateStr(date: Date, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(date)
+}
+
+function tzHour(date: Date, tz: string): number {
+  return parseInt(new Intl.DateTimeFormat('en', { hour: 'numeric', hour12: false, timeZone: tz }).format(date), 10) % 24
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -126,10 +140,12 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
 // ── Heatmap ───────────────────────────────────────────────────────────────────
 
 const dayLabels = computed(() => {
-  const today = new Date()
+  const tz = timezone.value
+  const todayStr = tzDateStr(new Date(), tz)
+  const todayMs = new Date(todayStr).getTime()
   return Array.from({ length: 7 }, (_, i) => {
-    const ts = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (6 - i))
-    return new Date(ts).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
+    const ms = todayMs - (6 - i) * 86_400_000
+    return new Date(ms).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
   })
 })
 
@@ -137,14 +153,15 @@ const heatGrid = computed((): number[][] => {
   const grid: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0))
   const buckets = txTs.value?.buckets
   if (!buckets?.length) return grid
-  const now = new Date()
-  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const tz = timezone.value
+  const todayStr = tzDateStr(new Date(), tz)
+  const todayMs = new Date(todayStr).getTime()
   for (const b of buckets) {
     const t = new Date(b.time)
-    const bucketDayUTC = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate())
-    const daysAgo = Math.round((todayUTC - bucketDayUTC) / 86_400_000)
+    const bucketMs = new Date(tzDateStr(t, tz)).getTime()
+    const daysAgo = Math.round((todayMs - bucketMs) / 86_400_000)
     if (daysAgo < 0 || daysAgo > 6) continue
-    grid[6 - daysAgo][t.getUTCHours()] += b.count
+    grid[6 - daysAgo][tzHour(t, tz)] += b.count
   }
   return grid
 })

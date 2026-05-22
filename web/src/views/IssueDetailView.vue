@@ -4,7 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/vue-query'
 import { useToast } from '@/composables/useToast'
 import { apiFetch } from '@/api/client'
-import { formatRel } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
+import { useTimezone } from '@/composables/useTimezone'
 import { useIssueNavStore } from '@/stores/issueNav'
 import type { Issue, Event as TindraEvent, Comment, User, TagSummary, IssueHistoryEntry, EventSummary, EventListPage, HistogramBucket } from '@/api/types'
 import Icon from '@/components/Icon.vue'
@@ -18,6 +19,8 @@ const router = useRouter()
 const { show: showToast } = useToast()
 const qc = useQueryClient()
 const navStore = useIssueNavStore()
+const { formatRel } = useFormatters()
+const tz = useTimezone()
 
 const { data: me } = useQuery({
   queryKey: ['me'],
@@ -329,20 +332,21 @@ const { data: histogram } = useQuery({
 
 function formatHistogramTime(iso: string): string {
   const d = new Date(iso)
-  // bucketSize comes from histogram.value?.bucket_size
   const size = histogram.value?.bucket_size
+  const zone = tz.value
   if (size === 'hour') {
-    const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-    const h = String(d.getUTCHours()).padStart(2, '0')
-    const hNext = String((d.getUTCHours() + 1) % 24).padStart(2, '0')
-    return `${dateStr}  ${h}:00 – ${hNext}:00 UTC`
+    const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: zone })
+    const fmt = new Intl.DateTimeFormat('en', { hour: 'numeric', hour12: false, timeZone: zone })
+    const h = String(parseInt(fmt.format(d), 10) % 24).padStart(2, '0')
+    const hNext = String((parseInt(fmt.format(d), 10) % 24 + 1) % 24).padStart(2, '0')
+    return `${dateStr}  ${h}:00 – ${hNext}:00`
   }
   if (size === 'day') {
-    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: zone })
   }
   const end = new Date(d.getTime() + 6 * 24 * 60 * 60 * 1000)
-  const s = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-  const e = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const s = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: zone })
+  const e = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: zone })
   return `${s} – ${e}`
 }
 
@@ -376,7 +380,7 @@ function historyLabel(entry: IssueHistoryEntry): string {
         const count = entry.details.ignore_count_limit as number | undefined
         if (until) {
           const d = new Date(until)
-          return `Ignored until ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+          return `Ignored until ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: tz.value })}`
         }
         if (count != null) return `Ignored for ${count.toLocaleString()} occurrence${count === 1 ? '' : 's'}`
         return 'Ignored forever'
@@ -638,7 +642,7 @@ onUnmounted(() => {
           <span class="issue-meta__item">
             <span class="statuspill" :class="`statuspill--${issue.status}`">{{ issue.status }}</span>
             <template v-if="issue.status === 'ignored' && issue.ignore_until">
-              <span class="issue-meta__k"> until {{ new Date(issue.ignore_until).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }}</span>
+              <span class="issue-meta__k"> until {{ new Date(issue.ignore_until).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: tz }) }}</span>
             </template>
             <template v-else-if="issue.status === 'ignored' && issue.ignore_count_limit != null">
               <span class="issue-meta__k"> · {{ Math.max(0, issue.ignore_count_limit - (issue.ignore_count ?? 0)) }} left</span>

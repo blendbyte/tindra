@@ -11,6 +11,8 @@ export interface User {
   name: string
   has_password: boolean
   mfa_enabled: boolean
+  weekly_digest: boolean
+  timezone: string
   permissions: UserPermissions
   created_at: string
 }

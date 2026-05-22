@@ -43,6 +43,7 @@ func (ro *router) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		Name         string `json:"name"`
 		Email        string `json:"email"`
 		WeeklyDigest *bool  `json:"weekly_digest"`
+		Timezone     string `json:"timezone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -52,7 +53,15 @@ func (ro *router) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "email is required", http.StatusBadRequest)
 		return
 	}
-	u, err := storage.UpdateUserProfile(r.Context(), ro.pool, *actorID, req.Name, req.Email)
+	tz := req.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		http.Error(w, "invalid timezone", http.StatusBadRequest)
+		return
+	}
+	u, err := storage.UpdateUserProfile(r.Context(), ro.pool, *actorID, req.Name, req.Email, tz)
 	if err != nil {
 		slog.Error("update me", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

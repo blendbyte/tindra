@@ -187,7 +187,7 @@ func (ro *router) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		name = inv.Name
 	}
 	if name != "" {
-		if updated, err2 := storage.UpdateUserProfile(r.Context(), ro.pool, user.ID, name, user.Email); err2 == nil && updated != nil {
+		if updated, err2 := storage.UpdateUserProfile(r.Context(), ro.pool, user.ID, name, user.Email, user.Timezone); err2 == nil && updated != nil {
 			user = updated
 		}
 	}

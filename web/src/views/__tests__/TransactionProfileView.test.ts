@@ -24,10 +24,15 @@ vi.mock('@/utils/formatters', () => ({
   formatDuration: vi.fn((n: number) => `${n}ms`),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import TransactionProfileView from '../TransactionProfileView.vue'
 import { useQuery, useInfiniteQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -74,6 +79,8 @@ beforeEach(() => {
   vi.mocked(useQuery).mockReset()
   vi.mocked(useInfiniteQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
+  vi.mocked(useAuthStore).mockReset()
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
 })
 
 describe('TransactionProfileView', () => {

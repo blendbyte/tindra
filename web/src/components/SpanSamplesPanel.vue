@@ -6,6 +6,7 @@ import { apiFetch } from '@/api/client'
 import type { SpanSummary, SpanSample } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { formatDuration } from '@/utils/formatters'
+import { useTimezone } from '@/composables/useTimezone'
 
 const props = defineProps<{
   row: SpanSummary
@@ -16,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const projects = useProjectsStore()
+const tz = useTimezone()
 
 const queryParams = computed(() => {
   const p = new URLSearchParams()
@@ -40,7 +42,7 @@ function formatTime(iso: string) {
   if (diff < 60_000) return 'just now'
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: tz.value })
 }
 
 function durClass(ms: number) {

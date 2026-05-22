@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { useTimezone } from '@/composables/useTimezone'
 import { useChartInteraction, PAD_LEFT } from '@/composables/useChartInteraction'
 import type { ChartSeries } from '@/composables/useChartInteraction'
 import ChartTooltip from './ChartTooltip.vue'
@@ -16,6 +17,8 @@ const props = withDefaults(defineProps<{
   height: 120,
   gridLines: 3,
 })
+
+const tz = useTimezone()
 
 const PAD = { top: 8, right: 8, bottom: 28, left: PAD_LEFT }
 
@@ -92,9 +95,9 @@ function fmtValue(v: number): string {
 function fmtAxisTime(iso: string): string {
   const d = new Date(iso)
   if (props.bucketSize === 'week' || props.bucketSize === 'day') {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: tz.value })
   }
-  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz.value })
 }
 
 function fmtTime(iso: string): string {

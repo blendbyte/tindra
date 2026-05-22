@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { ChartSeries } from '@/composables/useChartInteraction'
 
@@ -17,7 +17,17 @@ vi.mock('./ChartTooltip.vue', () => ({
   default: { template: '<div />', props: ['visible', 'mouseX', 'mouseY', 'time', 'lines'] },
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import TimeseriesChart from '../TimeseriesChart.vue'
+import { useAuthStore } from '@/stores/auth'
+
+beforeEach(() => {
+  vi.mocked(useAuthStore).mockReset()
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
+})
 
 const times = ['2024-01-01T00:00:00Z', '2024-01-01T01:00:00Z', '2024-01-01T02:00:00Z']
 

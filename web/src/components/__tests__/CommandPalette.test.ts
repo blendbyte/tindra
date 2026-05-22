@@ -21,9 +21,14 @@ vi.mock('@/stores/issueNav', () => ({
   useIssueNavStore: vi.fn(() => ({ set: vi.fn() })),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import CommandPalette from '../CommandPalette.vue'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
+import { useAuthStore } from '@/stores/auth'
 
 function makeProject(id: string, name: string, slug = id): Project {
   return { id, name, public_key: id, slug, created_at: '', platform: 'javascript' } as Project
@@ -63,6 +68,8 @@ beforeEach(() => {
   pushMock.mockReset()
   vi.mocked(useUiStore).mockReset()
   vi.mocked(useProjectsStore).mockReset()
+  vi.mocked(useAuthStore).mockReset()
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
 })
 
 describe('CommandPalette', () => {

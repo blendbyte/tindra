@@ -22,8 +22,13 @@ vi.mock('@/utils/formatters', () => ({
   formatDuration: vi.fn((n: number) => `${n}ms`),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import TransactionDetailView from '../TransactionDetailView.vue'
 import { useQuery } from '@tanstack/vue-query'
+import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -59,6 +64,8 @@ function setupMocks(
 
 beforeEach(() => {
   vi.mocked(useQuery).mockReset()
+  vi.mocked(useAuthStore).mockReset()
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
   backMock.mockReset()
 })
 

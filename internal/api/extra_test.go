@@ -94,6 +94,59 @@ func TestUpdateMe_badBody(t *testing.T) {
 	}
 }
 
+func TestUpdateMe_withTimezone(t *testing.T) {
+	body := bytes.NewBufferString(`{"email":"test@example.com","timezone":"America/New_York"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/me", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var u storage.User
+	if err := json.NewDecoder(rec.Body).Decode(&u); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if u.Timezone != "America/New_York" {
+		t.Errorf("timezone: got %q, want America/New_York", u.Timezone)
+	}
+}
+
+func TestUpdateMe_invalidTimezone(t *testing.T) {
+	body := bytes.NewBufferString(`{"email":"test@example.com","timezone":"Not/A/Zone"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/me", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid timezone, got %d", rec.Code)
+	}
+}
+
+func TestUpdateMe_emptyTimezone_defaultsUTC(t *testing.T) {
+	body := bytes.NewBufferString(`{"email":"test@example.com","timezone":""}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/me", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var u storage.User
+	if err := json.NewDecoder(rec.Body).Decode(&u); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if u.Timezone != "UTC" {
+		t.Errorf("timezone: got %q, want UTC", u.Timezone)
+	}
+}
+
 func TestUpdateMe_unauthenticated(t *testing.T) {
 	body := bytes.NewBufferString(`{"email":"test@example.com"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/me", body)

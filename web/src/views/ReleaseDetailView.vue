@@ -3,7 +3,8 @@ import { computed, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-import { formatDuration, formatRel } from '@/utils/formatters'
+import { formatDuration } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
 import type { Release, ReleaseIssue, ReleaseTxSummary } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { useProjectsStore } from '@/stores/projects'
@@ -11,6 +12,7 @@ import { useProjectsStore } from '@/stores/projects'
 const route = useRoute()
 const router = useRouter()
 const projects = useProjectsStore()
+const { formatRel } = useFormatters()
 
 const releaseId = computed(() => route.params.id as string)
 

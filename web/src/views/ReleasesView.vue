@@ -4,12 +4,14 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
-import { formatDuration, formatRel } from '@/utils/formatters'
+import { formatDuration } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
 import type { Release, ReleaseListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const projects = useProjectsStore()
+const { formatRel } = useFormatters()
 
 // ── Pagination ────────────────────────────────────────────────────────────────
 

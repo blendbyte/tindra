@@ -124,6 +124,15 @@ describe('formatTs', () => {
     expect(result.endsWith('.042')).toBe(true)
   })
 
+  it('applies the given timezone when formatting', () => {
+    // 2024-01-15T14:30:00.000Z = 06:30:00 in America/Los_Angeles (UTC-8 in January)
+    const iso = '2024-01-15T14:30:00.000Z'
+    const utcResult = formatTs(iso, 'UTC')
+    const laResult = formatTs(iso, 'America/Los_Angeles')
+    expect(utcResult.startsWith('14:30:00')).toBe(true)
+    expect(laResult.startsWith('06:30:00')).toBe(true)
+  })
+
   it('pads milliseconds with leading zeros', () => {
     const d = new Date('2024-01-15T10:00:00.007Z')
     const result = formatTs(d.toISOString())

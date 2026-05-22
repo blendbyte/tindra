@@ -2,13 +2,14 @@
 import { ref, computed, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-import { formatTs } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
 import type { Log, LogListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import FilterChip from '@/components/FilterChip.vue'
 import { useProjectsStore } from '@/stores/projects'
 
 const projects = useProjectsStore()
+const { formatTs } = useFormatters()
 
 const levelFilter = ref('All')
 const envFilter = ref('All')

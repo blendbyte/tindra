@@ -18,9 +18,14 @@ vi.mock('@/utils/formatters', () => ({
   formatTs: vi.fn((ts: string) => ts),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import LogsView from '../LogsView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
+import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -51,6 +56,8 @@ function setupMocks(logs: unknown[] = [], isLoading = false) {
 beforeEach(() => {
   vi.mocked(useQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
+  vi.mocked(useAuthStore).mockReset()
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
 })
 
 describe('LogsView', () => {

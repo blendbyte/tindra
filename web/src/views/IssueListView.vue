@@ -7,7 +7,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { useToast } from '@/composables/useToast'
 import { apiFetch } from '@/api/client'
-import { formatRel } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
 import type { Issue, IssueListPage, User } from '@/api/types'
 import FilterChip from '@/components/FilterChip.vue'
 import Sparkline from '@/components/Sparkline.vue'
@@ -22,6 +22,7 @@ const projects = useProjectsStore()
 const navStore = useIssueNavStore()
 const { show: showToast } = useToast()
 const qc = useQueryClient()
+const { formatRel } = useFormatters()
 
 const LS_NS = 'tindra:issues:'
 

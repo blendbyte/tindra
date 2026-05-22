@@ -27,9 +27,14 @@ vi.mock('@/utils/formatters', () => ({
   formatRel: vi.fn(() => '2m ago'),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import ReleaseDetailView from '../ReleaseDetailView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
+import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -70,6 +75,8 @@ function setupMocks(
 beforeEach(() => {
   vi.mocked(useQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
+  vi.mocked(useAuthStore).mockReset()
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
   pushMock.mockReset()
 })
 

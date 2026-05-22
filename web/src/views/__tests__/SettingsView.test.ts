@@ -40,12 +40,17 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 vi.mock('@/utils/formatters', () => ({
   formatRel: vi.fn(() => '2m ago'),
 }))
 
 import SettingsView from '../SettingsView.vue'
 import { useQuery } from '@tanstack/vue-query'
+import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -59,6 +64,7 @@ const adminUser = {
   email: 'admin@example.com',
   mfa_enabled: false,
   weekly_digest: true,
+  timezone: 'UTC',
   permissions: {
     manage_projects: true,
     manage_users: true,
@@ -68,6 +74,7 @@ const adminUser = {
 }
 
 function setupMocks(meData: unknown = adminUser) {
+  vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
   // useQuery call order in SettingsView:
   // 1. tokens, 2. projects, 3. users, 4. auditLogData, 5. me,
   // 6. invites, 7. alertRules, 8. settings, 9. health, 10. quota
@@ -87,6 +94,7 @@ function setupMocks(meData: unknown = adminUser) {
 
 beforeEach(() => {
   vi.mocked(useQuery).mockReset()
+  vi.mocked(useAuthStore).mockReset()
   pushMock.mockReset()
   replaceMock.mockReset()
   currentTab = 'overview'
@@ -276,6 +284,7 @@ describe('SettingsView', () => {
 
     it('renders audit rows when events exist', () => {
       currentTab = 'audit'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       const auditRow = {
         id: 'a1',
         event_type: 'user.login',
@@ -350,6 +359,7 @@ describe('SettingsView', () => {
 
     it('renders project cards when projects exist', () => {
       currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 0, event_limit: 0 }
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -369,6 +379,7 @@ describe('SettingsView', () => {
 
     it('expands a project card when its header is clicked', async () => {
       currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 0, event_limit: 0 }
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -439,6 +450,7 @@ describe('SettingsView', () => {
 
     function setupAlertsWithRules(rules: unknown[]) {
       currentTab = 'alerts'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -497,6 +509,7 @@ describe('SettingsView', () => {
       email: 'bob@example.com',
       mfa_enabled: false,
       weekly_digest: false,
+      timezone: 'UTC',
       permissions: {
         manage_projects: false,
         manage_users: false,
@@ -507,6 +520,7 @@ describe('SettingsView', () => {
 
     function setupUsersWithData(users: unknown[]) {
       currentTab = 'users'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -642,6 +656,7 @@ describe('SettingsView', () => {
 
     it('renders health data on overview tab', () => {
       currentTab = 'overview'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -661,6 +676,7 @@ describe('SettingsView', () => {
 
     it('renders expires label from health data', () => {
       currentTab = 'overview'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -680,6 +696,7 @@ describe('SettingsView', () => {
 
     it('renders usage section with settings data', () => {
       currentTab = 'overview'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       const settings = { event_limit: 1_000_000, project_limit: 10, user_limit: 5, billing_url: null }
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -758,6 +775,7 @@ describe('SettingsView', () => {
 
     function setupAlertsTab(rules: unknown[], projects: unknown[] = []) {
       currentTab = 'alerts'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref(projects) } as any)
@@ -824,6 +842,7 @@ describe('SettingsView', () => {
   describe('audit log - all action kinds', () => {
     function setupAuditTab(events: unknown[]) {
       currentTab = 'audit'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -926,11 +945,13 @@ describe('SettingsView', () => {
       email: 'bob@example.com',
       mfa_enabled: false,
       weekly_digest: false,
+      timezone: 'UTC',
       permissions: { manage_projects: false, manage_users: false, manage_alerts: false, manage_issues: true },
     }
 
     function setupUsersTabWithUsers(users: unknown[]) {
       currentTab = 'users'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
@@ -1056,6 +1077,7 @@ describe('SettingsView', () => {
 
     function setupProjectsTabWithProject(projects: unknown[]) {
       currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref(projects) } as any)
@@ -1150,6 +1172,7 @@ describe('SettingsView', () => {
 
     function setupProjectsTab() {
       currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([proj]) } as any)
@@ -1210,6 +1233,7 @@ describe('SettingsView', () => {
 
     function setupAlertsWithRulesForEdit(rules: unknown[]) {
       currentTab = 'alerts'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)

@@ -5,7 +5,7 @@ import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { apiFetch } from '@/api/client'
-import { formatRel } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
 import type { Issue, IssueListPage } from '@/api/types'
 import Icon from './Icon.vue'
 
@@ -13,6 +13,7 @@ const router = useRouter()
 const ui = useUiStore()
 const projects = useProjectsStore()
 const navStore = useIssueNavStore()
+const { formatRel } = useFormatters()
 
 const q = ref('')
 const active = ref(0)

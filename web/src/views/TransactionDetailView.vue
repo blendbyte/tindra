@@ -5,10 +5,12 @@ import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import type { Transaction, Span, TraceError, Log, LogListPage } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
+import { useTimezone } from '@/composables/useTimezone'
 import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
 const router = useRouter()
+const tz = useTimezone()
 const txId = computed(() => route.params.id as string)
 
 const collapsedBranches = ref<Set<string>>(new Set())
@@ -441,9 +443,9 @@ function traceErrorOffset(e: TraceError): string {
         <div class="stat">
           <div class="stat__label">Started</div>
           <div class="stat__value stat__value--md">
-            {{ new Date(tx.start_timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) }}
+            {{ new Date(tx.start_timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: tz }) }}
           </div>
-          <div class="stat__sub">{{ new Date(tx.start_timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}</div>
+          <div class="stat__sub">{{ new Date(tx.start_timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: tz }) }}</div>
         </div>
         <div class="stat stat--copyable" :title="copiedTraceId ? 'Copied!' : 'Click to copy full trace ID'" @click="copyTraceId">
           <div class="stat__label">Trace ID</div>

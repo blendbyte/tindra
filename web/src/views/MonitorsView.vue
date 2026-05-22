@@ -2,7 +2,8 @@
 import { ref, computed } from 'vue'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-import { formatRel, formatDuration } from '@/utils/formatters'
+import { formatDuration } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
 import type { CronMonitor, CronCheckin, Project } from '@/api/types'
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
@@ -20,6 +21,7 @@ function humanSchedule(expr: string): string {
 const projects = useProjectsStore()
 const auth = useAuthStore()
 const qc = useQueryClient()
+const { formatRel } = useFormatters()
 
 const canManage = computed(() => auth.user?.permissions.manage_projects ?? false)
 

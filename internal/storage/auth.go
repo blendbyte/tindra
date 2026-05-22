@@ -35,6 +35,7 @@ type User struct {
 	HasPassword  bool            `json:"has_password"`
 	MFAEnabled   bool            `json:"mfa_enabled"`
 	WeeklyDigest bool            `json:"weekly_digest"`
+	Timezone     string          `json:"timezone"`
 	Permissions  UserPermissions `json:"permissions"`
 	CreatedAt    time.Time       `json:"created_at"`
 }
@@ -74,10 +75,10 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, email, password string)
 		INSERT INTO users (email, password_hash,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)
 		SELECT $1, $2, v, v, v, v FROM is_first
-		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest,
+		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
 	`, strings.ToLower(email), string(hash)).Scan(
-		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if err != nil {
@@ -105,10 +106,10 @@ func CreateAdminUser(ctx context.Context, pool *pgxpool.Pool, email, name, passw
 		INSERT INTO users (email, name, password_hash,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)
 		VALUES ($1, $2, $3, true, true, true, true)
-		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest,
+		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
 	`, strings.ToLower(email), name, string(hash)).Scan(
-		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if err != nil {
@@ -128,10 +129,10 @@ func CreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, email string) (*Us
 		INSERT INTO users (email, password_hash,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)
 		SELECT $1, '', v, v, v, v FROM is_first
-		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest,
+		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
 	`, strings.ToLower(email)).Scan(
-		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if err != nil {
@@ -144,11 +145,11 @@ func CreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, email string) (*Us
 func GetUserByID(ctx context.Context, pool *pgxpool.Pool, id string) (*User, error) {
 	var u User
 	err := pool.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest,
+		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
 			created_at
 		FROM users WHERE id = $1
-	`, id).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+	`, id).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -164,11 +165,11 @@ func GetUserByID(ctx context.Context, pool *pgxpool.Pool, id string) (*User, err
 func GetUserByEmail(ctx context.Context, pool *pgxpool.Pool, email string) (*User, error) {
 	var u User
 	err := pool.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest,
+		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
 			created_at
 		FROM users WHERE email = $1
-	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -187,11 +188,11 @@ func AuthenticateUser(ctx context.Context, pool *pgxpool.Pool, email, password s
 	var lockedUntil *time.Time
 
 	err := pool.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest,
+		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
 			created_at, failed_attempts, locked_until
 		FROM users WHERE email = $1
-	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues,
 		&u.CreatedAt, &failedAttempts, &lockedUntil)
@@ -234,7 +235,7 @@ func AuthenticateUser(ctx context.Context, pool *pgxpool.Pool, email, password s
 
 func ListUsers(ctx context.Context, pool *pgxpool.Pool) ([]*User, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest,
+		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
 			created_at
 		FROM users ORDER BY created_at ASC
@@ -247,7 +248,7 @@ func ListUsers(ctx context.Context, pool *pgxpool.Pool) ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 			&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 			&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
@@ -284,11 +285,11 @@ func UpdateUserPermissions(ctx context.Context, pool *pgxpool.Pool, id string, p
 		    perm_manage_alerts   = $4,
 		    perm_manage_issues   = $5
 		WHERE id = $1
-		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest,
+		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
 			created_at
 	`, id, perms.ManageProjects, perms.ManageUsers, perms.ManageAlerts, perms.ManageIssues).Scan(
-		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -300,14 +301,15 @@ func UpdateUserPermissions(ctx context.Context, pool *pgxpool.Pool, id string, p
 	return &u, nil
 }
 
-func UpdateUserProfile(ctx context.Context, pool *pgxpool.Pool, id, name, email string) (*User, error) {
+func UpdateUserProfile(ctx context.Context, pool *pgxpool.Pool, id, name, email, timezone string) (*User, error) {
 	var u User
 	err := pool.QueryRow(ctx, `
-		UPDATE users SET name = $1, email = $2 WHERE id = $3
-		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest,
+		UPDATE users SET name = $1, email = $2, timezone = $3 WHERE id = $4
+		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
 			created_at
-	`, name, strings.ToLower(email), id).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest,
+	`, name, strings.ToLower(email), timezone, id).Scan(
+		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if err != nil {

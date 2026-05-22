@@ -15,9 +15,14 @@ vi.mock('@/stores/projects', () => ({
   useProjectsStore: vi.fn(),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(),
+}))
+
 import SpanSamplesPanel from '../SpanSamplesPanel.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
+import { useAuthStore } from '@/stores/auth'
 
 const mockRow: SpanSummary = {
   op: 'db.query',
@@ -47,6 +52,7 @@ function setupQuery(samples: SpanSample[] | undefined, isLoading = false) {
   vi.mocked(useProjectsStore).mockReturnValue({
     selectedIds: [],
   } as any)
+  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
 
   vi.mocked(useQuery).mockReturnValue({
     data: ref(samples),
