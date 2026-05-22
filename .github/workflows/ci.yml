@@ -42,6 +42,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Pre-pull postgres image
+        run: docker pull postgres:18
+        timeout-minutes: 5
       - name: Create UI stub for embed
         run: mkdir -p internal/ui/dist && printf '<!doctype html>' > internal/ui/dist/index.html
       - name: Run tests
