@@ -25,8 +25,8 @@ func TestSemverGT(t *testing.T) {
 		{"v1.0.0", "v1.1.0", false},
 		{"v1.0.0", "v1.0.1", false},
 		{"v1.2.3-beta", "v1.2.3", false}, // stripped pre-release equals v1.2.3
-		{"dev", "v1.0.0", false},          // non-semver
-		{"v1.0.0", "dev", false},          // non-semver
+		{"dev", "v1.0.0", false},         // non-semver
+		{"v1.0.0", "dev", false},         // non-semver
 		{"", "", false},
 	}
 
