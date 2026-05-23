@@ -144,6 +144,7 @@ export interface Event {
   environment: string | null
   release: string | null
   platform: string | null
+  trace_id?: string | null
   payload: Record<string, unknown>
 }
 

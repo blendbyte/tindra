@@ -408,3 +408,52 @@ func TestListAllTransactions_limitClamping(t *testing.T) {
 		t.Error("expected results even with Limit=0 (should clamp to 50)")
 	}
 }
+
+func TestGetTransactionByTraceID_found(t *testing.T) {
+	p := setupProjectForTxns(t)
+	start := time.Now().UTC().Truncate(time.Millisecond)
+	const traceID = "trace-test-abc123"
+
+	var tx storage.Transaction
+	err := testPool.QueryRow(context.Background(), `
+		INSERT INTO transactions
+			(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, trace_id)
+		VALUES ($1, '/api/traced', 'http.server', 'ok', 200, $2, $3, $4)
+		RETURNING id, project_id, COALESCE(trace_id,''), COALESCE(span_id,''), transaction,
+		          op, status, duration_ms, start_timestamp, timestamp, received_at,
+		          COALESCE(environment,''), COALESCE(release,''), COALESCE(platform,'')
+	`, p.ID, start, start.Add(200*time.Millisecond), traceID).Scan(
+		&tx.ID, &tx.ProjectID, &tx.TraceID, &tx.SpanID, &tx.Transaction,
+		&tx.Op, &tx.Status, &tx.DurationMs, &tx.StartTimestamp, &tx.Timestamp, &tx.ReceivedAt,
+		&tx.Environment, &tx.Release, &tx.Platform,
+	)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, err := storage.GetTransactionByTraceID(context.Background(), testPool, traceID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected transaction, got nil")
+	}
+	if got.ID != tx.ID {
+		t.Errorf("ID: got %q, want %q", got.ID, tx.ID)
+	}
+	if got.TraceID != traceID {
+		t.Errorf("TraceID: got %q, want %q", got.TraceID, traceID)
+	}
+}
+
+func TestGetTransactionByTraceID_notFound(t *testing.T) {
+	setupProjectForTxns(t) // clears transactions via CASCADE
+
+	got, err := storage.GetTransactionByTraceID(context.Background(), testPool, "nonexistent-trace-xyz")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil, got transaction %q", got.ID)
+	}
+}

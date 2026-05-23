@@ -437,6 +437,29 @@ func GetTransactionPercentiles(ctx context.Context, pool *pgxpool.Pool, projectI
 	return &p, nil
 }
 
+// GetTransactionByTraceID returns the most recent transaction for a given trace_id.
+func GetTransactionByTraceID(ctx context.Context, pool *pgxpool.Pool, traceID string) (*Transaction, error) {
+	var t Transaction
+	err := pool.QueryRow(ctx, `
+		SELECT id, project_id, COALESCE(trace_id,''), COALESCE(span_id,''), transaction,
+		       op, status, duration_ms, start_timestamp, timestamp, received_at,
+		       COALESCE(environment,''), COALESCE(release,''), COALESCE(platform,'')
+		FROM transactions WHERE trace_id = $1
+		ORDER BY received_at DESC LIMIT 1
+	`, traceID).Scan(
+		&t.ID, &t.ProjectID, &t.TraceID, &t.SpanID, &t.Transaction,
+		&t.Op, &t.Status, &t.DurationMs, &t.StartTimestamp, &t.Timestamp, &t.ReceivedAt,
+		&t.Environment, &t.Release, &t.Platform,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	return &t, nil
+}
+
 // GetErrorsForTrace returns up to 50 error events that share a trace_id, joined to their
 // parent issue for title and status. Used to correlate errors with spans in the waterfall.
 func GetErrorsForTrace(ctx context.Context, pool *pgxpool.Pool, traceID string) ([]*TraceError, error) {

@@ -769,13 +769,53 @@ func (ro *router) handleGetLatestEventGlobal(w http.ResponseWriter, r *http.Requ
 
 	writeJSON(w, struct {
 		ID         string          `json:"id"`
+		TraceID    *string         `json:"trace_id,omitempty"`
 		ReceivedAt time.Time       `json:"received_at"`
 		Payload    json.RawMessage `json:"payload"`
 	}{
 		ID:         ev.ID,
+		TraceID:    ev.TraceID,
 		ReceivedAt: ev.ReceivedAt,
 		Payload:    payload,
 	})
+}
+
+func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
+	issueID := chi.URLParam(r, "issueID")
+	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	if err != nil {
+		slog.Error("get issue for trace", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if issue == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !enforceTokenProject(w, r, issue.ProjectID) {
+		return
+	}
+
+	offset := 0
+	if s := r.URL.Query().Get("offset"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	ev, err := storage.GetEventForIssueAtOffset(r.Context(), ro.pool, issueID, offset)
+	if err != nil || ev == nil || ev.TraceID == nil || *ev.TraceID == "" {
+		writeJSON(w, nil)
+		return
+	}
+
+	tx, err := storage.GetTransactionByTraceID(r.Context(), ro.pool, *ev.TraceID)
+	if err != nil {
+		slog.Error("get transaction by trace", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, tx)
 }
 
 func (ro *router) handleGetIssueHistogram(w http.ResponseWriter, r *http.Request) {

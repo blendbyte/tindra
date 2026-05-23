@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -873,5 +874,97 @@ func TestGetInstanceHealth_forbidden(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("expected 403 for user without manage_projects, got %d", rec.Code)
+	}
+}
+
+// --- handleGetIssueTrace ---
+
+func TestGetIssueTrace_noEvent(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-trace-noev", "Trace No Event", "error", "error", "", "", time.Now().UTC())
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/issues/%s/trace", iss.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.TrimSpace(rec.Body.String()) != "null" {
+		t.Errorf("expected null body, got %s", rec.Body.String())
+	}
+}
+
+func TestGetIssueTrace_eventNoTrace(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-trace-notrace", "Trace No TraceID", "error", "error", "", "", time.Now().UTC())
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO events (project_id, issue_id, payload, fingerprint, timestamp, received_at)
+		VALUES ($1, $2, '{}', 'fp-trace-notrace', NOW(), NOW())
+	`, testProject.ID, iss.ID)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/issues/%s/trace", iss.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.TrimSpace(rec.Body.String()) != "null" {
+		t.Errorf("expected null body (no trace_id on event), got %s", rec.Body.String())
+	}
+}
+
+func TestGetIssueTrace_withLinkedTransaction(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues, transactions CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-trace-linked", "Trace Linked", "error", "error", "", "", time.Now().UTC())
+
+	const traceID = "api-test-trace-linked-xyz"
+	testPool.Exec(context.Background(), `
+		INSERT INTO events (project_id, issue_id, trace_id, payload, fingerprint, timestamp, received_at)
+		VALUES ($1, $2, $3, '{}', 'fp-trace-linked', NOW(), NOW())
+	`, testProject.ID, iss.ID, traceID)
+
+	start := time.Now().UTC()
+	var txID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, trace_id)
+		VALUES ($1, '/api/linked', 'http.server', 'ok', 150, $2, $3, $4)
+		RETURNING id
+	`, testProject.ID, start, start.Add(150*time.Millisecond), traceID).Scan(&txID); err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/issues/%s/trace", iss.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["id"] != txID {
+		t.Errorf("id: got %v, want %q", got["id"], txID)
+	}
+}
+
+func TestGetIssueTrace_notFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/00000000-0000-0000-0000-000000000000/trace", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }

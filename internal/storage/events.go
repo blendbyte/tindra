@@ -14,6 +14,7 @@ import (
 type EventRow struct {
 	ID         string
 	Release    *string
+	TraceID    *string
 	ReceivedAt time.Time
 	Payload    json.RawMessage
 }
@@ -96,7 +97,7 @@ func GetEventForIssueAtOffset(ctx context.Context, pool *pgxpool.Pool, issueID s
 		offset = 0
 	}
 	row := pool.QueryRow(ctx, `
-		SELECT id, release, received_at, payload
+		SELECT id, release, trace_id, received_at, payload
 		FROM events
 		WHERE issue_id = $1
 		ORDER BY received_at DESC
@@ -104,7 +105,7 @@ func GetEventForIssueAtOffset(ctx context.Context, pool *pgxpool.Pool, issueID s
 	`, issueID, offset)
 
 	var ev EventRow
-	if err := row.Scan(&ev.ID, &ev.Release, &ev.ReceivedAt, &ev.Payload); err != nil {
+	if err := row.Scan(&ev.ID, &ev.Release, &ev.TraceID, &ev.ReceivedAt, &ev.Payload); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}

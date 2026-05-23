@@ -47,10 +47,12 @@ func (ro *router) handleGetLatestEvent(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, struct {
 		ID         string          `json:"id"`
+		TraceID    *string         `json:"trace_id,omitempty"`
 		ReceivedAt time.Time       `json:"received_at"`
 		Payload    json.RawMessage `json:"payload"`
 	}{
 		ID:         ev.ID,
+		TraceID:    ev.TraceID,
 		ReceivedAt: ev.ReceivedAt,
 		Payload:    payload,
 	})

@@ -44,6 +44,8 @@ const SECTION_DEFAULTS: Record<string, boolean> = {
   events: false,
   tags: false,
   activity: false,
+  request: false,
+  trace: false,
 }
 
 function loadCollapsed(): Record<string, boolean> {
@@ -253,7 +255,7 @@ function toggleCrumb(i: number) {
 
 const CONTEXT_LABELS: Record<string, string> = {
   runtime: 'Runtime',
-  os: 'Operating system',
+  os: 'Operating System',
   browser: 'Browser',
   device: 'Device',
   app: 'App',
@@ -261,7 +263,18 @@ const CONTEXT_LABELS: Record<string, string> = {
   culture: 'Culture',
 }
 
-const contexts = computed<{ key: string; label: string; rows: [string, string][] }[]>(() => {
+const CONTEXT_ICONS: Record<string, string> = {
+  browser: 'globe',
+  device: 'squares',
+  os: 'activity',
+  runtime: 'zap',
+  app: 'package',
+  gpu: 'activity',
+}
+
+const CTX_SKIP_KEYS = new Set(['type', 'raw_description'])
+
+const contexts = computed<{ key: string; label: string; icon: string; rows: [string, string][] }[]>(() => {
   const raw = currentEvent.value?.payload?.contexts as Record<string, unknown> | undefined
   if (!raw || typeof raw !== 'object') return []
 
@@ -270,11 +283,12 @@ const contexts = computed<{ key: string; label: string; rows: [string, string][]
     .map(([key, val]) => {
       const obj = val as Record<string, unknown>
       const rows: [string, string][] = Object.entries(obj)
-        .filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object')
+        .filter(([k, v]) => !CTX_SKIP_KEYS.has(k) && v !== null && v !== undefined && typeof v !== 'object')
         .map(([k, v]) => [k.replace(/_/g, ' '), String(v)])
       return {
         key,
         label: CONTEXT_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1),
+        icon: CONTEXT_ICONS[key] ?? 'info',
         rows,
       }
     })
@@ -292,6 +306,65 @@ const modules = computed<[string, string][]>(() => {
 
 const showAllModules = ref(false)
 const MODULES_PREVIEW = 10
+
+function formatRequestBody(data: unknown): string {
+  if (data === null || data === undefined) return ''
+  if (typeof data === 'string') {
+    try { return JSON.stringify(JSON.parse(data), null, 2) } catch { return data }
+  }
+  return JSON.stringify(data, null, 2)
+}
+
+const httpRequest = computed(() => {
+  const req = currentEvent.value?.payload?.request as Record<string, unknown> | undefined
+  if (!req || typeof req !== 'object') return null
+  return {
+    method: req.method as string | undefined,
+    url: req.url as string | undefined,
+    headers: req.headers as Record<string, string> | undefined,
+    data: req.data,
+    query_string: req.query_string,
+    cookies: req.cookies as Record<string, string> | undefined,
+    env: req.env as Record<string, string> | undefined,
+  }
+})
+
+const traceId = computed(() => {
+  if (currentEvent.value?.trace_id) return currentEvent.value.trace_id
+  const ctx = currentEvent.value?.payload?.contexts as Record<string, unknown> | undefined
+  return (ctx?.trace as Record<string, unknown> | undefined)?.trace_id as string | undefined
+})
+
+const { data: linkedTransaction } = useQuery({
+  queryKey: computed(() => ['issues', issueId.value, 'trace', eventIndex.value]),
+  queryFn: () => apiFetch<import('@/api/types').Transaction | null>(`/api/issues/${issueId.value}/trace?offset=${eventIndex.value}`),
+  enabled: computed(() => !!issueId.value && !!traceId.value),
+})
+
+const { data: traceSpans } = useQuery({
+  queryKey: computed(() => ['transactions', linkedTransaction.value?.id, 'spans']),
+  queryFn: () => apiFetch<import('@/api/types').Span[]>(`/api/transactions/${linkedTransaction.value!.id}/spans`),
+  enabled: computed(() => !!linkedTransaction.value?.id),
+})
+
+const TRACE_PREVIEW_MAX = 10
+
+const tracePreviewRows = computed(() => {
+  const tx = linkedTransaction.value
+  const spans = traceSpans.value
+  if (!tx) return []
+  const total = tx.duration_ms || 1
+  const rows: { label: string; op: string; left: number; width: number; isTx: boolean }[] = []
+  rows.push({ label: tx.transaction, op: tx.op, left: 0, width: 100, isTx: true })
+  if (spans) {
+    for (const s of spans.slice(0, TRACE_PREVIEW_MAX - 1)) {
+      const left = Math.max(0, (s.start_offset_ms / total) * 100)
+      const width = Math.max(0.5, (s.duration_ms / total) * 100)
+      rows.push({ label: s.description || s.op, op: s.op, left, width, isTx: false })
+    }
+  }
+  return rows
+})
 
 const { data: issueTags } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'tags']),
@@ -901,6 +974,88 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- HTTP Request -->
+      <div v-if="httpRequest" class="section">
+        <div class="section__head" @click="toggleSection('request')">
+          <Icon name="chevron-right" :size="12" class="section__chevron" :class="{ 'section__chevron--open': !collapsed.request }" />
+          <h2 class="section__title">HTTP Request</h2>
+          <span v-if="httpRequest.method" class="section__badge section__badge--method">{{ httpRequest.method }}</span>
+        </div>
+        <div v-if="!collapsed.request" class="req-section">
+          <div v-if="httpRequest.url" class="req-url">{{ httpRequest.url }}</div>
+
+          <template v-if="httpRequest.headers && Object.keys(httpRequest.headers).length > 0">
+            <div class="req-subtitle">Headers</div>
+            <table class="ctx-table req-table">
+              <tbody>
+                <tr v-for="[k, v] in Object.entries(httpRequest.headers)" :key="k">
+                  <td class="ctx-table__key">{{ k }}</td>
+                  <td class="ctx-table__val mono">{{ v }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </template>
+
+          <template v-if="httpRequest.query_string">
+            <div class="req-subtitle">Query String</div>
+            <pre class="req-body">{{ typeof httpRequest.query_string === 'string' ? httpRequest.query_string : JSON.stringify(httpRequest.query_string, null, 2) }}</pre>
+          </template>
+
+          <template v-if="httpRequest.data !== undefined && httpRequest.data !== null && httpRequest.data !== ''">
+            <div class="req-subtitle">Body</div>
+            <pre class="req-body">{{ formatRequestBody(httpRequest.data) }}</pre>
+          </template>
+
+          <template v-if="httpRequest.cookies && Object.keys(httpRequest.cookies).length > 0">
+            <div class="req-subtitle">Cookies</div>
+            <table class="ctx-table req-table">
+              <tbody>
+                <tr v-for="[k, v] in Object.entries(httpRequest.cookies)" :key="k">
+                  <td class="ctx-table__key">{{ k }}</td>
+                  <td class="ctx-table__val mono">{{ v }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </template>
+        </div>
+      </div>
+
+      <!-- Trace Preview -->
+      <div v-if="linkedTransaction" class="section">
+        <div class="section__head" @click="toggleSection('trace')">
+          <Icon name="chevron-right" :size="12" class="section__chevron" :class="{ 'section__chevron--open': !collapsed.trace }" />
+          <h2 class="section__title">Trace Preview</h2>
+          <a
+            class="section__link"
+            :href="`/performance/transactions/${linkedTransaction.id}`"
+            @click.stop="$router.push(`/performance/transactions/${linkedTransaction.id}`)"
+          >View Full Trace <Icon name="external" :size="10" /></a>
+        </div>
+        <div v-if="!collapsed.trace" class="trace-preview">
+          <div
+            v-for="(row, i) in tracePreviewRows"
+            :key="i"
+            class="trace-preview__row"
+            :class="{ 'trace-preview__row--tx': row.isTx }"
+          >
+            <span class="trace-preview__label">
+              <span class="trace-preview__op">{{ row.op }}</span>
+              {{ row.label }}
+            </span>
+            <div class="trace-preview__track">
+              <div
+                class="trace-preview__bar"
+                :class="{ 'trace-preview__bar--tx': row.isTx }"
+                :style="{ left: row.left + '%', width: row.width + '%' }"
+              />
+            </div>
+          </div>
+          <div v-if="(traceSpans?.length ?? 0) > TRACE_PREVIEW_MAX - 1" class="trace-preview__more">
+            +{{ traceSpans!.length - (TRACE_PREVIEW_MAX - 1) }} more spans
+          </div>
+        </div>
+      </div>
+
       <!-- Breadcrumbs -->
       <div v-if="breadcrumbs.length > 0" class="section">
         <div class="section__head" @click="toggleSection('breadcrumbs')">
@@ -948,7 +1103,10 @@ onUnmounted(() => {
         </div>
         <div v-if="!collapsed.context" class="ctx-grid">
           <div v-for="ctx in contexts" :key="ctx.key" class="ctx-card">
-            <div class="ctx-card__title">{{ ctx.label }}</div>
+            <div class="ctx-card__title">
+              <Icon :name="ctx.icon" :size="12" class="ctx-card__icon" />
+              {{ ctx.label }}
+            </div>
             <table class="ctx-table">
               <tbody>
                 <tr v-for="[k, v] in ctx.rows" :key="k">

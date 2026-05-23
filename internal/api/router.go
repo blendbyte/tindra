@@ -171,6 +171,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/issues/{issueID}/events/histogram", ro.handleGetIssueHistogram)
 		r.Get("/api/issues/{issueID}/events", ro.handleListEventsForIssue)
 		r.Get("/api/issues/{issueID}/events/latest", ro.handleGetLatestEventGlobal)
+		r.Get("/api/issues/{issueID}/trace", ro.handleGetIssueTrace)
 		r.Get("/api/issues/{issueID}/tags", ro.handleGetIssueTags)
 		r.Get("/api/issues/{issueID}/history", ro.handleGetIssueHistory)
 		r.Get("/api/issues/{issueID}/perf-events", ro.handleListPerfEvents)

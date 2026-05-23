@@ -75,7 +75,8 @@ const baseIssue = {
 function setupQueries(issue = baseIssue as unknown, overrides: any[] = []) {
   // useQuery call order in IssueDetailView:
   // 1. me, 2. issue, 3. currentEvent, 4. perfEvents,
-  // 5. comments, 6. history, 7. users, 8. issueTags, 9. histogram
+  // 5. comments, 6. history, 7. users, 8. linkedTransaction (trace),
+  // 9. traceSpans, 10. issueTags, 11. histogram
   const defaults = [
     { data: ref({ id: 'user-1', permissions: { manage_issues: true } }) }, // 1. me
     { data: ref(issue), isError: ref(false), refetch: vi.fn() },           // 2. issue
@@ -84,8 +85,10 @@ function setupQueries(issue = baseIssue as unknown, overrides: any[] = []) {
     { data: ref([]) },                                                      // 5. comments
     { data: ref([]) },                                                      // 6. history
     { data: ref([]) },                                                      // 7. users
-    { data: ref(null) },                                                    // 8. issueTags
-    { data: ref(null) },                                                    // 9. histogram
+    { data: ref(null) },                                                    // 8. linkedTransaction
+    { data: ref(null) },                                                    // 9. traceSpans
+    { data: ref(null) },                                                    // 10. issueTags
+    { data: ref(null) },                                                    // 11. histogram
   ]
 
   const mocks = defaults.map((d, i) => ({ ...d, ...(overrides[i] ?? {}) }))
@@ -273,7 +276,7 @@ describe('IssueDetailView', () => {
           ],
         },
       ]
-      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, { data: ref(tags) }])
+      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, {}, {}, { data: ref(tags) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.find('.tags-dist').exists()).toBe(true)
       expect(wrapper.text()).toContain('Chrome')
@@ -285,7 +288,7 @@ describe('IssueDetailView', () => {
         { key: 'env', total: 50, values: [{ value: 'prod', pct: 100, count: 50 }] },
         { key: 'browser', total: 30, values: [{ value: 'Chrome', pct: 100, count: 30 }] },
       ]
-      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, { data: ref(tags) }])
+      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, {}, {}, { data: ref(tags) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('2 keys')
     })
@@ -382,6 +385,175 @@ describe('IssueDetailView', () => {
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('Browser')
       expect(wrapper.text()).toContain('Chrome')
+    })
+  })
+
+  describe('HTTP request section', () => {
+    it('renders HTTP request section when event has request data', () => {
+      const eventWithRequest = {
+        id: 'evt-1',
+        payload: {
+          request: {
+            method: 'POST',
+            url: 'https://example.com/api/users',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer token123' },
+            data: '{"name":"Alice"}',
+          },
+        },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.req-section').exists()).toBe(true)
+      expect(wrapper.text()).toContain('https://example.com/api/users')
+    })
+
+    it('shows HTTP method badge in section header', () => {
+      const eventWithRequest = {
+        id: 'evt-1',
+        payload: { request: { method: 'GET', url: 'https://example.com/health' } },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.section__badge--method').text()).toBe('GET')
+    })
+
+    it('renders request headers table', () => {
+      const eventWithRequest = {
+        id: 'evt-1',
+        payload: {
+          request: {
+            method: 'POST',
+            url: 'https://example.com/api',
+            headers: { 'X-Request-ID': 'req-abc' },
+          },
+        },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('X-Request-ID')
+      expect(wrapper.text()).toContain('req-abc')
+    })
+
+    it('does not render HTTP request section when event has no request data', () => {
+      const eventWithoutRequest = { id: 'evt-1', payload: {} }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithoutRequest) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.req-section').exists()).toBe(false)
+    })
+
+    it('pretty-prints JSON body', () => {
+      const eventWithRequest = {
+        id: 'evt-1',
+        payload: {
+          request: {
+            method: 'POST',
+            url: 'https://example.com/api',
+            data: '{"key":"value"}',
+          },
+        },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const body = wrapper.find('.req-body')
+      expect(body.exists()).toBe(true)
+      expect(body.text()).toContain('"key"')
+    })
+  })
+
+  describe('context section - type key filtering', () => {
+    it('does not show the "type" meta key in context rows', () => {
+      const eventWithContexts = {
+        id: 'evt-1',
+        payload: {
+          contexts: {
+            browser: { name: 'Chrome', version: '120.0', type: 'browser' },
+          },
+        },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithContexts) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const ctxTable = wrapper.find('.ctx-table')
+      expect(ctxTable.exists()).toBe(true)
+      expect(ctxTable.text()).not.toContain('type')
+      expect(ctxTable.text()).toContain('Chrome')
+    })
+
+    it('does not show raw_description key in context rows', () => {
+      const eventWithContexts = {
+        id: 'evt-1',
+        payload: {
+          contexts: {
+            os: { name: 'iOS', version: '17.0', raw_description: 'iPhone OS 17_0' },
+          },
+        },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithContexts) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const ctxTable = wrapper.find('.ctx-table')
+      expect(ctxTable.text()).not.toContain('raw description')
+      expect(ctxTable.text()).toContain('iOS')
+    })
+  })
+
+  describe('trace preview section', () => {
+    it('renders trace preview when linkedTransaction is available', () => {
+      const linkedTx = {
+        id: 'tx-abc',
+        project_id: 'proj-1',
+        trace_id: 'trace-xyz',
+        transaction: '/api/users',
+        op: 'http.server',
+        status: 'ok',
+        duration_ms: 150,
+        start_timestamp: '2024-01-01T00:00:00Z',
+        environment: 'production',
+      }
+      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, { data: ref(linkedTx) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.trace-preview').exists()).toBe(true)
+    })
+
+    it('shows View Full Trace link pointing to the transaction', () => {
+      const linkedTx = {
+        id: 'tx-abc',
+        project_id: 'proj-1',
+        trace_id: 'trace-xyz',
+        transaction: '/api/users',
+        op: 'http.server',
+        status: 'ok',
+        duration_ms: 150,
+        start_timestamp: '2024-01-01T00:00:00Z',
+        environment: null,
+      }
+      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, { data: ref(linkedTx) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const link = wrapper.find('.section__link')
+      expect(link.exists()).toBe(true)
+      expect(link.text()).toContain('View Full Trace')
+    })
+
+    it('does not render trace preview when no linked transaction', () => {
+      setupQueries(baseIssue)
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.trace-preview').exists()).toBe(false)
+    })
+
+    it('renders transaction row in trace preview', () => {
+      const linkedTx = {
+        id: 'tx-abc',
+        project_id: 'proj-1',
+        trace_id: 'trace-xyz',
+        transaction: '/api/checkout',
+        op: 'http.server',
+        status: 'ok',
+        duration_ms: 200,
+        start_timestamp: '2024-01-01T00:00:00Z',
+        environment: null,
+      }
+      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, { data: ref(linkedTx) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.trace-preview__row--tx').exists()).toBe(true)
+      expect(wrapper.text()).toContain('/api/checkout')
     })
   })
 
@@ -968,7 +1140,7 @@ describe('IssueDetailView', () => {
   describe('tag value navigation', () => {
     it('navigates to issues with tag filter when tag value is clicked', async () => {
       const tags = [{ key: 'browser', total: 100, values: [{ value: 'Chrome', pct: 80, count: 80 }] }]
-      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, { data: ref(tags) }])
+      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, {}, {}, { data: ref(tags) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       const tagLink = wrapper.find('.tag-val__label')
       if (tagLink.exists()) {
