@@ -77,12 +77,23 @@ func TestGrouper_groupsSameFingerprint(t *testing.T) {
 	defer cancel()
 	go g.Run(ctx)
 
-	time.Sleep(700 * time.Millisecond)
-
-	issueList, err := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
-	if err != nil {
-		t.Fatalf("list issues: %v", err)
+	// Poll until both events are grouped or we time out. The grouper ticks at
+	// 500ms, then needs multiple DB round-trips per event; a fixed 700ms sleep
+	// is too tight on loaded CI machines running many packages in parallel.
+	var issueList []*storage.Issue
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		var err error
+		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		if err != nil {
+			t.Fatalf("list issues: %v", err)
+		}
+		if len(issueList) == 1 && issueList[0].EventCount == 2 {
+			break
+		}
 	}
+
 	if len(issueList) != 1 {
 		t.Errorf("expected 1 issue for same fingerprint, got %d", len(issueList))
 	}
