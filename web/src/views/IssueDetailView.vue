@@ -315,18 +315,106 @@ function formatRequestBody(data: unknown): string {
   return JSON.stringify(data, null, 2)
 }
 
+// Sentry sends header values as ["value"] arrays; unwrap to plain string.
+function unwrapHeaderVal(v: unknown): string {
+  if (Array.isArray(v)) return v.map(String).join(', ')
+  return String(v ?? '')
+}
+
+const BODY_PREVIEW_LINES = 15
+const reqBodyExpanded = ref(false)
+watch(currentEvent, () => { reqBodyExpanded.value = false })
+
 const httpRequest = computed(() => {
   const req = currentEvent.value?.payload?.request as Record<string, unknown> | undefined
   if (!req || typeof req !== 'object') return null
   return {
     method: req.method as string | undefined,
     url: req.url as string | undefined,
-    headers: req.headers as Record<string, string> | undefined,
+    headers: req.headers as Record<string, unknown> | undefined,
     data: req.data,
     query_string: req.query_string,
-    cookies: req.cookies as Record<string, string> | undefined,
+    cookies: req.cookies as Record<string, unknown> | undefined,
     env: req.env as Record<string, string> | undefined,
   }
+})
+
+const reqBodyFull = computed(() => formatRequestBody(httpRequest.value?.data))
+const reqBodyLines = computed(() => reqBodyFull.value.split('\n'))
+const reqBodyTruncated = computed(() => reqBodyLines.value.length > BODY_PREVIEW_LINES)
+const reqBodyDisplay = computed(() =>
+  reqBodyExpanded.value || !reqBodyTruncated.value
+    ? reqBodyFull.value
+    : reqBodyLines.value.slice(0, BODY_PREVIEW_LINES).join('\n')
+)
+
+// Derive browser / OS / device from User-Agent when not in payload contexts.
+function parseUAContexts(ua: string): Record<string, { label: string; icon: string; rows: [string, string][] }> {
+  const out: Record<string, { label: string; icon: string; rows: [string, string][] }> = {}
+
+  // Browser
+  let bName = '', bVersion = ''
+  const edgeM = ua.match(/Edg(?:e|A|iOS)?\/(\S+)/)
+  const chromeM = ua.match(/(?:Chrome|CrMo|CriOS)\/(\d+(?:\.\d+)*)/)
+  const ffM = ua.match(/Firefox\/(\d+(?:\.\d+)*)/)
+  const safM = ua.match(/Version\/(\S+)\s+(?:Mobile\s+)?Safari/)
+  if (edgeM) { bName = 'Edge'; bVersion = edgeM[1] }
+  else if (chromeM) { bName = ua.includes('Mobile') ? 'Chrome Mobile' : 'Chrome'; bVersion = chromeM[1] }
+  else if (ffM) { bName = ua.includes('Mobile') ? 'Firefox Mobile' : 'Firefox'; bVersion = ffM[1] }
+  else if (safM) { bName = ua.includes('Mobile') ? 'Mobile Safari' : 'Safari'; bVersion = safM[1] }
+  if (bName) {
+    const rows: [string, string][] = [['name', bName]]
+    if (bVersion) rows.push(['version', bVersion])
+    out.browser = { label: 'Browser', icon: 'globe', rows }
+  }
+
+  // OS
+  let osName = '', osVersion = ''
+  const androidM = ua.match(/Android (\d+(?:[._]\d+)*)/)
+  const iosM = ua.match(/(?:iPhone|iPad)[^;]*; CPU (?:iPhone )?OS (\d+_\d+)/)
+  const winM = ua.match(/Windows NT (\d+\.\d+)/)
+  const macM = ua.match(/Mac OS X (\d+[._]\d+)/)
+  if (androidM) { osName = 'Android'; osVersion = androidM[1] }
+  else if (iosM) { osName = ua.includes('iPad') ? 'iPadOS' : 'iOS'; osVersion = iosM[1].replace(/_/g, '.') }
+  else if (winM) { osName = 'Windows'; osVersion = winM[1] }
+  else if (macM) { osName = 'macOS'; osVersion = macM[1].replace(/[_]/g, '.') }
+  else if (/Linux/.test(ua) && !androidM) osName = 'Linux'
+  if (osName) {
+    const rows: [string, string][] = [['name', osName]]
+    if (osVersion) rows.push(['version', osVersion])
+    out.os = { label: 'Operating System', icon: 'activity', rows }
+  }
+
+  // Device (Android model from UA)
+  const devM = ua.match(/Android \d+(?:[._]\d+)*;\s*([^)]+)\)/)
+  if (devM) {
+    const model = devM[1].trim().replace(/\s+Build$/, '')
+    if (model && model !== 'wv') {
+      out.device = { label: 'Device', icon: 'squares', rows: [['model', model]] }
+    }
+  }
+
+  return out
+}
+
+const displayContexts = computed(() => {
+  const list = [...contexts.value]
+  const existingKeys = new Set(list.map(c => c.key))
+
+  const headers = httpRequest.value?.headers
+  if (headers) {
+    const uaEntry = Object.entries(headers).find(([k]) => k.toLowerCase() === 'user-agent')
+    const ua = uaEntry ? unwrapHeaderVal(uaEntry[1]) : ''
+    if (ua) {
+      const derived = parseUAContexts(ua)
+      for (const key of ['browser', 'device', 'os'] as const) {
+        if (!existingKeys.has(key) && derived[key]) {
+          list.unshift({ key, ...derived[key] })
+        }
+      }
+    }
+  }
+  return list
 })
 
 const traceId = computed(() => {
@@ -990,7 +1078,7 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="[k, v] in Object.entries(httpRequest.headers)" :key="k">
                   <td class="ctx-table__key">{{ k }}</td>
-                  <td class="ctx-table__val mono">{{ v }}</td>
+                  <td class="ctx-table__val mono">{{ unwrapHeaderVal(v) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -1001,9 +1089,15 @@ onUnmounted(() => {
             <pre class="req-body">{{ typeof httpRequest.query_string === 'string' ? httpRequest.query_string : JSON.stringify(httpRequest.query_string, null, 2) }}</pre>
           </template>
 
-          <template v-if="httpRequest.data !== undefined && httpRequest.data !== null && httpRequest.data !== ''">
-            <div class="req-subtitle">Body</div>
-            <pre class="req-body">{{ formatRequestBody(httpRequest.data) }}</pre>
+          <template v-if="reqBodyFull">
+            <div class="req-subtitle">
+              Body
+              <span class="req-subtitle__meta">{{ reqBodyLines.length }} lines</span>
+            </div>
+            <pre class="req-body">{{ reqBodyDisplay }}</pre>
+            <button v-if="reqBodyTruncated" class="req-body__toggle" @click="reqBodyExpanded = !reqBodyExpanded">
+              {{ reqBodyExpanded ? 'Show less' : `Show all ${reqBodyLines.length} lines` }}
+            </button>
           </template>
 
           <template v-if="httpRequest.cookies && Object.keys(httpRequest.cookies).length > 0">
@@ -1012,7 +1106,7 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="[k, v] in Object.entries(httpRequest.cookies)" :key="k">
                   <td class="ctx-table__key">{{ k }}</td>
-                  <td class="ctx-table__val mono">{{ v }}</td>
+                  <td class="ctx-table__val mono">{{ unwrapHeaderVal(v) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -1096,13 +1190,13 @@ onUnmounted(() => {
       </div>
 
       <!-- Contexts -->
-      <div v-if="contexts.length > 0" class="section">
+      <div v-if="displayContexts.length > 0" class="section">
         <div class="section__head" @click="toggleSection('context')">
           <Icon name="chevron-right" :size="12" class="section__chevron" :class="{ 'section__chevron--open': !collapsed.context }" />
           <h2 class="section__title">Context</h2>
         </div>
         <div v-if="!collapsed.context" class="ctx-grid">
-          <div v-for="ctx in contexts" :key="ctx.key" class="ctx-card">
+          <div v-for="ctx in displayContexts" :key="ctx.key" class="ctx-card">
             <div class="ctx-card__title">
               <Icon :name="ctx.icon" :size="12" class="ctx-card__icon" />
               {{ ctx.label }}

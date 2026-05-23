@@ -1841,6 +1841,16 @@ a { color: inherit; text-decoration: none; }
   letter-spacing: 0.07em;
   color: var(--text-3);
   margin-bottom: -4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.req-subtitle__meta {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-3);
+  font-family: var(--mono);
 }
 .req-body {
   font-family: var(--mono);
@@ -1856,6 +1866,16 @@ a { color: inherit; text-decoration: none; }
   margin: 0;
 }
 .req-table { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.req-body__toggle {
+  font-size: var(--text-xs);
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  align-self: flex-start;
+}
+.req-body__toggle:hover { text-decoration: underline; }
 
 /* Section badge (e.g. HTTP method) */
 .section__badge {
