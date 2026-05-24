@@ -213,7 +213,8 @@ function handleUnignore() {
 
 const frames = computed(() => {
   const exc = currentEvent.value?.payload?.exception as { values?: { stacktrace?: { frames?: unknown[] } }[] } | undefined
-  return exc?.values?.[0]?.stacktrace?.frames ?? []
+  const fs = exc?.values?.[0]?.stacktrace?.frames ?? []
+  return [...fs].reverse()
 })
 
 const eventPlatform = computed(() => (currentEvent.value?.payload as Record<string, unknown> | undefined)?.platform as string | undefined)
