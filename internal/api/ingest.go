@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/blendbyte/tindra/internal/ingest"
@@ -45,15 +44,17 @@ func (ro *router) handleEnvelopeCORS(w http.ResponseWriter, r *http.Request) {
 func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// Spec: URL carries the project ID; public key is in the X-Sentry-Auth header.
-	projectID := chi.URLParam(r, "projectID")
 	publicKey := extractSentryKey(r)
 	if publicKey == "" {
 		http.Error(w, "missing sentry key", http.StatusUnauthorized)
 		return
 	}
 
-	project, err := storage.GetByIDAndPublicKey(r.Context(), ro.pool, projectID, publicKey)
+	// Look up by public key only. The project ID in the URL is Sentry's
+	// routing hint and the JS SDK truncates UUID project IDs via parseInt
+	// (e.g. "4915a9dc-..." becomes "4915"), so it cannot be used for lookup.
+	// The public key is unique and is the real authentication credential.
+	project, err := storage.GetByPublicKey(r.Context(), ro.pool, publicKey)
 	if err != nil {
 		slog.Error("project lookup", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
