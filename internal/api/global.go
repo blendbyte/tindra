@@ -763,8 +763,12 @@ func (ro *router) handleGetLatestEventGlobal(w http.ResponseWriter, r *http.Requ
 	}
 
 	payload := ev.Payload
-	if ro.smStore != nil && ev.Release != nil && *ev.Release != "" {
-		payload = ro.smStore.ResolveEventPayload(r.Context(), issue.ProjectID, *ev.Release, payload)
+	if ro.smStore != nil {
+		release := ""
+		if ev.Release != nil {
+			release = *ev.Release
+		}
+		payload = ro.smStore.ResolveEventPayload(r.Context(), issue.ProjectID, release, payload)
 	}
 
 	writeJSON(w, struct {

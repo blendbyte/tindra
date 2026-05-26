@@ -354,12 +354,13 @@ func TestStore_ResolveEventPayload_noSourcemapInDB(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
 	store := sourcemaps.NewStore(testDataDir, testPool)
 
+	// Use a non-HTTP URL so the HTTP-fetch fallback is skipped immediately.
 	payload := json.RawMessage(`{
 		"exception": {
 			"values": [{
 				"stacktrace": {
 					"frames": [{
-						"abs_path": "https://example.com/missing.js",
+						"abs_path": "~/dist/missing.js",
 						"lineno": 1,
 						"colno": 0
 					}]
@@ -369,7 +370,7 @@ func TestStore_ResolveEventPayload_noSourcemapInDB(t *testing.T) {
 	}`)
 
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "v3", payload)
-	// Should return payload unchanged (no sourcemap for this URL)
+	// Frame should be unchanged: no sourcemap in DB, non-HTTP URL skips fetch fallback.
 	var outFrames, inFrames []any
 	inMap := map[string]any{}
 	outMap := map[string]any{}

@@ -193,8 +193,8 @@ func TestExtractImplicitTags_uaSafariMac(t *testing.T) {
 	if tags["browser.name"] != "Safari" {
 		t.Errorf("browser.name: got %q, want Safari", tags["browser.name"])
 	}
-	if tags["os.name"] != "macOS" {
-		t.Errorf("os.name: got %q, want macOS", tags["os.name"])
+	if tags["os.name"] != "Mac OS X" {
+		t.Errorf("os.name: got %q, want Mac OS X", tags["os.name"])
 	}
 	if tags["os.version"] != "14.5" {
 		t.Errorf("os.version: got %q, want 14.5", tags["os.version"])
@@ -214,6 +214,22 @@ func TestExtractImplicitTags_uaContextTakesPriority(t *testing.T) {
 	tags := tagsToMap(extractImplicitTags(payload))
 	if tags["browser.name"] != "Firefox" {
 		t.Errorf("context should win over UA: got %q, want Firefox", tags["browser.name"])
+	}
+}
+
+func TestExtractImplicitTags_uaCrawler(t *testing.T) {
+	// uap-go recognises non-standard browsers; previously hand-rolled regexes missed these.
+	payload := json.RawMessage(`{
+		"request": {
+			"headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (Chrome, like Gecko; compatible; CCM19 Cookie Crawler/2.1; +https://ccm19.de/)"}
+		}
+	}`)
+	tags := tagsToMap(extractImplicitTags(payload))
+	if tags["browser.name"] != "CCM19 Cookie Crawler" {
+		t.Errorf("browser.name: got %q, want CCM19 Cookie Crawler", tags["browser.name"])
+	}
+	if tags["browser.version"] != "2.1" {
+		t.Errorf("browser.version: got %q, want 2.1", tags["browser.version"])
 	}
 }
 

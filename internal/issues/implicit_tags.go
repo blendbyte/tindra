@@ -2,22 +2,16 @@ package issues
 
 import (
 	"encoding/json"
-	"regexp"
 	"strings"
+
+	"github.com/ua-parser/uap-go/uaparser"
 )
 
 const tagMaxLen = 200
 
-var (
-	reBrowserEdge    = regexp.MustCompile(`Edg/(\d+(?:\.\d+)?)`)
-	reBrowserChrome  = regexp.MustCompile(`Chrome/(\d+(?:\.\d+)?)`)
-	reBrowserFirefox = regexp.MustCompile(`Firefox/(\d+(?:\.\d+)?)`)
-	reBrowserSafari  = regexp.MustCompile(`Version/(\d+(?:\.\d+)?)[^)]*Safari`)
-	reOSAndroid      = regexp.MustCompile(`Android (\d+(?:\.\d+)?)`)
-	reOSiOS          = regexp.MustCompile(`(?:iPhone|iPad).*OS (\d+[._]\d+)`)
-	reOSWindows      = regexp.MustCompile(`Windows NT (\d+\.\d+)`)
-	reOSMac          = regexp.MustCompile(`Mac OS X (\d+[._]\d+)`)
-)
+// uaParser is initialised once at startup using the bundled ua-parser database,
+// the same one Sentry uses, so browser/OS detection matches Sentry's output.
+var uaParser = uaparser.NewFromSaved()
 
 // extractImplicitTags derives the standard set of tags that Sentry synthesises
 // from well-known event fields: level, environment, transaction, server_name,
@@ -95,32 +89,36 @@ func extractImplicitTags(payload json.RawMessage) [][2]string {
 	}
 
 	// Fall back to User-Agent parsing for browser/os when the SDK did not
-	// supply explicit context objects (e.g. PHP SDK only sends headers).
+	// supply explicit context objects (e.g. PHP SDK sends headers only; JS
+	// SDK may omit browser context for unrecognised user agents).
+	// uap-go uses the same database as Sentry's server-side enrichment.
 	if ua := extractUserAgent(p.Request.Headers); ua != "" {
-		if !addedContexts["browser"] {
-			if name, version := parseBrowserFromUA(ua); name != "" {
-				composite := name
-				if version != "" {
-					composite += " " + version
-				}
-				add("browser", composite)
-				add("browser.name", name)
-				if version != "" {
-					add("browser.version", version)
-				}
+		client := uaParser.Parse(ua)
+
+		if !addedContexts["browser"] && client.UserAgent.Family != "Other" {
+			name := client.UserAgent.Family
+			version := joinVersion(client.UserAgent.Major, client.UserAgent.Minor)
+			composite := name
+			if version != "" {
+				composite += " " + version
+			}
+			add("browser", composite)
+			add("browser.name", name)
+			if version != "" {
+				add("browser.version", version)
 			}
 		}
-		if !addedContexts["os"] {
-			if name, version := parseOSFromUA(ua); name != "" {
-				composite := name
-				if version != "" {
-					composite += " " + version
-				}
-				add("os", composite)
-				add("os.name", name)
-				if version != "" {
-					add("os.version", version)
-				}
+		if !addedContexts["os"] && client.Os.Family != "Other" {
+			name := client.Os.Family
+			version := joinVersion(client.Os.Major, client.Os.Minor)
+			composite := name
+			if version != "" {
+				composite += " " + version
+			}
+			add("os", composite)
+			add("os.name", name)
+			if version != "" {
+				add("os.version", version)
 			}
 		}
 	}
@@ -149,12 +147,10 @@ func extractUserAgent(headers map[string]json.RawMessage) string {
 		if !strings.EqualFold(k, "user-agent") {
 			continue
 		}
-		// Try plain string first.
 		var s string
 		if json.Unmarshal(raw, &s) == nil {
 			return s
 		}
-		// Try array form ["value"].
 		var arr []string
 		if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 {
 			return arr[0]
@@ -163,53 +159,15 @@ func extractUserAgent(headers map[string]json.RawMessage) string {
 	return ""
 }
 
-func parseBrowserFromUA(ua string) (name, version string) {
-	if m := reBrowserEdge.FindStringSubmatch(ua); m != nil {
-		return "Edge", m[1]
+// joinVersion concatenates major.minor, omitting empty components.
+func joinVersion(major, minor string) string {
+	if major == "" {
+		return ""
 	}
-	if m := reBrowserChrome.FindStringSubmatch(ua); m != nil {
-		return "Chrome", m[1]
+	if minor == "" {
+		return major
 	}
-	if m := reBrowserFirefox.FindStringSubmatch(ua); m != nil {
-		return "Firefox", m[1]
-	}
-	if m := reBrowserSafari.FindStringSubmatch(ua); m != nil {
-		return "Safari", m[1]
-	}
-	return "", ""
-}
-
-func parseOSFromUA(ua string) (name, version string) {
-	if m := reOSAndroid.FindStringSubmatch(ua); m != nil {
-		return "Android", m[1]
-	}
-	if m := reOSiOS.FindStringSubmatch(ua); m != nil {
-		ver := strings.ReplaceAll(m[1], "_", ".")
-		return "iOS", ver
-	}
-	if m := reOSWindows.FindStringSubmatch(ua); m != nil {
-		// Map common NT versions to marketing names.
-		switch m[1] {
-		case "10.0":
-			return "Windows", "10"
-		case "6.3":
-			return "Windows", "8.1"
-		case "6.2":
-			return "Windows", "8"
-		case "6.1":
-			return "Windows", "7"
-		default:
-			return "Windows", m[1]
-		}
-	}
-	if m := reOSMac.FindStringSubmatch(ua); m != nil {
-		ver := strings.ReplaceAll(m[1], "_", ".")
-		return "macOS", ver
-	}
-	if strings.Contains(ua, "Linux") {
-		return "Linux", ""
-	}
-	return "", ""
+	return major + "." + minor
 }
 
 // mergeImplicitTags appends implicit tags to explicit ones, skipping any key

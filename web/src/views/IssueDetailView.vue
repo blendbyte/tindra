@@ -19,7 +19,7 @@ const router = useRouter()
 const { show: showToast } = useToast()
 const qc = useQueryClient()
 const navStore = useIssueNavStore()
-const { formatRel } = useFormatters()
+const { formatRel, formatTs } = useFormatters()
 const tz = useTimezone()
 
 const { data: me } = useQuery({
@@ -252,6 +252,14 @@ function toggleCrumb(i: number) {
   const s = new Set(expandedCrumbs.value)
   if (s.has(i)) s.delete(i); else s.add(i)
   expandedCrumbs.value = s
+}
+
+// JS SDK sends breadcrumb timestamps as Unix float seconds (e.g. 1716739678.943),
+// not ISO strings. Handle both so formatTs always receives a valid ISO string.
+function formatCrumbTime(ts: unknown): string {
+  if (typeof ts === 'number') return formatTs(new Date(ts * 1000).toISOString())
+  if (typeof ts === 'string') return formatTs(ts)
+  return ''
 }
 
 const CONTEXT_LABELS: Record<string, string> = {
@@ -1163,11 +1171,11 @@ onUnmounted(() => {
             v-for="(c, i) in (breadcrumbs as Record<string, unknown>[])"
             :key="i"
             class="crumb"
-            :class="{ 'crumb--error': c['type'] === 'error' }"
+            :class="{ 'crumb--error': c['level'] === 'error' || c['type'] === 'error' }"
           >
             <div class="crumb__row">
-              <span class="crumb__time">{{ c['timestamp'] }}</span>
-              <span class="crumb__type">{{ c['type'] ?? c['category'] }}</span>
+              <span class="crumb__time">{{ formatCrumbTime(c['timestamp']) }}</span>
+              <span class="crumb__type">{{ c['category'] ?? c['type'] }}</span>
               <span class="crumb__msg">{{ c['message'] ?? (typeof c['data'] !== 'object' ? c['data'] : '') }}</span>
               <button
                 v-if="c['data'] !== null && c['data'] !== undefined && typeof c['data'] === 'object'"
