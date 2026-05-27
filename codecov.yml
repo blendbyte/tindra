@@ -1,0 +1,5 @@
+flags:
+  go:
+    carryforward: true
+  frontend:
+    carryforward: true
