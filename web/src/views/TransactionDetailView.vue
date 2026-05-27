@@ -16,6 +16,7 @@ const txId = computed(() => route.params.id as string)
 const collapsedBranches = ref<Set<string>>(new Set())
 const openDetails = ref<Set<string>>(new Set())
 const expandedGroups = ref<Set<string>>(new Set())
+const expandAllFlag = ref(false)
 const focusedIdx = ref<number | null>(null)
 const copiedTraceId = ref(false)
 const copiedSpanId = ref<string | null>(null)
@@ -288,7 +289,7 @@ const spanTree = computed((): DisplayRow[] => {
         const groupSpans = siblings.slice(i, j)
         const key = `grp:${groupSpans[0].span_id}:${groupSpans[groupSpans.length - 1].span_id}`
         rows.push({ kind: 'group', key, op: base, count: runLen, depth, spans: groupSpans })
-        if (expandedGroups.value.has(key)) {
+        if (expandAllFlag.value || expandedGroups.value.has(key)) {
           for (const gs of groupSpans) {
             rows.push({ kind: 'span', span: gs, depth })
             if (!collapsedBranches.value.has(gs.span_id)) {
@@ -303,7 +304,7 @@ const spanTree = computed((): DisplayRow[] => {
           const key = `chain:${chain[0].span_id}:${chain[chain.length - 1].span_id}`
           const tail = chain[chain.length - 1]
           rows.push({ kind: 'chain', key, op: base, count: chain.length, depth, head: chain[0], tail, spans: chain })
-          if (expandedGroups.value.has(key)) {
+          if (expandAllFlag.value || expandedGroups.value.has(key)) {
             for (const cs of chain) {
               rows.push({ kind: 'span', span: cs, depth })
             }
@@ -349,6 +350,17 @@ function toggleDetail(id: string) {
 }
 
 function toggleGroup(key: string) {
+  if (expandAllFlag.value) {
+    const allKeys = new Set(
+      displayRows.value
+        .filter((r): r is GroupRow | ChainRow => r.kind === 'group' || r.kind === 'chain')
+        .map(r => r.key)
+    )
+    expandAllFlag.value = false
+    allKeys.delete(key)
+    expandedGroups.value = allKeys
+    return
+  }
   const s = new Set(expandedGroups.value)
   if (s.has(key)) s.delete(key)
   else s.add(key)
@@ -395,11 +407,13 @@ function handleDividerMouseDown(e: MouseEvent) {
 
 function expandAll() {
   collapsedBranches.value = new Set()
+  expandAllFlag.value = true
 }
 
 function collapseAll() {
   collapsedBranches.value = new Set(spanHasChildren.value)
   expandedGroups.value = new Set()
+  expandAllFlag.value = false
 }
 
 async function copyTraceId() {
@@ -796,7 +810,7 @@ function traceErrorOffset(e: TraceError): string {
             >
               <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
                 <span class="span-name__caret">
-                  <Icon :name="expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
+                  <Icon :name="expandAllFlag || expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
                 </span>
                 <span class="span-autogroup-badge">Autogrouped</span>
                 <span class="span-name__arrow">→</span>
@@ -816,7 +830,7 @@ function traceErrorOffset(e: TraceError): string {
             >
               <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
                 <span class="span-name__caret">
-                  <Icon :name="expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
+                  <Icon :name="expandAllFlag || expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
                 </span>
                 <span class="span-autogroup-badge">Chain</span>
                 <span class="span-name__arrow">→</span>
