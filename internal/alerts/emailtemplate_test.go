@@ -413,6 +413,78 @@ func TestRenderAlertEmail_issueCard_noOptionalFields(t *testing.T) {
 	}
 }
 
+func TestRenderAlertEmail_cronMissed(t *testing.T) {
+	now := time.Now().UTC()
+	nextAt := now.Add(time.Hour)
+	lastOk := now.Add(-2 * time.Hour)
+	payload := AlertPayload{
+		RuleName:  "Cron Monitor Alert",
+		Trigger:   "cron_missed",
+		FiredAt:   now,
+		ProjectID: "proj-cron",
+		Details:   map[string]any{"missed_count": 2},
+		Monitors: []*storage.CronMonitor{
+			{
+				Name:           "nightly-job",
+				Schedule:       "@daily",
+				State:          "missed",
+				NextExpectedAt: &nextAt,
+				LastOkAt:       &lastOk,
+			},
+		},
+	}
+
+	html, text, err := RenderAlertEmail(payload, "https://app.example.com")
+	if err != nil {
+		t.Fatalf("RenderAlertEmail cron_missed: %v", err)
+	}
+	if !strings.Contains(html, "monitors") {
+		t.Error("HTML should contain monitors link")
+	}
+	if !strings.Contains(text, "Cron Monitor Alert") {
+		t.Error("text should contain rule name")
+	}
+	if !strings.Contains(html, "nightly-job") {
+		t.Error("HTML should contain monitor name")
+	}
+}
+
+func TestRenderAlertEmail_cronError(t *testing.T) {
+	now := time.Now().UTC()
+	lastCheckin := now.Add(-time.Hour)
+	checkinStatus := "error"
+	payload := AlertPayload{
+		RuleName:  "Cron Error Alert",
+		Trigger:   "cron_error",
+		FiredAt:   now,
+		ProjectID: "proj-cron-err",
+		Details:   map[string]any{"error_count": 1},
+		Monitors: []*storage.CronMonitor{
+			{
+				Name:              "daily-report",
+				Schedule:          "0 8 * * *",
+				State:             "error",
+				LastCheckinAt:     &lastCheckin,
+				LastCheckinStatus: &checkinStatus,
+			},
+		},
+	}
+
+	html, text, err := RenderAlertEmail(payload, "https://app.example.com")
+	if err != nil {
+		t.Fatalf("RenderAlertEmail cron_error: %v", err)
+	}
+	if !strings.Contains(html, "monitors") {
+		t.Error("HTML should contain monitors link")
+	}
+	if !strings.Contains(text, "Cron Error Alert") {
+		t.Error("text should contain rule name")
+	}
+	if !strings.Contains(html, "daily-report") {
+		t.Error("HTML should contain monitor name")
+	}
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a

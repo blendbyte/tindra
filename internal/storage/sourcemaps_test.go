@@ -191,3 +191,34 @@ func TestDeleteSourcemap_notFound(t *testing.T) {
 		t.Error("expected empty content hash for non-existent ID")
 	}
 }
+
+func TestCountSourcemapsByHash(t *testing.T) {
+	truncateProjects(t)
+	p, err := storage.CreateProject(context.Background(), testPool, "sm-count", "SM Count")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	ctx := context.Background()
+
+	// No sourcemaps yet
+	n, err := storage.CountSourcemapsByHash(ctx, testPool, p.ID, "abc123")
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0, got %d", n)
+	}
+
+	// Add a sourcemap
+	storage.UpsertSourcemap(ctx, testPool, &storage.Sourcemap{
+		ProjectID: p.ID, Release: "v1", URL: "app.js", ContentHash: "abc123", SizeBytes: 13,
+	})
+
+	n, err = storage.CountSourcemapsByHash(ctx, testPool, p.ID, "abc123")
+	if err != nil {
+		t.Fatalf("count after insert: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1, got %d", n)
+	}
+}

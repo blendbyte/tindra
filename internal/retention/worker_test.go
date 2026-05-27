@@ -284,3 +284,31 @@ func TestWorker_deletesIgnoredIssueAfterEventsPurged(t *testing.T) {
 		t.Error("ignored issue with no remaining events should be deleted")
 	}
 }
+
+func TestWorker_Run_disabled(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		retention.NewWorker(testPool, 0).Run(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("Run with retentionDays=0 should return immediately")
+	}
+}
+
+func TestWorker_Run_stopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		retention.NewWorker(testPool, 90).Run(ctx)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Error("Run did not stop after context cancellation")
+	}
+}

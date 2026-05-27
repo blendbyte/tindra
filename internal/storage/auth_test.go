@@ -371,3 +371,300 @@ func TestDeleteSession(t *testing.T) {
 		t.Error("expected nil after delete")
 	}
 }
+
+func TestCountUsers(t *testing.T) {
+	truncateUsers(t)
+
+	n, err := storage.CountUsers(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 users, got %d", n)
+	}
+
+	storage.CreateUser(context.Background(), testPool, "count1@example.com", "password1234")
+	storage.CreateUser(context.Background(), testPool, "count2@example.com", "password1234")
+
+	n, err = storage.CountUsers(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 users, got %d", n)
+	}
+}
+
+func TestDeleteUser(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "delete@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	deleted, err := storage.DeleteUser(context.Background(), testPool, u.ID)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if !deleted {
+		t.Error("expected deleted=true")
+	}
+
+	got, err := storage.GetUserByID(context.Background(), testPool, u.ID)
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if got != nil {
+		t.Error("expected nil after delete")
+	}
+}
+
+func TestDeleteUser_notFound(t *testing.T) {
+	deleted, err := storage.DeleteUser(context.Background(), testPool, "00000000-0000-0000-0000-000000000000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deleted {
+		t.Error("expected deleted=false for unknown ID")
+	}
+}
+
+func TestUpdateUserProfile(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "profile@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	updated, err := storage.UpdateUserProfile(context.Background(), testPool, u.ID, "Alice", "new@example.com", "America/New_York")
+	if err != nil {
+		t.Fatalf("update profile: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if updated.Name != "Alice" {
+		t.Errorf("name: got %q, want %q", updated.Name, "Alice")
+	}
+	if updated.Email != "new@example.com" {
+		t.Errorf("email: got %q, want %q", updated.Email, "new@example.com")
+	}
+	if updated.Timezone != "America/New_York" {
+		t.Errorf("timezone: got %q, want %q", updated.Timezone, "America/New_York")
+	}
+}
+
+func TestUpdateUserProfile_normalizesEmail(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "prof2@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	updated, err := storage.UpdateUserProfile(context.Background(), testPool, u.ID, "Bob", "UPPER@EXAMPLE.COM", "UTC")
+	if err != nil {
+		t.Fatalf("update profile: %v", err)
+	}
+	if updated.Email != "upper@example.com" {
+		t.Errorf("expected lowercase email, got %q", updated.Email)
+	}
+}
+
+func TestChangeUserPassword(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "changepw@example.com", "oldpassword1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := storage.ChangeUserPassword(context.Background(), testPool, u.ID, "oldpassword1", "newpassword1"); err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+
+	// Verify new password works
+	authenticated, err := storage.AuthenticateUser(context.Background(), testPool, "changepw@example.com", "newpassword1")
+	if err != nil {
+		t.Fatalf("authenticate after change: %v", err)
+	}
+	if authenticated == nil {
+		t.Error("expected successful auth with new password")
+	}
+
+	// Verify old password no longer works
+	authenticated, err = storage.AuthenticateUser(context.Background(), testPool, "changepw@example.com", "oldpassword1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if authenticated != nil {
+		t.Error("expected old password to be rejected")
+	}
+}
+
+func TestChangeUserPassword_wrongCurrent(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "changepw2@example.com", "correctpass1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = storage.ChangeUserPassword(context.Background(), testPool, u.ID, "wrongpass", "newpassword1")
+	if err == nil {
+		t.Error("expected error for wrong current password")
+	}
+}
+
+func TestChangeUserPassword_tooShort(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "changepw3@example.com", "oldpassword1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = storage.ChangeUserPassword(context.Background(), testPool, u.ID, "oldpassword1", "short")
+	if err == nil {
+		t.Error("expected error for too-short password")
+	}
+}
+
+func TestDeleteSessionReturningUserID(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "delsess@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	sess, err := storage.CreateSession(context.Background(), testPool, u.ID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	userID, err := storage.DeleteSessionReturningUserID(context.Background(), testPool, sess.Token)
+	if err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+	if userID != u.ID {
+		t.Errorf("userID: got %q, want %q", userID, u.ID)
+	}
+
+	// Deleting again should return empty string
+	userID2, err := storage.DeleteSessionReturningUserID(context.Background(), testPool, sess.Token)
+	if err != nil {
+		t.Fatalf("second delete: %v", err)
+	}
+	if userID2 != "" {
+		t.Errorf("expected empty userID on second delete, got %q", userID2)
+	}
+}
+
+func TestUpdateUserWeeklyDigest(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "digest@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := storage.UpdateUserWeeklyDigest(context.Background(), testPool, u.ID, true); err != nil {
+		t.Fatalf("enable digest: %v", err)
+	}
+
+	got, err := storage.GetUserByID(context.Background(), testPool, u.ID)
+	if err != nil {
+		t.Fatalf("get by id: %v", err)
+	}
+	if !got.WeeklyDigest {
+		t.Error("expected weekly_digest=true")
+	}
+
+	if err := storage.UpdateUserWeeklyDigest(context.Background(), testPool, u.ID, false); err != nil {
+		t.Fatalf("disable digest: %v", err)
+	}
+	got, _ = storage.GetUserByID(context.Background(), testPool, u.ID)
+	if got.WeeklyDigest {
+		t.Error("expected weekly_digest=false after disable")
+	}
+}
+
+func TestListDigestDueUsers(t *testing.T) {
+	truncateUsers(t)
+
+	u1, _ := storage.CreateUser(context.Background(), testPool, "du1@example.com", "password1234")
+	u2, _ := storage.CreateUser(context.Background(), testPool, "du2@example.com", "password1234")
+	u3, _ := storage.CreateUser(context.Background(), testPool, "du3@example.com", "password1234")
+
+	// weekly_digest defaults to true; explicitly disable u3
+	storage.UpdateUserWeeklyDigest(context.Background(), testPool, u1.ID, true)
+	storage.UpdateUserWeeklyDigest(context.Background(), testPool, u2.ID, true)
+	storage.UpdateUserWeeklyDigest(context.Background(), testPool, u3.ID, false)
+
+	users, err := storage.ListDigestDueUsers(context.Background(), testPool, true)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(users) != 2 {
+		t.Errorf("expected 2 due users, got %d", len(users))
+	}
+}
+
+func TestListDigestDueUsers_respectsTimeFilter(t *testing.T) {
+	truncateUsers(t)
+
+	u, _ := storage.CreateUser(context.Background(), testPool, "dtime@example.com", "password1234")
+	storage.UpdateUserWeeklyDigest(context.Background(), testPool, u.ID, true)
+
+	// Mark digest sent recently
+	storage.MarkDigestSent(context.Background(), testPool, u.ID)
+
+	// Without force, user sent recently should not appear
+	users, err := storage.ListDigestDueUsers(context.Background(), testPool, false)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, du := range users {
+		if du.ID == u.ID {
+			t.Error("user with recent digest should not appear without force=true")
+		}
+	}
+}
+
+func TestMarkDigestSent(t *testing.T) {
+	truncateUsers(t)
+
+	u, _ := storage.CreateUser(context.Background(), testPool, "mds@example.com", "password1234")
+	storage.UpdateUserWeeklyDigest(context.Background(), testPool, u.ID, true)
+
+	if err := storage.MarkDigestSent(context.Background(), testPool, u.ID); err != nil {
+		t.Fatalf("mark digest sent: %v", err)
+	}
+
+	// User should not appear in due list (sent just now)
+	users, _ := storage.ListDigestDueUsers(context.Background(), testPool, false)
+	for _, du := range users {
+		if du.ID == u.ID {
+			t.Error("user with digest just sent should not be due")
+		}
+	}
+}
+
+func TestCreateAdminUser(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateAdminUser(context.Background(), testPool, "admin@example.com", "Admin User", "adminpassword1")
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	if u.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+	if !u.Permissions.ManageProjects || !u.Permissions.ManageUsers ||
+		!u.Permissions.ManageAlerts || !u.Permissions.ManageIssues {
+		t.Errorf("admin user should have all permissions, got %+v", u.Permissions)
+	}
+}

@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -334,5 +335,101 @@ func TestDeleteProjectByID_notFound(t *testing.T) {
 	}
 	if deleted {
 		t.Error("expected deleted=false for nonexistent ID")
+	}
+}
+
+func TestCountProjectEvents_empty(t *testing.T) {
+	truncateProjects(t)
+	p, err := storage.CreateProject(context.Background(), testPool, "ev-count-empty", "Ev Count Empty")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	n, err := storage.CountProjectEvents(context.Background(), testPool, p.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0, got %d", n)
+	}
+}
+
+func TestCountProjectEvents_withEvents(t *testing.T) {
+	p, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	payload := json.RawMessage(`{"level":"error"}`)
+	testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload)
+		VALUES ($1, NOW(), NOW(), $2)
+	`, p.ID, payload)
+
+	n, err := storage.CountProjectEvents(ctx, testPool, p.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n < 1 {
+		t.Errorf("expected >= 1, got %d", n)
+	}
+}
+
+func TestCountMonthlyEvents(t *testing.T) {
+	n, err := storage.CountMonthlyEvents(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n < 0 {
+		t.Errorf("expected >= 0, got %d", n)
+	}
+}
+
+func TestCountLastMonthEvents(t *testing.T) {
+	n, err := storage.CountLastMonthEvents(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n < 0 {
+		t.Errorf("expected >= 0, got %d", n)
+	}
+}
+
+func TestDailyEventVolume(t *testing.T) {
+	p, _ := setupProjectAndEvent(t)
+
+	counts, err := storage.DailyEventVolume(context.Background(), testPool, p.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(counts) != 30 {
+		t.Errorf("expected 30 daily buckets, got %d", len(counts))
+	}
+}
+
+func TestUpdateProjectScrubbing(t *testing.T) {
+	p, _ := setupProjectAndEvent(t)
+
+	fields := []string{"password", "token"}
+	patterns := json.RawMessage(`[{"pattern": "secret_.*"}]`)
+
+	updated, err := storage.UpdateProjectScrubbing(context.Background(), testPool, p.ID, fields, patterns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(updated.ScrubFields) != 2 {
+		t.Errorf("scrub_fields: got %v", updated.ScrubFields)
+	}
+}
+
+func TestUpdateProjectScrubbing_notFound(t *testing.T) {
+	got, err := storage.UpdateProjectScrubbing(context.Background(), testPool,
+		"00000000-0000-0000-0000-000000000000", nil, json.RawMessage(`[]`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil for unknown project, got %+v", got)
 	}
 }

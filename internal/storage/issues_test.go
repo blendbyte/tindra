@@ -652,3 +652,198 @@ func TestUserCount_noUserField(t *testing.T) {
 		t.Errorf("user_count: got %d, want 0", got.UserCount)
 	}
 }
+
+func TestCountAllIssues(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	for _, fp := range []string{"fp-ca1", "fp-ca2", "fp-ca3"} {
+		storage.UpsertIssue(ctx, testPool, project.ID, fp, "Title", "error", "error", "", "", ts)
+	}
+
+	n, err := storage.CountAllIssues(ctx, testPool, storage.IssueFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n < 3 {
+		t.Errorf("expected >= 3, got %d", n)
+	}
+}
+
+func TestCountAllIssues_withFilter(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf1", "Title", "error", "error", "prod", "", ts)
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf2", "Title", "warning", "error", "staging", "", ts)
+
+	n, err := storage.CountAllIssues(ctx, testPool, storage.IssueFilter{Level: "error"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n < 1 {
+		t.Errorf("expected >= 1 error-level issue, got %d", n)
+	}
+}
+
+func TestListAllIssues(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	for _, fp := range []string{"fp-la1", "fp-la2"} {
+		storage.UpsertIssue(ctx, testPool, project.ID, fp, "Title", "error", "error", "", "", ts)
+	}
+
+	issues, err := storage.ListAllIssues(ctx, testPool, storage.IssueFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) < 2 {
+		t.Errorf("expected >= 2 issues, got %d", len(issues))
+	}
+}
+
+func TestListAllIssues_filterByProject(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-laf1", "Title", "error", "error", "", "", ts)
+
+	issues, err := storage.ListAllIssues(ctx, testPool, storage.IssueFilter{
+		ProjectIDs: []string{project.ID},
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, iss := range issues {
+		if iss.ProjectID != project.ID {
+			t.Errorf("unexpected project_id: got %q", iss.ProjectID)
+		}
+	}
+}
+
+func TestExpireIgnoredIssues(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-expire", "Title", "error", "error", "", "", ts)
+
+	// Set status=ignored with an already-expired ignore_until
+	testPool.Exec(ctx, `
+		UPDATE issues SET status = 'ignored', ignore_until = NOW() - interval '1 minute'
+		WHERE id = $1
+	`, issue.ID)
+
+	n, err := storage.ExpireIgnoredIssues(ctx, testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n < 1 {
+		t.Errorf("expected >= 1 expired, got %d", n)
+	}
+
+	got, _ := storage.GetIssue(ctx, testPool, issue.ID)
+	if got == nil {
+		t.Fatal("expected non-nil issue")
+	}
+	if got.Status != "regressed" {
+		t.Errorf("status: got %q, want regressed", got.Status)
+	}
+}
+
+func TestExpireIgnoredIssues_noneToExpire(t *testing.T) {
+	n, err := storage.ExpireIgnoredIssues(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n < 0 {
+		t.Errorf("expected >= 0, got %d", n)
+	}
+}
+
+func TestUpdateIssueAssignee(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	truncateUsers(t)
+
+	u, _ := storage.CreateUser(ctx, testPool, "assignee@example.com", "password1234")
+	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-assign", "Title", "error", "error", "", "", time.Now())
+
+	updated, err := storage.UpdateIssueAssignee(ctx, testPool, issue.ID, &u.ID)
+	if err != nil {
+		t.Fatalf("update assignee: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if updated.AssigneeID == nil || *updated.AssigneeID != u.ID {
+		t.Errorf("assignee_id: got %v, want %q", updated.AssigneeID, u.ID)
+	}
+
+	// Unassign
+	updated2, err := storage.UpdateIssueAssignee(ctx, testPool, issue.ID, nil)
+	if err != nil {
+		t.Fatalf("unassign: %v", err)
+	}
+	if updated2.AssigneeID != nil {
+		t.Errorf("expected nil assignee_id after unassign")
+	}
+}
+
+func TestUpdateIssueAssignee_notFound(t *testing.T) {
+	got, err := storage.UpdateIssueAssignee(context.Background(), testPool, "00000000-0000-0000-0000-000000000000", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil for unknown issue, got %+v", got)
+	}
+}
+
+func TestGetIssueSparklines(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-spark", "Title", "error", "error", "", "", time.Now())
+
+	// Insert an event today
+	testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
+		VALUES ($1, NOW(), NOW(), '{"level":"error"}'::jsonb, 'fp-spark', $2)
+	`, project.ID, issue.ID)
+
+	sparklines, err := storage.GetIssueSparklines(ctx, testPool, []string{issue.ID})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	counts, ok := sparklines[issue.ID]
+	if !ok {
+		t.Fatalf("expected sparkline for issue %q", issue.ID)
+	}
+	if len(counts) != 14 {
+		t.Errorf("expected 14 buckets, got %d", len(counts))
+	}
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+	if total < 1 {
+		t.Error("expected at least one event in sparkline")
+	}
+}
+
+func TestGetIssueSparklines_empty(t *testing.T) {
+	sparklines, err := storage.GetIssueSparklines(context.Background(), testPool, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sparklines) != 0 {
+		t.Errorf("expected empty map, got %v", sparklines)
+	}
+}

@@ -160,3 +160,63 @@ func TestWorker_SendNow_nilPool_returnsWithoutPanic(t *testing.T) {
 	w.SendNow(context.Background(), false)
 	w.SendNow(context.Background(), true)
 }
+
+func TestWorker_buildReport_realPool(t *testing.T) {
+	truncateAll(t)
+	p := seedProject(t, "wr-build-real", "Build Report Real")
+
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -7)
+	seedEvent(t, p.ID, now.AddDate(0, 0, -1))
+
+	w := NewWorker(testPool, &mockEmailSender{}, "https://example.com")
+	report, err := w.buildReport(context.Background(), []string{p.ID}, from, now)
+	if err != nil {
+		t.Fatalf("buildReport: %v", err)
+	}
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if report.TotalErrors < 1 {
+		t.Errorf("expected at least 1 total error, got %d", report.TotalErrors)
+	}
+}
+
+func TestWorker_sendSlot_callsDB(t *testing.T) {
+	truncateAll(t)
+	// With no users in DB, sendSlot should complete without panic
+	w := NewWorker(testPool, &mockEmailSender{}, "https://example.com")
+	w.sendSlot(context.Background(), 0)
+	w.sendSlot(context.Background(), 1)
+}
+
+func TestWorker_send_realPool_withUser(t *testing.T) {
+	truncateAll(t)
+	p := seedProject(t, "wr-send-real", "Send Real Project")
+	seedEvent(t, p.ID, time.Now().UTC().AddDate(0, 0, -1))
+
+	ctx := context.Background()
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO users (email, name, password_hash)
+		VALUES ('digest-send-worker-test@example.com', 'Send User', 'x')
+		ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+		RETURNING id
+	`).Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
+	})
+
+	sender := &mockEmailSender{}
+	w := NewWorker(testPool, sender, "https://example.com")
+	w.send(ctx, true) // force=true bypasses the 7-day cooldown
+
+	if len(sender.messages) != 1 {
+		t.Errorf("expected 1 email sent, got %d", len(sender.messages))
+	}
+	if len(sender.messages) > 0 && sender.messages[0].To != "digest-send-worker-test@example.com" {
+		t.Errorf("unexpected To: %q", sender.messages[0].To)
+	}
+}

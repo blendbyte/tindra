@@ -268,3 +268,39 @@ func TestMarkAlertFired(t *testing.T) {
 		t.Error("last_fired_at should be set after MarkAlertFired")
 	}
 }
+
+func TestListEnabledAlertRules(t *testing.T) {
+	p := setupProjectForAlerts(t)
+	truncateAlerts(t)
+
+	// Create one enabled and one disabled rule
+	storage.CreateAlertRule(context.Background(), testPool, webhookRule(p.ID))
+	disabled := webhookRule(p.ID)
+	disabled.Enabled = false
+	storage.CreateAlertRule(context.Background(), testPool, disabled)
+
+	rules, err := storage.ListEnabledAlertRules(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, r := range rules {
+		if !r.Enabled {
+			t.Error("ListEnabledAlertRules returned a disabled rule")
+		}
+	}
+	if len(rules) < 1 {
+		t.Error("expected at least 1 enabled rule")
+	}
+}
+
+func TestListEnabledAlertRules_empty(t *testing.T) {
+	truncateAlerts(t)
+
+	rules, err := storage.ListEnabledAlertRules(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules, got %d", len(rules))
+	}
+}
