@@ -21,13 +21,27 @@ const copiedTraceId = ref(false)
 const copiedSpanId = ref<string | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const hoveredRowKey = ref<string | null>(null)
-const zoomLevel = ref(1)
+const viewStart = ref(0)
+const viewEnd = ref(1)
+const panActive = ref(false)
+const panDidMove = ref(false)
+const panStartX = ref(0)
+const panViewStart = ref(0)
+const panViewRange = ref(0)
+const suppressNextClick = ref(false)
+const timelineRef = ref<HTMLElement | null>(null)
+const waterfallRef = ref<HTMLElement | null>(null)
+const leftPct = ref(30)
+const isDividerDragging = ref(false)
+const dividerStartX = ref(0)
+const dividerStartPct = ref(0)
 
 const AUTO_GROUP_THRESHOLD = 4
 
 type SpanRow = { kind: 'span'; span: Span; depth: number }
 type GroupRow = { kind: 'group'; key: string; op: string; count: number; depth: number; spans: Span[] }
-type DisplayRow = SpanRow | GroupRow
+type ChainRow = { kind: 'chain'; key: string; op: string; count: number; depth: number; head: Span; tail: Span; spans: Span[] }
+type DisplayRow = SpanRow | GroupRow | ChainRow
 
 const {
   data: tx,
@@ -76,6 +90,11 @@ const total = computed(() => {
   return Math.max(txMs, maxSpanEnd)
 })
 
+watch(total, (t) => {
+  viewStart.value = 0
+  viewEnd.value = t
+})
+
 const criticalSpanCount = computed(() => spanList.value.filter(s => s.is_critical).length)
 
 const critPathEndMs = computed(() => {
@@ -87,11 +106,17 @@ const critPathEndMs = computed(() => {
 const hasCriticalPath = computed(() => criticalSpanCount.value > 0 && spanList.value.length > 1)
 
 const ticks = computed(() => {
-  const t = total.value
-  const step = t <= 250 ? 50 : t <= 1000 ? 100 : 200
+  const start = viewStart.value
+  const end = viewEnd.value
+  const range = end - start
+  if (range <= 0) return []
+  const rawStep = range / 6
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const n = rawStep / mag
+  const step = n <= 1 ? mag : n <= 2 ? 2 * mag : n <= 5 ? 5 * mag : 10 * mag
   const out: number[] = []
-  for (let v = 0; v <= t; v += step) out.push(v)
-  if (out[out.length - 1] !== t) out.push(t)
+  const firstTick = Math.ceil(start / step) * step
+  for (let v = firstTick; v <= end; v += step) out.push(v)
   return out
 })
 
@@ -232,6 +257,21 @@ const spanTree = computed((): DisplayRow[] => {
     return processLevel(kids, depth)
   }
 
+  function buildChain(head: Span): Span[] | null {
+    const headBase = head.op.split('.')[0]
+    const chain: Span[] = [head]
+    let cur = head
+    for (;;) {
+      const kids = children.get(cur.span_id) ?? []
+      if (kids.length !== 1) break
+      const child = kids[0]
+      if (child.op.split('.')[0] !== headBase) break
+      chain.push(child)
+      cur = child
+    }
+    return chain.length >= 3 ? chain : null
+  }
+
   // Groups consecutive siblings sharing the same op base into a single collapsible row
   // when there are AUTO_GROUP_THRESHOLD or more of them.
   function processLevel(siblings: Span[], depth: number): DisplayRow[] {
@@ -258,9 +298,24 @@ const spanTree = computed((): DisplayRow[] => {
         }
         i = j
       } else {
-        rows.push({ kind: 'span', span: s, depth })
-        if (!collapsedBranches.value.has(s.span_id)) {
-          rows.push(...walkChildren(s, depth + 1))
+        const chain = buildChain(s)
+        if (chain) {
+          const key = `chain:${chain[0].span_id}:${chain[chain.length - 1].span_id}`
+          const tail = chain[chain.length - 1]
+          rows.push({ kind: 'chain', key, op: base, count: chain.length, depth, head: chain[0], tail, spans: chain })
+          if (expandedGroups.value.has(key)) {
+            for (const cs of chain) {
+              rows.push({ kind: 'span', span: cs, depth })
+            }
+            if (!collapsedBranches.value.has(tail.span_id)) {
+              rows.push(...walkChildren(tail, depth + 1))
+            }
+          }
+        } else {
+          rows.push({ kind: 'span', span: s, depth })
+          if (!collapsedBranches.value.has(s.span_id)) {
+            rows.push(...walkChildren(s, depth + 1))
+          }
         }
         i++
       }
@@ -304,8 +359,39 @@ function rowKey(row: DisplayRow): string {
   return row.kind === 'span' ? row.span.id : row.key
 }
 
-function zoomIn() { zoomLevel.value = Math.round(Math.min(8, zoomLevel.value + 0.25) * 100) / 100 }
-function zoomOut() { zoomLevel.value = Math.round(Math.max(0.1, zoomLevel.value - 0.25) * 100) / 100 }
+function toPct(ms: number): string {
+  const range = viewEnd.value - viewStart.value
+  return `${((ms - viewStart.value) / range) * 100}%`
+}
+function toWidthPct(durationMs: number): string {
+  const range = viewEnd.value - viewStart.value
+  return `${(durationMs / range) * 100}%`
+}
+const isZoomed = computed(() => viewStart.value > 0.1 || viewEnd.value < total.value - 0.1)
+
+function zoomAt(fraction: number, factor: number) {
+  const t = total.value
+  const range = viewEnd.value - viewStart.value
+  const cursorMs = viewStart.value + fraction * range
+  const newRange = Math.max(1, range * factor)
+  let newStart = cursorMs - fraction * newRange
+  let newEnd = newStart + newRange
+  if (newStart < 0) { newEnd -= newStart; newStart = 0 }
+  if (newEnd > t) { newStart -= (newEnd - t); newEnd = t }
+  viewStart.value = Math.max(0, newStart)
+  viewEnd.value = Math.min(t, newEnd)
+}
+function resetZoom() {
+  viewStart.value = 0
+  viewEnd.value = total.value
+}
+
+function handleDividerMouseDown(e: MouseEvent) {
+  e.preventDefault()
+  isDividerDragging.value = true
+  dividerStartX.value = e.clientX
+  dividerStartPct.value = leftPct.value
+}
 
 function expandAll() {
   collapsedBranches.value = new Set()
@@ -359,27 +445,84 @@ function handleKeydown(e: KeyboardEvent) {
     focusedIdx.value = null
   } else if (e.key === '+' || e.key === '=') {
     e.preventDefault()
-    zoomIn()
+    zoomAt(0.5, 1 / 1.3)
   } else if (e.key === '-' || e.key === '_') {
     e.preventDefault()
-    zoomOut()
+    zoomAt(0.5, 1.3)
   }
 }
 
-const wheelAccum = ref(0)
 function handleTimelineWheel(e: WheelEvent) {
   if (!e.metaKey && !e.ctrlKey) return
   e.preventDefault()
-  wheelAccum.value += e.deltaY
-  if (Math.abs(wheelAccum.value) >= 50) {
-    if (wheelAccum.value < 0) zoomIn()
-    else zoomOut()
-    wheelAccum.value = 0
+  const el = timelineRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const fraction = (e.clientX - rect.left) / rect.width
+  zoomAt(fraction, e.deltaY > 0 ? 1.2 : 1 / 1.2)
+}
+
+function handleTimelineMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return
+  panActive.value = true
+  panDidMove.value = false
+  panStartX.value = e.clientX
+  panViewStart.value = viewStart.value
+  panViewRange.value = viewEnd.value - viewStart.value
+}
+
+function onDocumentMouseMove(e: MouseEvent) {
+  if (panActive.value) {
+    const el = timelineRef.value
+    if (!el) return
+    const dx = e.clientX - panStartX.value
+    if (Math.abs(dx) < 4) return
+    panDidMove.value = true
+    const rect = el.getBoundingClientRect()
+    const msDelta = (dx / rect.width) * panViewRange.value
+    let newStart = panViewStart.value - msDelta
+    const t = total.value
+    if (newStart < 0) newStart = 0
+    if (newStart + panViewRange.value > t) newStart = t - panViewRange.value
+    viewStart.value = Math.max(0, newStart)
+    viewEnd.value = viewStart.value + panViewRange.value
+  }
+  if (isDividerDragging.value) {
+    const container = waterfallRef.value
+    if (!container) return
+    const containerWidth = container.getBoundingClientRect().width
+    const dx = e.clientX - dividerStartX.value
+    const deltaPct = (dx / containerWidth) * 100
+    leftPct.value = Math.min(60, Math.max(15, dividerStartPct.value + deltaPct))
   }
 }
 
-onMounted(() => document.addEventListener('keydown', handleKeydown))
-onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
+function onDocumentMouseUp() {
+  if (panActive.value && panDidMove.value) {
+    suppressNextClick.value = true
+    setTimeout(() => { suppressNextClick.value = false }, 50)
+  }
+  panActive.value = false
+  panDidMove.value = false
+  isDividerDragging.value = false
+}
+
+function handleRowClick(row: DisplayRow) {
+  if (suppressNextClick.value) return
+  if (row.kind === 'group' || row.kind === 'chain') toggleGroup(row.key)
+  else toggleDetail(row.span.id)
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
+  document.addEventListener('mousemove', onDocumentMouseMove)
+  document.addEventListener('mouseup', onDocumentMouseUp)
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('mousemove', onDocumentMouseMove)
+  document.removeEventListener('mouseup', onDocumentMouseUp)
+})
 
 // Trace log correlation - only fetch when the transaction has a trace_id.
 const traceId = computed(() => tx.value?.trace_id ?? '')
@@ -584,22 +727,25 @@ function traceErrorOffset(e: TraceError): string {
       <div v-if="spanList.length > 0" class="trace-search__zoom">
         <button
           class="span-tree-btn"
-          :disabled="zoomLevel <= 0.1"
           v-tooltip="'Zoom out (-)'"
-          @click="zoomOut"
+          @click="zoomAt(0.5, 1.3)"
         ><Icon name="minus" :size="10" /></button>
-        <span class="trace-search__zoom-level">{{ zoomLevel }}×</span>
+        <button
+          v-if="isZoomed"
+          class="span-tree-btn span-tree-btn--reset"
+          v-tooltip="'Reset zoom'"
+          @click="resetZoom"
+        ><Icon name="maximize-2" :size="10" /></button>
         <button
           class="span-tree-btn"
-          :disabled="zoomLevel >= 8"
           v-tooltip="'Zoom in (+)'"
-          @click="zoomIn"
+          @click="zoomAt(0.5, 1 / 1.3)"
         ><Icon name="plus" :size="10" /></button>
       </div>
     </div>
 
     <!-- Waterfall -->
-    <div v-if="!isSpansError" class="waterfall-grid">
+    <div v-if="!isSpansError" ref="waterfallRef" class="waterfall-grid" :style="{ gridTemplateColumns: leftPct + '% 4px 1fr' }">
 
       <!-- Left: span tree -->
       <div class="waterfall-left">
@@ -644,7 +790,7 @@ function traceErrorOffset(e: TraceError): string {
               v-if="row.kind === 'group'"
               class="span-row span-row--group"
               :class="{ 'span-row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
-              @click="toggleGroup(row.key)"
+              @click="handleRowClick(row)"
               @mouseenter="hoveredRowKey = rowKey(row)"
               @mouseleave="hoveredRowKey = null"
             >
@@ -653,6 +799,26 @@ function traceErrorOffset(e: TraceError): string {
                   <Icon :name="expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
                 </span>
                 <span class="span-autogroup-badge">Autogrouped</span>
+                <span class="span-name__arrow">→</span>
+                <span class="span-name__op-label" :style="{ color: opColor(row.op) }">{{ row.op }}</span>
+              </div>
+              <span class="span-row__dur">{{ row.count }} spans</span>
+            </div>
+
+            <!-- Chain row: single-descendant chain of same-op spans -->
+            <div
+              v-else-if="row.kind === 'chain'"
+              class="span-row span-row--group"
+              :class="{ 'span-row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
+              @click="handleRowClick(row)"
+              @mouseenter="hoveredRowKey = rowKey(row)"
+              @mouseleave="hoveredRowKey = null"
+            >
+              <div class="span-name" :style="{ paddingLeft: row.depth * 12 + 'px' }">
+                <span class="span-name__caret">
+                  <Icon :name="expandedGroups.has(row.key) ? 'chevron-down' : 'chevron-right'" :size="10" />
+                </span>
+                <span class="span-autogroup-badge">Chain</span>
                 <span class="span-name__arrow">→</span>
                 <span class="span-name__op-label" :style="{ color: opColor(row.op) }">{{ row.op }}</span>
               </div>
@@ -670,7 +836,7 @@ function traceErrorOffset(e: TraceError): string {
                   'is-hovered': hoveredRowKey === rowKey(row),
                 }"
                 :style="{ opacity: hasCriticalPath && !row.span.is_critical ? 0.6 : 1 }"
-                @click="toggleDetail(row.span.id)"
+                @click="handleRowClick(row)"
                 @mouseenter="hoveredRowKey = rowKey(row)"
                 @mouseleave="hoveredRowKey = null"
               >
@@ -772,25 +938,29 @@ function traceErrorOffset(e: TraceError): string {
 
       </div>
 
+      <div class="waterfall-divider" @mousedown="handleDividerMouseDown" />
+
       <!-- Right: timeline -->
-      <div class="timeline" style="overflow-x: auto; overflow-y: auto; position: relative" @wheel="handleTimelineWheel">
-        <div :style="{ width: (zoomLevel * 100) + '%', minWidth: zoomLevel >= 1 ? '100%' : undefined, position: 'relative' }">
+      <div
+        ref="timelineRef"
+        class="timeline"
+        :style="{ overflowX: 'hidden', overflowY: 'auto', position: 'relative', cursor: panActive ? 'grabbing' : 'grab' }"
+        @wheel="handleTimelineWheel"
+        @mousedown="handleTimelineMouseDown"
+      >
         <div
           v-for="v in ticks"
           :key="`tl-${v}`"
           class="timeline__tick"
-          :style="{ left: `${(v / total) * 100}%` }"
+          :style="{ left: toPct(v) }"
         />
         <div class="timeline__axis">
           <template v-for="v in ticks" :key="v">
             <span
               class="timeline__tick-label"
-              :style="{
-                left: `${(v / total) * 100}%`,
-                transform: v === total ? 'translateX(calc(-100% - 2px))' : 'translateX(4px)',
-              }"
+              :style="{ left: toPct(v) }"
             >
-              {{ v === 0 ? '0' : formatDuration(v) }}
+              {{ formatDuration(v) }}
             </span>
           </template>
         </div>
@@ -806,7 +976,7 @@ function traceErrorOffset(e: TraceError): string {
           :key="row.kind === 'span' ? row.span.id : row.key"
           class="timeline__row"
           :class="{ 'timeline__row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
-          @click="row.kind === 'group' ? toggleGroup(row.key) : toggleDetail(row.span.id)"
+          @click="handleRowClick(row)"
           @mouseenter="hoveredRowKey = rowKey(row)"
           @mouseleave="hoveredRowKey = null"
         >
@@ -815,8 +985,22 @@ function traceErrorOffset(e: TraceError): string {
             <div
               class="timeline__bar"
               :style="{
-                left: `${(Math.min(...row.spans.map(s => s.start_offset_ms)) / total) * 100}%`,
-                width: `max(4px, ${((Math.max(...row.spans.map(s => s.start_offset_ms + s.duration_ms)) - Math.min(...row.spans.map(s => s.start_offset_ms))) / total) * 100}%)`,
+                left: toPct(Math.min(...row.spans.map(s => s.start_offset_ms))),
+                width: `max(4px, ${toWidthPct(Math.max(...row.spans.map(s => s.start_offset_ms + s.duration_ms)) - Math.min(...row.spans.map(s => s.start_offset_ms)))})`,
+                background: opColor(row.op),
+                opacity: 0.45,
+              }"
+            >
+              <span class="timeline__bar-label">{{ row.count }} × {{ row.op }}</span>
+            </div>
+          </template>
+          <!-- Chain: single bar from head start to tail end -->
+          <template v-else-if="row.kind === 'chain'">
+            <div
+              class="timeline__bar"
+              :style="{
+                left: toPct(row.head.start_offset_ms),
+                width: `max(4px, ${toWidthPct(row.tail.start_offset_ms + row.tail.duration_ms - row.head.start_offset_ms)})`,
                 background: opColor(row.op),
                 opacity: 0.45,
               }"
@@ -830,8 +1014,8 @@ function traceErrorOffset(e: TraceError): string {
               class="timeline__bar"
               :class="{ 'timeline__bar--crit': row.span.id === maxDurationSpanId }"
               :style="{
-                left: `${(row.span.start_offset_ms / total) * 100}%`,
-                width: `max(4px, ${(row.span.duration_ms / total) * 100}%)`,
+                left: toPct(row.span.start_offset_ms),
+                width: `max(4px, ${toWidthPct(row.span.duration_ms)})`,
                 background: opColor(row.span.op),
                 opacity: hasCriticalPath && !row.span.is_critical ? 0.3 : (openDetails.has(row.span.id) ? 1 : 0.85),
                 outline: row.span.is_critical ? `1.5px solid ${CRITICAL_COLOR}` : 'none',
@@ -839,20 +1023,19 @@ function traceErrorOffset(e: TraceError): string {
               }"
               v-tooltip="`${row.span.description || row.span.op} · ${formatDuration(row.span.duration_ms)}`"
             >
-              <span v-if="(row.span.duration_ms / total) * 100 > 8" class="timeline__bar-label">
+              <span v-if="parseFloat(toWidthPct(row.span.duration_ms)) > 8" class="timeline__bar-label">
                 {{ formatDuration(row.span.duration_ms) }}
               </span>
             </div>
             <span
               v-if="errorsBySpanId.get(row.span.span_id)?.length"
               class="timeline__error-dot"
-              :style="{ left: `calc(${(row.span.start_offset_ms / total) * 100}% + max(4px, ${(row.span.duration_ms / total) * 100}%) - 2px)` }"
+              :style="{ left: `calc(${toPct(row.span.start_offset_ms)} + max(4px, ${toWidthPct(row.span.duration_ms)}) - 2px)` }"
               v-tooltip="`${errorsBySpanId.get(row.span.span_id)!.length} error(s) on this span`"
             />
           </template>
         </div>
 
-        </div><!-- end timeline__inner (zoom) -->
       </div>
     </div>
 
