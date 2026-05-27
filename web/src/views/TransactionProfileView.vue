@@ -201,7 +201,7 @@ function projectName(projectId: string) {
       </a>
       <div class="detail-breadcrumb__title"><span>{{ txName }}</span></div>
       <div class="detail-breadcrumb__actions">
-        <span class="optag" :class="`optag--${txOp.split('.')[0]}`">{{ txOp.split('.')[0] }}</span>
+        <span v-if="txOp" class="optag" :class="`optag--${txOp.split('.')[0]}`">{{ txOp.split('.')[0] }}</span>
       </div>
     </div>
 
