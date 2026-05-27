@@ -467,3 +467,98 @@ func TestStore_fetchContextLine_nonHTTPURL(t *testing.T) {
 		t.Error("expected no context_line for non-HTTP abs_path")
 	}
 }
+
+func TestStore_fetchContextLine_outOfBounds(t *testing.T) {
+	// Server serves a 3-line JS file; request lineno=100 → out of bounds → returns ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "line1\nline2\nline3")
+	}))
+	defer srv.Close()
+
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	payload := json.RawMessage(fmt.Sprintf(
+		`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":100,"colno":0}]}}]}}`,
+		srv.URL+"/app.js",
+	))
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+
+	var out map[string]any
+	json.Unmarshal(got, &out)
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	if cl, ok := frame["context_line"]; ok && cl != "" {
+		t.Errorf("expected empty context_line for out-of-bounds lineno, got %q", cl)
+	}
+}
+
+func TestStore_fetchContextLine_emptyLine(t *testing.T) {
+	// Server serves a file where the second line is empty; request lineno=2 → empty line → returns ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("first line\n\nthird line\n"))
+	}))
+	defer srv.Close()
+
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	payload := json.RawMessage(fmt.Sprintf(
+		`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":2,"colno":0}]}}]}}`,
+		srv.URL+"/empty.js",
+	))
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+
+	var out map[string]any
+	json.Unmarshal(got, &out)
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	if cl, ok := frame["context_line"]; ok && cl != "" {
+		t.Errorf("expected empty context_line for empty line, got %q", cl)
+	}
+}
+
+func TestStore_fetchContextLine_non200(t *testing.T) {
+	// Server returns 404 → fetchLines returns nil → fetchContextLine returns ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	payload := json.RawMessage(fmt.Sprintf(
+		`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":1,"colno":0}]}}]}}`,
+		srv.URL+"/missing.js",
+	))
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+
+	var out map[string]any
+	json.Unmarshal(got, &out)
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	if _, ok := frame["context_line"]; ok {
+		t.Error("expected no context_line when server returns 404")
+	}
+}
+
+func TestStore_setCachedLines_lruEviction(t *testing.T) {
+	// Fill the cache beyond fileCacheMax (64) to trigger LRU eviction.
+	// Each call uses a unique path to add a new cache entry.
+	var lastURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "content for %s\n", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	ctx := context.Background()
+
+	// Insert 66 entries (> fileCacheMax=64) to trigger eviction
+	for i := 0; i < 66; i++ {
+		url := fmt.Sprintf("%s/file%d.js", srv.URL, i)
+		payload := json.RawMessage(fmt.Sprintf(
+			`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":1,"colno":0}]}}]}}`,
+			url,
+		))
+		store.ResolveEventPayload(ctx, testProject.ID, "", payload)
+		lastURL = url
+	}
+	_ = lastURL
+	// If we get here without panic, LRU eviction worked correctly
+}

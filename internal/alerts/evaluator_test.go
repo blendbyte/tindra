@@ -1655,3 +1655,149 @@ func TestMoreLabel_regressed_plural(t *testing.T) {
 		t.Errorf("moreLabel(regressed, 5) = %q, want %q", got, "regressed issues")
 	}
 }
+
+func TestFireTest_slack(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	rule := &storage.AlertRule{
+		ID:         "ft-slack",
+		Name:       "Slack Test Rule",
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_issue",
+		Channel:    "slack",
+		WebhookURL: &url,
+	}
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	err := e.FireTest(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("FireTest slack: %v", err)
+	}
+	if len(received) == 0 {
+		t.Error("expected slack webhook body to be received")
+	}
+}
+
+func TestFireTest_discord(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	rule := &storage.AlertRule{
+		ID:         "ft-discord",
+		Name:       "Discord Test Rule",
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_issue",
+		Channel:    "discord",
+		WebhookURL: &url,
+	}
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	err := e.FireTest(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("FireTest discord: %v", err)
+	}
+	if len(received) == 0 {
+		t.Error("expected discord webhook body to be received")
+	}
+}
+
+// --- buildAlertSubject ---
+
+func TestBuildAlertSubject_issueAutoResolved_singular(t *testing.T) {
+	p := AlertPayload{Trigger: "issue_auto_resolved", Details: map[string]any{"resolved_count": 1}}
+	got := buildAlertSubject(p)
+	if got != "[Tindra] 1 performance issue auto-resolved" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_issueAutoResolved_plural(t *testing.T) {
+	p := AlertPayload{Trigger: "issue_auto_resolved", Details: map[string]any{"resolved_count": 3}}
+	got := buildAlertSubject(p)
+	if !strings.Contains(got, "3 performance issues auto-resolved") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_regressed_singular(t *testing.T) {
+	p := AlertPayload{Trigger: "regressed", Details: map[string]any{"regressed_count": 1}}
+	got := buildAlertSubject(p)
+	if got != "[Tindra] 1 regression" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_regressed_plural(t *testing.T) {
+	p := AlertPayload{Trigger: "regressed", Details: map[string]any{"regressed_count": 4}}
+	got := buildAlertSubject(p)
+	if !strings.Contains(got, "4 regressions") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_newOrRegressed_singular(t *testing.T) {
+	p := AlertPayload{Trigger: "new_or_regressed", Details: map[string]any{"new_issue_count": 1, "regressed_count": 0}}
+	got := buildAlertSubject(p)
+	if got != "[Tindra] 1 issue" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_cronMissed_singular(t *testing.T) {
+	p := AlertPayload{Trigger: "cron_missed", Details: map[string]any{"missed_count": 1}}
+	got := buildAlertSubject(p)
+	if got != "[Tindra] 1 cron monitor missed" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_cronError_singular(t *testing.T) {
+	p := AlertPayload{Trigger: "cron_error", Details: map[string]any{"error_count": 1}}
+	got := buildAlertSubject(p)
+	if got != "[Tindra] 1 cron check-in error" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_cronError_plural(t *testing.T) {
+	p := AlertPayload{Trigger: "cron_error", Details: map[string]any{"error_count": 5}}
+	got := buildAlertSubject(p)
+	if !strings.Contains(got, "5 cron check-in errors") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_default(t *testing.T) {
+	p := AlertPayload{Trigger: "unknown_trigger", RuleName: "My Rule"}
+	got := buildAlertSubject(p)
+	if !strings.Contains(got, "My Rule") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_withProject(t *testing.T) {
+	p := AlertPayload{Trigger: "new_issue", ProjectName: "My Project", Details: map[string]any{"new_issue_count": 2}}
+	got := buildAlertSubject(p)
+	if !strings.Contains(got, "My Project") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildAlertSubject_projectIDFallback(t *testing.T) {
+	p := AlertPayload{Trigger: "new_issue", ProjectID: "proj-abc", Details: map[string]any{"new_issue_count": 1}}
+	got := buildAlertSubject(p)
+	if !strings.Contains(got, "proj-abc") {
+		t.Errorf("expected project ID in subject, got %q", got)
+	}
+}
