@@ -31,6 +31,7 @@ vi.mock('@/api/client', () => ({
 
 vi.mock('@/utils/formatters', () => ({
   formatRel: vi.fn(() => '2m ago'),
+  formatTs: vi.fn(() => '12:34:56.789'),
 }))
 
 vi.mock('@/stores/auth', () => ({
