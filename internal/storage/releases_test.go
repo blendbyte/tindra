@@ -132,3 +132,123 @@ func TestGetRelease_notFound(t *testing.T) {
 		t.Errorf("expected nil, got %+v", r)
 	}
 }
+
+func TestCountReleases_empty(t *testing.T) {
+	truncateProjects(t)
+	p, _ := storage.CreateProject(context.Background(), testPool, "rel-count", "Rel Count")
+
+	n, err := storage.CountReleases(context.Background(), testPool, storage.ReleaseFilter{ProjectIDs: []string{p.ID}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0, got %d", n)
+	}
+}
+
+func TestCountReleases_withReleases(t *testing.T) {
+	truncateProjects(t)
+	p, _ := storage.CreateProject(context.Background(), testPool, "rel-count2", "Rel Count 2")
+	ctx := context.Background()
+
+	for _, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		testPool.Exec(ctx, `
+			INSERT INTO releases (project_id, version, deployed_at)
+			VALUES ($1, $2, NOW())
+		`, p.ID, v)
+	}
+
+	n, err := storage.CountReleases(ctx, testPool, storage.ReleaseFilter{ProjectIDs: []string{p.ID}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("expected 3, got %d", n)
+	}
+}
+
+func TestGetReleaseTransactions_empty(t *testing.T) {
+	truncateProjects(t)
+	p, _ := storage.CreateProject(context.Background(), testPool, "rel-tx", "Rel Tx")
+	ctx := context.Background()
+
+	var relID string
+	testPool.QueryRow(ctx, `
+		INSERT INTO releases (project_id, version, deployed_at)
+		VALUES ($1, '2.0.0', NOW()) RETURNING id
+	`, p.ID).Scan(&relID)
+
+	summaries, err := storage.GetReleaseTransactions(ctx, testPool, relID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summaries) != 0 {
+		t.Errorf("expected empty, got %d", len(summaries))
+	}
+}
+
+func TestGetReleaseTransactions_withData(t *testing.T) {
+	truncateProjects(t)
+	p, _ := storage.CreateProject(context.Background(), testPool, "rel-tx2", "Rel Tx 2")
+	ctx := context.Background()
+
+	var relID string
+	testPool.QueryRow(ctx, `
+		INSERT INTO releases (project_id, version, deployed_at)
+		VALUES ($1, '3.0.0', NOW()) RETURNING id
+	`, p.ID).Scan(&relID)
+
+	// Insert a transaction with the same version
+	testPool.Exec(ctx, `
+		INSERT INTO transactions (project_id, trace_id, span_id, transaction, op, status, duration_ms, start_timestamp, timestamp, received_at, release)
+		VALUES ($1, gen_random_uuid()::text, gen_random_uuid()::text, '/api/test', 'http', 'ok', 100, NOW(), NOW(), NOW(), '3.0.0')
+	`, p.ID)
+
+	summaries, err := storage.GetReleaseTransactions(ctx, testPool, relID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summaries) == 0 {
+		t.Error("expected non-empty summaries")
+	}
+}
+
+func TestGetReleaseTransactions_notFound(t *testing.T) {
+	summaries, err := storage.GetReleaseTransactions(context.Background(), testPool, "00000000-0000-0000-0000-000000000000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summaries != nil {
+		t.Errorf("expected nil for unknown release, got %v", summaries)
+	}
+}
+
+func TestGetReleaseIssues_empty(t *testing.T) {
+	truncateProjects(t)
+	p, _ := storage.CreateProject(context.Background(), testPool, "rel-iss", "Rel Iss")
+	ctx := context.Background()
+
+	var relID string
+	testPool.QueryRow(ctx, `
+		INSERT INTO releases (project_id, version, deployed_at)
+		VALUES ($1, '4.0.0', NOW()) RETURNING id
+	`, p.ID).Scan(&relID)
+
+	issues, err := storage.GetReleaseIssues(ctx, testPool, relID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Errorf("expected empty, got %d", len(issues))
+	}
+}
+
+func TestGetReleaseIssues_notFound(t *testing.T) {
+	issues, err := storage.GetReleaseIssues(context.Background(), testPool, "00000000-0000-0000-0000-000000000000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if issues != nil {
+		t.Errorf("expected nil for unknown release, got %v", issues)
+	}
+}

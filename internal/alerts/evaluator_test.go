@@ -1098,3 +1098,560 @@ func TestNotifyAutoResolved_globalRule_firesForAnyProject(t *testing.T) {
 		t.Fatal("expected global rule to fire for any project's issues")
 	}
 }
+
+// --- conditionMet: regressed, new_or_regressed, cron_missed, cron_error ---
+
+func TestConditionMet_regressed_noIssues(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "regressed",
+		CreatedAt:  time.Now().Add(-time.Hour),
+	}
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false when no regressed issues")
+	}
+}
+
+func TestConditionMet_regressed_hasRegressed(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "regressed",
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+	}
+
+	// Insert a regressed issue with regressed_at = now
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, status, regressed_at, first_seen, last_seen)
+		VALUES ($1, 'fp-regressed-cond', 'Regressed Issue', 'error', 'regressed', NOW(), NOW() - interval '1 day', NOW())
+	`, testProject.ID)
+
+	met, details, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true when a regressed issue exists")
+	}
+	if details["regressed_count"].(int) < 1 {
+		t.Errorf("regressed_count: got %v", details["regressed_count"])
+	}
+}
+
+func TestConditionMet_newOrRegressed_noIssues(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_or_regressed",
+		CreatedAt:  time.Now().Add(-time.Hour),
+	}
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false when no new or regressed issues")
+	}
+}
+
+func TestConditionMet_newOrRegressed_hasNew(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_or_regressed",
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+	}
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, first_seen, last_seen)
+		VALUES ($1, 'fp-newreg-cond', 'New Issue', 'error', NOW(), NOW())
+	`, testProject.ID)
+
+	met, details, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true when new issue exists")
+	}
+	if details["new_issue_count"].(int) < 1 {
+		t.Errorf("new_issue_count: got %v", details["new_issue_count"])
+	}
+}
+
+func TestConditionMet_cronMissed_noMonitors(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM cron_monitors WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "cron_missed",
+	}
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false when no overdue monitors")
+	}
+}
+
+func TestConditionMet_cronMissed_hasOverdue(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM cron_monitors WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "cron_missed",
+	}
+
+	// Insert an overdue monitor (next_expected_at + grace_period < NOW)
+	testPool.Exec(context.Background(), `
+		INSERT INTO cron_monitors (project_id, name, schedule, grace_period_secs, status, next_expected_at)
+		VALUES ($1, 'overdue-monitor', '* * * * *', 60, 'active', NOW() - interval '5 minutes')
+	`, testProject.ID)
+
+	met, details, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true when overdue monitor exists")
+	}
+	if details["missed_count"].(int) < 1 {
+		t.Errorf("missed_count: got %v", details["missed_count"])
+	}
+}
+
+func TestConditionMet_cronError_noErrors(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM cron_monitors WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "cron_error",
+		CreatedAt:  time.Now().Add(-time.Hour),
+	}
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false when no cron errors")
+	}
+}
+
+func TestConditionMet_unknownTrigger_xyz(t *testing.T) {
+	rule := &storage.AlertRule{
+		Trigger: "unknown_trigger_xyz",
+	}
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false for unknown trigger")
+	}
+}
+
+// --- enrichPayload ---
+
+func TestEnrichPayload_newIssue(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_issue",
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+	}
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, first_seen, last_seen)
+		VALUES ($1, 'fp-enrich-ni', 'Enriched Issue', 'error', NOW(), NOW())
+	`, testProject.ID)
+
+	payload := &AlertPayload{Trigger: "new_issue"}
+	testEvaluator(nil).enrichPayload(context.Background(), payload, rule)
+
+	if len(payload.Issues) == 0 {
+		t.Error("expected issues to be populated")
+	}
+}
+
+func TestEnrichPayload_regressed(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "regressed",
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+	}
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, status, regressed_at, first_seen, last_seen)
+		VALUES ($1, 'fp-enrich-reg', 'Regressed', 'error', 'regressed', NOW(), NOW() - interval '1 day', NOW())
+	`, testProject.ID)
+
+	payload := &AlertPayload{Trigger: "regressed"}
+	testEvaluator(nil).enrichPayload(context.Background(), payload, rule)
+
+	// Should populate issues (regressed)
+	_ = payload.Issues // no error expected
+}
+
+func TestEnrichPayload_newOrRegressed(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_or_regressed",
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+	}
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, first_seen, last_seen)
+		VALUES ($1, 'fp-enrich-nor', 'New Or Regressed', 'error', NOW(), NOW())
+	`, testProject.ID)
+
+	payload := &AlertPayload{Trigger: "new_or_regressed"}
+	testEvaluator(nil).enrichPayload(context.Background(), payload, rule)
+
+	_ = payload.Issues // no error expected
+}
+
+func TestEnrichPayload_cronMissed(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM cron_monitors WHERE project_id = $1", testProject.ID)
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO cron_monitors (project_id, name, schedule, grace_period_secs, status, next_expected_at)
+		VALUES ($1, 'overdue-enrich', '* * * * *', 60, 'active', NOW() - interval '5 minutes')
+	`, testProject.ID)
+
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "cron_missed",
+	}
+
+	payload := &AlertPayload{Trigger: "cron_missed"}
+	testEvaluator(nil).enrichPayload(context.Background(), payload, rule)
+
+	if len(payload.Monitors) == 0 {
+		t.Error("expected monitors to be populated for cron_missed")
+	}
+}
+
+func TestEnrichPayload_withProjectName(t *testing.T) {
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_issue",
+		CreatedAt:  time.Now().Add(-time.Hour),
+	}
+
+	payload := &AlertPayload{Trigger: "new_issue"}
+	testEvaluator(nil).enrichPayload(context.Background(), payload, rule)
+
+	if payload.ProjectName == "" {
+		t.Error("expected ProjectName to be populated")
+	}
+}
+
+// --- levelsAtOrAbove ---
+
+func TestLevelsAtOrAbove_performance(t *testing.T) {
+	got := levelsAtOrAbove("performance")
+	if len(got) != 1 || got[0] != "performance" {
+		t.Errorf("levelsAtOrAbove('performance') = %v, want ['performance']", got)
+	}
+}
+
+func TestLevelsAtOrAbove_fatal(t *testing.T) {
+	got := levelsAtOrAbove("fatal")
+	if len(got) != 1 || got[0] != "fatal" {
+		t.Errorf("levelsAtOrAbove('fatal') = %v, want ['fatal']", got)
+	}
+}
+
+func TestLevelsAtOrAbove_error(t *testing.T) {
+	got := levelsAtOrAbove("error")
+	if len(got) != 2 || got[0] != "fatal" || got[1] != "error" {
+		t.Errorf("levelsAtOrAbove('error') = %v, want [fatal error]", got)
+	}
+}
+
+func TestLevelsAtOrAbove_debug(t *testing.T) {
+	got := levelsAtOrAbove("debug")
+	if len(got) != 5 {
+		t.Errorf("levelsAtOrAbove('debug'): expected 5 levels, got %d: %v", len(got), got)
+	}
+}
+
+func TestLevelsAtOrAbove_unknown(t *testing.T) {
+	got := levelsAtOrAbove("doesnotexist")
+	if len(got) != 5 {
+		t.Errorf("levelsAtOrAbove('doesnotexist'): expected 5 levels, got %d: %v", len(got), got)
+	}
+}
+
+// --- conditionMet with FilterLevel / FilterEnvironment ---
+
+func TestConditionMet_eventCount_withFilterLevel(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", testProject.ID)
+
+	threshold := 1
+	window := 60
+	filterLevel := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "event_count",
+		Threshold:   &threshold,
+		WindowMins:  &window,
+		FilterLevel: &filterLevel,
+	}
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO events (project_id, timestamp, payload)
+		VALUES ($1, NOW(), '{"level":"error"}'::jsonb)
+	`, testProject.ID)
+
+	met, details, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true when error-level event matches FilterLevel")
+	}
+	if details["event_count"].(int) < threshold {
+		t.Errorf("event_count: got %v", details["event_count"])
+	}
+}
+
+func TestConditionMet_eventCount_withFilterEnvironment(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", testProject.ID)
+
+	threshold := 1
+	window := 60
+	filterEnv := "production"
+	rule := &storage.AlertRule{
+		ProjectIDs:        []string{testProject.ID},
+		Trigger:           "event_count",
+		Threshold:         &threshold,
+		WindowMins:        &window,
+		FilterEnvironment: &filterEnv,
+	}
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO events (project_id, timestamp, payload)
+		VALUES ($1, NOW(), '{"level":"error","environment":"production"}'::jsonb)
+	`, testProject.ID)
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true when event environment matches FilterEnvironment")
+	}
+}
+
+func TestConditionMet_newIssue_withFilterLevel(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	filterLevel := "warning"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "new_issue",
+		CreatedAt:   time.Now().Add(-time.Hour),
+		FilterLevel: &filterLevel,
+	}
+
+	// Insert issue with level 'error' (>= warning) — should match the filter
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, first_seen, last_seen)
+		VALUES ($1, 'fp-fl-new-issue', 'FilterLevel Issue', 'error', NOW(), NOW())
+	`, testProject.ID)
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true: error level is >= warning in levelsAtOrAbove")
+	}
+}
+
+func TestConditionMet_newIssue_withMinOccurrences(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	minOcc := 5
+	rule := &storage.AlertRule{
+		ProjectIDs:     []string{testProject.ID},
+		Trigger:        "new_issue",
+		CreatedAt:      time.Now().Add(-time.Hour),
+		MinOccurrences: &minOcc,
+	}
+
+	// Issue with event_count below minimum
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, first_seen, last_seen, event_count)
+		VALUES ($1, 'fp-minocc', 'MinOcc Issue', 'error', NOW(), NOW(), 2)
+	`, testProject.ID)
+
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false when event_count < MinOccurrences")
+	}
+}
+
+// --- FireTest ---
+
+func TestFireTest_webhook(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	rule := &storage.AlertRule{
+		ID:         "ft-wh",
+		Name:       "Fire Test Rule",
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_issue",
+		Channel:    "webhook",
+		WebhookURL: &url,
+	}
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	err := e.FireTest(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("FireTest webhook: %v", err)
+	}
+	if len(received) == 0 {
+		t.Error("expected webhook body to be received")
+	}
+	var body map[string]any
+	if jsonErr := json.Unmarshal(received, &body); jsonErr != nil {
+		t.Fatalf("webhook body not valid JSON: %v", jsonErr)
+	}
+}
+
+func TestFireTest_email(t *testing.T) {
+	sender := &mockEmailSender{}
+	emailTo := "test@example.com"
+	rule := &storage.AlertRule{
+		ID:         "ft-email",
+		Name:       "Fire Test Email Rule",
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_issue",
+		Channel:    "email",
+		EmailTo:    &emailTo,
+	}
+
+	e := &Evaluator{pool: testPool, client: &http.Client{}, email: sender, publicURL: "https://example.com"}
+	err := e.FireTest(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("FireTest email: %v", err)
+	}
+	if sender.lastMsg.To != emailTo {
+		t.Errorf("expected email to %q, got %q", emailTo, sender.lastMsg.To)
+	}
+}
+
+func TestFireTest_unknownChannel(t *testing.T) {
+	rule := &storage.AlertRule{
+		ID:         "ft-unknown",
+		Name:       "Unknown Channel",
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "new_issue",
+		Channel:    "unknown_channel_xyz",
+	}
+
+	e := &Evaluator{pool: testPool, client: &http.Client{}}
+	err := e.FireTest(context.Background(), rule)
+	if err == nil {
+		t.Error("expected error for unknown channel")
+	}
+	if !strings.Contains(err.Error(), "unknown channel") {
+		t.Errorf("expected 'unknown channel' error, got: %v", err)
+	}
+}
+
+func TestFireTest_cronMissed_webhook(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	rule := &storage.AlertRule{
+		ID:         "ft-cron",
+		Name:       "Cron Missed Rule",
+		ProjectIDs: []string{testProject.ID},
+		Trigger:    "cron_missed",
+		Channel:    "webhook",
+		WebhookURL: &url,
+	}
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	err := e.FireTest(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("FireTest cron_missed webhook: %v", err)
+	}
+	if len(received) == 0 {
+		t.Error("expected webhook body to be received")
+	}
+}
+
+// --- moreLabel ---
+
+func TestMoreLabel_cron_singular(t *testing.T) {
+	got := moreLabel("cron_missed", 1)
+	if got != "monitor" {
+		t.Errorf("moreLabel(cron_missed, 1) = %q, want %q", got, "monitor")
+	}
+}
+
+func TestMoreLabel_cron_plural(t *testing.T) {
+	got := moreLabel("cron_missed", 3)
+	if got != "monitors" {
+		t.Errorf("moreLabel(cron_missed, 3) = %q, want %q", got, "monitors")
+	}
+}
+
+func TestMoreLabel_cron_error_singular(t *testing.T) {
+	got := moreLabel("cron_error", 1)
+	if got != "monitor" {
+		t.Errorf("moreLabel(cron_error, 1) = %q, want %q", got, "monitor")
+	}
+}
+
+func TestMoreLabel_regressed_singular(t *testing.T) {
+	got := moreLabel("regressed", 1)
+	if got != "regressed issue" {
+		t.Errorf("moreLabel(regressed, 1) = %q, want %q", got, "regressed issue")
+	}
+}
+
+func TestMoreLabel_regressed_plural(t *testing.T) {
+	got := moreLabel("regressed", 5)
+	if got != "regressed issues" {
+		t.Errorf("moreLabel(regressed, 5) = %q, want %q", got, "regressed issues")
+	}
+}

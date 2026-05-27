@@ -3,7 +3,10 @@ package sourcemaps_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -386,5 +389,81 @@ func TestStore_ResolveEventPayload_noSourcemapInDB(t *testing.T) {
 	}
 	if outFrame["abs_path"] != inFrame["abs_path"] {
 		t.Error("abs_path should be unchanged when no sourcemap")
+	}
+}
+
+func TestStore_fetchContextLine_httpFallback(t *testing.T) {
+	jsContent := "const x = 1;\nconst y = 2;\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		fmt.Fprint(w, jsContent)
+	}))
+	defer srv.Close()
+
+	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
+	store := sourcemaps.NewStore(testDataDir, testPool)
+
+	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/app.js","lineno":1,"colno":0}]}}]}}`, srv.URL))
+
+	// First call: fetches from HTTP server, populates cache
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+	var out map[string]any
+	if err := json.Unmarshal(got, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	if _, ok := frame["context_line"]; !ok {
+		t.Error("expected context_line to be set from HTTP fallback")
+	}
+
+	// Second call: same URL → cache hit (getCachedLines returns non-nil)
+	got2 := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+	var out2 map[string]any
+	if err := json.Unmarshal(got2, &out2); err != nil {
+		t.Fatalf("unmarshal cached: %v", err)
+	}
+	frames2 := out2["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame2 := frames2[0].(map[string]any)
+	if _, ok := frame2["context_line"]; !ok {
+		t.Error("expected context_line on second call (cache hit)")
+	}
+}
+
+func TestStore_fetchContextLine_longLine(t *testing.T) {
+	// Line longer than ctxLineMax (140) triggers {snip} truncation
+	longLine := strings.Repeat("a", 200)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, longLine)
+	}))
+	defer srv.Close()
+
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	// colno=100: start=30, end=170; both start>0 and end<200 → leading and trailing {snip}
+	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/long.js","lineno":1,"colno":100}]}}]}}`, srv.URL))
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+
+	var out map[string]any
+	json.Unmarshal(got, &out)
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	cl, _ := frame["context_line"].(string)
+	if !strings.Contains(cl, "{snip}") {
+		t.Errorf("expected {snip} in context_line for long line, got %q", cl)
+	}
+}
+
+func TestStore_fetchContextLine_nonHTTPURL(t *testing.T) {
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	// ~/dist/app.js is not an http:// URL → fetchContextLine returns "" immediately
+	payload := json.RawMessage(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"~/dist/app.js","lineno":1,"colno":0}]}}]}}`)
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+
+	var out map[string]any
+	json.Unmarshal(got, &out)
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	if _, ok := frame["context_line"]; ok {
+		t.Error("expected no context_line for non-HTTP abs_path")
 	}
 }

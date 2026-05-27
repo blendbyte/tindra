@@ -151,3 +151,32 @@ func TestConsumeMFAChallenge_notFound(t *testing.T) {
 		t.Error("expected empty string for unknown token")
 	}
 }
+
+func TestGetMFAChallenge_found(t *testing.T) {
+	truncateUsers(t)
+
+	u, _ := storage.CreateUser(context.Background(), testPool, "mfach@example.com", "password1234")
+
+	token, err := storage.CreateMFAChallenge(context.Background(), testPool, u.ID)
+	if err != nil {
+		t.Fatalf("create challenge: %v", err)
+	}
+
+	userID, err := storage.GetMFAChallenge(context.Background(), testPool, token)
+	if err != nil {
+		t.Fatalf("get challenge: %v", err)
+	}
+	if userID != u.ID {
+		t.Errorf("userID: got %q, want %q", userID, u.ID)
+	}
+}
+
+func TestGetMFAChallenge_notFound(t *testing.T) {
+	userID, err := storage.GetMFAChallenge(context.Background(), testPool, "nonexistent-token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if userID != "" {
+		t.Errorf("expected empty userID, got %q", userID)
+	}
+}

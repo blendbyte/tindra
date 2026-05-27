@@ -451,3 +451,346 @@ func TestGetTransactionByTraceID_notFound(t *testing.T) {
 		t.Errorf("expected nil, got transaction %q", got.ID)
 	}
 }
+
+func TestGetTransactionTimeseries_empty(t *testing.T) {
+	p := setupProjectForTxns(t)
+
+	ts, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ts == nil {
+		t.Fatal("expected non-nil timeseries")
+	}
+	if ts.BucketSize != "hour" {
+		t.Errorf("bucket_size: got %q, want hour", ts.BucketSize)
+	}
+}
+
+func TestGetTransactionTimeseries_withData(t *testing.T) {
+	p := setupProjectForTxns(t)
+	now := time.Now().UTC()
+	seedTransaction(t, p.ID, "/api/ts", 100, now)
+	seedTransaction(t, p.ID, "/api/ts", 200, now.Add(-30*time.Minute))
+
+	ts, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ts.Buckets) == 0 {
+		t.Error("expected non-empty buckets")
+	}
+	total := int64(0)
+	for _, b := range ts.Buckets {
+		total += b.Count
+	}
+	if total < 2 {
+		t.Errorf("expected at least 2 total events, got %d", total)
+	}
+}
+
+func TestGetTransactionTimeseries_bucketSizes(t *testing.T) {
+	p := setupProjectForTxns(t)
+
+	// <= 1 hour: 5min buckets
+	ts1, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 1, "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ts1.BucketSize != "5min" {
+		t.Errorf("1h bucket_size: got %q, want 5min", ts1.BucketSize)
+	}
+
+	// > 168 hours: day buckets
+	ts2, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 200, "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ts2.BucketSize != "day" {
+		t.Errorf("200h bucket_size: got %q, want day", ts2.BucketSize)
+	}
+}
+
+func TestListTransactionSummaries_empty(t *testing.T) {
+	p := setupProjectForTxns(t)
+
+	summaries, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summaries) != 0 {
+		t.Errorf("expected empty, got %d", len(summaries))
+	}
+}
+
+func TestListTransactionSummaries_withData(t *testing.T) {
+	p := setupProjectForTxns(t)
+	now := time.Now().UTC()
+	seedTransaction(t, p.ID, "/api/summary", 100, now.Add(-10*time.Minute))
+	seedTransaction(t, p.ID, "/api/summary", 200, now.Add(-5*time.Minute))
+	seedTransaction(t, p.ID, "/api/other", 50, now.Add(-3*time.Minute))
+
+	summaries, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summaries) == 0 {
+		t.Error("expected non-empty summaries")
+	}
+	found := false
+	for _, s := range summaries {
+		if s.Transaction == "/api/summary" {
+			found = true
+			if s.SampleCount != 2 {
+				t.Errorf("/api/summary sample_count: got %d, want 2", s.SampleCount)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected /api/summary in summaries")
+	}
+}
+
+func TestGetErrorsForTrace_empty(t *testing.T) {
+	errs, err := storage.GetErrorsForTrace(context.Background(), testPool, "nonexistent-trace-id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Errorf("expected empty, got %d", len(errs))
+	}
+}
+
+func TestGetErrorsForTrace_withErrors(t *testing.T) {
+	p := setupProjectForTxns(t)
+	ctx := context.Background()
+	traceID := "test-trace-12345"
+
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, p.ID, "fp-trace-err", "Trace Error", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+
+	testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id, trace_id)
+		VALUES ($1, NOW(), NOW(), '{"level":"error"}'::jsonb, 'fp-trace-err', $2, $3)
+	`, p.ID, issue.ID, traceID)
+
+	errs, err := storage.GetErrorsForTrace(ctx, testPool, traceID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error, got %d", len(errs))
+	}
+	if errs[0].IssueID != issue.ID {
+		t.Errorf("issue_id: got %q, want %q", errs[0].IssueID, issue.ID)
+	}
+	if errs[0].Title != "Trace Error" {
+		t.Errorf("title: got %q", errs[0].Title)
+	}
+}
+
+func TestListTransactionSummaries_withFilters(t *testing.T) {
+	p := setupProjectForTxns(t)
+	now := time.Now().UTC()
+
+	// Transaction with specific op + environment + release
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, environment, release)
+		VALUES ($1, '/api/filtered', 'http.server', 'ok', 100, $2, $3, 'production', 'v1.0.0')
+	`, p.ID, now.Add(-5*time.Minute), now.Add(-5*time.Minute).Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Filter by op - should find the transaction
+	got, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "http.server", "")
+	if err != nil {
+		t.Fatalf("op filter: %v", err)
+	}
+	var found bool
+	for _, s := range got {
+		if s.Transaction == "/api/filtered" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected /api/filtered in summaries with op filter")
+	}
+
+	// Filter by name
+	byName, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "/api/filtered", "", "")
+	if err != nil {
+		t.Fatalf("name filter: %v", err)
+	}
+	if len(byName) == 0 {
+		t.Error("expected results when filtering by name /api/filtered")
+	}
+
+	// Filter by environment
+	byEnv, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "production", "", "", "")
+	if err != nil {
+		t.Fatalf("env filter: %v", err)
+	}
+	if len(byEnv) == 0 {
+		t.Error("expected results when filtering by environment=production")
+	}
+
+	// Filter by release
+	byRel, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "v1.0.0")
+	if err != nil {
+		t.Fatalf("release filter: %v", err)
+	}
+	if len(byRel) == 0 {
+		t.Error("expected results when filtering by release=v1.0.0")
+	}
+
+	// Test with offsetHours > 0 (the offset window should not include recent transactions)
+	withOffset, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 1, "", "", "", "")
+	if err != nil {
+		t.Fatalf("offset: %v", err)
+	}
+	_ = withOffset // just verify it doesn't error
+}
+
+func TestGetTransactionTimeseries_withFilters(t *testing.T) {
+	p := setupProjectForTxns(t)
+	now := time.Now().UTC()
+
+	// Insert transaction with environment and op
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, environment)
+		VALUES ($1, '/api/ts-filt', 'http.server', 'ok', 50, $2, $3, 'production')
+	`, p.ID, now.Add(-30*time.Minute), now.Add(-30*time.Minute).Add(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Filter by env
+	ts1, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "production", "", "")
+	if err != nil {
+		t.Fatalf("env filter: %v", err)
+	}
+	if ts1 == nil {
+		t.Fatal("expected non-nil timeseries")
+	}
+
+	// Filter by name
+	ts2, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "/api/ts-filt", "")
+	if err != nil {
+		t.Fatalf("name filter: %v", err)
+	}
+	if len(ts2.Buckets) == 0 {
+		t.Error("expected at least one bucket when filtering by matching name")
+	}
+
+	// Filter by op
+	ts3, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "http.server")
+	if err != nil {
+		t.Fatalf("op filter: %v", err)
+	}
+	if ts3 == nil {
+		t.Fatal("expected non-nil timeseries with op filter")
+	}
+}
+
+func TestListAllTransactions_withNameAndOpFilter(t *testing.T) {
+	p := setupProjectForTxns(t)
+	now := time.Now().UTC()
+
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, environment)
+		VALUES ($1, '/api/named', 'grpc', 'ok', 30, $2, $3, 'staging')
+	`, p.ID, now, now.Add(30*time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Filter by name
+	byName, err := storage.ListAllTransactions(context.Background(), testPool, storage.TransactionFilter{
+		Name:  "/api/named",
+		Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("name filter: %v", err)
+	}
+	if len(byName) == 0 {
+		t.Error("expected results when filtering by name")
+	}
+	for _, tx := range byName {
+		if tx.Transaction != "/api/named" {
+			t.Errorf("unexpected transaction name: %q", tx.Transaction)
+		}
+	}
+
+	// Filter by op
+	byOp, err := storage.ListAllTransactions(context.Background(), testPool, storage.TransactionFilter{
+		Op:    "grpc",
+		Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("op filter: %v", err)
+	}
+	if len(byOp) == 0 {
+		t.Error("expected results when filtering by op=grpc")
+	}
+
+	// Filter by environment
+	byEnv, err := storage.ListAllTransactions(context.Background(), testPool, storage.TransactionFilter{
+		Environment: "staging",
+		Limit:       50,
+	})
+	if err != nil {
+		t.Fatalf("env filter: %v", err)
+	}
+	if len(byEnv) == 0 {
+		t.Error("expected results when filtering by environment=staging")
+	}
+
+	// Filter by projectIDs
+	byProject, err := storage.ListAllTransactions(context.Background(), testPool, storage.TransactionFilter{
+		ProjectIDs: []string{p.ID},
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("projectIDs filter: %v", err)
+	}
+	if len(byProject) == 0 {
+		t.Error("expected results when filtering by projectID")
+	}
+}
+
+func TestListAllTransactions_pagination(t *testing.T) {
+	p := setupProjectForTxns(t)
+	now := time.Now().UTC()
+
+	for i := range 5 {
+		seedTransaction(t, p.ID, "/api/allpage", 10, now.Add(time.Duration(i)*time.Second))
+	}
+
+	first, err := storage.ListAllTransactions(context.Background(), testPool, storage.TransactionFilter{
+		ProjectIDs: []string{p.ID},
+		Limit:      3,
+	})
+	if err != nil {
+		t.Fatalf("page 1: %v", err)
+	}
+	if len(first) != 3 {
+		t.Fatalf("expected 3, got %d", len(first))
+	}
+
+	last := first[len(first)-1]
+	second, err := storage.ListAllTransactions(context.Background(), testPool, storage.TransactionFilter{
+		ProjectIDs: []string{p.ID},
+		Limit:      3,
+		CursorTime: &last.StartTimestamp,
+		CursorID:   &last.ID,
+	})
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
+	}
+	if len(second) != 2 {
+		t.Errorf("expected 2 on page 2, got %d", len(second))
+	}
+}

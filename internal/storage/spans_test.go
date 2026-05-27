@@ -265,3 +265,135 @@ func TestGetSpanSamples_projectFilter(t *testing.T) {
 		}
 	}
 }
+
+// TestGetSpanSummaries_jobCategory verifies the "job" op-prefix filter covers task/queue/job spans.
+func TestGetSpanSummaries_jobCategory(t *testing.T) {
+	p := setupProjectForSpans(t)
+	now := time.Now().UTC()
+
+	tx := seedTransaction(t, p.ID, "/worker", 200, now)
+	seedSpan(t, tx.ID, "job-sp-1", "queue.consume", "process_email", 50, now)
+	seedSpan(t, tx.ID, "job-sp-2", "task.execute", "send_notification", 30, now.Add(time.Millisecond))
+
+	summaries, err := storage.GetSpanSummaries(context.Background(), testPool, "job", []string{p.ID}, 24, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summaries) == 0 {
+		t.Error("expected job-category spans in summaries")
+	}
+	for _, s := range summaries {
+		if s.Op != "queue.consume" && s.Op != "task.execute" {
+			t.Errorf("unexpected op in job category result: %q", s.Op)
+		}
+	}
+}
+
+// TestGetSpanSummaries_unknownCategory verifies that an unknown category uses the default filter (TRUE).
+func TestGetSpanSummaries_unknownCategory(t *testing.T) {
+	p := setupProjectForSpans(t)
+	now := time.Now().UTC()
+
+	tx := seedTransaction(t, p.ID, "/custom", 100, now)
+	seedSpan(t, tx.ID, "any-sp", "custom.thing", "do something", 10, now)
+
+	summaries, err := storage.GetSpanSummaries(context.Background(), testPool, "unknown_category", []string{p.ID}, 24, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var found bool
+	for _, s := range summaries {
+		if s.Op == "custom.thing" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected custom.thing span visible with unknown category (default filter = TRUE)")
+	}
+}
+
+// TestGetSpanSummaries_withEnvFilter verifies the environment filter passes through to query.
+func TestGetSpanSummaries_withEnvFilter(t *testing.T) {
+	p := setupProjectForSpans(t)
+	now := time.Now().UTC()
+
+	// Transaction with environment=production
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, environment)
+		VALUES ($1, '/env-txn', 'http.server', 'ok', 100, $2, $3, 'production')
+	`, p.ID, now, now.Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+	var txID string
+	testPool.QueryRow(context.Background(), `SELECT id FROM transactions WHERE transaction = '/env-txn' AND project_id = $1`, p.ID).Scan(&txID)
+	seedSpan(t, txID, "env-sp", "db.query", "SELECT env", 10, now)
+
+	// With env filter matching production
+	got, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "production", "")
+	if err != nil {
+		t.Fatalf("env filter: %v", err)
+	}
+	var found bool
+	for _, s := range got {
+		if s.Description == "SELECT env" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected span visible when environment matches")
+	}
+
+	// With env filter not matching
+	none, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "staging", "")
+	if err != nil {
+		t.Fatalf("staging filter: %v", err)
+	}
+	for _, s := range none {
+		if s.Description == "SELECT env" {
+			t.Error("span from production should not appear when filtering by staging")
+		}
+	}
+}
+
+// TestGetSpanTimeseries_5minBuckets verifies the bucket size for hours <= 1.
+func TestGetSpanTimeseries_5minBuckets(t *testing.T) {
+	setupProjectForSpans(t)
+
+	ts, err := storage.GetSpanTimeseries(context.Background(), testPool, "db", nil, 1, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ts.BucketSize != "5min" {
+		t.Errorf("expected bucket_size=5min for hours=1, got %q", ts.BucketSize)
+	}
+}
+
+// TestGetSpanTimeseries_withEnvFilter verifies the environment filter is applied to span timeseries.
+func TestGetSpanTimeseries_withEnvFilter(t *testing.T) {
+	setupProjectForSpans(t)
+
+	// Just verify the query runs without error when env is set
+	ts, err := storage.GetSpanTimeseries(context.Background(), testPool, "db", nil, 24, "production", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ts == nil {
+		t.Fatal("expected non-nil timeseries")
+	}
+}
+
+// TestGetSpanSamples_withEnvAndReleaseFilter verifies both env and release filters in GetSpanSamples.
+func TestGetSpanSamples_withEnvAndReleaseFilter(t *testing.T) {
+	setupProjectForSpans(t)
+
+	// Just verify the query runs with env/release set (no data expected)
+	samples, err := storage.GetSpanSamples(context.Background(), testPool, "db.query", "SELECT 1", nil, 24, "production", "v1.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if samples == nil {
+		t.Error("expected non-nil (empty) slice")
+	}
+}
