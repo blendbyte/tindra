@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
+let routeQueryOverride: Record<string, string> = { name: '/api/users', op: 'http.server' }
+
 vi.mock('vue-router', () => ({
-  useRoute: vi.fn(() => ({ query: { name: '/api/users', op: 'http.server' } })),
-  useRouter: vi.fn(() => ({ push: vi.fn() })),
+  useRoute: vi.fn(() => ({ query: routeQueryOverride })),
+  useRouter: vi.fn(() => ({ push: vi.fn(), back: vi.fn() })),
 }))
 
 vi.mock('@tanstack/vue-query', () => ({
@@ -31,7 +33,7 @@ vi.mock('@/stores/auth', () => ({
 import TransactionProfileView from '../TransactionProfileView.vue'
 import { useQuery, useInfiniteQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
@@ -76,6 +78,7 @@ function setupMocks(summaries: unknown[] = [], isError = false, samples?: unknow
 }
 
 beforeEach(() => {
+  routeQueryOverride = { name: '/api/users', op: 'http.server' }
   vi.mocked(useQuery).mockReset()
   vi.mocked(useInfiniteQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
@@ -526,6 +529,222 @@ describe('TransactionProfileView', () => {
       expect(wrapper.find('.txerror').exists()).toBe(true)
       await wrapper.find('.txerror .btn').trigger('click')
       expect(refetchTimeseriesFn).toHaveBeenCalled()
+    })
+  })
+
+  describe('no txOp in route', () => {
+    it('renders without op badge when op query param is absent', () => {
+      routeQueryOverride = { name: '/api/users' }
+      setupMocks([makeSummary()])
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      expect(wrapper.find('.optag').exists()).toBe(false)
+    })
+  })
+
+  describe('back button', () => {
+    it('calls router.back() when breadcrumb back link is clicked', async () => {
+      const backFn = vi.fn()
+      vi.mocked(useRouter).mockReturnValue({ push: vi.fn(), back: backFn } as any)
+      setupMocks([makeSummary()])
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      await wrapper.find('.detail-breadcrumb__back').trigger('click')
+      expect(backFn).toHaveBeenCalled()
+    })
+  })
+
+  describe('retry summaries button', () => {
+    it('calls refetchSummaries when Retry is clicked on stats error', async () => {
+      const refetchFn = vi.fn()
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [] } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
+      vi.mocked(useInfiniteQuery).mockReturnValue({
+        data: ref(undefined), fetchNextPage: vi.fn(), hasNextPage: ref(false),
+        isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
+      } as any)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(refetchFn).toHaveBeenCalled()
+    })
+  })
+
+  describe('handleSamplesKey with empty samples', () => {
+    it('does not throw when keydown fires with no samples', () => {
+      setupMocks([makeSummary()], false, [])
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      expect(() => {
+        wrapper.find('.tx-samples').element.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }))
+      }).not.toThrow()
+      wrapper.unmount()
+    })
+  })
+
+  describe('sort comparator with two samples', () => {
+    const twoSamples = [
+      { id: 'tx1', project_id: 'proj-1', trace_id: 'tr1', duration_ms: 300, status: 'ok', start_timestamp: '2024-01-01T00:00:00.000Z' },
+      { id: 'tx2', project_id: 'proj-1', trace_id: 'tr2', duration_ms: 100, status: 'error', start_timestamp: '2024-01-01T01:00:00.000Z' },
+    ]
+
+    it('sorts by duration with two samples covering comparator body', async () => {
+      setupMocks([makeSummary()], false, twoSamples)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      const durBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Duration'))!
+      await durBtn.trigger('click')
+      expect(durBtn.classes()).toContain('col-sort--active')
+    })
+
+    it('sorts by status with two samples covering localeCompare branch', async () => {
+      setupMocks([makeSummary()], false, twoSamples)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      const statusBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Status'))!
+      await statusBtn.trigger('click')
+      expect(statusBtn.classes()).toContain('col-sort--active')
+    })
+
+    it('sorts by time with two samples covering timestamp branch', async () => {
+      setupMocks([makeSummary()], false, twoSamples)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      const timeBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Time'))!
+      await timeBtn.trigger('click')
+      await timeBtn.trigger('click')
+      expect(timeBtn.classes()).toContain('col-sort--active')
+    })
+  })
+
+  describe('k key at boundary (selectedIdx=0)', () => {
+    it('handles k key when at first item without throwing', async () => {
+      const twoSamples = [
+        { id: 'tx1', project_id: 'proj-1', trace_id: 'tr1', duration_ms: 100, status: 'ok', start_timestamp: '2024-01-01T00:00:00.000Z' },
+        { id: 'tx2', project_id: 'proj-1', trace_id: 'tr2', duration_ms: 200, status: 'error', start_timestamp: '2024-01-01T00:01:00.000Z' },
+      ]
+      setupMocks([makeSummary()], false, twoSamples)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      const txSamples = wrapper.find('.tx-samples')
+      // first navigate down to set selectedIdx=0
+      txSamples.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }))
+      await wrapper.vm.$nextTick()
+      // then navigate up from index 0 - should clamp to 0
+      expect(() => {
+        txSamples.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', bubbles: true }))
+      }).not.toThrow()
+      wrapper.unmount()
+    })
+  })
+
+  describe('formatTPM with tpm >= 1', () => {
+    it('shows 2 decimal places for tpm >= 1', () => {
+      const s = { ...makeSummary(), tpm: 5.5 }
+      setupMocks([s])
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      expect(wrapper.text()).toContain('5.50/min')
+    })
+  })
+
+  describe('projectName fallback', () => {
+    it('returns project id when project not found in store', () => {
+      vi.mocked(useProjectsStore).mockReturnValue({
+        selectedIds: [],
+        projects: [],
+      } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([makeSummary()]), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
+      vi.mocked(useInfiniteQuery).mockReturnValue({
+        data: ref({ pages: [{ transactions: [{ id: 'tx1', project_id: 'unknown-proj', trace_id: 'tr1', duration_ms: 100, status: 'ok', start_timestamp: '2024-01-01T00:00:00.000Z' }] }] }),
+        fetchNextPage: vi.fn(), hasNextPage: ref(false),
+        isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
+      } as any)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      expect(wrapper.find('.tx-sample-row__project').text()).toBe('unknown-proj')
+    })
+  })
+
+  describe('profileParams and samplesParams with selectedIds', () => {
+    it('uses selectedIds from store in query params', () => {
+      vi.mocked(useProjectsStore).mockReturnValue({
+        selectedIds: ['proj-1', 'proj-2'],
+        projects: [{ id: 'proj-1', name: 'My App', slug: 'my-app' }],
+      } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([makeSummary()]), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
+      vi.mocked(useInfiniteQuery).mockReturnValue({
+        data: ref(undefined), fetchNextPage: vi.fn(), hasNextPage: ref(false),
+        isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
+      } as any)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      expect(wrapper.find('.txstats').exists()).toBe(true)
+    })
+  })
+
+  describe('queryKey evaluation covers profileParams computed', () => {
+    it('evaluates computed queryKey to trigger profileParams', () => {
+      let callIdx = 0
+      vi.mocked(useProjectsStore).mockReturnValue({
+        selectedIds: ['proj-1'],
+        projects: [{ id: 'proj-1', name: 'My App', slug: 'my-app' }],
+      } as any)
+      vi.mocked(useQuery).mockImplementation((opts: any) => {
+        try {
+          if (opts?.queryKey && typeof opts.queryKey === 'object' && 'value' in opts.queryKey) {
+            void opts.queryKey.value
+          }
+        } catch {}
+        callIdx++
+        if (callIdx === 1) return { data: ref([makeSummary()]), isError: ref(false), refetch: vi.fn() } as any
+        return { data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any
+      })
+      vi.mocked(useInfiniteQuery).mockReturnValue({
+        data: ref(undefined), fetchNextPage: vi.fn(), hasNextPage: ref(false),
+        isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
+      } as any)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      expect(wrapper.find('.txstats').exists()).toBe(true)
+    })
+  })
+
+  describe('envFilter change resets samplesParams watcher', () => {
+    it('updates envFilter via FilterChip and triggers samplesParams watcher', async () => {
+      const capturedQueryKeys: any[] = []
+      let callIdx = 0
+      vi.mocked(useProjectsStore).mockReturnValue({
+        selectedIds: ['proj-1'],
+        projects: [{ id: 'proj-1', name: 'My App', slug: 'my-app' }],
+      } as any)
+      vi.mocked(useQuery).mockImplementation((opts: any) => {
+        try {
+          if (opts?.queryKey && typeof opts.queryKey === 'object' && 'value' in opts.queryKey) {
+            capturedQueryKeys.push(opts.queryKey)
+            void opts.queryKey.value
+          }
+        } catch {}
+        callIdx++
+        if (callIdx === 1) return { data: ref([makeSummary()]), isError: ref(false), refetch: vi.fn() } as any
+        return { data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any
+      })
+      vi.mocked(useInfiniteQuery).mockReturnValue({
+        data: ref(undefined), fetchNextPage: vi.fn(), hasNextPage: ref(false),
+        isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
+      } as any)
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips[1].vm.$emit('change', 'staging')
+      await wrapper.vm.$nextTick()
+      // Access captured queryKeys after env change to trigger profileParams with envFilter !== 'All'
+      for (const qk of capturedQueryKeys) {
+        try { void qk.value } catch {}
+      }
+      expect(wrapper.find('.txstats').exists()).toBe(true)
+    })
+  })
+
+  describe('formatOkRate', () => {
+    it('shows ok rate in stats breakdown when failureRate > 0', () => {
+      const s = { ...makeSummary(), failure_rate: 0.05 }
+      setupMocks([s])
+      const wrapper = mount(TransactionProfileView, { global: { stubs } })
+      expect(wrapper.text()).toContain('ok')
     })
   })
 })

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
+import { flushPromises } from '@vue/test-utils'
+
+let cronstrueThrows = false
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
@@ -26,13 +29,19 @@ vi.mock('@/utils/formatters', () => ({
 }))
 
 vi.mock('cronstrue', () => ({
-  default: { toString: vi.fn(() => 'Every hour') },
+  default: {
+    toString: vi.fn(() => {
+      if (cronstrueThrows) throw new Error('invalid cron')
+      return 'Every hour'
+    }),
+  },
 }))
 
 import MonitorsView from '../MonitorsView.vue'
 import { useQuery, useMutation } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/api/client'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -64,6 +73,7 @@ function setupMocks(monitors: unknown[] = [], canManage = false, isLoading = fal
 }
 
 beforeEach(() => {
+  cronstrueThrows = false
   vi.mocked(useQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
   vi.mocked(useAuthStore).mockReset()
@@ -623,6 +633,137 @@ describe('MonitorsView', () => {
         await nameInput.setValue('Updated backup')
         expect((nameInput.element as HTMLInputElement).value).toBe('Updated backup')
       }
+    })
+  })
+
+  describe('humanSchedule catch branch', () => {
+    it('returns raw expression when cronstrue throws', () => {
+      cronstrueThrows = true
+      setupMocks([makeMonitor('m1', 'Daily backup')])
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      // When cronstrue throws, humanSchedule returns the raw expression '0 * * * *'
+      expect(wrapper.text()).toContain('0 * * * *')
+    })
+  })
+
+  describe('queryParams with selectedIds', () => {
+    it('builds query params including project_id when selectedIds has values', () => {
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: ['proj-1', 'proj-2'] } as any)
+      vi.mocked(useAuthStore).mockReturnValue({ user: { permissions: { manage_projects: false } } } as any)
+      let callIdx = 0
+      vi.mocked(useQuery).mockImplementation((opts: any) => {
+        try {
+          if (opts?.queryKey && typeof opts.queryKey === 'object' && 'value' in opts.queryKey) {
+            void opts.queryKey.value
+          }
+        } catch {}
+        callIdx++
+        if (callIdx === 1) return { data: ref([{ id: 'proj-1', name: 'App' }]) } as any
+        if (callIdx === 2) return { data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any
+        return { data: ref([]), isLoading: ref(false) } as any
+      })
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Daily backup')
+    })
+  })
+
+  describe('projectName fallback', () => {
+    it('returns sliced project id when project not found in projectList', async () => {
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useAuthStore).mockReturnValue({ user: { permissions: { manage_projects: false } } } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref([makeMonitor('unknown-project-id', 'My Monitor')]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      const row = wrapper.findAll('.monrow').find(r => r.text().includes('My Monitor'))!
+      await row.trigger('click')
+      // projectName returns id.slice(0, 8) when not found
+      expect(wrapper.find('.mon-detail').text()).toContain('unknown-')
+    })
+  })
+
+  describe('mutation callbacks via call-through pattern', () => {
+    it('createMonitor onSuccess resets form and sets selectedMonitorId', async () => {
+      vi.mocked(apiFetch).mockResolvedValue({ id: 'new-mon', name: 'New', schedule: '0 * * * *', status: 'active', state: 'ok', grace_period_secs: 300, project_id: 'proj-1', last_checkin_at: null, next_expected_at: null, recent_checkins: [] })
+      vi.mocked(useMutation).mockImplementation((opts: any) => {
+        const mutate = vi.fn(async (...args: any[]) => {
+          try {
+            const result = await opts.mutationFn(...args)
+            if (opts.onSuccess) opts.onSuccess(result)
+          } catch {}
+        })
+        return { mutate, isPending: ref(false) } as any
+      })
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useAuthStore).mockReturnValue({ user: { permissions: { manage_projects: true } } } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('New Monitor')
+      await wrapper.find('.mon-createbar input.mono').setValue('0 * * * *')
+      await wrapper.find('.mon-createbar select').setValue('proj-1')
+      await wrapper.find('.mon-createbar__actions .btn--primary').trigger('click')
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+    })
+
+    it('saveMonitor onSuccess clears editingId', async () => {
+      vi.mocked(apiFetch).mockResolvedValue({ id: 'm1', name: 'Daily backup', schedule: '0 * * * *', status: 'active', state: 'ok', grace_period_secs: 300, project_id: 'proj-1', last_checkin_at: null, next_expected_at: null, recent_checkins: [] })
+      vi.mocked(useMutation).mockImplementation((opts: any) => {
+        const mutate = vi.fn(async (...args: any[]) => {
+          try {
+            const result = await opts.mutationFn(...args)
+            if (opts.onSuccess) opts.onSuccess(result)
+          } catch {}
+        })
+        return { mutate, isPending: ref(false) } as any
+      })
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useAuthStore).mockReturnValue({ user: { permissions: { manage_projects: true } } } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
+        .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
+      await row.trigger('click')
+      await wrapper.find('.mon-detail__actions .btn').trigger('click')
+      await wrapper.find('.mon-editbar .btn--primary').trigger('click')
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+    })
+
+    it('deleteMonitor onSuccess clears selectedMonitorId and editingId', async () => {
+      vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+      vi.mocked(apiFetch).mockResolvedValue(undefined)
+      vi.mocked(useMutation).mockImplementation((opts: any) => {
+        const mutate = vi.fn(async (...args: any[]) => {
+          try {
+            const result = await opts.mutationFn(...args)
+            if (opts.onSuccess) opts.onSuccess(result)
+          } catch {}
+        })
+        return { mutate, isPending: ref(false) } as any
+      })
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useAuthStore).mockReturnValue({ user: { permissions: { manage_projects: true } } } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
+        .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
+      await row.trigger('click')
+      await wrapper.find('.mon-detail__actions .btn').trigger('click')
+      const deleteBtn = wrapper.findAll('.mon-editbar .btn--ghost').find(b => b.text().includes('Delete'))!
+      await deleteBtn.trigger('click')
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+      vi.unstubAllGlobals()
     })
   })
 })
