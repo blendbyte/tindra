@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -167,5 +168,40 @@ func TestUpdateIssue_invalidStatus(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+// --- handleListPerfEvents ---
+
+func TestListPerfEvents_empty(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "fp-perf-empty", "Perf Empty")
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/issues/%s/perf-events", iss.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	issuesHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var events []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&events); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 perf events, got %d", len(events))
+	}
+}
+
+func TestListPerfEvents_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/issues/00000000-0000-0000-0000-000000000000/perf-events", nil)
+	rec := httptest.NewRecorder()
+	issuesHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
 	}
 }
