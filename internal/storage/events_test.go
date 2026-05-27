@@ -272,3 +272,23 @@ func TestGetIssueHistogram_dayBuckets(t *testing.T) {
 		t.Errorf("bucket_size: got %q, want day", result.BucketSize)
 	}
 }
+
+func TestGetIssueHistogram_weekBuckets(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	// >60 days old triggers week-bucket granularity — exercises truncateBucket("week") and advanceBucket("week")
+	firstSeen := time.Now().Add(-90 * 24 * time.Hour)
+	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-histweek", "Error", "error", "error", "", "", firstSeen)
+
+	result, err := storage.GetIssueHistogram(ctx, testPool, issue.ID, firstSeen)
+	if err != nil {
+		t.Fatalf("histogram: %v", err)
+	}
+	if result.BucketSize != "week" {
+		t.Errorf("bucket_size: got %q, want week", result.BucketSize)
+	}
+	if len(result.Buckets) == 0 {
+		t.Error("expected at least one week bucket")
+	}
+}
