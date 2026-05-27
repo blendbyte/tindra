@@ -5298,8 +5298,8 @@ describe('SettingsView', () => {
       const disableBtn = wrapper.findAll('.btn--ghost').find(b => b.text().includes('Disable two-factor auth'))
       if (disableBtn) {
         await disableBtn.trigger('click')
-        const cancelBtn = wrapper.findAll('.btn--ghost').find(b => b.text() === 'Cancel')
-        if (cancelBtn) {
+        const cancelBtn = wrapper.find('.btn--mfa-disable-cancel')
+        if (cancelBtn.exists()) {
           await cancelBtn.trigger('click')
           expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(false)
         }

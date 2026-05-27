@@ -2528,7 +2528,7 @@ function actionKindOf(action: string) {
                   <button class="btn btn--primary" :disabled="!mfaDisablePassword || disablingMFA" @click="disableMFA(mfaDisablePassword)" style="background: var(--danger, #ef4444); border-color: var(--danger, #ef4444)">
                     {{ disablingMFA ? 'Disabling…' : 'Disable 2FA' }}
                   </button>
-                  <button class="btn btn--ghost" @click="showDisableMFA = false; mfaDisablePassword = ''; mfaDisableError = null">Cancel</button>
+                  <button class="btn btn--ghost btn--mfa-disable-cancel" @click="showDisableMFA = false; mfaDisablePassword = ''; mfaDisableError = null">Cancel</button>
                 </div>
               </div>
             </template>
