@@ -15,7 +15,7 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
-// Evaluator checks alert rules every 60 seconds and fires deliveries.
+// Evaluator checks alert rules every 15 seconds and fires deliveries.
 type Evaluator struct {
 	pool      *pgxpool.Pool
 	client    *http.Client
@@ -33,7 +33,7 @@ func NewEvaluator(pool *pgxpool.Pool, email EmailSender, publicURL string, allow
 }
 
 func (e *Evaluator) Run(ctx context.Context) {
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -141,9 +141,8 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			args = append(args, rule.ProjectIDs)
 			clauses = append(clauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(args)))
 		}
-		clauses = append(clauses, "status = 'regressed'")
 		args = append(args, since)
-		clauses = append(clauses, fmt.Sprintf("last_seen > $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("regressed_at > $%d", len(args)))
 		where, args := appendIssueFilters(rule, strings.Join(clauses, " AND "), args)
 		var count int
 		if err := e.pool.QueryRow(ctx,
@@ -173,7 +172,7 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 		newArgs = append(newArgs, since)
 		newClauses = append(newClauses, fmt.Sprintf("first_seen > $%d", len(newArgs)))
 		regArgs = append(regArgs, since)
-		regClauses = append(regClauses, "status = 'regressed'", fmt.Sprintf("last_seen > $%d", len(regArgs)))
+		regClauses = append(regClauses, fmt.Sprintf("regressed_at > $%d", len(regArgs)))
 
 		newWhere, newArgs := appendIssueFilters(rule, strings.Join(newClauses, " AND "), newArgs)
 		regWhere, regArgs := appendIssueFilters(rule, strings.Join(regClauses, " AND "), regArgs)
@@ -341,11 +340,11 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			since = *rule.LastFiredAt
 		}
 		issues, err := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
-			Status:      "regressed",
-			SinceLast:   &since,
-			Limit:       5,
-			Level:       filterLevel,
-			Environment: filterEnv,
+			Status:         "regressed",
+			SinceRegressed: &since,
+			Limit:          5,
+			Level:          filterLevel,
+			Environment:    filterEnv,
 		})
 		if err == nil {
 			payload.Issues = issues
@@ -362,11 +361,11 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			Environment: filterEnv,
 		})
 		regIssues, _ := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
-			Status:      "regressed",
-			SinceLast:   &since,
-			Limit:       5,
-			Level:       filterLevel,
-			Environment: filterEnv,
+			Status:         "regressed",
+			SinceRegressed: &since,
+			Limit:          5,
+			Level:          filterLevel,
+			Environment:    filterEnv,
 		})
 		seen := map[string]bool{}
 		for _, iss := range append(newIssues, regIssues...) {

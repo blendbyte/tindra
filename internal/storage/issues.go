@@ -50,20 +50,21 @@ type IgnoreOptions struct {
 }
 
 type IssueFilter struct {
-	Status      string
-	Level       string
-	Kind        string // "error" | "n1_query" | "" (all)
-	Environment string
-	AssigneeID  string
-	TagKey      string
-	TagValue    string
-	Title       string   // ILIKE substring match on title
-	ProjectIDs  []string // nil or empty = all projects
-	CursorTime  *time.Time
-	CursorID    *string
-	Limit       int
-	Since       *time.Time // first_seen > Since
-	SinceLast   *time.Time // last_seen > SinceLast
+	Status         string
+	Level          string
+	Kind           string // "error" | "n1_query" | "" (all)
+	Environment    string
+	AssigneeID     string
+	TagKey         string
+	TagValue       string
+	Title          string   // ILIKE substring match on title
+	ProjectIDs     []string // nil or empty = all projects
+	CursorTime     *time.Time
+	CursorID       *string
+	Limit          int
+	Since          *time.Time // first_seen > Since
+	SinceLast      *time.Time // last_seen > SinceLast
+	SinceRegressed *time.Time // regressed_at > SinceRegressed
 }
 
 // issueSelectCols is the canonical SELECT column list for the issues table.
@@ -142,6 +143,12 @@ func upsertIssueOnce(ctx context.Context, pool *pgxpool.Pool, projectID, fingerp
 			                            OR (ignore_count_limit IS NOT NULL AND (ignore_count + 1) >= ignore_count_limit)
 			                          ) THEN NULL
 			                          ELSE ignore_count_limit
+			                        END,
+			    regressed_at       = CASE
+			                          WHEN status = 'resolved' THEN NOW()
+			                          WHEN status = 'ignored' AND ignore_until IS NOT NULL AND ignore_until < now() THEN NOW()
+			                          WHEN status = 'ignored' AND ignore_count_limit IS NOT NULL AND (ignore_count + 1) >= ignore_count_limit THEN NOW()
+			                          ELSE regressed_at
 			                        END
 			WHERE id = $1
 			RETURNING `+issueSelectCols+`,
@@ -245,6 +252,10 @@ func ListIssues(ctx context.Context, pool *pgxpool.Pool, projectID string, filte
 		args = append(args, *filter.SinceLast)
 		q += fmt.Sprintf(" AND last_seen > $%d", len(args))
 	}
+	if filter.SinceRegressed != nil {
+		args = append(args, *filter.SinceRegressed)
+		q += fmt.Sprintf(" AND regressed_at > $%d", len(args))
+	}
 	if filter.CursorTime != nil && filter.CursorID != nil {
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
@@ -331,6 +342,10 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 	if filter.SinceLast != nil {
 		args = append(args, *filter.SinceLast)
 		q += fmt.Sprintf(" AND last_seen > $%d", len(args))
+	}
+	if filter.SinceRegressed != nil {
+		args = append(args, *filter.SinceRegressed)
+		q += fmt.Sprintf(" AND regressed_at > $%d", len(args))
 	}
 	return q, args
 }
