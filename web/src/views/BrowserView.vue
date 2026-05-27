@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
+import { RouterLink } from 'vue-router'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
@@ -223,10 +224,13 @@ const sortedPages = computed(() => {
               <tr
                 v-for="page in sortedPages"
                 :key="page.transaction"
-                class="perf-table__row"
+                class="perf-table__row perf-table__row--link"
               >
                 <td class="perf-table__desc">
-                  <span class="mono">{{ page.transaction }}</span>
+                  <RouterLink
+                    :to="{ name: 'transaction-profile', query: { name: page.transaction } }"
+                    class="perf-table__page-link mono"
+                  >{{ page.transaction }}</RouterLink>
                 </td>
                 <td class="perf-table__num">{{ page.sessions.toLocaleString() }}</td>
                 <td class="perf-table__num">

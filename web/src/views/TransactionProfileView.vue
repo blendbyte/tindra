@@ -28,7 +28,7 @@ const profileParams = computed(() => {
   const p = new URLSearchParams()
   p.set('hours', String(hours.value))
   p.set('name', txName.value)
-  p.set('op', txOp.value)
+  if (txOp.value) p.set('op', txOp.value)
   if (envFilter.value !== 'All') p.set('env', envFilter.value)
   for (const id of projects.selectedIds) p.append('project_id', id)
   return p.toString()
@@ -55,7 +55,7 @@ const {
 const samplesParams = computed(() => {
   const p = new URLSearchParams()
   p.set('name', txName.value)
-  p.set('op', txOp.value)
+  if (txOp.value) p.set('op', txOp.value)
   if (envFilter.value !== 'All') p.set('environment', envFilter.value)
   for (const id of projects.selectedIds) p.append('project_id', id)
   return p.toString()

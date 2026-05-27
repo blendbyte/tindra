@@ -6512,6 +6512,19 @@ select.field__input {
 
 /* ── Browser / Web Vitals view ──────────────────────────────────────────── */
 
+.perf-table__page-link {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  text-decoration: none;
+}
+.perf-table__page-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 /* Vital pill — inline status chip in the table */
 .vital-pill {
   display: inline-block;
