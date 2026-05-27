@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -146,9 +148,7 @@ func TestUnmergeIssue(t *testing.T) {
 
 	// Original issue should have event_count=1 now.
 	original, _ := storage.GetIssue(context.Background(), testPool, a.ID)
-	if original == nil {
-		t.Fatal("original issue should still exist")
-	}
+	require.NotNil(t, original)
 	if original.EventCount != 1 {
 		t.Errorf("expected original event_count=1, got %d", original.EventCount)
 	}

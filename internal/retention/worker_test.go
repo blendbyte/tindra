@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/retention"
 	"github.com/blendbyte/tindra/internal/storage"
 	"github.com/blendbyte/tindra/internal/testutil"
@@ -239,9 +241,7 @@ func TestWorker_keepsOpenIssueShellAfterEventsPurged(t *testing.T) {
 	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	survived, _ := storage.GetIssue(ctx, testPool, iss.ID)
-	if survived == nil {
-		t.Fatal("open issue shell should be kept after events are purged")
-	}
+	require.NotNil(t, survived)
 	if survived.EventCount != 0 {
 		t.Errorf("event_count: got %d, want 0", survived.EventCount)
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -43,9 +45,7 @@ func TestGetPasswordResetUser_valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected user, got nil")
-	}
+	require.NotNil(t, got)
 	if got.Email != "getreset@example.com" {
 		t.Errorf("email: got %q", got.Email)
 	}
@@ -72,9 +72,7 @@ func TestUsePasswordResetToken_valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("use: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected user, got nil")
-	}
+	require.NotNil(t, got)
 	if !got.HasPassword {
 		t.Error("expected HasPassword=true after reset")
 	}

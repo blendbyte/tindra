@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -41,9 +43,7 @@ func TestGetInvite_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if inv == nil {
-		t.Fatal("expected invite, got nil")
-	}
+	require.NotNil(t, inv)
 	if inv.Token != token {
 		t.Errorf("token: got %q, want %q", inv.Token, token)
 	}
@@ -176,9 +176,7 @@ func TestCreateInvite_withInviterID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if inv == nil {
-		t.Fatal("expected invite, got nil")
-	}
+	require.NotNil(t, inv)
 	if inv.InviterID == nil || *inv.InviterID != u.ID {
 		t.Errorf("inviter_id: got %v, want %q", inv.InviterID, u.ID)
 	}

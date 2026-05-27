@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -101,9 +103,7 @@ func TestGetAlertRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected rule, got nil")
-	}
+	require.NotNil(t, got)
 	if got.ID != created.ID {
 		t.Errorf("ID mismatch")
 	}

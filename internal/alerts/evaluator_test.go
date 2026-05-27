@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -41,15 +43,11 @@ func webhookRule(projectID, url string) *storage.AlertRule {
 
 func TestNewEvaluator(t *testing.T) {
 	e := NewEvaluator(testPool, nil, "", false)
-	if e == nil {
-		t.Fatal("expected non-nil evaluator")
-	}
+	require.NotNil(t, e)
 	if e.pool != testPool {
 		t.Error("expected pool to be set")
 	}
-	if e.client == nil {
-		t.Error("expected http client to be set")
-	}
+	require.NotNil(t, e.client)
 }
 
 func TestEvaluator_Run_stopsOnCancel(t *testing.T) {

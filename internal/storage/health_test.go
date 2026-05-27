@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -12,9 +14,7 @@ func TestGetInstanceHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if h == nil {
-		t.Fatal("expected non-nil health")
-	}
+	require.NotNil(t, h)
 	if h.DBSizeBytes <= 0 {
 		t.Errorf("DBSizeBytes: got %d, want > 0", h.DBSizeBytes)
 	}

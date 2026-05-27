@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -21,9 +23,7 @@ func TestFindOrCreateOAuthUser_newUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if u == nil {
-		t.Fatal("expected user, got nil")
-	}
+	require.NotNil(t, u)
 	if u.Email != "oauth@example.com" {
 		t.Errorf("email: got %q", u.Email)
 	}
@@ -88,9 +88,7 @@ func TestCreateOAuthState_and_consume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consume state: %v", err)
 	}
-	if state == nil {
-		t.Fatal("expected state, got nil")
-	}
+	require.NotNil(t, state)
 	if state.Provider != "github" {
 		t.Errorf("provider: got %q, want %q", state.Provider, "github")
 	}

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -40,9 +42,7 @@ func TestStoreMFASecret_and_GetMFASecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get secret: %v", err)
 	}
-	if secret == nil {
-		t.Fatal("expected secret, got nil")
-	}
+	require.NotNil(t, secret)
 	if *secret != "TOTP_SECRET_ABC" {
 		t.Errorf("secret: got %q, want %q", *secret, "TOTP_SECRET_ABC")
 	}

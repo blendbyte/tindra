@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -103,9 +105,7 @@ func TestGetCronMonitor_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected monitor, got nil")
-	}
+	require.NotNil(t, got)
 	if got.ID != created.ID {
 		t.Errorf("ID: got %q, want %q", got.ID, created.ID)
 	}
@@ -211,9 +211,7 @@ func TestUpdateCronMonitor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if updated == nil {
-		t.Fatal("expected updated monitor, got nil")
-	}
+	require.NotNil(t, updated)
 	if updated.Name != "updated-name" {
 		t.Errorf("name: got %q, want %q", updated.Name, "updated-name")
 	}
@@ -284,9 +282,7 @@ func TestRecordCheckin_inProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ci == nil {
-		t.Fatal("expected checkin, got nil")
-	}
+	require.NotNil(t, ci)
 	if ci.Status != "in_progress" {
 		t.Errorf("status: got %q, want in_progress", ci.Status)
 	}
@@ -380,9 +376,7 @@ func TestFinishCheckin_toOk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finish checkin: %v", err)
 	}
-	if finished == nil {
-		t.Fatal("expected finished checkin, got nil")
-	}
+	require.NotNil(t, finished)
 	if finished.Status != "ok" {
 		t.Errorf("status: got %q, want ok", finished.Status)
 	}
@@ -417,9 +411,7 @@ func TestFinishCheckin_toError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finish checkin: %v", err)
 	}
-	if finished == nil {
-		t.Fatal("expected finished checkin, got nil")
-	}
+	require.NotNil(t, finished)
 	if finished.Status != "error" {
 		t.Errorf("status: got %q, want error", finished.Status)
 	}
@@ -461,9 +453,7 @@ func TestGetCheckin_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected checkin, got nil")
-	}
+	require.NotNil(t, got)
 	if got.ID != created.ID {
 		t.Errorf("ID: got %q, want %q", got.ID, created.ID)
 	}

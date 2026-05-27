@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -71,9 +73,7 @@ func TestAuthenticateUser_success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if u == nil {
-		t.Fatal("expected user, got nil")
-	}
+	require.NotNil(t, u)
 	if u.Email != "bob@example.com" {
 		t.Errorf("email: got %q", u.Email)
 	}
@@ -125,9 +125,7 @@ func TestCreateSession_and_GetSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected session, got nil")
-	}
+	require.NotNil(t, got)
 	if got.UserID != u.ID {
 		t.Errorf("user_id mismatch: got %q, want %q", got.UserID, u.ID)
 	}
@@ -214,9 +212,7 @@ func TestGetUserByID_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected user, got nil")
-	}
+	require.NotNil(t, got)
 	if got.ID != created.ID {
 		t.Errorf("ID mismatch: got %q", got.ID)
 	}
@@ -241,9 +237,7 @@ func TestGetUserByEmail_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected user, got nil")
-	}
+	require.NotNil(t, got)
 	if got.Email != "byemail@example.com" {
 		t.Errorf("email: got %q", got.Email)
 	}
@@ -268,9 +262,7 @@ func TestGetUserByEmail_caseInsensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected user for uppercase email lookup, got nil")
-	}
+	require.NotNil(t, got)
 }
 
 func TestCreateUser_firstUserGetsAllPerms(t *testing.T) {
@@ -319,9 +311,7 @@ func TestUpdateUserPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if updated == nil {
-		t.Fatal("expected user, got nil")
-	}
+	require.NotNil(t, updated)
 	if !updated.Permissions.ManageProjects {
 		t.Error("ManageProjects should be true")
 	}

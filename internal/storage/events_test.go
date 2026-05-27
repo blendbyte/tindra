@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -37,9 +39,7 @@ func TestGetLatestEventForIssue_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ev == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, ev)
 	// Should return the most recently received event
 	if ev.ID != ev2ID {
 		t.Errorf("expected newest event %q, got %q", ev2ID, ev.ID)
