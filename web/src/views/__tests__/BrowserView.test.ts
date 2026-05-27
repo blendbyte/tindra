@@ -27,6 +27,7 @@ const stubs = {
   Icon: { template: '<span />' },
   FilterChip: { template: '<div />' },
   PerformanceSubnav: { template: '<div />' },
+  RouterLink: { template: '<a><slot /></a>', props: ['to'] },
 }
 
 const makeSummary = (override = {}) => ({
