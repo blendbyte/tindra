@@ -937,9 +937,9 @@ function traceErrorOffset(e: TraceError): string {
                 </div>
                 <div v-if="spanDataEntries(row.span).length" class="span-detail__section">
                   <div class="span-detail__section-title">Span Data</div>
-                  <div class="span-detail__grid">
+                  <div class="span-detail__grid span-detail__grid--attrs">
                     <template v-for="[k, v] in spanDataEntries(row.span)" :key="k">
-                      <span class="span-detail__k span-detail__mono">{{ k }}</span>
+                      <span class="span-detail__k span-detail__mono" :title="k">{{ k }}</span>
                       <span class="span-detail__v span-detail__v--wrap span-detail__mono">{{ v }}</span>
                     </template>
                   </div>

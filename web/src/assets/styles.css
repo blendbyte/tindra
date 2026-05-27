@@ -3325,6 +3325,14 @@ a { color: inherit; text-decoration: none; }
   gap: 8px 14px;
   font-size: 11px;
 }
+.span-detail__grid--attrs {
+  grid-template-columns: 160px 1fr;
+}
+.span-detail__grid--attrs .span-detail__k {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .span-detail__k {
   color: var(--text-3);
   font-family: var(--sans);
