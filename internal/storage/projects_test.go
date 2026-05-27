@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 
 	"github.com/blendbyte/tindra/internal/storage"
 	"github.com/blendbyte/tindra/internal/testutil"
@@ -126,9 +127,7 @@ func TestGetByPublicKey_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p == nil {
-		t.Fatal("expected project, got nil")
-	}
+	require.NotNil(t, p, "expected project, got nil")
 	if p.ID != created.ID {
 		t.Errorf("ID mismatch: got %q, want %q", p.ID, created.ID)
 	}
@@ -156,9 +155,7 @@ func TestGetProjectBySlug_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p == nil {
-		t.Fatal("expected project, got nil")
-	}
+	require.NotNil(t, p, "expected project, got nil")
 	if p.ID != created.ID {
 		t.Errorf("ID mismatch: got %q, want %q", p.ID, created.ID)
 	}
@@ -186,9 +183,7 @@ func TestGetByIDAndPublicKey_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p == nil {
-		t.Fatal("expected project, got nil")
-	}
+	require.NotNil(t, p, "expected project, got nil")
 	if p.ID != created.ID {
 		t.Errorf("ID mismatch: got %q, want %q", p.ID, created.ID)
 	}
@@ -238,9 +233,7 @@ func TestUpdateProject_passthroughDSN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if updated == nil {
-		t.Fatal("expected non-nil project")
-	}
+	require.NotNil(t, updated, "expected non-nil project")
 	if updated.PassthroughDSN == nil || *updated.PassthroughDSN != dsn {
 		t.Errorf("passthrough_dsn: got %v, want %q", updated.PassthroughDSN, dsn)
 	}

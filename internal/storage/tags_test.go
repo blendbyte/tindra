@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -194,9 +196,7 @@ func TestGetIssueTags_aggregation(t *testing.T) {
 			break
 		}
 	}
-	if browserSummary == nil {
-		t.Fatal("expected browser tag summary")
-	}
+	require.NotNil(t, browserSummary, "expected browser tag summary")
 	if browserSummary.Total != 3 {
 		t.Errorf("total: got %d, want 3", browserSummary.Total)
 	}

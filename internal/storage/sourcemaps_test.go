@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -82,9 +84,7 @@ func TestGetSourcemap_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected sourcemap, got nil")
-	}
+	require.NotNil(t, got, "expected sourcemap, got nil")
 	if got.ContentHash != "hash-xyz" {
 		t.Errorf("content_hash: got %q", got.ContentHash)
 	}

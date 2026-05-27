@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -71,9 +73,7 @@ func TestGetSpanSummaries_basicAggregation(t *testing.T) {
 			break
 		}
 	}
-	if found == nil {
-		t.Fatal("expected summary for db.query/SELECT 1")
-	}
+	require.NotNil(t, found, "expected summary for db.query/SELECT 1")
 	if found.SampleCount != 3 {
 		t.Errorf("sample_count: got %d, want 3", found.SampleCount)
 	}
@@ -149,9 +149,7 @@ func TestGetSpanTimeseries_empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ts == nil {
-		t.Fatal("expected non-nil SpanTimeseries")
-	}
+	require.NotNil(t, ts, "expected non-nil SpanTimeseries")
 	if len(ts.Buckets) != 0 {
 		t.Errorf("expected 0 buckets, got %d", len(ts.Buckets))
 	}

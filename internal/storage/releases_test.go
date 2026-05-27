@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -112,9 +114,7 @@ func TestGetRelease_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if r == nil {
-		t.Fatal("expected release, got nil")
-	}
+	require.NotNil(t, r, "expected release, got nil")
 	if r.ID != id {
 		t.Errorf("ID: got %q, want %q", r.ID, id)
 	}

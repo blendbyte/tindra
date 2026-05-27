@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -144,9 +146,7 @@ func TestGetAPITokenByHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if tok == nil {
-		t.Fatal("expected token, got nil")
-	}
+	require.NotNil(t, tok, "expected token, got nil")
 	if tok.ProjectID != p.ID {
 		t.Errorf("project_id mismatch")
 	}
@@ -323,9 +323,7 @@ func TestGetAPITokenByHash_writable_preserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if tok == nil {
-		t.Fatal("expected token, got nil")
-	}
+	require.NotNil(t, tok, "expected token, got nil")
 	if !tok.Writable {
 		t.Error("GetAPITokenByHash: expected Writable=true")
 	}

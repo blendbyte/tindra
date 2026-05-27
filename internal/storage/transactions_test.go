@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -111,9 +113,7 @@ func TestGetTransaction_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected transaction, got nil")
-	}
+	require.NotNil(t, got, "expected transaction, got nil")
 	if got.ID != created.ID {
 		t.Errorf("ID: got %q, want %q", got.ID, created.ID)
 	}
@@ -209,17 +209,13 @@ func TestGetSpansForTransaction_dataField(t *testing.T) {
 	}
 
 	withData := byID["with-data"]
-	if withData == nil {
-		t.Fatal("span with-data not found")
-	}
+	require.NotNil(t, withData, "span with-data not found")
 	if len(withData.Data) == 0 || string(withData.Data) == "null" {
 		t.Errorf("expected non-empty Data, got %q", withData.Data)
 	}
 
 	nullData := byID["null-data"]
-	if nullData == nil {
-		t.Fatal("span null-data not found")
-	}
+	require.NotNil(t, nullData, "span null-data not found")
 	if string(nullData.Data) != "{}" {
 		t.Errorf("expected '{}' for null data via COALESCE, got %q", nullData.Data)
 	}
@@ -435,9 +431,7 @@ func TestGetTransactionByTraceID_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == nil {
-		t.Fatal("expected transaction, got nil")
-	}
+	require.NotNil(t, got, "expected transaction, got nil")
 	if got.ID != tx.ID {
 		t.Errorf("ID: got %q, want %q", got.ID, tx.ID)
 	}
