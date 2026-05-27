@@ -38,9 +38,9 @@ var baseLayoutTmpl = template.Must(template.New("base").Parse(
 <tr><td align="center" style="padding:20px 10px;">
 
   <!--[if (gte mso 9)|(IE)]>
-  <table width="600" align="center" cellpadding="0" cellspacing="0" role="presentation"><tr><td>
+  <table width="680" align="center" cellpadding="0" cellspacing="0" role="presentation"><tr><td>
   <![endif]-->
-  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;margin:0 auto;">
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:680px;margin:0 auto;">
 
     <!-- Card (logo + body on white) -->
     <tr><td style="background-color:#ffffff;border-radius:12px;padding:24px 20px;">
