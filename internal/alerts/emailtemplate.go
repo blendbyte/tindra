@@ -35,7 +35,7 @@ var baseLayoutTmpl = template.Must(template.New("base").Parse(
 </head>
 <body style="margin:0;padding:0;background-color:#f5f6f8;word-spacing:normal;">
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#f5f6f8;">
-<tr><td align="center" style="padding:32px 16px;">
+<tr><td align="center" style="padding:20px 10px;">
 
   <!--[if (gte mso 9)|(IE)]>
   <table width="600" align="center" cellpadding="0" cellspacing="0" role="presentation"><tr><td>
@@ -43,9 +43,9 @@ var baseLayoutTmpl = template.Must(template.New("base").Parse(
   <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;margin:0 auto;">
 
     <!-- Card (logo + body on white) -->
-    <tr><td style="background-color:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:32px 28px;">
+    <tr><td style="background-color:#ffffff;border-radius:12px;padding:24px 20px;">
       <div style="text-align:center;margin-bottom:28px;">
-        <img src="{{.LogoSrc}}" width="160" height="45" alt="Tindra" style="border:0;display:inline-block;width:160px;height:auto;max-width:100%;">
+        <a href="{{.PublicURL}}" style="border:0;text-decoration:none;"><img src="{{.LogoSrc}}" width="160" height="45" alt="Tindra" style="border:0;display:inline-block;width:160px;height:auto;max-width:100%;"></a>
       </div>
       {{.Body}}
     </td></tr>
@@ -68,19 +68,21 @@ var baseLayoutTmpl = template.Must(template.New("base").Parse(
 </html>`))
 
 type baseEmailData struct {
-	Title   string
-	Body    template.HTML
-	LogoSrc string
+	Title     string
+	Body      template.HTML
+	LogoSrc   string
+	PublicURL string
 }
 
 // renderBase wraps pre-rendered body HTML in the shared Tindra email layout.
 // body must already be HTML-safe (use template.HTML to mark it as trusted).
-func renderBase(title string, body template.HTML, logoSrc string) (string, error) {
+func renderBase(title string, body template.HTML, logoSrc, publicURL string) (string, error) {
 	var buf bytes.Buffer
 	if err := baseLayoutTmpl.Execute(&buf, baseEmailData{
-		Title:   title,
-		Body:    body,
-		LogoSrc: logoSrc,
+		Title:     title,
+		Body:      body,
+		LogoSrc:   logoSrc,
+		PublicURL: publicURL,
 	}); err != nil {
 		return "", fmt.Errorf("render base layout: %w", err)
 	}
@@ -158,7 +160,7 @@ func RenderPasswordResetEmail(resetURL, publicURL string) (string, string, error
 	if err := passwordResetBodyTmpl.Execute(&bodyBuf, struct{ ResetURL string }{resetURL}); err != nil {
 		return "", "", fmt.Errorf("render password reset body: %w", err)
 	}
-	html, err := renderBase("Reset your Tindra password", template.HTML(bodyBuf.String()), logoSrc)
+	html, err := renderBase("Reset your Tindra password", template.HTML(bodyBuf.String()), logoSrc, strings.TrimRight(publicURL, "/"))
 	if err != nil {
 		return "", "", err
 	}
@@ -176,14 +178,17 @@ func RenderPasswordResetEmail(resetURL, publicURL string) (string, string, error
 // ---- Alert email ----
 
 type alertIssueData struct {
-	Title       string
-	Level       string
-	LevelColor  string
-	Environment string
-	ProjectName string
-	FirstSeen   string
-	URL         string
-	StackFrames []string
+	Title         string
+	Level         string
+	LevelColor    string
+	Environment   string
+	ProjectName   string
+	OccurredAt    string
+	RequestURL    string
+	RequestMethod string
+	Message       string
+	URL           string
+	StackFrames   []string
 }
 
 type alertMonitorData struct {
@@ -209,7 +214,7 @@ type alertEmailData struct {
 }
 
 var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
-	`<h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;letter-spacing:-0.3px;line-height:1.3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Alert: {{.RuleName}}</h1>
+	`<h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:#111827;letter-spacing:-0.3px;line-height:1.3;word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Alert: {{.RuleName}}</h1>
 <p style="margin:0 0 20px;font-size:15px;line-height:1.65;color:#6b7280;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
   {{.TriggerLine}}
 </p>
@@ -218,12 +223,15 @@ var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
 {{range .Issues}}
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
   <tr>
-    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-      <p style="margin:0 0 6px;font-size:11px;line-height:1;">
-        <strong style="color:{{.LevelColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.Level}}</strong>{{if .Environment}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.Environment}}</span>{{end}}{{if .ProjectName}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.ProjectName}}</span>{{end}}&nbsp;&bull;&nbsp;<span style="color:#9ca3af;">{{.FirstSeen}}</span>
+    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
+      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
+        <strong style="color:{{.LevelColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.Level}}</strong>{{if .Environment}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.Environment}}</span>{{end}}{{if .ProjectName}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.ProjectName}}</span>{{end}}
       </p>
-      <a href="{{.URL}}" style="font-size:13px;font-weight:600;color:#111827;text-decoration:none;line-height:1.45;word-break:break-all;">{{.Title}}</a>
-      {{if .StackFrames}}<div style="margin-top:8px;padding:8px 10px;background-color:#f3f4f6;border-radius:4px;font-family:'Courier New',Courier,monospace;font-size:11px;color:#6b7280;line-height:1.7;">{{range .StackFrames}}<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{.}}</div>{{end}}</div>{{end}}
+      <a href="{{.URL}}" style="font-size:13px;font-weight:600;color:#111827;text-decoration:none;line-height:1.4;word-break:break-all;">{{.Title}}</a>
+      {{if .OccurredAt}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">{{.OccurredAt}}</p>{{end}}
+      {{if .RequestURL}}<p style="margin:7px 0 0;font-size:11px;font-family:'Courier New',Courier,monospace;color:#6b7280;word-break:break-all;"><span style="padding:1px 5px;background-color:#e5e7eb;border-radius:3px;color:#374151;font-weight:600;letter-spacing:0.3px;">{{.RequestMethod}}</span> {{.RequestURL}}</p>{{end}}
+      {{if .Message}}<p style="margin:7px 0 0;font-size:12px;color:#374151;line-height:1.5;word-break:break-all;">{{.Message}}</p>{{end}}
+      {{if .StackFrames}}<div style="margin-top:7px;padding:7px 9px;background-color:#f3f4f6;border-radius:4px;font-family:'Courier New',Courier,monospace;font-size:11px;color:#6b7280;line-height:1.6;">{{range .StackFrames}}<div style="word-break:break-all;">{{.}}</div>{{end}}</div>{{end}}
     </td>
   </tr>
 </table>
@@ -233,8 +241,8 @@ var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
 {{range .Monitors}}
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
   <tr>
-    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-      <p style="margin:0 0 6px;font-size:11px;line-height:1;">
+    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
+      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
         <strong style="color:{{.StateColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.State}}</strong>&nbsp;&bull;&nbsp;<span style="color:#6b7280;font-family:'Courier New',Courier,monospace;">{{.Schedule}}</span>
       </p>
       <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#111827;line-height:1.45;">{{.Name}}</p>
@@ -354,15 +362,22 @@ func buildIssueCards(issues []*storage.Issue, projectName, base string) []alertI
 		if iss.Environment != nil {
 			env = *iss.Environment
 		}
+		occurredAt := ""
+		if iss.AlertOccurredAt != nil {
+			occurredAt = iss.AlertOccurredAt.UTC().Format("2 Jan 2006, 15:04:05 UTC")
+		}
 		cards = append(cards, alertIssueData{
-			Title:       iss.Title,
-			Level:       iss.Level,
-			LevelColor:  alertLevelColor(iss.Level),
-			Environment: env,
-			ProjectName: projectName,
-			FirstSeen:   iss.FirstSeen.UTC().Format("2 Jan 2006"),
-			URL:         base + "/issues/" + iss.ID,
-			StackFrames: iss.TopFrames,
+			Title:         iss.Title,
+			Level:         iss.Level,
+			LevelColor:    alertLevelColor(iss.Level),
+			Environment:   env,
+			ProjectName:   projectName,
+			OccurredAt:    occurredAt,
+			RequestURL:    iss.AlertReqURL,
+			RequestMethod: iss.AlertReqMethod,
+			Message:       iss.AlertMessage,
+			URL:           base + "/issues/" + iss.ID,
+			StackFrames:   iss.TopFrames,
 		})
 	}
 	return cards
@@ -479,18 +494,71 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	if err := alertBodyTmpl.Execute(&bodyBuf, data); err != nil {
 		return "", "", fmt.Errorf("render alert body: %w", err)
 	}
-	html, err := renderBase("[Tindra] "+payload.RuleName, template.HTML(bodyBuf.String()), logoSrc)
+	html, err := renderBase("[Tindra] "+payload.RuleName, template.HTML(bodyBuf.String()), logoSrc, base)
 	if err != nil {
 		return "", "", err
 	}
 
-	triggerLine := data.TriggerLine
-	text := fmt.Sprintf("Alert: %s\n\n%s\n\nFired at: %s\n", payload.RuleName, triggerLine, data.FiredAt)
-	if viewURL != "" {
-		text += fmt.Sprintf("\n%s: %s\n", viewLabel, viewURL)
+	var tb strings.Builder
+	fmt.Fprintf(&tb, "Alert: %s\n\n%s\n\n", payload.RuleName, data.TriggerLine)
+
+	for _, iss := range data.Issues {
+		tb.WriteString("----------------------------------------\n")
+		meta := iss.Level
+		if iss.Environment != "" {
+			meta += " · " + iss.Environment
+		}
+		if iss.ProjectName != "" {
+			meta += " · " + iss.ProjectName
+		}
+		fmt.Fprintf(&tb, "%s\n%s\n", strings.ToUpper(meta), iss.Title)
+		if iss.OccurredAt != "" {
+			fmt.Fprintf(&tb, "%s\n", iss.OccurredAt)
+		}
+		if iss.RequestURL != "" {
+			fmt.Fprintf(&tb, "%s %s\n", iss.RequestMethod, iss.RequestURL)
+		}
+		if iss.Message != "" {
+			fmt.Fprintf(&tb, "\n%s\n", iss.Message)
+		}
+		if len(iss.StackFrames) > 0 {
+			tb.WriteString("\n")
+			for _, f := range iss.StackFrames {
+				fmt.Fprintf(&tb, "  %s\n", f)
+			}
+		}
+		if iss.URL != "" {
+			fmt.Fprintf(&tb, "\n%s\n", iss.URL)
+		}
+		tb.WriteString("\n")
 	}
-	text += "\n---\nYou're receiving this because an alert rule in your Tindra instance fired.\n" +
-		"Manage alert rules in Settings > Alerts."
+
+	for _, m := range data.Monitors {
+		tb.WriteString("----------------------------------------\n")
+		fmt.Fprintf(&tb, "%s  %s\n%s\n", strings.ToUpper(m.State), m.Schedule, m.Name)
+		if m.NextAt != "" {
+			fmt.Fprintf(&tb, "Expected at %s\n", m.NextAt)
+		}
+		if m.LastErrAt != "" {
+			fmt.Fprintf(&tb, "Last error at %s\n", m.LastErrAt)
+		}
+		if m.LastOkAt != "" {
+			fmt.Fprintf(&tb, "Last OK at %s\n", m.LastOkAt)
+		}
+		tb.WriteString("\n")
+	}
+
+	if data.MoreCount > 0 {
+		fmt.Fprintf(&tb, "...and %d more %s\n\n", data.MoreCount, data.MoreLabel)
+	}
+
+	fmt.Fprintf(&tb, "Fired at: %s\n", data.FiredAt)
+	if viewURL != "" {
+		fmt.Fprintf(&tb, "%s: %s\n", viewLabel, viewURL)
+	}
+	tb.WriteString("\n---\nYou're receiving this because an alert rule in your Tindra instance fired.\n" +
+		"Manage alert rules in Settings > Alerts.")
+	text := tb.String()
 
 	return html, text, nil
 }
@@ -503,7 +571,7 @@ func RenderInviteEmail(inviteURL, publicURL string) (string, string, error) {
 	if err := inviteBodyTmpl.Execute(&bodyBuf, struct{ InviteURL string }{inviteURL}); err != nil {
 		return "", "", fmt.Errorf("render invite body: %w", err)
 	}
-	html, err := renderBase("You've been invited to Tindra", template.HTML(bodyBuf.String()), logoSrc)
+	html, err := renderBase("You've been invited to Tindra", template.HTML(bodyBuf.String()), logoSrc, strings.TrimRight(publicURL, "/"))
 	if err != nil {
 		return "", "", err
 	}

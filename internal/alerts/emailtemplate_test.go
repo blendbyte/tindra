@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blendbyte/tindra/internal/storage"
 )
 
 // --- alertLevelColor ---
@@ -296,6 +298,118 @@ func TestRenderAlertEmail_newOrRegressed(t *testing.T) {
 	_, _, err := RenderAlertEmail(payload, "")
 	if err != nil {
 		t.Fatalf("render new_or_regressed: %v", err)
+	}
+}
+
+// makeTestIssue returns a *storage.Issue with all alert-enrichment fields populated.
+func makeTestIssue(id, title, level, env string, ts time.Time) *storage.Issue {
+	e := env
+	return &storage.Issue{
+		ID:              id,
+		Title:           title,
+		Level:           level,
+		Environment:     &e,
+		FirstSeen:       ts,
+		AlertMessage:    "Something went wrong fetching data",
+		AlertReqURL:     "https://api.example.com/v1/orders/99",
+		AlertReqMethod:  "POST",
+		AlertOccurredAt: &ts,
+		TopFrames:       []string{"handleOrder  app/orders.go:88", "routeRequest  app/router.go:14"},
+	}
+}
+
+func TestRenderAlertEmail_issueCard_html(t *testing.T) {
+	ts := time.Date(2026, 5, 27, 14, 30, 0, 0, time.UTC)
+	iss := makeTestIssue("iss-001", "TypeError: Cannot read properties of undefined", "error", "production", ts)
+	payload := AlertPayload{
+		RuleName: "Prod errors",
+		Trigger:  "new_issue",
+		FiredAt:  ts,
+		Details:  map[string]any{"new_issue_count": 1},
+		Issues:   []*storage.Issue{iss},
+	}
+	html, _, err := RenderAlertEmail(payload, "https://tindra.example.com")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		"TypeError: Cannot read properties of undefined",
+		"27 May 2026, 14:30:00 UTC",
+		"POST",
+		"https://api.example.com/v1/orders/99",
+		"Something went wrong fetching data",
+		"handleOrder",
+		"https://tindra.example.com/issues/iss-001",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML missing %q", want)
+		}
+	}
+}
+
+func TestRenderAlertEmail_issueCard_text(t *testing.T) {
+	ts := time.Date(2026, 5, 27, 14, 30, 0, 0, time.UTC)
+	iss := makeTestIssue("iss-002", "RuntimeException: DB connection refused", "error", "production", ts)
+	payload := AlertPayload{
+		RuleName: "Prod errors",
+		Trigger:  "new_issue",
+		FiredAt:  ts,
+		Details:  map[string]any{"new_issue_count": 1},
+		Issues:   []*storage.Issue{iss},
+	}
+	_, text, err := RenderAlertEmail(payload, "https://tindra.example.com")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		"RuntimeException: DB connection refused",
+		"27 May 2026, 14:30:00 UTC",
+		"POST https://api.example.com/v1/orders/99",
+		"Something went wrong fetching data",
+		"handleOrder",
+		"https://tindra.example.com/issues/iss-002",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing %q", want)
+		}
+	}
+}
+
+// TestRenderAlertEmail_issueCard_noOptionalFields verifies that missing request/message
+// fields don't produce empty labels or broken markup.
+func TestRenderAlertEmail_issueCard_noOptionalFields(t *testing.T) {
+	ts := time.Date(2026, 5, 27, 9, 0, 0, 0, time.UTC)
+	env := "staging"
+	iss := &storage.Issue{
+		ID:          "iss-003",
+		Title:       "NullPointerException",
+		Level:       "error",
+		Environment: &env,
+		FirstSeen:   ts,
+		// no AlertMessage, AlertReqURL, AlertReqMethod, AlertOccurredAt, TopFrames
+	}
+	payload := AlertPayload{
+		RuleName: "staging alert",
+		Trigger:  "new_issue",
+		FiredAt:  ts,
+		Details:  map[string]any{"new_issue_count": 1},
+		Issues:   []*storage.Issue{iss},
+	}
+	html, text, err := RenderAlertEmail(payload, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "NullPointerException") {
+		t.Error("HTML missing issue title")
+	}
+	if !strings.Contains(text, "NullPointerException") {
+		t.Error("text missing issue title")
+	}
+	// Empty optional fields must not leave orphaned labels in either output.
+	for _, bad := range []string{"POST ", "GET ", "occurred_at", "undefined"} {
+		if strings.Contains(text, bad) {
+			t.Errorf("text contains unexpected fragment %q", bad)
+		}
 	}
 }
 

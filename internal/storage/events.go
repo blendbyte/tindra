@@ -86,6 +86,94 @@ func GetTopFrames(ctx context.Context, pool *pgxpool.Pool, issueID string, limit
 	return collect(false)
 }
 
+// AlertEventData holds enrichment data extracted from the most recent event for an issue.
+// Populated in one DB round-trip and used to build alert email cards.
+type AlertEventData struct {
+	TopFrames     []string
+	Message       string
+	RequestURL    string
+	RequestMethod string
+	OccurredAt    *time.Time
+}
+
+// GetAlertEventData fetches the latest event for an issue and extracts top stack frames,
+// message, and request URL/method in a single DB round-trip.
+func GetAlertEventData(ctx context.Context, pool *pgxpool.Pool, issueID string, frameLimit int) AlertEventData {
+	ev, err := GetLatestEventForIssue(ctx, pool, issueID)
+	if err != nil || ev == nil {
+		return AlertEventData{}
+	}
+
+	var p struct {
+		Message string `json:"message"`
+		Request struct {
+			URL    string `json:"url"`
+			Method string `json:"method"`
+		} `json:"request"`
+		Exception struct {
+			Values []struct {
+				Stacktrace struct {
+					Frames []struct {
+						Function string `json:"function"`
+						Filename string `json:"filename"`
+						Module   string `json:"module"`
+						Lineno   int    `json:"lineno"`
+						InApp    bool   `json:"in_app"`
+					} `json:"frames"`
+				} `json:"stacktrace"`
+			} `json:"values"`
+		} `json:"exception"`
+	}
+
+	out := AlertEventData{OccurredAt: &ev.ReceivedAt}
+
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		return out
+	}
+
+	out.Message = p.Message
+	out.RequestURL = p.Request.URL
+	out.RequestMethod = p.Request.Method
+
+	if len(p.Exception.Values) == 0 {
+		return out
+	}
+	frames := p.Exception.Values[0].Stacktrace.Frames
+
+	format := func(fn, filename, module string, lineno int) string {
+		loc := filename
+		if loc == "" {
+			loc = module
+		}
+		if loc == "" {
+			return fn
+		}
+		if lineno > 0 {
+			return fmt.Sprintf("%s  %s:%d", fn, loc, lineno)
+		}
+		return fmt.Sprintf("%s  %s", fn, loc)
+	}
+
+	collect := func(inAppOnly bool) []string {
+		var res []string
+		for i := len(frames) - 1; i >= 0 && len(res) < frameLimit; i-- {
+			f := frames[i]
+			if inAppOnly && !f.InApp {
+				continue
+			}
+			res = append(res, format(f.Function, f.Filename, f.Module, f.Lineno))
+		}
+		return res
+	}
+
+	if lines := collect(true); len(lines) > 0 {
+		out.TopFrames = lines
+	} else {
+		out.TopFrames = collect(false)
+	}
+	return out
+}
+
 // GetLatestEventForIssue returns the most recently received event for an issue.
 func GetLatestEventForIssue(ctx context.Context, pool *pgxpool.Pool, issueID string) (*EventRow, error) {
 	return GetEventForIssueAtOffset(ctx, pool, issueID, 0)

@@ -12,22 +12,27 @@ import (
 )
 
 type Issue struct {
-	ID               string     `json:"id"`
-	ProjectID        string     `json:"project_id"`
-	Fingerprint      string     `json:"fingerprint"`
-	Title            string     `json:"title"`
-	Level            string     `json:"level"`
-	Kind             string     `json:"kind"`
-	FirstSeen        time.Time  `json:"first_seen"`
-	LastSeen         time.Time  `json:"last_seen"`
-	EventCount       int64      `json:"event_count"`
-	Status           string     `json:"status"`
-	AssigneeID       *string    `json:"assignee_id"`
-	AssigneeEmail    *string    `json:"assignee_email,omitempty"`
-	FingerprintCount int        `json:"fingerprint_count,omitempty"`
-	Sparkline        []int      `json:"sparkline,omitempty"`
-	Environment      *string    `json:"environment"`
-	TopFrames        []string   `json:"top_frames,omitempty"` // populated on demand (alerts, not API responses)
+	ID               string    `json:"id"`
+	ProjectID        string    `json:"project_id"`
+	Fingerprint      string    `json:"fingerprint"`
+	Title            string    `json:"title"`
+	Level            string    `json:"level"`
+	Kind             string    `json:"kind"`
+	FirstSeen        time.Time `json:"first_seen"`
+	LastSeen         time.Time `json:"last_seen"`
+	EventCount       int64     `json:"event_count"`
+	Status           string    `json:"status"`
+	AssigneeID       *string   `json:"assignee_id"`
+	AssigneeEmail    *string   `json:"assignee_email,omitempty"`
+	FingerprintCount int       `json:"fingerprint_count,omitempty"`
+	Sparkline        []int     `json:"sparkline,omitempty"`
+	Environment      *string   `json:"environment"`
+	TopFrames        []string  `json:"top_frames,omitempty"` // populated on demand (alerts, not API responses)
+	// Alert-only enrichment fields; not serialised in API responses.
+	AlertMessage     string     `json:"-"`
+	AlertReqURL      string     `json:"-"`
+	AlertReqMethod   string     `json:"-"`
+	AlertOccurredAt  *time.Time `json:"-"`
 	IgnoreUntil      *time.Time `json:"ignore_until"`
 	IgnoreCountLimit *int       `json:"ignore_count_limit"`
 	IgnoreCount      int        `json:"ignore_count"`

@@ -398,7 +398,12 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 	}
 
 	for _, iss := range payload.Issues {
-		iss.TopFrames = storage.GetTopFrames(ctx, e.pool, iss.ID, 3)
+		evd := storage.GetAlertEventData(ctx, e.pool, iss.ID, 3)
+		iss.TopFrames = evd.TopFrames
+		iss.AlertMessage = evd.Message
+		iss.AlertReqURL = evd.RequestURL
+		iss.AlertReqMethod = evd.RequestMethod
+		iss.AlertOccurredAt = evd.OccurredAt
 	}
 }
 
