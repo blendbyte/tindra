@@ -588,3 +588,214 @@ func TestGetLatestEventGlobal_issueNotFound(t *testing.T) {
 		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
+
+// --- handleUpdateComment ---
+
+func seedCommentForTest(t *testing.T) (issueID, commentID string) {
+	t.Helper()
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, err := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-upd-comment", "Upd Comment Issue", "error", "error", "", "", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"body":"original comment"}`)
+	req := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/issues/%s/comments", iss.ID), body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create comment: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var c storage.Comment
+	if err := json.NewDecoder(rec.Body).Decode(&c); err != nil {
+		t.Fatalf("decode comment: %v", err)
+	}
+	return iss.ID, c.ID
+}
+
+func TestUpdateComment_success(t *testing.T) {
+	_, commentID := seedCommentForTest(t)
+
+	body := bytes.NewBufferString(`{"body":"updated text"}`)
+	req := httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/comments/%s", commentID), body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var c storage.Comment
+	if err := json.NewDecoder(rec.Body).Decode(&c); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if c.Body != "updated text" {
+		t.Errorf("body: got %q, want 'updated text'", c.Body)
+	}
+}
+
+func TestUpdateComment_emptyBody(t *testing.T) {
+	_, commentID := seedCommentForTest(t)
+
+	req := httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/comments/%s", commentID),
+		bytes.NewBufferString(`{"body":""}`))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty body, got %d", rec.Code)
+	}
+}
+
+func TestUpdateComment_notFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/comments/00000000-0000-0000-0000-000000000000",
+		bytes.NewBufferString(`{"body":"text"}`))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestUpdateComment_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/comments/00000000-0000-0000-0000-000000000000",
+		bytes.NewBufferString(`{"body":"text"}`))
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// --- handleDeleteComment ---
+
+func TestDeleteComment_success(t *testing.T) {
+	_, commentID := seedCommentForTest(t)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		fmt.Sprintf("/api/comments/%s", commentID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteComment_notFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/comments/00000000-0000-0000-0000-000000000000", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestDeleteComment_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/comments/00000000-0000-0000-0000-000000000000", nil)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// --- handleGetReleaseTransactions ---
+
+func TestGetReleaseTransactions_unknownRelease(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/releases/00000000-0000-0000-0000-000000000000/transactions", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var txns []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&txns); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(txns) != 0 {
+		t.Errorf("expected empty list for unknown release, got %d", len(txns))
+	}
+}
+
+func TestGetReleaseTransactions_withRelease(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE releases")
+	var relID string
+	testPool.QueryRow(context.Background(),
+		"INSERT INTO releases (project_id, version) VALUES ($1, 'v5.0.0') RETURNING id",
+		testProject.ID).Scan(&relID)
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/releases/%s/transactions", relID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleGetReleaseIssues ---
+
+func TestGetReleaseIssues_api_unknownRelease(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/releases/00000000-0000-0000-0000-000000000000/issues", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var issues []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&issues); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Errorf("expected empty list for unknown release, got %d", len(issues))
+	}
+}
+
+func TestGetReleaseIssues_api_withRelease(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE releases")
+	var relID string
+	testPool.QueryRow(context.Background(),
+		"INSERT INTO releases (project_id, version) VALUES ($1, 'v7.0.0') RETURNING id",
+		testProject.ID).Scan(&relID)
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/releases/%s/issues", relID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

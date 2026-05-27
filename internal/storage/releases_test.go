@@ -252,3 +252,33 @@ func TestGetReleaseIssues_notFound(t *testing.T) {
 		t.Errorf("expected nil for unknown release, got %v", issues)
 	}
 }
+
+func TestGetReleaseIssues_withData(t *testing.T) {
+	truncateProjects(t)
+	p, _ := storage.CreateProject(context.Background(), testPool, "rel-iss-data", "Rel Iss Data")
+	ctx := context.Background()
+
+	var relID string
+	testPool.QueryRow(ctx, `
+		INSERT INTO releases (project_id, version, deployed_at)
+		VALUES ($1, '6.0.0', NOW()) RETURNING id
+	`, p.ID).Scan(&relID)
+
+	var eventID string
+	testPool.QueryRow(ctx, `
+		INSERT INTO events (project_id, timestamp, payload)
+		VALUES ($1, NOW(), '{"level":"error","release":"6.0.0"}'::jsonb) RETURNING id
+	`, p.ID).Scan(&eventID)
+
+	ts := time.Now().UTC()
+	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, p.ID, "fp-rel-iss", "Release Issue", "error", "error", "", "6.0.0", ts)
+	storage.LinkEventToIssue(ctx, testPool, eventID, issue.ID, "fp-rel-iss")
+
+	issues, err := storage.GetReleaseIssues(ctx, testPool, relID)
+	if err != nil {
+		t.Fatalf("GetReleaseIssues: %v", err)
+	}
+	if len(issues) < 1 {
+		t.Errorf("expected at least 1 issue, got %d", len(issues))
+	}
+}

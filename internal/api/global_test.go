@@ -968,3 +968,272 @@ func TestGetIssueTrace_notFound(t *testing.T) {
 		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
+
+// --- handleListTransactionSummaries ---
+
+func TestListTransactionSummaries_success(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/summaries", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var summaries []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&summaries); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
+func TestListTransactionSummaries_withHours(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/summaries?hours=48", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 with hours param, got %d", rec.Code)
+	}
+}
+
+// --- handleTransactionTimeseries ---
+
+func TestTransactionTimeseries_success(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/timeseries", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleGetTransactionErrors ---
+
+func TestGetTransactionErrors_notFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/transactions/00000000-0000-0000-0000-000000000000/errors", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestGetTransactionErrors_found(t *testing.T) {
+	truncateTransactions(t)
+	tx := seedTransactionRow(t, "/api/tx-errors", 50)
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/transactions/%s/errors", tx.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var errs []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&errs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
+// --- handleSpanSamples ---
+
+func TestSpanSamples_success(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/samples", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSpanSamples_withFilters(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/spans/samples?op=db.query&hours=48", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 with filters, got %d", rec.Code)
+	}
+}
+
+// --- handleGetWebVitals ---
+
+func TestGetWebVitals_success(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/vitals", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetWebVitals_withHours(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/vitals?hours=72", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 with hours param, got %d", rec.Code)
+	}
+}
+
+// --- handleGetWebVitalsPages ---
+
+func TestGetWebVitalsPages_success(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/vitals/pages", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var pages []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&pages); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
+// --- handleUpdateProjectPrivacy ---
+
+func TestUpdateProjectPrivacy_success(t *testing.T) {
+	p, err := storage.CreateProject(context.Background(), testPool, "privacy-proj", "Privacy Project")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id=$1", p.ID)
+	})
+
+	body := bytes.NewBufferString(`{"scrub_fields":["password","token"],"scrub_patterns":[]}`)
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/projects/%s/privacy", p.ID), body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got storage.Project
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != p.ID {
+		t.Errorf("project ID: got %q, want %q", got.ID, p.ID)
+	}
+}
+
+func TestUpdateProjectPrivacy_badBody(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/projects/%s/privacy", testProject.ID),
+		bytes.NewBufferString("not json"))
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestUpdateProjectPrivacy_notFound(t *testing.T) {
+	body := bytes.NewBufferString(`{"scrub_fields":[],"scrub_patterns":[]}`)
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/projects/00000000-0000-0000-0000-000000000000/privacy", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestUpdateProjectPrivacy_forbidden(t *testing.T) {
+	roCookie := makeReadOnlyUser(t, "ro-privacy@example.com")
+	body := bytes.NewBufferString(`{"scrub_fields":[],"scrub_patterns":[]}`)
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/projects/%s/privacy", testProject.ID), body)
+	req.AddCookie(roCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for user without manage_projects, got %d", rec.Code)
+	}
+}
+
+// --- handleExportIssues ---
+
+func TestExportIssues_csv(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("expected text/csv content-type, got %q", ct)
+	}
+	if rec.Header().Get("Content-Disposition") == "" {
+		t.Error("expected Content-Disposition header")
+	}
+}
+
+func TestExportIssues_json(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?format=json", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var issues []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&issues); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
+func TestExportIssues_invalidFormat(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?format=xml", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid format, got %d", rec.Code)
+	}
+}
+
+func TestExportIssues_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export", nil)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}

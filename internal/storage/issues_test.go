@@ -727,6 +727,33 @@ func TestListAllIssues_filterByProject(t *testing.T) {
 	}
 }
 
+func TestListAllIssues_cursorPagination(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	for i, fp := range []string{"fp-cur1", "fp-cur2", "fp-cur3"} {
+		storage.UpsertIssue(ctx, testPool, project.ID, fp, "Cursor Issue", "error", "error", "", "", ts.Add(time.Duration(-i)*time.Second))
+	}
+
+	first, err := storage.ListAllIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Limit: 2})
+	if err != nil || len(first) == 0 {
+		t.Fatalf("first page: err=%v len=%d", err, len(first))
+	}
+
+	last := first[len(first)-1]
+	second, err := storage.ListAllIssues(ctx, testPool, storage.IssueFilter{
+		ProjectIDs: []string{project.ID},
+		Limit:      10,
+		CursorTime: &last.LastSeen,
+		CursorID:   &last.ID,
+	})
+	if err != nil {
+		t.Fatalf("cursor page: %v", err)
+	}
+	_ = second
+}
+
 func TestExpireIgnoredIssues(t *testing.T) {
 	project, _ := setupProjectAndEvent(t)
 	ctx := context.Background()

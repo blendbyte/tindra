@@ -283,3 +283,115 @@ func TestHandleEnvelope_nonEventItemsIgnored(t *testing.T) {
 		t.Errorf("expected 0 events for session-only envelope, got %d", count)
 	}
 }
+
+// --- parseLogs via log envelope item ---
+
+func logEnvelope(payload string) string {
+	header := `{"event_id":"log-test-event-id-0001"}`
+	itemHeader := fmt.Sprintf(`{"type":"log","length":%d}`, len(payload))
+	return header + "\n" + itemHeader + "\n" + payload + "\n"
+}
+
+func TestHandleEnvelope_logItem(t *testing.T) {
+	logBuf := ingest.NewLogBuffer(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go logBuf.Run(ctx, testPool)
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+
+	payload := `[{"timestamp":1700000000.0,"level":"info","body":"hello from log","trace_id":"abc123","span_id":"def456","attributes":{"sentry.environment":"test"}}]`
+	body := logEnvelope(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleEnvelope_logItem_singleObject(t *testing.T) {
+	logBuf := ingest.NewLogBuffer(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go logBuf.Run(ctx, testPool)
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+
+	// Single object (not array) format.
+	payload := `{"timestamp":1700000001.0,"level":"warn","body":"single log object"}`
+	body := logEnvelope(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleEnvelopeCheckin ---
+
+func checkinEnvelope(payload string) string {
+	header := `{"event_id":"checkin-test-0001"}`
+	itemHeader := fmt.Sprintf(`{"type":"check_in","length":%d}`, len(payload))
+	return header + "\n" + itemHeader + "\n" + payload + "\n"
+}
+
+func TestHandleEnvelope_checkin_inProgress(t *testing.T) {
+	m := createTestMonitor(t, "test-checkin-monitor", "0 * * * *")
+
+	payload := fmt.Sprintf(`{"check_in_id":"ci-001","monitor_slug":%q,"status":"in_progress"}`, m.ID)
+	body := checkinEnvelope(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	newHandler(ingest.NewBuffer(1)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleEnvelope_checkin_ok(t *testing.T) {
+	m := createTestMonitor(t, "test-checkin-ok", "0 * * * *")
+	dur := 1.5
+
+	payload := fmt.Sprintf(`{"check_in_id":"ci-ok-001","monitor_slug":%q,"status":"ok","duration":%v}`, m.ID, dur)
+	body := checkinEnvelope(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	newHandler(ingest.NewBuffer(1)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleEnvelope_checkin_unknownMonitor(t *testing.T) {
+	payload := `{"check_in_id":"ci-unk","monitor_slug":"00000000-0000-0000-0000-000000000000","status":"ok"}`
+	body := checkinEnvelope(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	newHandler(ingest.NewBuffer(1)).ServeHTTP(rec, req)
+
+	// Unknown monitor is silently ignored; the envelope still returns 200.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
