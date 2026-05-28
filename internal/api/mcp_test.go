@@ -1095,20 +1095,27 @@ func TestMCP_createAlertRule_writableToken_success(t *testing.T) {
 
 // --- OAuth discovery & transport helpers ---
 
-func TestMCP_oauthAS_returns404JSON(t *testing.T) {
+func TestMCP_oauthAS_returns200JSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
 	rec := httptest.NewRecorder()
 	mcpHandler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("expected application/json Content-Type, got %q", ct)
 	}
 	var body map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Errorf("body is not valid JSON: %v", err)
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if body["issuer"] == nil {
+		t.Error("expected issuer field in AS metadata")
+	}
+	methods, ok := body["bearer_methods_supported"].([]any)
+	if !ok || len(methods) == 0 {
+		t.Error("expected non-empty bearer_methods_supported")
 	}
 }
 
@@ -1129,6 +1136,10 @@ func TestMCP_oauthPR_returns200JSON(t *testing.T) {
 	}
 	if body["resource"] == nil {
 		t.Error("expected resource field in protected resource metadata")
+	}
+	authServers, ok := body["authorization_servers"].([]any)
+	if !ok || len(authServers) == 0 {
+		t.Error("expected non-empty authorization_servers")
 	}
 	methods, ok := body["bearer_methods_supported"].([]any)
 	if !ok || len(methods) == 0 {

@@ -84,15 +84,23 @@ func rawIDToAny(raw json.RawMessage) any {
 }
 
 // handleMCPOAuthAS responds to OAuth Authorization Server discovery (RFC 8414).
-// We have no OAuth AS; return 404 JSON so clients don't receive the SPA HTML catch-all.
+// Tindra does not implement an OAuth flow; tokens are pre-issued via the UI.
+// We return a minimal valid metadata document so strict clients don't reject the server.
 func (ro *router) handleMCPOAuthAS(w http.ResponseWriter, r *http.Request) {
+	issuer := ro.publicURL
+	if issuer == "" {
+		issuer = "https://" + r.Host
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(w).Encode(map[string]any{"error": "not_found"})
+	json.NewEncoder(w).Encode(map[string]any{
+		"issuer":                   issuer,
+		"response_types_supported": []string{},
+		"bearer_methods_supported": []string{"header"},
+	})
 }
 
 // handleMCPOAuthPR responds to Protected Resource Metadata discovery (RFC 9728).
-// Advertises that Bearer token in Authorization header is the supported auth method.
+// Advertises Bearer token in Authorization header and points to this server as the AS.
 func (ro *router) handleMCPOAuthPR(w http.ResponseWriter, r *http.Request) {
 	resource := ro.publicURL
 	if resource == "" {
@@ -101,6 +109,7 @@ func (ro *router) handleMCPOAuthPR(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"resource":                 resource,
+		"authorization_servers":    []string{resource},
 		"bearer_methods_supported": []string{"header"},
 	})
 }
