@@ -125,6 +125,19 @@ export const router = createRouter({
   },
 })
 
+// Lazy-loaded route chunks may 404 after a deploy. Navigate hard to the
+// destination so the browser picks up fresh assets instead of throwing.
+router.onError((error, to) => {
+  const isChunkError =
+    error.message?.includes('Failed to fetch dynamically imported module') ||
+    error.message?.includes('Importing a module script failed') ||
+    error.message?.includes('Unable to preload CSS for') ||
+    error.name === 'ChunkLoadError'
+  if (isChunkError) {
+    window.location.assign(to.fullPath)
+  }
+})
+
 router.afterEach((to) => {
   const base = 'Tindra'
   const title = to.meta.title as string | undefined

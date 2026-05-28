@@ -112,6 +112,41 @@ describe('TransactionListView', () => {
     })
   })
 
+  describe('profile link project scoping', () => {
+    const RouterLinkCapture = { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' }
+    const stubsWithCapture = { ...stubs, RouterLink: RouterLinkCapture }
+
+    it('includes project_id in the transaction-profile link', () => {
+      setupMocks([{ ...makeSummary('/api/users'), project_id: 'proj-abc' }])
+      const wrapper = mount(TransactionListView, { global: { stubs: stubsWithCapture } })
+      const links = wrapper.findAllComponents(RouterLinkCapture)
+      const rowLink = links.find(l => l.props('to')?.name === 'transaction-profile')!
+      expect(rowLink.props('to').query.project_id).toBe('proj-abc')
+    })
+
+    it('includes transaction name and op in the link', () => {
+      setupMocks([makeSummary('/api/orders', 'db.query')])
+      const wrapper = mount(TransactionListView, { global: { stubs: stubsWithCapture } })
+      const links = wrapper.findAllComponents(RouterLinkCapture)
+      const rowLink = links.find(l => l.props('to')?.name === 'transaction-profile')!
+      expect(rowLink.props('to').query.name).toBe('/api/orders')
+      expect(rowLink.props('to').query.op).toBe('db.query')
+    })
+
+    it('scopes each row to its own project when rows have different project_ids', () => {
+      setupMocks([
+        { ...makeSummary('/a'), project_id: 'proj-1' },
+        { ...makeSummary('/b'), project_id: 'proj-2' },
+      ])
+      const wrapper = mount(TransactionListView, { global: { stubs: stubsWithCapture } })
+      const rowLinks = wrapper.findAllComponents(RouterLinkCapture)
+        .filter(l => l.props('to')?.name === 'transaction-profile')
+      const projectIds = rowLinks.map(l => l.props('to').query.project_id)
+      expect(projectIds).toContain('proj-1')
+      expect(projectIds).toContain('proj-2')
+    })
+  })
+
   describe('loaded transactions', () => {
     it('renders a row for each transaction', () => {
       setupMocks([makeSummary('/api/users'), makeSummary('/api/orders')])
