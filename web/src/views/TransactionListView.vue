@@ -455,7 +455,7 @@ const stats = computed(() => {
             v-for="(s, i) in summaries"
             :key="`${s.transaction}-${s.op}-${s.project_id}-${i}`"
             class="txrow"
-            :to="{ name: 'transaction-profile', query: { name: s.transaction, op: s.op } }"
+            :to="{ name: 'transaction-profile', query: { name: s.transaction, op: s.op, project_id: s.project_id } }"
           >
             <span class="optag" :class="opClass(s.op)">{{ s.op.split('.')[0] }}</span>
             <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ s.transaction }}</span>

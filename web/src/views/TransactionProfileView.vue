@@ -18,6 +18,10 @@ const tz = useTimezone()
 
 const txName = computed(() => route.query.name as string)
 const txOp = computed(() => route.query.op as string)
+const txProjectId = computed(() => route.query.project_id as string | undefined)
+const activeProjectIds = computed(() =>
+  txProjectId.value ? [txProjectId.value] : projects.selectedIds
+)
 
 const windowHrs = ref('24h')
 const envFilter = ref('All')
@@ -30,7 +34,7 @@ const profileParams = computed(() => {
   p.set('name', txName.value)
   if (txOp.value) p.set('op', txOp.value)
   if (envFilter.value !== 'All') p.set('env', envFilter.value)
-  for (const id of projects.selectedIds) p.append('project_id', id)
+  for (const id of activeProjectIds.value) p.append('project_id', id)
   return p.toString()
 })
 
@@ -57,7 +61,7 @@ const samplesParams = computed(() => {
   p.set('name', txName.value)
   if (txOp.value) p.set('op', txOp.value)
   if (envFilter.value !== 'All') p.set('environment', envFilter.value)
-  for (const id of projects.selectedIds) p.append('project_id', id)
+  for (const id of activeProjectIds.value) p.append('project_id', id)
   return p.toString()
 })
 
