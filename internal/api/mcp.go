@@ -83,6 +83,36 @@ func rawIDToAny(raw json.RawMessage) any {
 	return v
 }
 
+// handleMCPOAuthAS responds to OAuth Authorization Server discovery (RFC 8414).
+// We have no OAuth AS; return 404 JSON so clients don't receive the SPA HTML catch-all.
+func (ro *router) handleMCPOAuthAS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]any{"error": "not_found"})
+}
+
+// handleMCPOAuthPR responds to Protected Resource Metadata discovery (RFC 9728).
+// Advertises that Bearer token in Authorization header is the supported auth method.
+func (ro *router) handleMCPOAuthPR(w http.ResponseWriter, r *http.Request) {
+	resource := ro.publicURL
+	if resource == "" {
+		resource = "https://" + r.Host
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"resource":                 resource,
+		"bearer_methods_supported": []string{"header"},
+	})
+}
+
+// handleMCPGet handles GET /mcp — SSE is not supported; tell clients to use POST.
+func (ro *router) handleMCPGet(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Allow", "POST")
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	json.NewEncoder(w).Encode(mcpRPCError(nil, -32000, "MCP requires POST with Content-Type: application/json and a Bearer token"))
+}
+
 // handleMCP is the single entry-point for the MCP Streamable HTTP transport.
 func (ro *router) handleMCP(w http.ResponseWriter, r *http.Request) {
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {

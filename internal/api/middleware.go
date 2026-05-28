@@ -141,6 +141,7 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 
 		cookie, err := r.Cookie("tindra_session")
 		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="tindra"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -150,6 +151,7 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		if session == nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="tindra"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

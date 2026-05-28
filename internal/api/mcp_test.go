@@ -1092,3 +1092,79 @@ func TestMCP_createAlertRule_writableToken_success(t *testing.T) {
 		t.Errorf("name: got %v", rule["name"])
 	}
 }
+
+// --- OAuth discovery & transport helpers ---
+
+func TestMCP_oauthAS_returns404JSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	rec := httptest.NewRecorder()
+	mcpHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("expected application/json Content-Type, got %q", ct)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Errorf("body is not valid JSON: %v", err)
+	}
+}
+
+func TestMCP_oauthPR_returns200JSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource", nil)
+	rec := httptest.NewRecorder()
+	mcpHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("expected application/json Content-Type, got %q", ct)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if body["resource"] == nil {
+		t.Error("expected resource field in protected resource metadata")
+	}
+	methods, ok := body["bearer_methods_supported"].([]any)
+	if !ok || len(methods) == 0 {
+		t.Error("expected non-empty bearer_methods_supported")
+	}
+}
+
+func TestMCP_getMethod_returns405JSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	rec := httptest.NewRecorder()
+	mcpHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); allow != "POST" {
+		t.Errorf("expected Allow: POST, got %q", allow)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("expected application/json Content-Type, got %q", ct)
+	}
+	var resp rpcResp
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if resp.Error == nil {
+		t.Error("expected JSON-RPC error in 405 response")
+	}
+}
+
+func TestMCP_unauthenticated_hasWWWAuthenticate(t *testing.T) {
+	rec := postMCPRaw(t, mcpHandler(), `{"jsonrpc":"2.0","id":1,"method":"ping"}`, "application/json")
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+	if hdr := rec.Header().Get("WWW-Authenticate"); !strings.HasPrefix(hdr, "Bearer") {
+		t.Errorf("expected WWW-Authenticate: Bearer ..., got %q", hdr)
+	}
+}

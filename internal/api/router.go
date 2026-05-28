@@ -302,6 +302,13 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.With(ro.requirePerm("manage_projects")).Delete("/api/monitors/{monitorID}", ro.handleDeleteMonitor)
 	})
 
+	// MCP OAuth discovery endpoints — must be registered before the SPA catch-all so
+	// clients get JSON instead of index.html when probing for OAuth metadata.
+	r.Get("/.well-known/oauth-authorization-server", ro.handleMCPOAuthAS)
+	r.Get("/.well-known/oauth-protected-resource", ro.handleMCPOAuthPR)
+	// GET /mcp for clients probing SSE support — we only support POST; return 405 JSON.
+	r.Get("/mcp", ro.handleMCPGet)
+
 	// Serve the embedded Vue SPA. Static assets are served directly;
 	// everything else falls back to index.html for client-side routing.
 	dist, _ := fs.Sub(ui.FS, "dist")
