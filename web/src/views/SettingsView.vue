@@ -104,6 +104,50 @@ const { mutate: revokeToken } = useMutation({
   },
 })
 
+const editingToken = ref<ApiToken | null>(null)
+const editTokenName = ref('')
+const editTokenProject = ref('')
+const editTokenWritable = ref(false)
+
+function openEditToken(t: ApiToken) {
+  editingToken.value = t
+  editTokenName.value = t.name
+  editTokenProject.value = t.project_id
+  editTokenWritable.value = t.writable
+  closeUserMenus()
+}
+
+function closeEditToken() {
+  editingToken.value = null
+}
+
+const { mutate: updateToken, isPending: updatingToken } = useMutation({
+  mutationFn: ({ id, name, project_id, writable }: { id: string; name: string; project_id: string; writable: boolean }) =>
+    apiFetch<ApiToken>(`/api/tokens/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name, project_id, writable }),
+    }),
+  onSuccess: () => {
+    qc.invalidateQueries({ queryKey: ['tokens'] })
+    closeEditToken()
+    showToast('Token updated')
+  },
+  onError: (err) => {
+    showToast(err instanceof Error ? err.message : 'Failed to update token.', 'error')
+  },
+})
+
+function submitEditToken(e: Event) {
+  e.preventDefault()
+  if (!editingToken.value || !editTokenName.value.trim() || !editTokenProject.value) return
+  updateToken({
+    id: editingToken.value.id,
+    name: editTokenName.value.trim(),
+    project_id: editTokenProject.value,
+    writable: editTokenWritable.value,
+  })
+}
+
 function submitCreate(e: Event) {
   e.preventDefault()
   const pid = newTokenProject.value || (projects.value[0]?.id ?? '')
@@ -1270,6 +1314,10 @@ function actionKindOf(action: string) {
                     <Icon name="more-horizontal" :size="15" />
                   </button>
                   <div v-if="openMenuId === t.id" class="user-menu__dropdown">
+                    <button class="user-menu__item" @click="openEditToken(t)">
+                      <Icon name="pencil" :size="13" class="user-menu__item-icon" />
+                      Edit
+                    </button>
                     <button class="user-menu__item user-menu__item--danger" @click="revoke(t.id, t.name)">
                       <Icon name="trash-2" :size="13" class="user-menu__item-icon" />
                       Revoke
@@ -1285,6 +1333,38 @@ function actionKindOf(action: string) {
             </tr>
           </tbody>
         </table>
+
+        <!-- Edit token form -->
+        <div v-if="editingToken" class="token-edit-panel">
+          <form @submit="submitEditToken">
+            <div class="token-edit-panel__title">Edit token</div>
+            <div class="fields-grid" style="margin-top: 12px">
+              <div class="field">
+                <label class="field__label">Name</label>
+                <input v-model="editTokenName" class="field__input" type="text" placeholder="Token name" required />
+              </div>
+              <div class="field" v-if="projects.length > 1">
+                <label class="field__label">Project</label>
+                <select v-model="editTokenProject" class="field__input">
+                  <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field__label">Access</label>
+                <label class="checkbox-label">
+                  <input type="checkbox" v-model="editTokenWritable" />
+                  Read / Write (uncheck for read-only)
+                </label>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 14px">
+              <button type="submit" class="btn btn--primary" :disabled="updatingToken">
+                {{ updatingToken ? 'Saving…' : 'Save changes' }}
+              </button>
+              <button type="button" class="btn btn--ghost" @click="closeEditToken">Cancel</button>
+            </div>
+          </form>
+        </div>
       </template>
 
       <!-- Projects tab -->

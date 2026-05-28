@@ -95,6 +95,24 @@ func ListAllAPITokens(ctx context.Context, pool *pgxpool.Pool) ([]*APIToken, err
 	return tokens, rows.Err()
 }
 
+// UpdateAPIToken updates the name, project, and writable flag of an existing token.
+// Returns nil, nil if the token does not exist.
+func UpdateAPIToken(ctx context.Context, pool *pgxpool.Pool, id, name, projectID string, writable bool) (*APIToken, error) {
+	var t APIToken
+	err := pool.QueryRow(ctx, `
+		UPDATE api_tokens SET name = $2, project_id = $3, writable = $4
+		WHERE id = $1
+		RETURNING id, project_id, name, writable, created_at, last_used_at, expires_at
+	`, id, name, projectID, writable).Scan(&t.ID, &t.ProjectID, &t.Name, &t.Writable, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update: %w", err)
+	}
+	return &t, nil
+}
+
 func DeleteAPITokenByID(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error) {
 	tag, err := pool.Exec(ctx, `DELETE FROM api_tokens WHERE id = $1`, id)
 	if err != nil {

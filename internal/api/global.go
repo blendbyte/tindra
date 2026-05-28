@@ -1239,6 +1239,39 @@ func (ro *router) handleCreateTokenGlobal(w http.ResponseWriter, r *http.Request
 	}{Token: plaintext, Meta: token})
 }
 
+// handleUpdateTokenGlobal updates an API token's name, project, and writable flag.
+func (ro *router) handleUpdateTokenGlobal(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "tokenID")
+	var req struct {
+		Name      string `json:"name"`
+		ProjectID string `json:"project_id"`
+		Writable  bool   `json:"writable"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.ProjectID == "" {
+		http.Error(w, "name and project_id are required", http.StatusBadRequest)
+		return
+	}
+	token, err := storage.UpdateAPIToken(r.Context(), ro.pool, id, req.Name, req.ProjectID, req.Writable)
+	if err != nil {
+		slog.Error("update api token", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if token == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "token.updated",
+		ActorID:   actorFromContext(r.Context()),
+		ProjectID: &token.ProjectID,
+		TargetID:  &id,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"name": token.Name, "writable": token.Writable},
+	})
+	writeJSON(w, token)
+}
+
 // handleDeleteTokenGlobal revokes an API token by ID without project scoping.
 func (ro *router) handleDeleteTokenGlobal(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "tokenID")

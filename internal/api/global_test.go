@@ -795,6 +795,93 @@ func TestDeleteTokenGlobal_notFound(t *testing.T) {
 	}
 }
 
+// --- handleUpdateTokenGlobal ---
+
+func TestUpdateTokenGlobal_success(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE api_tokens")
+
+	tok, _, _ := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "old-name", false)
+
+	body, _ := json.Marshal(map[string]any{
+		"name":       "new-name",
+		"project_id": testProject.ID,
+		"writable":   true,
+	})
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/tokens/%s", tok.ID), bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated storage.APIToken
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.Name != "new-name" {
+		t.Errorf("name: got %q, want %q", updated.Name, "new-name")
+	}
+	if !updated.Writable {
+		t.Error("expected Writable=true after update")
+	}
+}
+
+func TestUpdateTokenGlobal_badBody(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPatch, "/api/tokens/some-id", bytes.NewBufferString("not json"))
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestUpdateTokenGlobal_missingName(t *testing.T) {
+	body := bytes.NewBufferString(fmt.Sprintf(`{"project_id":%q,"writable":false}`, testProject.ID))
+	req := httptest.NewRequest(http.MethodPatch, "/api/tokens/some-id", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing name, got %d", rec.Code)
+	}
+}
+
+func TestUpdateTokenGlobal_missingProjectID(t *testing.T) {
+	body := bytes.NewBufferString(`{"name":"x","writable":false}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/tokens/some-id", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing project_id, got %d", rec.Code)
+	}
+}
+
+func TestUpdateTokenGlobal_notFound(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"name":       "x",
+		"project_id": testProject.ID,
+		"writable":   false,
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/tokens/00000000-0000-0000-0000-000000000000", bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
 // --- handleTestAlertRule ---
 
 func TestTestAlertRule_noEvaluator(t *testing.T) {

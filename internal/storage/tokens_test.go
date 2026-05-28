@@ -353,3 +353,59 @@ func TestListAPITokens_writable_field(t *testing.T) {
 		t.Errorf("expected exactly 1 writable token, got %d", writableCount)
 	}
 }
+
+// --- UpdateAPIToken ---
+
+func TestUpdateAPIToken_renameAndFlipWritable(t *testing.T) {
+	p := setupProjectForTokens(t)
+
+	tok, _, _ := storage.CreateAPIToken(context.Background(), testPool, p.ID, "original", false)
+
+	updated, err := storage.UpdateAPIToken(context.Background(), testPool, tok.ID, "renamed", p.ID, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected updated token, got nil")
+	}
+	if updated.Name != "renamed" {
+		t.Errorf("name: got %q, want %q", updated.Name, "renamed")
+	}
+	if !updated.Writable {
+		t.Error("expected Writable=true after update")
+	}
+	if updated.ID != tok.ID {
+		t.Error("ID must not change on update")
+	}
+}
+
+func TestUpdateAPIToken_changeProject(t *testing.T) {
+	truncateProjects(t)
+	p1, _ := storage.CreateProject(context.Background(), testPool, "upd-p1", "P1")
+	p2, _ := storage.CreateProject(context.Background(), testPool, "upd-p2", "P2")
+
+	tok, _, _ := storage.CreateAPIToken(context.Background(), testPool, p1.ID, "tok", false)
+
+	updated, err := storage.UpdateAPIToken(context.Background(), testPool, tok.ID, "tok", p2.ID, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected updated token, got nil")
+	}
+	if updated.ProjectID != p2.ID {
+		t.Errorf("project_id: got %q, want %q", updated.ProjectID, p2.ID)
+	}
+}
+
+func TestUpdateAPIToken_notFound(t *testing.T) {
+	p := setupProjectForTokens(t)
+
+	updated, err := storage.UpdateAPIToken(context.Background(), testPool, "00000000-0000-0000-0000-000000000000", "x", p.ID, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated != nil {
+		t.Error("expected nil for nonexistent token")
+	}
+}

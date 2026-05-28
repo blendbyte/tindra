@@ -196,6 +196,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		// manage_projects: token write operations (a token grants project-scoped write access,
 		// so creating or revoking one is equivalent to granting/removing that access).
 		r.With(ro.requirePerm("manage_projects")).Post("/api/tokens", ro.handleCreateTokenGlobal)
+		r.With(ro.requirePerm("manage_projects")).Patch("/api/tokens/{tokenID}", ro.handleUpdateTokenGlobal)
 		r.With(ro.requirePerm("manage_projects")).Delete("/api/tokens/{tokenID}", ro.handleDeleteTokenGlobal)
 		r.Get("/api/logs", ro.handleListLogs)
 		r.Get("/api/releases", ro.handleListReleases)
