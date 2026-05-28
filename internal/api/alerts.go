@@ -83,7 +83,13 @@ func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "alert_rule.created",
+		ActorID:   actorFromContext(r.Context()),
+		TargetID:  &created.ID,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"name": created.Name, "trigger": created.Trigger},
+	})
 	writeJSONStatus(w, http.StatusCreated, created)
 }
 
@@ -285,7 +291,13 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "alert_rule.updated",
+		ActorID:   actorFromContext(r.Context()),
+		TargetID:  &id,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"name": existing.Name},
+	})
 	writeJSON(w, updated)
 }
 
@@ -301,7 +313,12 @@ func (ro *router) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "alert_rule.deleted",
+		ActorID:   actorFromContext(r.Context()),
+		TargetID:  &id,
+		IP:        r.RemoteAddr,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

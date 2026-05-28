@@ -118,6 +118,17 @@ func (ro *router) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existing, err := storage.GetIssue(r.Context(), ro.pool, id)
+	if err != nil {
+		slog.Error("get issue for update", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if existing == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
 	var ignoreOpts *storage.IgnoreOptions
 	if req.Status == "ignored" && (req.IgnoreUntil != nil || req.IgnoreCountLimit != nil) {
 		ignoreOpts = &storage.IgnoreOptions{Until: req.IgnoreUntil, CountLimit: req.IgnoreCountLimit}
@@ -133,14 +144,33 @@ func (ro *router) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	actor := actorFromContext(r.Context())
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "issue.status_changed",
-		ActorID:   actorFromContext(r.Context()),
+		ActorID:   actor,
 		ProjectID: &project.ID,
 		TargetID:  &id,
 		IP:        r.RemoteAddr,
 		Details:   map[string]any{"status": req.Status},
 	})
+	historyDetails := map[string]any{"from": existing.Status, "to": req.Status}
+	if req.Status == "ignored" {
+		if req.IgnoreUntil != nil {
+			historyDetails["ignore_until"] = req.IgnoreUntil.Format(time.RFC3339)
+		}
+		if req.IgnoreCountLimit != nil {
+			historyDetails["ignore_count_limit"] = *req.IgnoreCountLimit
+		}
+	}
+	if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
+		IssueID:   id,
+		ActorID:   actor,
+		EventType: "status_changed",
+		Details:   historyDetails,
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		slog.Error("insert issue history", "err", err)
+	}
 
 	writeJSON(w, issue)
 }
@@ -208,6 +238,37 @@ func (ro *router) handleMergeIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actor := actorFromContext(r.Context())
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "issue.merged",
+		ActorID:   actor,
+		ProjectID: &project.ID,
+		TargetID:  &primaryID,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"merged_ids": mergeIDs},
+	})
+	now := time.Now().UTC()
+	if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
+		IssueID:   primaryID,
+		ActorID:   actor,
+		EventType: "merged_into",
+		Details:   map[string]any{"merged_ids": mergeIDs},
+		CreatedAt: now,
+	}); err != nil {
+		slog.Error("insert issue history (merge primary)", "err", err)
+	}
+	for _, mid := range mergeIDs {
+		if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
+			IssueID:   mid,
+			ActorID:   actor,
+			EventType: "merged",
+			Details:   map[string]any{"into": primaryID},
+			CreatedAt: now,
+		}); err != nil {
+			slog.Error("insert issue history (merge source)", "err", err, "issue_id", mid)
+		}
+	}
+
 	writeJSON(w, merged)
 }
 
@@ -242,6 +303,37 @@ func (ro *router) handleUnmergeIssue(w http.ResponseWriter, r *http.Request) {
 		slog.Error("unmerge fingerprints", "err", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	actor := actorFromContext(r.Context())
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "issue.unmerged",
+		ActorID:   actor,
+		ProjectID: &project.ID,
+		TargetID:  &issueID,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"fingerprints": req.Fingerprints},
+	})
+	now := time.Now().UTC()
+	if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
+		IssueID:   issueID,
+		ActorID:   actor,
+		EventType: "unmerged",
+		Details:   map[string]any{"fingerprints": req.Fingerprints},
+		CreatedAt: now,
+	}); err != nil {
+		slog.Error("insert issue history (unmerge source)", "err", err)
+	}
+	for _, ni := range newIssues {
+		if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
+			IssueID:   ni.ID,
+			ActorID:   actor,
+			EventType: "unmerged_from",
+			Details:   map[string]any{"from": issueID},
+			CreatedAt: now,
+		}); err != nil {
+			slog.Error("insert issue history (unmerge new)", "err", err, "issue_id", ni.ID)
+		}
 	}
 
 	writeJSON(w, map[string]any{"issues": newIssues})

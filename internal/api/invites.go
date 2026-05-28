@@ -118,6 +118,11 @@ func (ro *router) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "auth.invite.revoked",
+		ActorID:   actorFromContext(r.Context()),
+		IP:        r.RemoteAddr,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -97,6 +97,13 @@ func (ro *router) handleUpdateUserPermissions(w http.ResponseWriter, r *http.Req
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "user.permissions_changed",
+		ActorID:   actorFromContext(r.Context()),
+		TargetID:  &userID,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"permissions": perms},
+	})
 	writeJSON(w, u)
 }
 

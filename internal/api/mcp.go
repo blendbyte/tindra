@@ -882,9 +882,32 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 	}
 
 	status := mcpArgString(args, "status")
+	actor := actorFromContext(ctx)
 	var updated *storage.Issue
 	if status != "" {
 		updated, err = storage.UpdateIssueStatus(ctx, ro.pool, issue.ProjectID, id, status, nil)
+		if err != nil {
+			return "", fmt.Errorf("update issue: %w", err)
+		}
+		if updated == nil {
+			return "", mcpToolError{"issue not found"}
+		}
+		storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+			EventType: "issue.status_changed",
+			ActorID:   actor,
+			ProjectID: &issue.ProjectID,
+			TargetID:  &id,
+			Details:   map[string]any{"status": status},
+		})
+		if err := storage.InsertIssueHistory(ctx, ro.pool, storage.IssueHistoryEntry{
+			IssueID:   id,
+			ActorID:   actor,
+			EventType: "status_changed",
+			Details:   map[string]any{"from": issue.Status, "to": status},
+			CreatedAt: time.Now().UTC(),
+		}); err != nil {
+			slog.Error("insert issue history (mcp status)", "err", err)
+		}
 	} else {
 		// assignee update - raw value may be nil (unassign) or a string
 		var assigneeID *string
@@ -892,12 +915,32 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 			assigneeID = &v
 		}
 		updated, err = storage.UpdateIssueAssignee(ctx, ro.pool, id, assigneeID)
-	}
-	if err != nil {
-		return "", fmt.Errorf("update issue: %w", err)
-	}
-	if updated == nil {
-		return "", mcpToolError{"issue not found"}
+		if err != nil {
+			return "", fmt.Errorf("update issue: %w", err)
+		}
+		if updated == nil {
+			return "", mcpToolError{"issue not found"}
+		}
+		details := map[string]any{"to_id": nil}
+		if assigneeID != nil {
+			details["to_id"] = *assigneeID
+		}
+		storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+			EventType: "issue.assignee_changed",
+			ActorID:   actor,
+			ProjectID: &issue.ProjectID,
+			TargetID:  &id,
+			Details:   details,
+		})
+		if err := storage.InsertIssueHistory(ctx, ro.pool, storage.IssueHistoryEntry{
+			IssueID:   id,
+			ActorID:   actor,
+			EventType: "assigned",
+			Details:   details,
+			CreatedAt: time.Now().UTC(),
+		}); err != nil {
+			slog.Error("insert issue history (mcp assignee)", "err", err)
+		}
 	}
 	b, _ := json.MarshalIndent(updated, "", "  ")
 	return string(b), nil
@@ -934,6 +977,24 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 	n, err := storage.BulkUpdateIssueStatus(ctx, ro.pool, ids, status, nil, projectIDs)
 	if err != nil {
 		return "", fmt.Errorf("bulk update: %w", err)
+	}
+	actor := actorFromContext(ctx)
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "issue.bulk_status_changed",
+		ActorID:   actor,
+		Details:   map[string]any{"status": status, "count": n},
+	})
+	now := time.Now().UTC()
+	for _, issueID := range ids {
+		if err := storage.InsertIssueHistory(ctx, ro.pool, storage.IssueHistoryEntry{
+			IssueID:   issueID,
+			ActorID:   actor,
+			EventType: "status_changed",
+			Details:   map[string]any{"to": status},
+			CreatedAt: now,
+		}); err != nil {
+			slog.Error("insert bulk issue history (mcp)", "err", err, "issue_id", issueID)
+		}
 	}
 	b, _ := json.MarshalIndent(map[string]any{"updated": n}, "", "  ")
 	return string(b), nil
@@ -991,6 +1052,12 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 	if err != nil {
 		return "", fmt.Errorf("create alert rule: %w", err)
 	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "alert_rule.created",
+		ActorID:   actorFromContext(ctx),
+		TargetID:  &created.ID,
+		Details:   map[string]any{"name": created.Name, "trigger": created.Trigger},
+	})
 	b, _ := json.MarshalIndent(created, "", "  ")
 	return string(b), nil
 }

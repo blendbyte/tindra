@@ -70,6 +70,14 @@ func (ro *router) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "monitor.created",
+		ActorID:   actorFromContext(r.Context()),
+		ProjectID: &req.ProjectID,
+		TargetID:  &m.ID,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"name": m.Name, "schedule": m.Schedule},
+	})
 	writeJSONStatus(w, http.StatusCreated, m)
 }
 
@@ -126,6 +134,14 @@ func (ro *router) handleUpdateMonitor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "monitor.updated",
+		ActorID:   actorFromContext(r.Context()),
+		ProjectID: &updated.ProjectID,
+		TargetID:  &updated.ID,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"name": updated.Name},
+	})
 	writeJSON(w, updated)
 }
 
@@ -141,6 +157,12 @@ func (ro *router) handleDeleteMonitor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "monitor.deleted",
+		ActorID:   actorFromContext(r.Context()),
+		TargetID:  &id,
+		IP:        r.RemoteAddr,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
