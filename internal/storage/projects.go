@@ -255,6 +255,35 @@ func UpdateProjectScrubbing(ctx context.Context, pool *pgxpool.Pool, id string, 
 	return &p, nil
 }
 
+type ProjectIssueCount struct {
+	ProjectID  string `json:"project_id"`
+	OpenIssues int64  `json:"open_issues"`
+}
+
+func GetProjectIssueCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []string) ([]*ProjectIssueCount, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT p.id, COUNT(i.id) AS open_issues
+		FROM projects p
+		LEFT JOIN issues i ON i.project_id = p.id AND i.status = 'open'
+		WHERE p.id = ANY($1)
+		GROUP BY p.id
+	`, projectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*ProjectIssueCount
+	for rows.Next() {
+		var c ProjectIssueCount
+		if err := rows.Scan(&c.ProjectID, &c.OpenIssues); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
 func generatePublicKey() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

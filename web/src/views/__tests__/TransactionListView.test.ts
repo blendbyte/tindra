@@ -1,13 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 
 const pushMock = vi.fn()
 const replaceMock = vi.fn()
+let routeQueryOverride: Record<string, string | string[]> = {}
 
 vi.mock('vue-router', () => ({
   useRouter: vi.fn(() => ({ push: pushMock, replace: replaceMock })),
-  useRoute: vi.fn(() => ({ query: {} })),
+  useRoute: vi.fn(() => ({ query: routeQueryOverride })),
 }))
 
 vi.mock('@tanstack/vue-query', () => ({
@@ -57,10 +58,10 @@ const makeSummary = (transaction: string, op = 'http.server') => ({
   time_spent_ms: 12000,
 })
 
-function setupMocks(summaries: unknown[] = [], isLoading = false, isError = false, projects = [{ id: '1', name: 'App', slug: 'app' }]) {
+function setupMocks(summaries: unknown[] = [], isLoading = false, isError = false, projects = [{ id: '1', name: 'App', slug: 'app' }], selectedIds: string[] = []) {
   vi.mocked(useProjectsStore).mockReturnValue({
     projects,
-    selectedIds: [],
+    selectedIds,
   } as any)
   vi.mocked(usePerformanceStore).mockReturnValue({
     windowHrs: '24h',
@@ -79,6 +80,7 @@ beforeEach(() => {
   vi.mocked(usePerformanceStore).mockReset()
   pushMock.mockReset()
   replaceMock.mockReset()
+  routeQueryOverride = {}
 })
 
 describe('TransactionListView', () => {
@@ -417,6 +419,40 @@ describe('TransactionListView', () => {
       if (txBtn) {
         await txBtn.trigger('click')
         expect(txBtn.classes()).toContain('col-sort--active')
+      }
+    })
+  })
+
+  describe('project_id URL param', () => {
+    afterEach(() => { routeQueryOverride = {} })
+
+    it('includes route project_id in txParams query key', () => {
+      routeQueryOverride = { project_id: 'url-proj-id' }
+      setupMocks([], false, false, [{ id: 'url-proj-id', name: 'App', slug: 'app' }])
+      mount(TransactionListView, { global: { stubs } })
+      // rawSummaries useQuery is call index 1; queryKey is ['transaction-summaries', txParams]
+      const summariesCall = vi.mocked(useQuery).mock.calls[1]
+      const txParamsRef = summariesCall[0].queryKey[1] as { value: string }
+      expect(txParamsRef.value).toContain('project_id=url-proj-id')
+    })
+
+    it('falls back to store selectedIds when no project_id in URL', () => {
+      routeQueryOverride = {}
+      setupMocks([], false, false, [{ id: 'store-proj-id', name: 'App', slug: 'app' }], ['store-proj-id'])
+      mount(TransactionListView, { global: { stubs } })
+      const summariesCall = vi.mocked(useQuery).mock.calls[1]
+      const txParamsRef = summariesCall[0].queryKey[1] as { value: string }
+      expect(txParamsRef.value).toContain('project_id=store-proj-id')
+    })
+
+    it('preserves project_id param when filter sync triggers router.replace', async () => {
+      routeQueryOverride = { project_id: 'url-proj-id' }
+      setupMocks([makeSummary('/api/users')], false, false, [{ id: 'url-proj-id', name: 'App', slug: 'app' }])
+      mount(TransactionListView, { global: { stubs } })
+      // router.replace is called on mount due to the filter-sync watcher; check it preserves project_id
+      if (replaceMock.mock.calls.length > 0) {
+        const query = replaceMock.mock.calls[replaceMock.mock.calls.length - 1][0].query
+        expect(query.project_id).toBe('url-proj-id')
       }
     })
   })

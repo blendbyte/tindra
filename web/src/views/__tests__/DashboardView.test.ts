@@ -40,7 +40,7 @@ const stubs = {
   Sparkline: { template: '<span />' },
 }
 
-// Queries are called in declaration order: me, issues, tx-summaries, tx-timeseries, releases, alert-rules
+// Queries are called in declaration order: me, issues, tx-summaries, tx-timeseries, releases, alert-rules, proj-stats
 function setupQueries({
   manageAlerts = false,
   issues = undefined as unknown,
@@ -50,8 +50,11 @@ function setupQueries({
   releases = undefined as unknown,
   alertRules = [] as unknown[],
   alertsLoading = false,
+  projects = [] as Array<{ id: string; name: string; slug: string }>,
+  projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
+  projStatsFetching = false,
 } = {}) {
-  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects } as any)
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: manageAlerts } }) } as any)
     .mockReturnValueOnce({ data: ref(issues), isFetching: ref(issuesFetching) } as any)
@@ -59,6 +62,7 @@ function setupQueries({
     .mockReturnValueOnce({ data: ref(undefined) } as any)
     .mockReturnValueOnce({ data: ref(releases), isFetching: ref(false) } as any)
     .mockReturnValueOnce({ data: ref(alertRules), isLoading: ref(alertsLoading) } as any)
+    .mockReturnValueOnce({ data: ref(projectIssueCounts), isFetching: ref(projStatsFetching) } as any)
 }
 
 function makeWrapper(options?: Parameters<typeof setupQueries>[0]) {
@@ -401,7 +405,7 @@ describe('DashboardView', () => {
         time: new Date(now.getTime() - 3_600_000).toISOString(),
         count: 1200,
       }
-      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [] } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
@@ -409,8 +413,116 @@ describe('DashboardView', () => {
         .mockReturnValueOnce({ data: ref({ buckets: [bucket] }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
       const wrapper = mount(DashboardView, { global: { stubs } })
       expect(wrapper.text()).toContain('Transaction density')
+    })
+  })
+
+  describe('project overview widget', () => {
+    const RouterLinkCapture = { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' }
+    const stubsWithCapture = { ...stubs, RouterLink: RouterLinkCapture }
+
+    const twoProjects = [
+      { id: 'p1', name: 'Frontend', slug: 'frontend' },
+      { id: 'p2', name: 'Backend', slug: 'backend' },
+    ]
+
+    it('is hidden when there is only one project', () => {
+      const wrapper = makeWrapper({ projects: [{ id: 'p1', name: 'App', slug: 'app' }] })
+      expect(wrapper.find('.db-projects').exists()).toBe(false)
+    })
+
+    it('is hidden when there are no projects', () => {
+      const wrapper = makeWrapper({ projects: [] })
+      expect(wrapper.find('.db-projects').exists()).toBe(false)
+    })
+
+    it('shows when there are 2 or more projects', () => {
+      const wrapper = makeWrapper({ projects: twoProjects })
+      expect(wrapper.find('.db-projects').exists()).toBe(true)
+    })
+
+    it('renders a row for each project name', () => {
+      const wrapper = makeWrapper({ projects: twoProjects })
+      expect(wrapper.text()).toContain('Frontend')
+      expect(wrapper.text()).toContain('Backend')
+    })
+
+    it('shows the Project Overview heading', () => {
+      const wrapper = makeWrapper({ projects: twoProjects })
+      expect(wrapper.text()).toContain('Project Overview')
+    })
+
+    it('shows open issue counts from projectIssueCounts', () => {
+      const wrapper = makeWrapper({
+        projects: twoProjects,
+        projectIssueCounts: [
+          { project_id: 'p1', open_issues: 7 },
+          { project_id: 'p2', open_issues: 0 },
+        ],
+      })
+      expect(wrapper.text()).toContain('7')
+    })
+
+    it('open issues value links to issues route with project_id', () => {
+      setupQueries({
+        projects: twoProjects,
+        projectIssueCounts: [
+          { project_id: 'p1', open_issues: 3 },
+          { project_id: 'p2', open_issues: 0 },
+        ],
+      })
+      const wrapper = mount(DashboardView, { global: { stubs: stubsWithCapture } })
+      const links = wrapper.findAllComponents(RouterLinkCapture)
+      const issueLinks = links.filter(l => l.props('to')?.name === 'issues')
+      expect(issueLinks.length).toBeGreaterThan(0)
+      const projectIds = issueLinks.map(l => l.props('to').query.project_id)
+      expect(projectIds).toContain('p1')
+      expect(projectIds).toContain('p2')
+    })
+
+    it('req/24h value links to transactions route with project_id', () => {
+      setupQueries({
+        projects: twoProjects,
+        txSummaries: [
+          { transaction: '/api/a', op: 'http.server', project_id: 'p1', sample_count: 50, tpm: 2, p50: 100, p95: 300, failure_rate: 0, time_spent_ms: 5000 },
+          { transaction: '/api/b', op: 'http.server', project_id: 'p2', sample_count: 20, tpm: 1, p50: 80, p95: 200, failure_rate: 1, time_spent_ms: 2000 },
+        ],
+      })
+      const wrapper = mount(DashboardView, { global: { stubs: stubsWithCapture } })
+      const links = wrapper.findAllComponents(RouterLinkCapture)
+      const txLinks = links.filter(l => l.props('to')?.name === 'transactions')
+      const projectIds = txLinks.map(l => l.props('to').query.project_id)
+      expect(projectIds).toContain('p1')
+      expect(projectIds).toContain('p2')
+    })
+
+    it('derives weighted-average p50 from txSummaries per project', () => {
+      const wrapper = makeWrapper({
+        projects: twoProjects,
+        txSummaries: [
+          // p1: two routes, weighted p50 = (100*10 + 200*10) / 20 = 150ms
+          { transaction: '/a', op: 'http.server', project_id: 'p1', sample_count: 10, tpm: 1, p50: 100, p95: 300, failure_rate: 0, time_spent_ms: 1000 },
+          { transaction: '/b', op: 'http.server', project_id: 'p1', sample_count: 10, tpm: 1, p50: 200, p95: 400, failure_rate: 0, time_spent_ms: 2000 },
+        ],
+      })
+      // formatDuration mock returns `${n}ms`, so weighted 150 → '150ms'
+      expect(wrapper.text()).toContain('150ms')
+    })
+
+    it('shows dash for req/24h when project has no tx data', () => {
+      const wrapper = makeWrapper({
+        projects: twoProjects,
+        txSummaries: [
+          { transaction: '/a', op: 'http.server', project_id: 'p1', sample_count: 10, tpm: 1, p50: 100, p95: 300, failure_rate: 0, time_spent_ms: 1000 },
+          // p2 has no tx data
+        ],
+      })
+      // p2 row should show '–' for req/24h, p50, error rate
+      const rows = wrapper.findAll('.db-proj-row')
+      const p2Row = rows.find(r => r.text().includes('Backend'))
+      expect(p2Row?.text()).toContain('–')
     })
   })
 })

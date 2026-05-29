@@ -1324,3 +1324,108 @@ func TestExportIssues_unauthenticated(t *testing.T) {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
 }
+
+// --- handleGetProjectStats ---
+
+func TestGetProjectStats_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/stats", nil)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestGetProjectStats_success(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/stats", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var stats []*storage.ProjectIssueCount
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var found bool
+	for _, s := range stats {
+		if s.ProjectID == testProject.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("testProject.ID %q not found in stats response", testProject.ID)
+	}
+}
+
+func TestGetProjectStats_returnsOpenIssueCounts(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE issues CASCADE")
+
+	ts := time.Now().UTC()
+	storage.UpsertIssue(context.Background(), testPool, testProject.ID, "fp-stats-1", "Stats Error 1", "error", "error", "", "", ts)
+	storage.UpsertIssue(context.Background(), testPool, testProject.ID, "fp-stats-2", "Stats Error 2", "error", "error", "", "", ts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/stats", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var stats []*storage.ProjectIssueCount
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var found *storage.ProjectIssueCount
+	for _, s := range stats {
+		if s.ProjectID == testProject.ID {
+			found = s
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("testProject.ID %q not found in stats response", testProject.ID)
+	}
+	if found.OpenIssues != 2 {
+		t.Errorf("expected 2 open issues, got %d", found.OpenIssues)
+	}
+}
+
+func TestGetProjectStats_scopedByBearerToken(t *testing.T) {
+	tok, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "stats-scope-token", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM api_tokens WHERE id = $1", tok.ID)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var stats []*storage.ProjectIssueCount
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	for _, s := range stats {
+		if s.ProjectID != testProject.ID {
+			t.Errorf("bearer-scoped response includes unexpected project %q", s.ProjectID)
+		}
+	}
+}

@@ -15,6 +15,20 @@ import type {
   AlertRule,
   User,
 } from '@/api/types'
+
+interface ProjectIssueCount {
+  project_id: string
+  open_issues: number
+}
+
+interface ProjectStatRow {
+  projectId: string
+  projectName: string
+  openIssues: number
+  reqPerDay: number | null
+  p50: number | null
+  errorRate: number | null
+}
 import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 
@@ -87,6 +101,13 @@ const { data: alertRules, isLoading: alertsLoading } = useQuery({
   refetchInterval: 120_000,
 })
 
+const { data: projectIssueCounts, isFetching: projStatsFetching } = useQuery({
+  queryKey: ['dash-proj-stats'],
+  queryFn: () => apiFetch<ProjectIssueCount[]>('/api/projects/stats'),
+  enabled: computed(() => projects.projects.length >= 2),
+  refetchInterval: 30_000,
+})
+
 // ── KPIs ──────────────────────────────────────────────────────────────────────
 
 const openCount = computed(() => issuesPage.value?.total ?? 0)
@@ -136,6 +157,33 @@ const firedAlerts = computed(() =>
 )
 
 const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enabled).length)
+
+const projectStats = computed((): ProjectStatRow[] => {
+  if (projects.projects.length < 2) return []
+  const txByProject = new Map<string, { total: number; p50sum: number; errSum: number }>()
+  for (const s of txSummaries.value ?? []) {
+    const cur = txByProject.get(s.project_id) ?? { total: 0, p50sum: 0, errSum: 0 }
+    cur.total += s.sample_count
+    cur.p50sum += s.p50 * s.sample_count
+    cur.errSum += s.failure_rate * s.sample_count
+    txByProject.set(s.project_id, cur)
+  }
+  const issueByProject = new Map<string, number>()
+  for (const c of projectIssueCounts.value ?? []) {
+    issueByProject.set(c.project_id, c.open_issues)
+  }
+  return projects.projects.map(p => {
+    const tx = txByProject.get(p.id)
+    return {
+      projectId: p.id,
+      projectName: p.name,
+      openIssues: issueByProject.get(p.id) ?? 0,
+      reqPerDay: tx ? tx.total : null,
+      p50: tx && tx.total > 0 ? tx.p50sum / tx.total : null,
+      errorRate: tx && tx.total > 0 ? tx.errSum / tx.total : null,
+    }
+  })
+})
 
 // ── Heatmap ───────────────────────────────────────────────────────────────────
 
@@ -209,6 +257,7 @@ function fmt(n: number): string {
   return String(n)
 }
 
+
 const loading = computed(
   () =>
     (issuesFetching.value && !issuesPage.value) ||
@@ -277,6 +326,57 @@ const loading = computed(
         <div v-else class="db-kpi__value db-kpi__value--muted">–</div>
         <div class="db-kpi__sub">across all endpoints</div>
       </div>
+    </div>
+
+    <!-- Project overview (only when 2+ projects) ──────────────────────────── -->
+    <div v-if="projects.projects.length >= 2" class="db-projects">
+      <div class="db-sec__head">
+        <span class="db-sec__title">Project Overview</span>
+      </div>
+      <div class="db-proj-head">
+        <span>Project</span>
+        <span>Open Issues</span>
+        <span>Req / 24h</span>
+        <span>P50</span>
+        <span>Error Rate</span>
+      </div>
+      <template v-if="projStatsFetching && !projectIssueCounts">
+        <div v-for="i in projects.projects.length" :key="i" class="db-proj-row">
+          <div class="skel" style="width: 120px; height: 10px" />
+          <div class="skel" style="width: 40px; height: 10px; justify-self: end" />
+          <div class="skel" style="width: 50px; height: 10px; justify-self: end" />
+          <div class="skel" style="width: 44px; height: 10px; justify-self: end" />
+          <div class="skel" style="width: 44px; height: 10px; justify-self: end" />
+        </div>
+      </template>
+      <template v-else>
+        <div
+          v-for="row in projectStats"
+          :key="row.projectId"
+          class="db-proj-row"
+        >
+          <span class="db-proj-row__name">{{ row.projectName }}</span>
+          <RouterLink
+            class="db-proj-row__val db-proj-row__link"
+            :class="{ 'db-proj-row__val--bad': row.openIssues > 0 }"
+            :to="{ name: 'issues', query: { project_id: row.projectId } }"
+          >{{ row.openIssues }}</RouterLink>
+          <RouterLink
+            v-if="row.reqPerDay !== null"
+            class="db-proj-row__val db-proj-row__link"
+            :to="{ name: 'transactions', query: { project_id: row.projectId } }"
+          >{{ fmt(row.reqPerDay) }}</RouterLink>
+          <span v-else class="db-proj-row__val">–</span>
+          <span
+            class="db-proj-row__val"
+            :class="{ 'db-proj-row__val--warn': row.p50 !== null && row.p50 > 500 }"
+          >{{ row.p50 !== null ? formatDuration(row.p50) : '–' }}</span>
+          <span
+            class="db-proj-row__val"
+            :class="{ 'db-proj-row__val--bad': row.errorRate !== null && row.errorRate > 2 }"
+          >{{ row.errorRate !== null ? row.errorRate.toFixed(1) + '%' : '–' }}</span>
+        </div>
+      </template>
     </div>
 
     <!-- Body ───────────────────────────────────────────────────────────────── -->
@@ -567,6 +667,67 @@ const loading = computed(
   gap: 5px;
   font-size: var(--text-xs);
   color: var(--text-3);
+}
+
+/* ── Project overview ───────────────────────────────────────────────────────── */
+
+.db-projects {
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.db-proj-head,
+.db-proj-row {
+  display: grid;
+  grid-template-columns: 1fr 110px 100px 90px 110px;
+  column-gap: 12px;
+  padding: 7px 16px;
+  align-items: center;
+}
+
+.db-proj-head {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-proj-head span:nth-child(n+2) { text-align: right; }
+
+.db-proj-row {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+}
+
+.db-proj-row:last-of-type { border-bottom: none; }
+
+.db-proj-row__name {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-proj-row__val {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.db-proj-row__val--warn { color: var(--warning); }
+.db-proj-row__val--bad  { color: var(--danger); }
+
+.db-proj-row__link {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.db-proj-row__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* ── Body layout ────────────────────────────────────────────────────────────── */

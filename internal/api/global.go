@@ -357,6 +357,32 @@ func (ro *router) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (ro *router) handleGetProjectStats(w http.ResponseWriter, r *http.Request) {
+	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	if len(projectIDs) == 0 {
+		projs, err := storage.ListProjects(r.Context(), ro.pool)
+		if err != nil {
+			slog.Error("project stats: list projects", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		for _, p := range projs {
+			projectIDs = append(projectIDs, p.ID)
+		}
+	}
+
+	counts, err := storage.GetProjectIssueCounts(r.Context(), ro.pool, projectIDs)
+	if err != nil {
+		slog.Error("project stats: issue counts", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if counts == nil {
+		counts = []*storage.ProjectIssueCount{}
+	}
+	writeJSON(w, counts)
+}
+
 // handleListAllIssues returns a paginated issue list across all projects.
 // Response: { issues, total, has_more, next_cursor_time?, next_cursor_id? }
 func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {

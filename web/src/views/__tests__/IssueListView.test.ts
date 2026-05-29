@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
@@ -1609,5 +1609,38 @@ describe('confirmMerge early return', () => {
     const wrapper = mount(IssueListView, { global: { stubs } })
     // Component should mount without error; confirmMerge guard covers !primary
     expect(wrapper.exists()).toBe(true)
+  })
+
+  describe('project_id URL param', () => {
+    afterEach(() => { routeQueryOverride = {} })
+
+    it('uses route project_id in the query key instead of store selectedIds', () => {
+      routeQueryOverride = { project_id: 'url-proj-id' }
+      setupMocks({ selectedIds: ['store-proj-id'] })
+      mount(IssueListView, { global: { stubs } })
+      // The issues query is call index 1; queryKey is a computed whose last element is the joined project IDs
+      const issuesCall = vi.mocked(useQuery).mock.calls[1]
+      const queryKey = issuesCall[0].queryKey.value as string[]
+      expect(queryKey[queryKey.length - 1]).toBe('url-proj-id')
+      expect(queryKey[queryKey.length - 1]).not.toContain('store-proj-id')
+    })
+
+    it('falls back to store selectedIds when no project_id in URL', () => {
+      routeQueryOverride = {}
+      setupMocks({ selectedIds: ['store-proj-id'] })
+      mount(IssueListView, { global: { stubs } })
+      const issuesCall = vi.mocked(useQuery).mock.calls[1]
+      const queryKey = issuesCall[0].queryKey.value as string[]
+      expect(queryKey[queryKey.length - 1]).toBe('store-proj-id')
+    })
+
+    it('uses empty project filter when neither URL param nor store selection is set', () => {
+      routeQueryOverride = {}
+      setupMocks({ selectedIds: [] })
+      mount(IssueListView, { global: { stubs } })
+      const issuesCall = vi.mocked(useQuery).mock.calls[1]
+      const queryKey = issuesCall[0].queryKey.value as string[]
+      expect(queryKey[queryKey.length - 1]).toBe('')
+    })
   })
 })

@@ -160,6 +160,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Patch("/api/me", ro.handleUpdateMe)
 		r.Get("/api/users", ro.handleListUsers)
 		r.Get("/api/projects", ro.handleListProjects)
+		r.Get("/api/projects/stats", ro.handleGetProjectStats)
 		r.With(ro.requirePerm("manage_projects")).Post("/api/projects", ro.handleCreateProject)
 		r.Get("/api/projects/{projectID}/quota", ro.handleGetProjectQuota)
 		r.With(ro.requirePerm("manage_projects")).Patch("/api/projects/{projectID}", ro.handleUpdateProject)

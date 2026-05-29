@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -431,5 +432,143 @@ func TestUpdateProjectScrubbing_notFound(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("expected nil for unknown project, got %+v", got)
+	}
+}
+
+// ── GetProjectIssueCounts ────────────────────────────────────────────────────
+
+func truncateIssues(t *testing.T) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(), "TRUNCATE issues CASCADE"); err != nil {
+		t.Fatalf("truncate issues: %v", err)
+	}
+}
+
+func seedOpenIssue(t *testing.T, projectID, fingerprint, title string) *storage.Issue {
+	t.Helper()
+	iss, _, _, err := storage.UpsertIssue(context.Background(), testPool, projectID, fingerprint, title, "error", "error", "", "", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed issue %q: %v", title, err)
+	}
+	return iss
+}
+
+func TestGetProjectIssueCounts_emptyIDs(t *testing.T) {
+	counts, err := storage.GetProjectIssueCounts(context.Background(), testPool, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(counts) != 0 {
+		t.Errorf("expected 0 results for empty ID list, got %d", len(counts))
+	}
+}
+
+func TestGetProjectIssueCounts_noIssues(t *testing.T) {
+	truncateProjects(t)
+	p, err := storage.CreateProject(context.Background(), testPool, "issue-count-empty", "Issue Count Empty")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	counts, err := storage.GetProjectIssueCounts(context.Background(), testPool, []string{p.ID})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(counts) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(counts))
+	}
+	if counts[0].OpenIssues != 0 {
+		t.Errorf("expected 0 open issues, got %d", counts[0].OpenIssues)
+	}
+	if counts[0].ProjectID != p.ID {
+		t.Errorf("project_id mismatch: got %q, want %q", counts[0].ProjectID, p.ID)
+	}
+}
+
+func TestGetProjectIssueCounts_openIssues(t *testing.T) {
+	truncateProjects(t)
+	truncateIssues(t)
+	p, err := storage.CreateProject(context.Background(), testPool, "issue-count-open", "Issue Count Open")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	seedOpenIssue(t, p.ID, "fp-cnt-1", "Error One")
+	seedOpenIssue(t, p.ID, "fp-cnt-2", "Error Two")
+	seedOpenIssue(t, p.ID, "fp-cnt-3", "Error Three")
+
+	counts, err := storage.GetProjectIssueCounts(context.Background(), testPool, []string{p.ID})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(counts) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(counts))
+	}
+	if counts[0].OpenIssues != 3 {
+		t.Errorf("expected 3 open issues, got %d", counts[0].OpenIssues)
+	}
+}
+
+func TestGetProjectIssueCounts_excludesResolvedIssues(t *testing.T) {
+	truncateProjects(t)
+	truncateIssues(t)
+	p, err := storage.CreateProject(context.Background(), testPool, "issue-count-filter", "Issue Count Filter")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	seedOpenIssue(t, p.ID, "fp-filter-open", "Open Error")
+
+	resolved := seedOpenIssue(t, p.ID, "fp-filter-resolved", "Resolved Error")
+	if _, err := storage.UpdateIssueStatus(context.Background(), testPool, p.ID, resolved.ID, "resolved", nil); err != nil {
+		t.Fatalf("resolve issue: %v", err)
+	}
+
+	counts, err := storage.GetProjectIssueCounts(context.Background(), testPool, []string{p.ID})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(counts) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(counts))
+	}
+	if counts[0].OpenIssues != 1 {
+		t.Errorf("expected 1 open issue (resolved excluded), got %d", counts[0].OpenIssues)
+	}
+}
+
+func TestGetProjectIssueCounts_multipleProjects(t *testing.T) {
+	truncateProjects(t)
+	truncateIssues(t)
+	ctx := context.Background()
+
+	pa, _ := storage.CreateProject(ctx, testPool, "issue-count-multi-a", "A")
+	pb, _ := storage.CreateProject(ctx, testPool, "issue-count-multi-b", "B")
+	pc, _ := storage.CreateProject(ctx, testPool, "issue-count-multi-c", "C")
+
+	seedOpenIssue(t, pa.ID, "fp-multi-a1", "A Error 1")
+	seedOpenIssue(t, pa.ID, "fp-multi-a2", "A Error 2")
+	seedOpenIssue(t, pb.ID, "fp-multi-b1", "B Error 1")
+	// pc has no issues
+
+	counts, err := storage.GetProjectIssueCounts(ctx, testPool, []string{pa.ID, pb.ID, pc.ID})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(counts) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(counts))
+	}
+
+	byID := make(map[string]int64, 3)
+	for _, c := range counts {
+		byID[c.ProjectID] = c.OpenIssues
+	}
+	if byID[pa.ID] != 2 {
+		t.Errorf("project A: expected 2, got %d", byID[pa.ID])
+	}
+	if byID[pb.ID] != 1 {
+		t.Errorf("project B: expected 1, got %d", byID[pb.ID])
+	}
+	if byID[pc.ID] != 0 {
+		t.Errorf("project C: expected 0, got %d", byID[pc.ID])
 	}
 }

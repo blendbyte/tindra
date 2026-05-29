@@ -18,6 +18,13 @@ const route = useRoute()
 const projects = useProjectsStore()
 const perf = usePerformanceStore()
 
+const effectiveProjectIds = computed(() => {
+  const v = route.query.project_id
+  if (typeof v === 'string') return [v]
+  if (Array.isArray(v)) return v as string[]
+  return projects.selectedIds
+})
+
 const WINDOW_MAP: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 }
 const VALID_WINDOWS = Object.keys(WINDOW_MAP)
 
@@ -80,7 +87,8 @@ watch([() => perf.windowHrs, () => perf.envFilter, opFilter, releaseFilter, sort
     query.sort = sortCol.value
     query.dir = sortDir.value
   }
-  router.replace({ query })
+  const pid = route.query.project_id
+  router.replace({ query: { ...query, ...(pid ? { project_id: pid } : {}) } })
 })
 
 // Persist op/sort/dir to localStorage (window+env handled by the store)
@@ -97,7 +105,7 @@ const { data: releasesPage } = useQuery({
 })
 
 const releaseOptions = computed(() => {
-  const projectSet = projects.selectedIds.length > 0 ? new Set(projects.selectedIds) : null
+  const projectSet = effectiveProjectIds.value.length > 0 ? new Set(effectiveProjectIds.value) : null
   const versions = (releasesPage.value?.releases ?? [])
     .filter((r) => !projectSet || projectSet.has(r.project_id))
     .map((r) => r.version)
@@ -110,7 +118,7 @@ const txParams = computed(() => {
   p.set('hours', String(hours.value))
   if (perf.envFilter !== 'All') p.set('env', perf.envFilter)
   if (releaseFilter.value !== 'All') p.set('release', releaseFilter.value)
-  for (const id of projects.selectedIds) p.append('project_id', id)
+  for (const id of effectiveProjectIds.value) p.append('project_id', id)
   return p.toString()
 })
 

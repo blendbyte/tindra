@@ -20,6 +20,13 @@ const router = useRouter()
 const route = useRoute()
 const projects = useProjectsStore()
 const navStore = useIssueNavStore()
+
+const effectiveProjectIds = computed(() => {
+  const v = route.query.project_id
+  if (typeof v === 'string') return [v]
+  if (Array.isArray(v)) return v as string[]
+  return projects.selectedIds
+})
 const { show: showToast } = useToast()
 const qc = useQueryClient()
 const { formatRel } = useFormatters()
@@ -98,7 +105,7 @@ function buildIssueParams(cursor: Cursor) {
   if (serverAssigneeId.value) params.set('assignee_id', serverAssigneeId.value)
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
-  for (const id of projects.selectedIds) params.append('project_id', id)
+  for (const id of effectiveProjectIds.value) params.append('project_id', id)
   if (cursor) {
     params.set('cursor_time', cursor.cursor_time)
     params.set('cursor_id', cursor.cursor_id)
@@ -115,20 +122,20 @@ function exportIssues(format: 'csv' | 'json') {
   if (serverAssigneeId.value) params.set('assignee_id', serverAssigneeId.value)
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
-  for (const id of projects.selectedIds) params.append('project_id', id)
+  for (const id of effectiveProjectIds.value) params.append('project_id', id)
   params.set('format', format)
   window.location.href = `/api/issues/export?${params.toString()}`
 }
 
 const { data: firstPage, isFetching, isError, refetch } = useQuery({
-  queryKey: computed(() => ['issues', serverStatus.value, serverLevel.value, serverEnv.value, serverSince.value, serverAssigneeId.value, tagKey.value, tagValue.value, [...projects.selectedIds].sort().join(',')]),
+  queryKey: computed(() => ['issues', serverStatus.value, serverLevel.value, serverEnv.value, serverSince.value, serverAssigneeId.value, tagKey.value, tagValue.value, [...effectiveProjectIds.value].sort().join(',')]),
   queryFn: () => apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(null)}`),
   refetchInterval: REFETCH_INTERVAL,
   refetchOnWindowFocus: false,
 })
 
 // When filters change: discard extra pages and re-run the query with new params.
-watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, () => projects.selectedIds], () => {
+watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, effectiveProjectIds], () => {
   extraIssues.value = []
   nextCursor.value = null
   refetch()
@@ -195,7 +202,7 @@ function assigneeInitial(iss: Issue) {
 
 const filtered = computed(() => {
   const projectSet =
-    projects.selectedIds.length === 0 ? null : new Set(projects.selectedIds)
+    effectiveProjectIds.value.length === 0 ? null : new Set(effectiveProjectIds.value)
   const qq = search.value.trim().toLowerCase()
   return allIssues.value.filter((iss) => {
     if (projectSet && !projectSet.has(iss.project_id)) return false
