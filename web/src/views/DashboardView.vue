@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -185,6 +185,61 @@ const projectStats = computed((): ProjectStatRow[] => {
   })
 })
 
+// ── Project overview sort + expand ────────────────────────────────────────────
+
+type ProjSortCol = 'projectName' | 'openIssues' | 'reqPerDay' | 'p50' | 'errorRate'
+
+function lsGet(key: string): string | null {
+  try { return localStorage.getItem(key) } catch { return null }
+}
+function lsSet(key: string, val: string) {
+  try { localStorage.setItem(key, val) } catch {}
+}
+
+const PROJ_DEFAULT_LIMIT = 5
+
+const projSortCol = ref<ProjSortCol>((lsGet('tindra:dash:proj-sort') as ProjSortCol) ?? 'projectName')
+const projSortDir = ref<'asc' | 'desc'>((lsGet('tindra:dash:proj-sort-dir') as 'asc' | 'desc') ?? 'asc')
+const projExpanded = ref(false)
+
+function toggleProjSort(col: ProjSortCol) {
+  if (projSortCol.value === col) {
+    projSortDir.value = projSortDir.value === 'asc' ? 'desc' : 'asc'
+    lsSet('tindra:dash:proj-sort-dir', projSortDir.value)
+  } else {
+    projSortCol.value = col
+    projSortDir.value = col === 'projectName' ? 'asc' : 'desc'
+    lsSet('tindra:dash:proj-sort', projSortCol.value)
+    lsSet('tindra:dash:proj-sort-dir', projSortDir.value)
+  }
+}
+
+function projSortIcon(col: ProjSortCol): string {
+  if (projSortCol.value !== col) return ''
+  return projSortDir.value === 'asc' ? '↑' : '↓'
+}
+
+const sortedProjectStats = computed((): ProjectStatRow[] => {
+  const rows = [...projectStats.value]
+  const col = projSortCol.value
+  const dir = projSortDir.value === 'asc' ? 1 : -1
+  return rows.sort((a, b) => {
+    const av = a[col]
+    const bv = b[col]
+    if (av === null && bv === null) return 0
+    if (av === null) return 1
+    if (bv === null) return -1
+    if (typeof av === 'string' && typeof bv === 'string') {
+      return dir * av.localeCompare(bv)
+    }
+    return dir * ((av as number) - (bv as number))
+  })
+})
+
+const visibleProjectStats = computed(() =>
+  projExpanded.value ? sortedProjectStats.value : sortedProjectStats.value.slice(0, PROJ_DEFAULT_LIMIT),
+)
+
 // ── Heatmap ───────────────────────────────────────────────────────────────────
 
 const dayLabels = computed(() => {
@@ -334,11 +389,21 @@ const loading = computed(
         <span class="db-sec__title">Project Overview</span>
       </div>
       <div class="db-proj-head">
-        <span>Project</span>
-        <span>Open Issues</span>
-        <span>Req / 24h</span>
-        <span>P50</span>
-        <span>Error Rate</span>
+        <button class="col-sort" :class="{ 'col-sort--active': projSortCol === 'projectName' }" @click="toggleProjSort('projectName')">
+          Project <em class="col-sort__icon">{{ projSortIcon('projectName') }}</em>
+        </button>
+        <button class="col-sort db-proj-head__num" :class="{ 'col-sort--active': projSortCol === 'openIssues' }" @click="toggleProjSort('openIssues')">
+          Open Issues <em class="col-sort__icon">{{ projSortIcon('openIssues') }}</em>
+        </button>
+        <button class="col-sort db-proj-head__num" :class="{ 'col-sort--active': projSortCol === 'reqPerDay' }" @click="toggleProjSort('reqPerDay')">
+          Req / 24h <em class="col-sort__icon">{{ projSortIcon('reqPerDay') }}</em>
+        </button>
+        <button class="col-sort db-proj-head__num" :class="{ 'col-sort--active': projSortCol === 'p50' }" @click="toggleProjSort('p50')">
+          P50 <em class="col-sort__icon">{{ projSortIcon('p50') }}</em>
+        </button>
+        <button class="col-sort db-proj-head__num" :class="{ 'col-sort--active': projSortCol === 'errorRate' }" @click="toggleProjSort('errorRate')">
+          Error Rate <em class="col-sort__icon">{{ projSortIcon('errorRate') }}</em>
+        </button>
       </div>
       <template v-if="projStatsFetching && !projectIssueCounts">
         <div v-for="i in projects.projects.length" :key="i" class="db-proj-row">
@@ -351,7 +416,7 @@ const loading = computed(
       </template>
       <template v-else>
         <div
-          v-for="row in projectStats"
+          v-for="row in visibleProjectStats"
           :key="row.projectId"
           class="db-proj-row"
         >
@@ -376,6 +441,14 @@ const loading = computed(
             :class="{ 'db-proj-row__val--bad': row.errorRate !== null && row.errorRate > 2 }"
           >{{ row.errorRate !== null ? row.errorRate.toFixed(1) + '%' : '–' }}</span>
         </div>
+        <button
+          v-if="sortedProjectStats.length > PROJ_DEFAULT_LIMIT"
+          class="db-proj-expand"
+          @click="projExpanded = !projExpanded"
+        >
+          <template v-if="projExpanded">Show less</template>
+          <template v-else>Show {{ sortedProjectStats.length - PROJ_DEFAULT_LIMIT }} more&hellip;</template>
+        </button>
       </template>
     </div>
 
@@ -693,7 +766,10 @@ const loading = computed(
   border-bottom: 1px solid var(--border);
 }
 
-.db-proj-head span:nth-child(n+2) { text-align: right; }
+.db-proj-head__num {
+  justify-self: end;
+  justify-content: flex-end;
+}
 
 .db-proj-row {
   border-bottom: 1px solid var(--border);
@@ -701,6 +777,20 @@ const loading = computed(
 }
 
 .db-proj-row:last-of-type { border-bottom: none; }
+
+.db-proj-expand {
+  all: unset;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  font-size: var(--text-xs);
+  color: var(--accent);
+  text-align: center;
+  border-top: 1px solid var(--border);
+}
+
+.db-proj-expand:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 .db-proj-row__name {
   font-size: var(--text-sm);

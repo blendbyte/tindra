@@ -1,6 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
+
+// Provide a localStorage shim for happy-dom (which requires --localstorage-file)
+let lsStore: Record<string, string> = {}
+const localStorageMock = {
+  getItem: (key: string) => lsStore[key] ?? null,
+  setItem: (key: string, val: string) => { lsStore[key] = val },
+  removeItem: (key: string) => { delete lsStore[key] },
+  clear: () => { lsStore = {} },
+  get length() { return Object.keys(lsStore).length },
+  key: (i: number) => Object.keys(lsStore)[i] ?? null,
+}
+Object.defineProperty(window, 'localStorage', { value: localStorageMock, writable: true })
 
 const pushMock = vi.fn()
 
@@ -76,6 +88,11 @@ beforeEach(() => {
   vi.mocked(useAuthStore).mockReset()
   vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
   pushMock.mockReset()
+  localStorage.clear()
+})
+
+afterEach(() => {
+  localStorage.clear()
 })
 
 describe('DashboardView', () => {
@@ -523,6 +540,124 @@ describe('DashboardView', () => {
       const rows = wrapper.findAll('.db-proj-row')
       const p2Row = rows.find(r => r.text().includes('Backend'))
       expect(p2Row?.text()).toContain('–')
+    })
+
+    describe('sort', () => {
+      it('sorts alphabetically by name ascending by default', () => {
+        const wrapper = makeWrapper({ projects: twoProjects })
+        const rows = wrapper.findAll('.db-proj-row')
+        expect(rows[0].text()).toContain('Backend')
+        expect(rows[1].text()).toContain('Frontend')
+      })
+
+      it('marks the name column header as active by default', () => {
+        const wrapper = makeWrapper({ projects: twoProjects })
+        const sortBtns = wrapper.findAll('.col-sort')
+        expect(sortBtns[0].classes()).toContain('col-sort--active')
+        expect(sortBtns[1].classes()).not.toContain('col-sort--active')
+      })
+
+      it('clicking another column sorts by that column descending', async () => {
+        const wrapper = makeWrapper({
+          projects: twoProjects,
+          projectIssueCounts: [
+            { project_id: 'p1', open_issues: 3 },
+            { project_id: 'p2', open_issues: 10 },
+          ],
+        })
+        const sortBtns = wrapper.findAll('.col-sort')
+        await sortBtns[1].trigger('click') // Open Issues, defaults to desc
+        const rows = wrapper.findAll('.db-proj-row')
+        // p2 has 10 issues, p1 has 3 — descending means p2 first
+        expect(rows[0].text()).toContain('Backend')
+        expect(rows[1].text()).toContain('Frontend')
+      })
+
+      it('clicking active column reverses sort direction', async () => {
+        const wrapper = makeWrapper({ projects: twoProjects })
+        const nameBtn = wrapper.findAll('.col-sort')[0]
+        // default is asc, clicking again flips to desc
+        await nameBtn.trigger('click')
+        const rows = wrapper.findAll('.db-proj-row')
+        expect(rows[0].text()).toContain('Frontend')
+        expect(rows[1].text()).toContain('Backend')
+      })
+
+      it('persists sort column and direction to localStorage', async () => {
+        const wrapper = makeWrapper({ projects: twoProjects })
+        const sortBtns = wrapper.findAll('.col-sort')
+        await sortBtns[2].trigger('click') // Req / 24h
+        expect(localStorage.getItem('tindra:dash:proj-sort')).toBe('reqPerDay')
+        expect(localStorage.getItem('tindra:dash:proj-sort-dir')).toBe('desc')
+      })
+
+      it('reads sort column from localStorage on mount', () => {
+        localStorage.setItem('tindra:dash:proj-sort', 'openIssues')
+        localStorage.setItem('tindra:dash:proj-sort-dir', 'asc')
+        const wrapper = makeWrapper({
+          projects: twoProjects,
+          projectIssueCounts: [
+            { project_id: 'p1', open_issues: 10 },
+            { project_id: 'p2', open_issues: 3 },
+          ],
+        })
+        const sortBtns = wrapper.findAll('.col-sort')
+        // Open Issues button (index 1) should be active
+        expect(sortBtns[1].classes()).toContain('col-sort--active')
+        const rows = wrapper.findAll('.db-proj-row')
+        // asc by open issues: p2=3 first, p1=10 second
+        expect(rows[0].text()).toContain('Backend')
+        expect(rows[1].text()).toContain('Frontend')
+      })
+    })
+
+    describe('expand/collapse', () => {
+      const sixProjects = [
+        { id: 'p1', name: 'Alpha', slug: 'alpha' },
+        { id: 'p2', name: 'Beta', slug: 'beta' },
+        { id: 'p3', name: 'Gamma', slug: 'gamma' },
+        { id: 'p4', name: 'Delta', slug: 'delta' },
+        { id: 'p5', name: 'Epsilon', slug: 'epsilon' },
+        { id: 'p6', name: 'Zeta', slug: 'zeta' },
+      ]
+
+      it('shows at most 5 rows when there are more than 5 projects', () => {
+        const wrapper = makeWrapper({ projects: sixProjects })
+        const rows = wrapper.findAll('.db-proj-row')
+        expect(rows).toHaveLength(5)
+      })
+
+      it('shows expand button when there are more than 5 projects', () => {
+        const wrapper = makeWrapper({ projects: sixProjects })
+        expect(wrapper.find('.db-proj-expand').exists()).toBe(true)
+        expect(wrapper.find('.db-proj-expand').text()).toContain('more')
+      })
+
+      it('does not show expand button when there are 5 or fewer projects', () => {
+        const wrapper = makeWrapper({ projects: sixProjects.slice(0, 5) })
+        expect(wrapper.find('.db-proj-expand').exists()).toBe(false)
+      })
+
+      it('shows all rows after clicking expand', async () => {
+        const wrapper = makeWrapper({ projects: sixProjects })
+        await wrapper.find('.db-proj-expand').trigger('click')
+        const rows = wrapper.findAll('.db-proj-row')
+        expect(rows).toHaveLength(6)
+      })
+
+      it('collapse button shows "Show less" when expanded', async () => {
+        const wrapper = makeWrapper({ projects: sixProjects })
+        await wrapper.find('.db-proj-expand').trigger('click')
+        expect(wrapper.find('.db-proj-expand').text()).toContain('less')
+      })
+
+      it('collapses back to 5 rows after clicking again', async () => {
+        const wrapper = makeWrapper({ projects: sixProjects })
+        await wrapper.find('.db-proj-expand').trigger('click')
+        await wrapper.find('.db-proj-expand').trigger('click')
+        const rows = wrapper.findAll('.db-proj-row')
+        expect(rows).toHaveLength(5)
+      })
     })
   })
 })
