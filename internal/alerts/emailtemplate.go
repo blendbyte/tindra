@@ -229,7 +229,7 @@ var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
       </p>
       <a href="{{.URL}}" style="font-size:13px;font-weight:600;color:#111827;text-decoration:none;line-height:1.4;word-break:break-all;">{{.Title}}</a>
       {{if .OccurredAt}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">{{.OccurredAt}}</p>{{end}}
-      {{if .RequestURL}}<p style="margin:7px 0 0;font-size:11px;font-family:'Courier New',Courier,monospace;color:#6b7280;word-break:break-all;"><span style="padding:1px 5px;background-color:#e5e7eb;border-radius:3px;color:#374151;font-weight:600;letter-spacing:0.3px;">{{.RequestMethod}}</span> {{.RequestURL}}</p>{{end}}
+      {{if .RequestURL}}<p style="margin:7px 0 0;font-size:11px;font-family:'Courier New',Courier,monospace;color:#6b7280;word-break:break-all;">{{if .RequestMethod}}<span style="padding:1px 5px;background-color:#e5e7eb;border-radius:3px;color:#374151;font-weight:600;letter-spacing:0.3px;">{{.RequestMethod}}</span> {{end}}{{.RequestURL}}</p>{{end}}
       {{if .Message}}<p style="margin:7px 0 0;font-size:12px;color:#374151;line-height:1.5;word-break:break-all;">{{.Message}}</p>{{end}}
       {{if .StackFrames}}<div style="margin-top:7px;padding:7px 9px;background-color:#f3f4f6;border-radius:4px;font-family:'Courier New',Courier,monospace;font-size:11px;color:#6b7280;line-height:1.6;">{{range .StackFrames}}<div style="word-break:break-all;">{{.}}</div>{{end}}</div>{{end}}
     </td>
@@ -516,7 +516,11 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 			fmt.Fprintf(&tb, "%s\n", iss.OccurredAt)
 		}
 		if iss.RequestURL != "" {
-			fmt.Fprintf(&tb, "%s %s\n", iss.RequestMethod, iss.RequestURL)
+			if iss.RequestMethod != "" {
+				fmt.Fprintf(&tb, "%s %s\n", iss.RequestMethod, iss.RequestURL)
+			} else {
+				fmt.Fprintf(&tb, "%s\n", iss.RequestURL)
+			}
 		}
 		if iss.Message != "" {
 			fmt.Fprintf(&tb, "\n%s\n", iss.Message)
