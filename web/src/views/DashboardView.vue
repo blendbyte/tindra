@@ -198,8 +198,8 @@ function lsSet(key: string, val: string) {
 
 const PROJ_DEFAULT_LIMIT = 5
 
-const projSortCol = ref<ProjSortCol>((lsGet('tindra:dash:proj-sort') as ProjSortCol) ?? 'projectName')
-const projSortDir = ref<'asc' | 'desc'>((lsGet('tindra:dash:proj-sort-dir') as 'asc' | 'desc') ?? 'asc')
+const projSortCol = ref<ProjSortCol>((lsGet('tindra:dash:proj-sort') as ProjSortCol) ?? 'openIssues')
+const projSortDir = ref<'asc' | 'desc'>((lsGet('tindra:dash:proj-sort-dir') as 'asc' | 'desc') ?? 'desc')
 const projExpanded = ref(false)
 
 function toggleProjSort(col: ProjSortCol) {

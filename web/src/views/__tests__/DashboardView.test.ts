@@ -543,21 +543,7 @@ describe('DashboardView', () => {
     })
 
     describe('sort', () => {
-      it('sorts alphabetically by name ascending by default', () => {
-        const wrapper = makeWrapper({ projects: twoProjects })
-        const rows = wrapper.findAll('.db-proj-row')
-        expect(rows[0].text()).toContain('Backend')
-        expect(rows[1].text()).toContain('Frontend')
-      })
-
-      it('marks the name column header as active by default', () => {
-        const wrapper = makeWrapper({ projects: twoProjects })
-        const sortBtns = wrapper.findAll('.col-sort')
-        expect(sortBtns[0].classes()).toContain('col-sort--active')
-        expect(sortBtns[1].classes()).not.toContain('col-sort--active')
-      })
-
-      it('clicking another column sorts by that column descending', async () => {
+      it('sorts by open issues descending by default', () => {
         const wrapper = makeWrapper({
           projects: twoProjects,
           projectIssueCounts: [
@@ -565,19 +551,40 @@ describe('DashboardView', () => {
             { project_id: 'p2', open_issues: 10 },
           ],
         })
-        const sortBtns = wrapper.findAll('.col-sort')
-        await sortBtns[1].trigger('click') // Open Issues, defaults to desc
         const rows = wrapper.findAll('.db-proj-row')
-        // p2 has 10 issues, p1 has 3 — descending means p2 first
+        // p2 has 10 issues, p1 has 3 — descending means p2 (Backend) first
+        expect(rows[0].text()).toContain('Backend')
+        expect(rows[1].text()).toContain('Frontend')
+      })
+
+      it('marks the open issues column header as active by default', () => {
+        const wrapper = makeWrapper({ projects: twoProjects })
+        const sortBtns = wrapper.findAll('.col-sort')
+        expect(sortBtns[0].classes()).not.toContain('col-sort--active') // Project
+        expect(sortBtns[1].classes()).toContain('col-sort--active')     // Open Issues
+      })
+
+      it('clicking another column sorts by that column ascending for name', async () => {
+        const wrapper = makeWrapper({ projects: twoProjects })
+        const sortBtns = wrapper.findAll('.col-sort')
+        await sortBtns[0].trigger('click') // Project name, defaults to asc
+        const rows = wrapper.findAll('.db-proj-row')
+        // alphabetical ascending: Backend before Frontend
         expect(rows[0].text()).toContain('Backend')
         expect(rows[1].text()).toContain('Frontend')
       })
 
       it('clicking active column reverses sort direction', async () => {
-        const wrapper = makeWrapper({ projects: twoProjects })
-        const nameBtn = wrapper.findAll('.col-sort')[0]
-        // default is asc, clicking again flips to desc
-        await nameBtn.trigger('click')
+        const wrapper = makeWrapper({
+          projects: twoProjects,
+          projectIssueCounts: [
+            { project_id: 'p1', open_issues: 3 },
+            { project_id: 'p2', open_issues: 10 },
+          ],
+        })
+        const openIssuesBtn = wrapper.findAll('.col-sort')[1]
+        // default is open issues desc (p2 first), clicking flips to asc (p1 first)
+        await openIssuesBtn.trigger('click')
         const rows = wrapper.findAll('.db-proj-row')
         expect(rows[0].text()).toContain('Frontend')
         expect(rows[1].text()).toContain('Backend')
