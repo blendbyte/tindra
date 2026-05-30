@@ -1678,6 +1678,7 @@ a { color: inherit; text-decoration: none; }
   overflow-x: auto;
   white-space: pre;
   line-height: 1.6;
+  font-variant-ligatures: none;
 }
 
 .stack__toggle {
