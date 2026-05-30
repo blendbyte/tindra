@@ -1625,6 +1625,12 @@ a { color: inherit; text-decoration: none; }
 .stack__frame--app { background: var(--surface); }
 .stack__frame--app + .stack__frame--app { background: var(--surface); }
 .stack__frame--system { opacity: 0.42; }
+.stack__frame--collapsed {
+  padding: 4px 14px;
+  opacity: 0.28;
+  font-size: var(--text-xs);
+}
+.stack__frame--collapsed + .stack__frame--collapsed { border-bottom: none; }
 .stack__file { color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stack__line { color: var(--text-3); }
 .stack__fn { color: var(--text-2); text-align: right; }

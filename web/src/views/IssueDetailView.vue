@@ -1050,9 +1050,11 @@ onUnmounted(() => {
           <div
             v-for="(f, idx) in (frames as Record<string, unknown>[])"
             :key="idx"
-            v-show="showSystem || (f['in_app'] ?? true)"
             class="stack__frame"
-            :class="(f['in_app'] ?? true) ? 'stack__frame--app' : 'stack__frame--system'"
+            :class="[
+              (f['in_app'] ?? true) ? 'stack__frame--app' : 'stack__frame--system',
+              (!showSystem && !(f['in_app'] ?? true)) ? 'stack__frame--collapsed' : '',
+            ]"
           >
             <span class="stack__file">
               {{ f['filename'] ?? f['module'] ?? 'unknown' }}
@@ -1060,7 +1062,7 @@ onUnmounted(() => {
             </span>
             <span class="stack__fn">{{ f['function'] }}</span>
             <CodeContext
-              v-if="f['context_line'] != null"
+              v-if="f['context_line'] != null && (showSystem || (f['in_app'] ?? true))"
               :pre-context="(f['pre_context'] as string[] | undefined) ?? []"
               :context-line="f['context_line'] as string"
               :post-context="(f['post_context'] as string[] | undefined) ?? []"
