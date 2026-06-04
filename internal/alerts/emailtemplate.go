@@ -355,7 +355,7 @@ func alertTriggerLine(p AlertPayload) string {
 	}
 }
 
-func buildIssueCards(issues []*storage.Issue, projectName, base string) []alertIssueData {
+func buildIssueCards(issues []*storage.Issue, projectName string, projectNames map[string]string, base string) []alertIssueData {
 	cards := make([]alertIssueData, 0, len(issues))
 	for _, iss := range issues {
 		env := ""
@@ -366,12 +366,16 @@ func buildIssueCards(issues []*storage.Issue, projectName, base string) []alertI
 		if iss.AlertOccurredAt != nil {
 			occurredAt = iss.AlertOccurredAt.UTC().Format("2 Jan 2006, 15:04:05 UTC")
 		}
+		name := projectName
+		if n := projectNames[iss.ProjectID]; n != "" {
+			name = n
+		}
 		cards = append(cards, alertIssueData{
 			Title:         iss.Title,
 			Level:         iss.Level,
 			LevelColor:    alertLevelColor(iss.Level),
 			Environment:   env,
-			ProjectName:   projectName,
+			ProjectName:   name,
 			OccurredAt:    occurredAt,
 			RequestURL:    iss.AlertReqURL,
 			RequestMethod: iss.AlertReqMethod,
@@ -421,7 +425,7 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 		}
 	}
 
-	issueCards := buildIssueCards(payload.Issues, payload.ProjectName, base)
+	issueCards := buildIssueCards(payload.Issues, payload.ProjectName, payload.ProjectNames, base)
 
 	var monitorCards []alertMonitorData
 	for _, m := range payload.Monitors {

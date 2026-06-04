@@ -285,15 +285,16 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 // AlertPayload is the JSON body sent to webhook endpoints and used to build
 // the email body.
 type AlertPayload struct {
-	RuleID      string                 `json:"rule_id"`
-	RuleName    string                 `json:"rule_name"`
-	ProjectID   string                 `json:"project_id"`
-	ProjectName string                 `json:"project_name,omitempty"`
-	Trigger     string                 `json:"trigger"`
-	FiredAt     time.Time              `json:"fired_at"`
-	Details     map[string]any         `json:"details"`
-	Issues      []*storage.Issue       `json:"issues,omitempty"`
-	Monitors    []*storage.CronMonitor `json:"monitors,omitempty"`
+	RuleID       string                 `json:"rule_id"`
+	RuleName     string                 `json:"rule_name"`
+	ProjectID    string                 `json:"project_id"`
+	ProjectName  string                 `json:"project_name,omitempty"`
+	ProjectNames map[string]string      `json:"project_names,omitempty"`
+	Trigger      string                 `json:"trigger"`
+	FiredAt      time.Time              `json:"fired_at"`
+	Details      map[string]any         `json:"details"`
+	Issues       []*storage.Issue       `json:"issues,omitempty"`
+	Monitors     []*storage.CronMonitor `json:"monitors,omitempty"`
 }
 
 // firstProjectID returns the first project ID for scoped rules, or "" for global.
@@ -403,6 +404,28 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		iss.AlertReqURL = evd.RequestURL
 		iss.AlertReqMethod = evd.RequestMethod
 		iss.AlertOccurredAt = evd.OccurredAt
+	}
+
+	if len(payload.Issues) > 0 {
+		seen := map[string]bool{}
+		ids := make([]string, 0, len(payload.Issues))
+		for _, iss := range payload.Issues {
+			if iss.ProjectID != "" && !seen[iss.ProjectID] {
+				seen[iss.ProjectID] = true
+				ids = append(ids, iss.ProjectID)
+			}
+		}
+		rows, err := e.pool.Query(ctx, `SELECT id, name FROM projects WHERE id = ANY($1)`, ids)
+		if err == nil {
+			payload.ProjectNames = make(map[string]string, len(ids))
+			for rows.Next() {
+				var id, name string
+				if rows.Scan(&id, &name) == nil {
+					payload.ProjectNames[id] = name
+				}
+			}
+			rows.Close()
+		}
 	}
 }
 

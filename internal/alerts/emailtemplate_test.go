@@ -413,6 +413,61 @@ func TestRenderAlertEmail_issueCard_noOptionalFields(t *testing.T) {
 	}
 }
 
+func TestRenderAlertEmail_projectName_fromPayload(t *testing.T) {
+	ts := time.Now().UTC()
+	iss := makeTestIssue("iss-p1", "SomeError", "error", "production", ts)
+	iss.ProjectID = "proj-aaa"
+	payload := AlertPayload{
+		RuleName:    "Errors",
+		Trigger:     "new_issue",
+		FiredAt:     ts,
+		Details:     map[string]any{"new_issue_count": 1},
+		ProjectName: "MyApp",
+		Issues:      []*storage.Issue{iss},
+	}
+	html, text, err := RenderAlertEmail(payload, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "MyApp") {
+		t.Error("HTML missing project name from payload")
+	}
+	if !strings.Contains(text, "MyApp") {
+		t.Error("text missing project name from payload")
+	}
+}
+
+func TestRenderAlertEmail_projectName_perIssueOverridesPayload(t *testing.T) {
+	ts := time.Now().UTC()
+	iss1 := makeTestIssue("iss-p1", "ErrorAlpha", "error", "production", ts)
+	iss1.ProjectID = "proj-aaa"
+	iss2 := makeTestIssue("iss-p2", "ErrorBeta", "error", "production", ts)
+	iss2.ProjectID = "proj-bbb"
+	payload := AlertPayload{
+		RuleName: "All errors",
+		Trigger:  "new_issue",
+		FiredAt:  ts,
+		Details:  map[string]any{"new_issue_count": 2},
+		ProjectNames: map[string]string{
+			"proj-aaa": "Frontend",
+			"proj-bbb": "Backend",
+		},
+		Issues: []*storage.Issue{iss1, iss2},
+	}
+	html, text, err := RenderAlertEmail(payload, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"Frontend", "Backend"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML missing project name %q", want)
+		}
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing project name %q", want)
+		}
+	}
+}
+
 func TestRenderAlertEmail_cronMissed(t *testing.T) {
 	now := time.Now().UTC()
 	nextAt := now.Add(time.Hour)
