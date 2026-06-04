@@ -432,7 +432,8 @@ func TestRenderAlertEmail_projectName_fromPayload(t *testing.T) {
 	if !strings.Contains(html, "MyApp") {
 		t.Error("HTML missing project name from payload")
 	}
-	if !strings.Contains(text, "MyApp") {
+	// text meta line is uppercased: "ERROR · PRODUCTION · MYAPP"
+	if !strings.Contains(text, "MYAPP") {
 		t.Error("text missing project name from payload")
 	}
 }
@@ -462,6 +463,9 @@ func TestRenderAlertEmail_projectName_perIssueOverridesPayload(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("HTML missing project name %q", want)
 		}
+	}
+	// text meta line is uppercased: "ERROR · PRODUCTION · FRONTEND"
+	for _, want := range []string{"FRONTEND", "BACKEND"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text missing project name %q", want)
 		}
