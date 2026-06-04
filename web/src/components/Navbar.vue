@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
-import BrandMark from './BrandMark.vue'
 import Icon from './Icon.vue'
 
 const route = useRoute()
@@ -67,8 +66,8 @@ async function logout() {
 <template>
   <nav class="nav" role="navigation">
     <a class="nav__brand" href="#" @click.prevent="router.push('/dashboard')" title="Tindra">
-      <BrandMark :size="22" />
-      <span class="nav__brand-text">Tindra</span>
+      <img src="/logo.png" alt="Tindra" class="nav__logo nav__logo--light" />
+      <img src="/logo-dark.png" alt="Tindra" class="nav__logo nav__logo--dark" />
     </a>
 
     <div class="nav__links">
