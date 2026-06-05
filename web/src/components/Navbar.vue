@@ -5,6 +5,8 @@ import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import Icon from './Icon.vue'
+import logoLight from '@/assets/logo.png'
+import logoDark from '@/assets/logo-dark.png'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,8 +68,8 @@ async function logout() {
 <template>
   <nav class="nav" role="navigation">
     <a class="nav__brand" href="#" @click.prevent="router.push('/dashboard')" title="Tindra">
-      <img src="/logo.png" alt="Tindra" class="nav__logo nav__logo--light" />
-      <img src="/logo-dark.png" alt="Tindra" class="nav__logo nav__logo--dark" />
+      <img :src="logoLight" alt="Tindra" class="nav__logo nav__logo--light" />
+      <img :src="logoDark" alt="Tindra" class="nav__logo nav__logo--dark" />
     </a>
 
     <div class="nav__links">

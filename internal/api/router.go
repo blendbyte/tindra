@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -311,14 +312,16 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	// GET /mcp for clients probing SSE support — we only support POST; return 405 JSON.
 	r.Get("/mcp", ro.handleMCPGet)
 
-	// Serve the embedded Vue SPA. Static assets are served directly;
-	// everything else falls back to index.html for client-side routing.
+	// Serve the embedded Vue SPA. If a file exists in dist, serve it
+	// directly; otherwise fall back to index.html for client-side routing.
 	dist, _ := fs.Sub(ui.FS, "dist")
 	fileServer := http.FileServer(http.FS(dist))
-	r.Handle("/assets/*", fileServer)
-	r.Handle("/fonts/*", fileServer)
-	r.Handle("/favicon.svg", fileServer)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if _, err := dist.Open(path); err == nil {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
 		f, err := dist.Open("index.html")
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
