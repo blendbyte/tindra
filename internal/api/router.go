@@ -318,7 +318,8 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	fileServer := http.FileServer(http.FS(dist))
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
-		if _, err := dist.Open(path); err == nil {
+		if f, err := dist.Open(path); err == nil {
+			f.Close()
 			fileServer.ServeHTTP(w, r)
 			return
 		}

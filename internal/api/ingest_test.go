@@ -135,12 +135,19 @@ func TestHandleEnvelope_deduplicatesOnRetry(t *testing.T) {
 		}
 	}
 
-	time.Sleep(350 * time.Millisecond)
-
+	// Poll until the batch is committed or the deadline is exceeded.
+	// A fixed sleep is too brittle under -race and -p 8 CI load.
+	deadline := time.Now().Add(5 * time.Second)
 	var count int
-	testPool.QueryRow(context.Background(),
-		"SELECT COUNT(*) FROM events WHERE project_id = $1", testProject.ID,
-	).Scan(&count)
+	for time.Now().Before(deadline) {
+		testPool.QueryRow(context.Background(),
+			"SELECT COUNT(*) FROM events WHERE project_id = $1", testProject.ID,
+		).Scan(&count)
+		if count > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if count != 1 {
 		t.Errorf("expected 1 event after dedup, got %d", count)
 	}
