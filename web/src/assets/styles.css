@@ -282,6 +282,7 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
+  overflow-x: hidden;
 }
 
 /* ---------- Quota banner ---------- */
@@ -369,6 +370,7 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   padding-right: 20px;
   margin-right: 8px;
+  flex-shrink: 0;
 }
 
 .nav__brand svg { display: block; }
@@ -6152,8 +6154,8 @@ select.field__input {
   .audit-toolbar .filterbar__search { width: 100%; min-width: 0 !important; margin-left: 0 !important; }
 }
 
-/* 639px — small phones: hamburger nav */
-@media (max-width: 639px) {
+/* 1199px — tablet/narrow: hamburger nav */
+@media (max-width: 1199px) {
   /* Navbar: hide brand text */
   .nav__brand-text { display: none; }
   .nav__brand { padding-right: 6px; margin-right: 0; }

@@ -702,7 +702,7 @@ const loading = computed(
 }
 
 .db-kpi {
-  padding: 16px 20px;
+  padding: 10px 16px;
   border-right: 1px solid var(--border);
 }
 
@@ -841,7 +841,6 @@ const loading = computed(
 /* ── Sections ───────────────────────────────────────────────────────────────── */
 
 .db-sec + .db-sec {
-  margin-top: 16px;
   border-top: 1px solid var(--border);
 }
 
@@ -899,7 +898,7 @@ const loading = computed(
 /* ── Heatmap ────────────────────────────────────────────────────────────────── */
 
 .db-heatmap {
-  padding: 12px 16px 14px;
+  padding: 8px 16px 10px;
 }
 
 .db-heatmap__row {
