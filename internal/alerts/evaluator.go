@@ -783,12 +783,18 @@ func buildAlertSubject(p AlertPayload) string {
 	case "new_issue":
 		count, _ := p.Details["new_issue_count"].(int)
 		if count == 1 {
+			if title := singleIssueTitle(p); title != "" {
+				return "[Tindra] New issue: " + title + suffix
+			}
 			return "[Tindra] 1 new issue" + suffix
 		}
 		return fmt.Sprintf("[Tindra] %d new issues%s", count, suffix)
 	case "regressed":
 		count, _ := p.Details["regressed_count"].(int)
 		if count == 1 {
+			if title := singleIssueTitle(p); title != "" {
+				return "[Tindra] Regression: " + title + suffix
+			}
 			return "[Tindra] 1 regression" + suffix
 		}
 		return fmt.Sprintf("[Tindra] %d regressions%s", count, suffix)
@@ -797,6 +803,9 @@ func buildAlertSubject(p AlertPayload) string {
 		r, _ := p.Details["regressed_count"].(int)
 		total := n + r
 		if total == 1 {
+			if title := singleIssueTitle(p); title != "" {
+				return "[Tindra] Issue: " + title + suffix
+			}
 			return "[Tindra] 1 issue" + suffix
 		}
 		return fmt.Sprintf("[Tindra] %d issues%s", total, suffix)
@@ -825,4 +834,17 @@ func buildAlertSubject(p AlertPayload) string {
 	default:
 		return fmt.Sprintf("[Tindra] %s%s", p.RuleName, suffix)
 	}
+}
+
+// singleIssueTitle returns the title of the first issue, truncated to 120
+// characters, or "" if no issues are attached to the payload.
+func singleIssueTitle(p AlertPayload) string {
+	if len(p.Issues) == 0 {
+		return ""
+	}
+	t := p.Issues[0].Title
+	if len(t) > 120 {
+		t = t[:117] + "..."
+	}
+	return t
 }

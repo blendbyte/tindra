@@ -989,6 +989,66 @@ func TestAlertSubject_autoResolved_multiple(t *testing.T) {
 	}
 }
 
+// --- buildAlertSubject with issue title ---
+
+func TestEmailSubject_newIssue_single_withTitle(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:     "new_issue",
+		ProjectName: "acme",
+		Details:     map[string]any{"new_issue_count": 1},
+		Issues:      []*storage.Issue{{Title: "TypeError: cannot read property 'foo'"}},
+	})
+	want := "[Tindra] New issue: TypeError: cannot read property 'foo' - acme"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestEmailSubject_regressed_single_withTitle(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:     "regressed",
+		ProjectName: "acme",
+		Details:     map[string]any{"regressed_count": 1},
+		Issues:      []*storage.Issue{{Title: "NullPointerException in OrderService"}},
+	})
+	want := "[Tindra] Regression: NullPointerException in OrderService - acme"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestEmailSubject_newOrRegressed_single_withTitle(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:     "new_or_regressed",
+		ProjectName: "acme",
+		Details:     map[string]any{"new_issue_count": 0, "regressed_count": 1},
+		Issues:      []*storage.Issue{{Title: "RateLimitError: too many requests"}},
+	})
+	want := "[Tindra] Issue: RateLimitError: too many requests - acme"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestEmailSubject_single_titleTruncated(t *testing.T) {
+	long := "A: " + string(make([]byte, 150))
+	for i := range long {
+		long = long[:i] + "x" + long[i+1:]
+	}
+	got := buildAlertSubject(AlertPayload{
+		Trigger: "new_issue",
+		Details: map[string]any{"new_issue_count": 1},
+		Issues:  []*storage.Issue{{Title: long}},
+	})
+	// subject title portion should be truncated to 120 chars
+	if len(got) > len("[Tindra] New issue: ")+120 {
+		t.Errorf("subject too long: %d chars", len(got))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("expected truncation with ..., got %q", got)
+	}
+}
+
 // --- NotifyAutoResolved ---
 
 func TestNotifyAutoResolved_noIssues_noFire(t *testing.T) {
