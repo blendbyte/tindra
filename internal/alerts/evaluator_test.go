@@ -878,14 +878,14 @@ func TestEvaluate_cooldownPreventsReFire(t *testing.T) {
 
 func TestEmailSubject_withProject(t *testing.T) {
 	got := buildAlertSubject(AlertPayload{RuleName: "my rule", ProjectName: "acme"})
-	if got != "[Tindra] my rule - acme" {
+	if got != "[Tindra] acme - my rule" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestEmailSubject_projectIDFallback(t *testing.T) {
 	got := buildAlertSubject(AlertPayload{RuleName: "my rule", ProjectID: "proj-123"})
-	if got != "[Tindra] my rule - proj-123" {
+	if got != "[Tindra] proj-123 - my rule" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -896,7 +896,7 @@ func TestEmailSubject_newIssue_single(t *testing.T) {
 		ProjectName: "acme",
 		Details:     map[string]any{"new_issue_count": 1},
 	})
-	if got != "[Tindra] 1 new issue - acme" {
+	if got != "[Tindra] acme - 1 new issue" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -907,7 +907,7 @@ func TestEmailSubject_newIssue_multiple(t *testing.T) {
 		ProjectName: "acme",
 		Details:     map[string]any{"new_issue_count": 5},
 	})
-	if got != "[Tindra] 5 new issues - acme" {
+	if got != "[Tindra] acme - 5 new issues" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -918,7 +918,7 @@ func TestEmailSubject_regressed_single(t *testing.T) {
 		ProjectName: "acme",
 		Details:     map[string]any{"regressed_count": 1},
 	})
-	if got != "[Tindra] 1 regression - acme" {
+	if got != "[Tindra] acme - 1 regression" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -929,7 +929,7 @@ func TestEmailSubject_regressed_multiple(t *testing.T) {
 		ProjectName: "acme",
 		Details:     map[string]any{"regressed_count": 3},
 	})
-	if got != "[Tindra] 3 regressions - acme" {
+	if got != "[Tindra] acme - 3 regressions" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -940,7 +940,7 @@ func TestEmailSubject_newOrRegressed_single(t *testing.T) {
 		ProjectName: "acme",
 		Details:     map[string]any{"new_issue_count": 1, "regressed_count": 0},
 	})
-	if got != "[Tindra] 1 issue - acme" {
+	if got != "[Tindra] acme - 1 issue" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -951,7 +951,7 @@ func TestEmailSubject_newOrRegressed_multiple(t *testing.T) {
 		ProjectName: "acme",
 		Details:     map[string]any{"new_issue_count": 2, "regressed_count": 3},
 	})
-	if got != "[Tindra] 5 issues - acme" {
+	if got != "[Tindra] acme - 5 issues" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -962,7 +962,7 @@ func TestEmailSubject_eventCount(t *testing.T) {
 		ProjectName: "acme",
 		Details:     map[string]any{"event_count": 42, "window_mins": 60},
 	})
-	if got != "[Tindra] 42 events in 60min - acme" {
+	if got != "[Tindra] acme - 42 events in 60min" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -973,7 +973,7 @@ func TestAlertSubject_autoResolved_single(t *testing.T) {
 		ProjectName: "myapp",
 		Details:     map[string]any{"resolved_count": 1},
 	})
-	if got != "[Tindra] 1 performance issue auto-resolved - myapp" {
+	if got != "[Tindra] myapp - 1 performance issue auto-resolved" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -984,12 +984,62 @@ func TestAlertSubject_autoResolved_multiple(t *testing.T) {
 		ProjectName: "myapp",
 		Details:     map[string]any{"resolved_count": 5},
 	})
-	if got != "[Tindra] 5 performance issues auto-resolved - myapp" {
+	if got != "[Tindra] myapp - 5 performance issues auto-resolved" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// --- payloadProjectName ---
+
+func TestPayloadProjectName_payloadLevel(t *testing.T) {
+	p := AlertPayload{ProjectName: "acme", ProjectID: "pid-1"}
+	if got := payloadProjectName(p); got != "acme" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestPayloadProjectName_fromProjectNames_singleProject(t *testing.T) {
+	p := AlertPayload{
+		ProjectNames: map[string]string{"pid-1": "Backend"},
+		Issues:       []*storage.Issue{{ProjectID: "pid-1"}, {ProjectID: "pid-1"}},
+	}
+	if got := payloadProjectName(p); got != "Backend" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestPayloadProjectName_fromProjectNames_multiProject(t *testing.T) {
+	p := AlertPayload{
+		ProjectNames: map[string]string{"pid-1": "Backend", "pid-2": "Frontend"},
+		Issues:       []*storage.Issue{{ProjectID: "pid-1"}, {ProjectID: "pid-2"}},
+	}
+	// multiple projects — falls back to ProjectID
+	if got := payloadProjectName(p); got != "" {
+		t.Errorf("expected empty for multi-project, got %q", got)
+	}
+}
+
+func TestPayloadProjectName_fallbackToProjectID(t *testing.T) {
+	p := AlertPayload{ProjectID: "pid-fallback"}
+	if got := payloadProjectName(p); got != "pid-fallback" {
 		t.Errorf("got %q", got)
 	}
 }
 
 // --- buildAlertSubject with issue title ---
+
+func TestEmailSubject_newIssue_single_projectFromMap(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:      "new_issue",
+		Details:      map[string]any{"new_issue_count": 1},
+		Issues:       []*storage.Issue{{Title: "SomeError", ProjectID: "pid-1"}},
+		ProjectNames: map[string]string{"pid-1": "Backend"},
+	})
+	want := "[Tindra] Backend - New issue: SomeError"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
 
 func TestEmailSubject_newIssue_single_withTitle(t *testing.T) {
 	got := buildAlertSubject(AlertPayload{
@@ -998,7 +1048,7 @@ func TestEmailSubject_newIssue_single_withTitle(t *testing.T) {
 		Details:     map[string]any{"new_issue_count": 1},
 		Issues:      []*storage.Issue{{Title: "TypeError: cannot read property 'foo'"}},
 	})
-	want := "[Tindra] New issue: TypeError: cannot read property 'foo' - acme"
+	want := "[Tindra] acme - New issue: TypeError: cannot read property 'foo'"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -1011,7 +1061,7 @@ func TestEmailSubject_regressed_single_withTitle(t *testing.T) {
 		Details:     map[string]any{"regressed_count": 1},
 		Issues:      []*storage.Issue{{Title: "NullPointerException in OrderService"}},
 	})
-	want := "[Tindra] Regression: NullPointerException in OrderService - acme"
+	want := "[Tindra] acme - Regression: NullPointerException in OrderService"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -1024,7 +1074,7 @@ func TestEmailSubject_newOrRegressed_single_withTitle(t *testing.T) {
 		Details:     map[string]any{"new_issue_count": 0, "regressed_count": 1},
 		Issues:      []*storage.Issue{{Title: "RateLimitError: too many requests"}},
 	})
-	want := "[Tindra] Issue: RateLimitError: too many requests - acme"
+	want := "[Tindra] acme - Issue: RateLimitError: too many requests"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

@@ -562,10 +562,7 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 	}
 
 	subject := buildAlertSubject(payload)
-	proj := payload.ProjectName
-	if proj == "" {
-		proj = payload.ProjectID
-	}
+	proj := payloadProjectName(payload)
 	trigLabel := alertTriggerLabels[payload.Trigger]
 	if trigLabel == "" {
 		trigLabel = payload.Trigger
@@ -650,10 +647,7 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 	}
 
 	subject := buildAlertSubject(payload)
-	proj := payload.ProjectName
-	if proj == "" {
-		proj = payload.ProjectID
-	}
+	proj := payloadProjectName(payload)
 	trigLabel := alertTriggerLabels[payload.Trigger]
 	if trigLabel == "" {
 		trigLabel = payload.Trigger
@@ -771,69 +765,90 @@ func (e *Evaluator) FireTest(ctx context.Context, rule *storage.AlertRule) error
 }
 
 func buildAlertSubject(p AlertPayload) string {
-	proj := p.ProjectName
-	if proj == "" {
-		proj = p.ProjectID
-	}
-	suffix := ""
+	proj := payloadProjectName(p)
+	prefix := ""
 	if proj != "" {
-		suffix = " - " + proj
+		prefix = proj + " - "
 	}
 	switch p.Trigger {
 	case "new_issue":
 		count, _ := p.Details["new_issue_count"].(int)
 		if count == 1 {
 			if title := singleIssueTitle(p); title != "" {
-				return "[Tindra] New issue: " + title + suffix
+				return "[Tindra] " + prefix + "New issue: " + title
 			}
-			return "[Tindra] 1 new issue" + suffix
+			return "[Tindra] " + prefix + "1 new issue"
 		}
-		return fmt.Sprintf("[Tindra] %d new issues%s", count, suffix)
+		return fmt.Sprintf("[Tindra] %s%d new issues", prefix, count)
 	case "regressed":
 		count, _ := p.Details["regressed_count"].(int)
 		if count == 1 {
 			if title := singleIssueTitle(p); title != "" {
-				return "[Tindra] Regression: " + title + suffix
+				return "[Tindra] " + prefix + "Regression: " + title
 			}
-			return "[Tindra] 1 regression" + suffix
+			return "[Tindra] " + prefix + "1 regression"
 		}
-		return fmt.Sprintf("[Tindra] %d regressions%s", count, suffix)
+		return fmt.Sprintf("[Tindra] %s%d regressions", prefix, count)
 	case "new_or_regressed":
 		n, _ := p.Details["new_issue_count"].(int)
 		r, _ := p.Details["regressed_count"].(int)
 		total := n + r
 		if total == 1 {
 			if title := singleIssueTitle(p); title != "" {
-				return "[Tindra] Issue: " + title + suffix
+				return "[Tindra] " + prefix + "Issue: " + title
 			}
-			return "[Tindra] 1 issue" + suffix
+			return "[Tindra] " + prefix + "1 issue"
 		}
-		return fmt.Sprintf("[Tindra] %d issues%s", total, suffix)
+		return fmt.Sprintf("[Tindra] %s%d issues", prefix, total)
 	case "event_count":
 		count, _ := p.Details["event_count"].(int)
 		window, _ := p.Details["window_mins"].(int)
-		return fmt.Sprintf("[Tindra] %d events in %dmin%s", count, window, suffix)
+		return fmt.Sprintf("[Tindra] %s%d events in %dmin", prefix, count, window)
 	case "cron_missed":
 		count, _ := p.Details["missed_count"].(int)
 		if count == 1 {
-			return "[Tindra] 1 cron monitor missed" + suffix
+			return "[Tindra] " + prefix + "1 cron monitor missed"
 		}
-		return fmt.Sprintf("[Tindra] %d cron monitors missed%s", count, suffix)
+		return fmt.Sprintf("[Tindra] %s%d cron monitors missed", prefix, count)
 	case "cron_error":
 		count, _ := p.Details["error_count"].(int)
 		if count == 1 {
-			return "[Tindra] 1 cron check-in error" + suffix
+			return "[Tindra] " + prefix + "1 cron check-in error"
 		}
-		return fmt.Sprintf("[Tindra] %d cron check-in errors%s", count, suffix)
+		return fmt.Sprintf("[Tindra] %s%d cron check-in errors", prefix, count)
 	case "issue_auto_resolved":
 		count, _ := p.Details["resolved_count"].(int)
 		if count == 1 {
-			return "[Tindra] 1 performance issue auto-resolved" + suffix
+			return "[Tindra] " + prefix + "1 performance issue auto-resolved"
 		}
-		return fmt.Sprintf("[Tindra] %d performance issues auto-resolved%s", count, suffix)
+		return fmt.Sprintf("[Tindra] %s%d performance issues auto-resolved", prefix, count)
 	default:
-		return fmt.Sprintf("[Tindra] %s%s", p.RuleName, suffix)
+		return fmt.Sprintf("[Tindra] %s%s", prefix, p.RuleName)
 	}
+}
+
+// payloadProjectName resolves the best project name for the payload.
+// It prefers the payload-level ProjectName, then falls back to the per-issue
+// ProjectNames map (returning the name when all issues share one project),
+// then falls back to ProjectID.
+func payloadProjectName(p AlertPayload) string {
+	if p.ProjectName != "" {
+		return p.ProjectName
+	}
+	if len(p.Issues) > 0 && len(p.ProjectNames) > 0 {
+		seen := map[string]string{}
+		for _, iss := range p.Issues {
+			if n := p.ProjectNames[iss.ProjectID]; n != "" {
+				seen[n] = n
+			}
+		}
+		if len(seen) == 1 {
+			for name := range seen {
+				return name
+			}
+		}
+	}
+	return p.ProjectID
 }
 
 // singleIssueTitle returns the title of the first issue, truncated to 120
