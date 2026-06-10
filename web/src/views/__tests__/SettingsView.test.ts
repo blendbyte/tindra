@@ -1,6 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
+
+// Provide a localStorage shim for happy-dom (mirrors the DashboardView test pattern)
+let lsStore: Record<string, string> = {}
+const localStorageMock = {
+  getItem: (key: string) => lsStore[key] ?? null,
+  setItem: (key: string, val: string) => { lsStore[key] = val },
+  removeItem: (key: string) => { delete lsStore[key] },
+  clear: () => { lsStore = {} },
+  get length() { return Object.keys(lsStore).length },
+  key: (i: number) => Object.keys(lsStore)[i] ?? null,
+}
+Object.defineProperty(window, 'localStorage', { value: localStorageMock, writable: true })
 
 const pushMock = vi.fn()
 const replaceMock = vi.fn()
@@ -100,6 +112,11 @@ beforeEach(() => {
   pushMock.mockReset()
   replaceMock.mockReset()
   currentTab = 'overview'
+  localStorage.clear()
+})
+
+afterEach(() => {
+  localStorage.clear()
 })
 
 describe('SettingsView', () => {
