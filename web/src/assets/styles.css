@@ -3692,7 +3692,7 @@ a { color: inherit; text-decoration: none; }
 /* Data volumes table rows (inside proj-grid) */
 .overview-vol-row {
   display: grid;
-  grid-template-columns: 80px 1fr 1fr 1fr 1fr;
+  grid-template-columns: 80px 1fr 1fr 1fr 1fr 1fr;
   align-items: center;
   padding: 10px 16px;
   gap: 8px;
@@ -3712,6 +3712,7 @@ a { color: inherit; text-decoration: none; }
 .overview-vol-row__rate { color: var(--text-3); }
 .overview-vol-row__age  { color: var(--text-3); font-size: var(--text-xs); }
 .overview-vol-row__expires { font-weight: 500; }
+.overview-vol-row__size { color: var(--text-2); }
 
 /* Usage rows (inside proj-grid) */
 .overview-usage-row {

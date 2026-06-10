@@ -8,16 +8,19 @@ import (
 )
 
 type InstanceHealth struct {
-	DBSizeBytes   int64      `json:"db_size_bytes"`
-	EventsTotal   int64      `json:"events_total"`
-	TxTotal       int64      `json:"tx_total"`
-	LogsTotal     int64      `json:"logs_total"`
-	Events24h     int64      `json:"events_24h"`
-	Tx24h         int64      `json:"tx_24h"`
-	Logs24h       int64      `json:"logs_24h"`
-	OldestEventAt *time.Time `json:"oldest_event_at"`
-	OldestTxAt    *time.Time `json:"oldest_tx_at"`
-	OldestLogAt   *time.Time `json:"oldest_log_at"`
+	DBSizeBytes     int64      `json:"db_size_bytes"`
+	EventsTotal     int64      `json:"events_total"`
+	TxTotal         int64      `json:"tx_total"`
+	LogsTotal       int64      `json:"logs_total"`
+	Events24h       int64      `json:"events_24h"`
+	Tx24h           int64      `json:"tx_24h"`
+	Logs24h         int64      `json:"logs_24h"`
+	OldestEventAt   *time.Time `json:"oldest_event_at"`
+	OldestTxAt      *time.Time `json:"oldest_tx_at"`
+	OldestLogAt     *time.Time `json:"oldest_log_at"`
+	EventsSizeBytes int64      `json:"events_size_bytes"`
+	TxSizeBytes     int64      `json:"tx_size_bytes"`
+	LogsSizeBytes   int64      `json:"logs_size_bytes"`
 }
 
 func GetInstanceHealth(ctx context.Context, pool *pgxpool.Pool) (*InstanceHealth, error) {
@@ -33,7 +36,10 @@ func GetInstanceHealth(ctx context.Context, pool *pgxpool.Pool) (*InstanceHealth
 			(SELECT COUNT(*) FROM logs         WHERE received_at > NOW() - INTERVAL '24 hours'),
 			(SELECT MIN(received_at) FROM events),
 			(SELECT MIN(received_at) FROM transactions),
-			(SELECT MIN(received_at) FROM logs)
+			(SELECT MIN(received_at) FROM logs),
+			pg_total_relation_size('events'),
+			pg_total_relation_size('transactions'),
+			pg_total_relation_size('logs')
 	`).Scan(
 		&h.DBSizeBytes,
 		&h.EventsTotal,
@@ -45,6 +51,9 @@ func GetInstanceHealth(ctx context.Context, pool *pgxpool.Pool) (*InstanceHealth
 		&h.OldestEventAt,
 		&h.OldestTxAt,
 		&h.OldestLogAt,
+		&h.EventsSizeBytes,
+		&h.TxSizeBytes,
+		&h.LogsSizeBytes,
 	)
 	if err != nil {
 		return nil, err

@@ -86,6 +86,9 @@ export interface InstanceHealth {
   oldest_tx_at: string | null
   oldest_log_at: string | null
   retention_days: number
+  events_size_bytes: number
+  tx_size_bytes: number
+  logs_size_bytes: number
 }
 
 export type IssueStatus = 'open' | 'resolved' | 'ignored' | 'regressed'

@@ -935,7 +935,11 @@ func TestGetInstanceHealth_success(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	for _, key := range []string{"db_size_bytes", "events_total", "tx_total", "logs_total", "events_24h", "tx_24h", "logs_24h", "retention_days"} {
+	for _, key := range []string{
+		"db_size_bytes", "events_total", "tx_total", "logs_total",
+		"events_24h", "tx_24h", "logs_24h", "retention_days",
+		"events_size_bytes", "tx_size_bytes", "logs_size_bytes",
+	} {
 		if _, ok := resp[key]; !ok {
 			t.Errorf("expected key %q in response", key)
 		}
