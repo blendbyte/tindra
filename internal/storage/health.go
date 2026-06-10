@@ -37,8 +37,8 @@ func GetInstanceHealth(ctx context.Context, pool *pgxpool.Pool) (*InstanceHealth
 			(SELECT MIN(received_at) FROM events),
 			(SELECT MIN(received_at) FROM transactions),
 			(SELECT MIN(received_at) FROM logs),
-			pg_total_relation_size('events'),
-			pg_total_relation_size('transactions'),
+			pg_total_relation_size('events') + pg_total_relation_size('event_tags'),
+			pg_total_relation_size('transactions') + pg_total_relation_size('spans') + pg_total_relation_size('perf_events'),
 			pg_total_relation_size('logs')
 	`).Scan(
 		&h.DBSizeBytes,
