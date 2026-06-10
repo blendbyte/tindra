@@ -23,6 +23,8 @@ type Project struct {
 	ScrubPatterns  json.RawMessage `json:"scrub_patterns"`
 	CreatedAt      time.Time       `json:"created_at"`
 	EventCount     int64           `json:"event_count"`
+	Events24h      int64           `json:"events_24h"`
+	StorageBytes   int64           `json:"storage_bytes"`
 }
 
 func CreateProject(ctx context.Context, pool *pgxpool.Pool, slug, name string) (*Project, error) {
@@ -53,12 +55,48 @@ func CountProjects(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 
 func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 	rows, err := pool.Query(ctx, `
+		WITH
+		  sizes AS (
+		    SELECT
+		      GREATEST(1, (SELECT COUNT(*) FROM events))       AS total_ev,
+		      GREATEST(1, (SELECT COUNT(*) FROM transactions)) AS total_tx,
+		      GREATEST(1, (SELECT COUNT(*) FROM logs))         AS total_log,
+		      pg_total_relation_size('events') + pg_total_relation_size('event_tags')                                      AS ev_bytes,
+		      pg_total_relation_size('transactions') + pg_total_relation_size('spans') + pg_total_relation_size('perf_events') AS tx_bytes,
+		      pg_total_relation_size('logs')                                                                                AS log_bytes
+		  ),
+		  ev AS (
+		    SELECT project_id,
+		      COUNT(*) FILTER (WHERE received_at >= date_trunc('month', now()))        AS month_cnt,
+		      COUNT(*) FILTER (WHERE received_at > now() - INTERVAL '24 hours')        AS day_cnt,
+		      COUNT(*)                                                                  AS total
+		    FROM events GROUP BY project_id
+		  ),
+		  tx AS (
+		    SELECT project_id,
+		      COUNT(*) FILTER (WHERE received_at >= date_trunc('month', now()))        AS month_cnt,
+		      COUNT(*) FILTER (WHERE received_at > now() - INTERVAL '24 hours')        AS day_cnt,
+		      COUNT(*)                                                                  AS total
+		    FROM transactions GROUP BY project_id
+		  ),
+		  lg AS (
+		    SELECT project_id, COUNT(*) AS total FROM logs GROUP BY project_id
+		  )
 		SELECT
-			p.id, p.slug, p.name, p.public_key, p.passthrough_dsn, p.scrub_fields, p.scrub_patterns, p.created_at,
-			(SELECT COUNT(*) FROM events WHERE project_id = p.id AND received_at >= date_trunc('month', now())) +
-			(SELECT COUNT(*) FROM transactions WHERE project_id = p.id AND received_at >= date_trunc('month', now())) AS event_count
+		  p.id, p.slug, p.name, p.public_key, p.passthrough_dsn, p.scrub_fields, p.scrub_patterns, p.created_at,
+		  COALESCE(ev.month_cnt, 0) + COALESCE(tx.month_cnt, 0) AS event_count,
+		  COALESCE(ev.day_cnt,   0) + COALESCE(tx.day_cnt,   0) AS events_24h,
+		  (
+		    COALESCE(ev.total, 0)::float8 / s.total_ev  * s.ev_bytes  +
+		    COALESCE(tx.total, 0)::float8 / s.total_tx  * s.tx_bytes  +
+		    COALESCE(lg.total, 0)::float8 / s.total_log * s.log_bytes
+		  )::int8 AS storage_bytes
 		FROM projects p
-		ORDER BY p.created_at DESC
+		CROSS JOIN sizes s
+		LEFT JOIN ev  ON ev.project_id  = p.id
+		LEFT JOIN tx  ON tx.project_id  = p.id
+		LEFT JOIN lg  ON lg.project_id  = p.id
+		ORDER BY p.name ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
@@ -68,7 +106,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 	var projects []*Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt, &p.EventCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt, &p.EventCount, &p.Events24h, &p.StorageBytes); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		projects = append(projects, &p)

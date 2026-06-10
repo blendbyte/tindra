@@ -362,7 +362,7 @@ describe('SettingsView', () => {
     it('renders project cards when projects exist', () => {
       currentTab = 'projects'
       vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
-      const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 0, event_limit: 0 }
+      const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 0, events_24h: 0, storage_bytes: 0, event_limit: 0 }
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([proj]) } as any)
@@ -379,10 +379,116 @@ describe('SettingsView', () => {
       expect(wrapper.text()).toContain('My App')
     })
 
+    it('renders sortable table header with four col-sort buttons', () => {
+      currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 42, events_24h: 5, storage_bytes: 1024 * 1024, event_limit: 0, scrub_fields: [], scrub_patterns: [] }
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref([proj]) } as any)
+        .mockReturnValue({ data: ref(undefined) } as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const sortBtns = wrapper.findAll('.proj-table-head .col-sort')
+      expect(sortBtns.length).toBe(4)
+      const labels = sortBtns.map(b => b.text())
+      expect(labels.some(l => l.includes('Project'))).toBe(true)
+      expect(labels.some(l => l.includes('Events'))).toBe(true)
+      expect(labels.some(l => l.includes('24h'))).toBe(true)
+      expect(labels.some(l => l.includes('Storage'))).toBe(true)
+    })
+
+    it('shows events_24h and storage_bytes values in project rows', () => {
+      currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 1234, events_24h: 7, storage_bytes: 2 * 1024 * 1024, event_limit: 0, scrub_fields: [], scrub_patterns: [] }
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref([proj]) } as any)
+        .mockReturnValue({ data: ref(undefined) } as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('1,234')
+      expect(wrapper.text()).toContain('+7')
+      // 2 MB formatted
+      expect(wrapper.text()).toContain('MB')
+    })
+
+    it('sorts projects alphabetically by default (name ascending)', () => {
+      currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      const projects = [
+        { id: 'p2', name: 'Zebra', slug: 'zebra', public_key: 'k2', event_count: 0, events_24h: 0, storage_bytes: 0, scrub_fields: [], scrub_patterns: [] },
+        { id: 'p1', name: 'Alpha', slug: 'alpha', public_key: 'k1', event_count: 0, events_24h: 0, storage_bytes: 0, scrub_fields: [], scrub_patterns: [] },
+      ]
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref(projects) } as any)
+        .mockReturnValue({ data: ref(undefined) } as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const rows = wrapper.findAll('.proj-card')
+      expect(rows[0].text()).toContain('Alpha')
+      expect(rows[1].text()).toContain('Zebra')
+    })
+
+    it('sorts by events/mo descending when that header is clicked', async () => {
+      currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      const projects = [
+        { id: 'p1', name: 'Alpha', slug: 'alpha', public_key: 'k1', event_count: 5, events_24h: 0, storage_bytes: 0, scrub_fields: [], scrub_patterns: [] },
+        { id: 'p2', name: 'Beta',  slug: 'beta',  public_key: 'k2', event_count: 99, events_24h: 0, storage_bytes: 0, scrub_fields: [], scrub_patterns: [] },
+      ]
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref(projects) } as any)
+        .mockReturnValue({ data: ref(undefined) } as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const sortBtns = wrapper.findAll('.proj-table-head .col-sort')
+      const evBtn = sortBtns.find(b => b.text().includes('Events'))!
+      await evBtn.trigger('click') // first click → desc
+      const rows = wrapper.findAll('.proj-card')
+      expect(rows[0].text()).toContain('Beta')   // 99 first
+      expect(rows[1].text()).toContain('Alpha')  // 5 second
+    })
+
+    it('reverses sort direction when same column header is clicked twice', async () => {
+      currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      const projects = [
+        { id: 'p1', name: 'Alpha', slug: 'alpha', public_key: 'k1', event_count: 5, events_24h: 0, storage_bytes: 0, scrub_fields: [], scrub_patterns: [] },
+        { id: 'p2', name: 'Beta',  slug: 'beta',  public_key: 'k2', event_count: 99, events_24h: 0, storage_bytes: 0, scrub_fields: [], scrub_patterns: [] },
+      ]
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref(projects) } as any)
+        .mockReturnValue({ data: ref(undefined) } as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const sortBtns = wrapper.findAll('.proj-table-head .col-sort')
+      const evBtn = sortBtns.find(b => b.text().includes('Events'))!
+      await evBtn.trigger('click') // desc
+      await evBtn.trigger('click') // asc
+      const rows = wrapper.findAll('.proj-card')
+      expect(rows[0].text()).toContain('Alpha')  // 5 first (asc)
+      expect(rows[1].text()).toContain('Beta')
+    })
+
+    it('active sort column gets col-sort--active class', () => {
+      currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 0, events_24h: 0, storage_bytes: 0, scrub_fields: [], scrub_patterns: [] }
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref([proj]) } as any)
+        .mockReturnValue({ data: ref(undefined) } as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      // default sort is name, so first col-sort should be active
+      const sortBtns = wrapper.findAll('.proj-table-head .col-sort')
+      expect(sortBtns[0].classes()).toContain('col-sort--active')
+      expect(sortBtns[1].classes()).not.toContain('col-sort--active')
+    })
+
     it('expands a project card when its header is clicked', async () => {
       currentTab = 'projects'
       vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
-      const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 0, event_limit: 0 }
+      const proj = { id: 'p1', name: 'My App', slug: 'my-app', public_key: 'abc123', event_count: 0, events_24h: 0, storage_bytes: 0, event_limit: 0 }
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([proj]) } as any)

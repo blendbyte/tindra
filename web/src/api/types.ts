@@ -34,6 +34,8 @@ export interface Project {
   scrub_patterns: ScrubPattern[]
   created_at: string
   event_count: number
+  events_24h: number
+  storage_bytes: number
 }
 
 export interface ProjectQuota {

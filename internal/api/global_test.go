@@ -36,6 +36,52 @@ func TestListProjects_success(t *testing.T) {
 	}
 }
 
+func TestListProjects_includesStatsFields(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var projects []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&projects); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(projects) == 0 {
+		t.Fatal("expected at least one project")
+	}
+	p := projects[0]
+	for _, key := range []string{"event_count", "events_24h", "storage_bytes"} {
+		if _, ok := p[key]; !ok {
+			t.Errorf("expected key %q in project response", key)
+		}
+	}
+}
+
+func TestListProjects_sortedAlphabetically(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var projects []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&projects); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i := 1; i < len(projects); i++ {
+		a := projects[i-1]["name"].(string)
+		b := projects[i]["name"].(string)
+		if a > b {
+			t.Errorf("not sorted: %q > %q at positions %d,%d", a, b, i-1, i)
+		}
+	}
+}
+
 func TestListProjects_unauthenticated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
 	rec := httptest.NewRecorder()

@@ -4887,6 +4887,20 @@ a { color: inherit; text-decoration: none; }
   background: var(--bg);
 }
 
+.proj-table-head {
+  display: grid;
+  grid-template-columns: 1fr 120px 100px 110px 28px;
+  gap: 8px;
+  padding: 7px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.proj-table-head__num { justify-content: flex-end; justify-self: end; }
+
 .proj-card__head {
   display: flex;
   align-items: center;
@@ -4895,6 +4909,19 @@ a { color: inherit; text-decoration: none; }
   cursor: pointer;
   transition: background 120ms;
   border-bottom: 1px solid var(--border-soft);
+}
+.proj-card__head--row {
+  display: grid;
+  grid-template-columns: 1fr 120px 100px 110px 28px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 16px;
+}
+.proj-card__stat {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .proj-card__head:hover { background: var(--surface); }
 

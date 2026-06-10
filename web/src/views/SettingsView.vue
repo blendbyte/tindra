@@ -74,6 +74,46 @@ const { data: projectsData } = useQuery({
 })
 const projects = computed(() => projectsData.value ?? [])
 
+// ── Project list sort ─────────────────────────────────────────────────────────
+function projLsGet(key: string): string | null {
+  try { return localStorage.getItem('tindra:settings:proj-' + key) } catch { return null }
+}
+function projLsSet(key: string, val: string | null) {
+  try {
+    if (val === null) localStorage.removeItem('tindra:settings:proj-' + key)
+    else localStorage.setItem('tindra:settings:proj-' + key, val)
+  } catch {}
+}
+type ProjSortCol = 'name' | 'event_count' | 'events_24h' | 'storage_bytes'
+const PROJ_SORT_COLS: ProjSortCol[] = ['name', 'event_count', 'events_24h', 'storage_bytes']
+const rawProjSort = projLsGet('sort') ?? 'name'
+const projSortCol = ref<ProjSortCol>(PROJ_SORT_COLS.includes(rawProjSort as ProjSortCol) ? rawProjSort as ProjSortCol : 'name')
+const projSortDir = ref<'asc' | 'desc'>((projLsGet('dir') ?? 'asc') === 'desc' ? 'desc' : 'asc')
+
+function toggleProjSort(col: ProjSortCol) {
+  if (projSortCol.value === col) {
+    projSortDir.value = projSortDir.value === 'desc' ? 'asc' : 'desc'
+  } else {
+    projSortCol.value = col
+    projSortDir.value = col === 'name' ? 'asc' : 'desc'
+  }
+  projLsSet('sort', projSortCol.value !== 'name' ? projSortCol.value : null)
+  projLsSet('dir', projSortDir.value !== 'asc' ? projSortDir.value : null)
+}
+function projSortIcon(col: ProjSortCol): string {
+  if (projSortCol.value !== col) return ''
+  return projSortDir.value === 'asc' ? '↑' : '↓'
+}
+const sortedProjects = computed(() => {
+  const list = [...projects.value]
+  const col = projSortCol.value
+  const dir = projSortDir.value === 'asc' ? 1 : -1
+  return list.sort((a, b) => {
+    if (col === 'name') return dir * a.name.localeCompare(b.name)
+    return dir * ((a[col] as number) - (b[col] as number))
+  })
+})
+
 const { mutate: createToken, isPending: creatingToken } = useMutation({
   mutationFn: ({ name, project_id, writable }: { name: string; project_id: string; writable: boolean }) =>
     apiFetch<{ token: string; meta: ApiToken }>('/api/tokens', {
@@ -1519,20 +1559,37 @@ function actionKindOf(action: string) {
 
         <!-- Project list -->
         <div v-if="projects.length > 0" class="proj-grid" :style="showNewProject ? 'margin-top: 12px' : ''">
+          <!-- Table header -->
+          <div class="proj-table-head">
+            <button class="col-sort" :class="{ 'col-sort--active': projSortCol === 'name' }" @click="toggleProjSort('name')">
+              Project <em class="col-sort__icon">{{ projSortIcon('name') }}</em>
+            </button>
+            <button class="col-sort proj-table-head__num" :class="{ 'col-sort--active': projSortCol === 'event_count' }" @click="toggleProjSort('event_count')">
+              Events / mo <em class="col-sort__icon">{{ projSortIcon('event_count') }}</em>
+            </button>
+            <button class="col-sort proj-table-head__num" :class="{ 'col-sort--active': projSortCol === 'events_24h' }" @click="toggleProjSort('events_24h')">
+              Last 24h <em class="col-sort__icon">{{ projSortIcon('events_24h') }}</em>
+            </button>
+            <button class="col-sort proj-table-head__num" :class="{ 'col-sort--active': projSortCol === 'storage_bytes' }" @click="toggleProjSort('storage_bytes')">
+              ~Storage <em class="col-sort__icon">{{ projSortIcon('storage_bytes') }}</em>
+            </button>
+            <span></span>
+          </div>
+
           <div
-            v-for="p in projects"
+            v-for="p in sortedProjects"
             :key="p.id"
             class="proj-card"
             :class="{ 'proj-card--open': expandedProject === p.id }"
           >
-            <div class="proj-card__head" @click="expandedProject = expandedProject === p.id ? null : p.id">
-              <span class="platform-badge">
-                <Icon name="package" :size="11" />
-              </span>
-              <div style="min-width: 0; flex: 1">
+            <div class="proj-card__head proj-card__head--row" @click="expandedProject = expandedProject === p.id ? null : p.id">
+              <div style="min-width: 0">
                 <div class="proj-card__name">{{ p.name }}</div>
                 <div class="proj-card__meta mono">{{ p.slug }}</div>
               </div>
+              <span class="proj-card__stat mono">{{ (p.event_count ?? 0).toLocaleString() }}</span>
+              <span class="proj-card__stat mono">+{{ (p.events_24h ?? 0).toLocaleString() }}</span>
+              <span class="proj-card__stat mono">{{ formatBytes(p.storage_bytes ?? 0) }}</span>
               <span class="rule__caret">
                 <Icon :name="expandedProject === p.id ? 'chevron-down' : 'chevron-right'" :size="11" />
               </span>

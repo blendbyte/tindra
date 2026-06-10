@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,9 +88,178 @@ func TestListProjects(t *testing.T) {
 	if len(projects) != 3 {
 		t.Fatalf("expected 3 projects, got %d", len(projects))
 	}
-	// ListProjects returns newest first
-	if projects[0].Slug != "gamma" {
-		t.Errorf("expected gamma first, got %q", projects[0].Slug)
+	// ListProjects now returns alphabetically by name
+	if projects[0].Slug != "alpha" {
+		t.Errorf("expected alpha first (alphabetical), got %q", projects[0].Slug)
+	}
+	if projects[2].Slug != "gamma" {
+		t.Errorf("expected gamma last (alphabetical), got %q", projects[2].Slug)
+	}
+}
+
+func TestListProjects_statsFields(t *testing.T) {
+	truncateProjects(t)
+
+	p, err := storage.CreateProject(context.Background(), testPool, "statstest", "Stats Test")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	projects, err := storage.ListProjects(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found *storage.Project
+	for _, pr := range projects {
+		if pr.ID == p.ID {
+			found = pr
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("project not found in list")
+	}
+	if found.EventCount < 0 {
+		t.Errorf("EventCount: got %d, want >= 0", found.EventCount)
+	}
+	if found.Events24h < 0 {
+		t.Errorf("Events24h: got %d, want >= 0", found.Events24h)
+	}
+	if found.StorageBytes < 0 {
+		t.Errorf("StorageBytes: got %d, want >= 0", found.StorageBytes)
+	}
+}
+
+func TestListProjects_eventCountMonth(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+
+	p, err := storage.CreateProject(ctx, testPool, "evcount-month", "Ev Count Month")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	payload := json.RawMessage(`{"level":"error"}`)
+	for range 3 {
+		testPool.Exec(ctx, `
+			INSERT INTO events (project_id, timestamp, received_at, payload)
+			VALUES ($1, NOW(), NOW(), $2)
+		`, p.ID, payload)
+	}
+
+	projects, err := storage.ListProjects(ctx, testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found *storage.Project
+	for _, pr := range projects {
+		if pr.ID == p.ID {
+			found = pr
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("project not found in list")
+	}
+	if found.EventCount < 3 {
+		t.Errorf("EventCount: got %d, want >= 3", found.EventCount)
+	}
+}
+
+func TestListProjects_events24h(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+
+	p, err := storage.CreateProject(ctx, testPool, "ev24h", "Ev 24h")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	payload := json.RawMessage(`{"level":"error"}`)
+	// 2 events in the last hour
+	for range 2 {
+		testPool.Exec(ctx, `
+			INSERT INTO events (project_id, timestamp, received_at, payload)
+			VALUES ($1, NOW(), NOW(), $2)
+		`, p.ID, payload)
+	}
+	// 1 event from 2 days ago (outside 24h window)
+	testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload)
+		VALUES ($1, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days', $2)
+	`, p.ID, payload)
+
+	projects, err := storage.ListProjects(ctx, testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found *storage.Project
+	for _, pr := range projects {
+		if pr.ID == p.ID {
+			found = pr
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("project not found in list")
+	}
+	if found.Events24h != 2 {
+		t.Errorf("Events24h: got %d, want 2", found.Events24h)
+	}
+	if found.EventCount < 3 {
+		t.Errorf("EventCount (month): got %d, want >= 3 (includes old event if same month)", found.EventCount)
+	}
+}
+
+func TestListProjects_storageBytesPositive(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+
+	if _, err := storage.CreateProject(ctx, testPool, "storage-est", "Storage Est"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	projects, err := storage.ListProjects(ctx, testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(projects) == 0 {
+		t.Fatal("expected at least one project")
+	}
+	// storage_bytes is a proportional estimate: even a project with zero rows
+	// gets 0 storage, so we only assert non-negative here.
+	if projects[0].StorageBytes < 0 {
+		t.Errorf("StorageBytes: got %d, want >= 0", projects[0].StorageBytes)
+	}
+}
+
+func TestListProjects_alphabeticalOrder(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"Zebra", "Alpha", "Mango"} {
+		slug := strings.ToLower(name)
+		if _, err := storage.CreateProject(ctx, testPool, slug, name); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+
+	projects, err := storage.ListProjects(ctx, testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(projects) != 3 {
+		t.Fatalf("expected 3, got %d", len(projects))
+	}
+	names := make([]string, len(projects))
+	for i, p := range projects {
+		names[i] = p.Name
+	}
+	want := []string{"Alpha", "Mango", "Zebra"}
+	for i, w := range want {
+		if names[i] != w {
+			t.Errorf("position %d: got %q, want %q (full list: %v)", i, names[i], w, names)
+		}
 	}
 }
 
