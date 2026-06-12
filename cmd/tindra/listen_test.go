@@ -164,9 +164,21 @@ func TestParseSocketMode_valid(t *testing.T) {
 }
 
 func TestParseSocketMode_invalid(t *testing.T) {
-	// Invalid input should return the default, not panic.
-	if got := parseSocketMode("notoctal", 0660); got != 0660 {
-		t.Errorf("invalid: got %04o, want 0660 (default)", got)
+	// Invalid input should return the default, not panic. "438" is what an
+	// unquoted `SOCKET_MODE: 0666` becomes after YAML mangles it (0666 octal =
+	// 438 decimal); it is not valid octal, so we fall back rather than guess.
+	for _, in := range []string{"notoctal", "438", "0999", "-1"} {
+		if got := parseSocketMode(in, 0660); got != 0660 {
+			t.Errorf("input %q: got %04o, want 0660 (default)", in, got)
+		}
+	}
+}
+
+func TestParseSocketMode_quotedFixesYAMLMangling(t *testing.T) {
+	// Quoting in docker-compose (SOCKET_MODE: "0666") passes the literal
+	// string, which parses correctly to mode 0666.
+	if got := parseSocketMode("0666", 0660); got != 0666 {
+		t.Errorf(`parseSocketMode("0666"): got %04o, want 0666`, got)
 	}
 }
 

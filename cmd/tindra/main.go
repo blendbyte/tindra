@@ -193,6 +193,13 @@ func loadConfig() config {
 
 // parseSocketMode parses an octal string like "0666" into a FileMode.
 // Falls back to def on empty input or parse error.
+//
+// A common gotcha: in a docker-compose `environment:` block, an unquoted
+// `SOCKET_MODE: 0666` is parsed by YAML as the octal integer 438 and reaches
+// the process as the string "438", which is not valid octal. Quote it
+// (`SOCKET_MODE: "0666"`) so the literal string is passed through. The warning
+// below spells this out rather than guessing, since silently treating a decimal
+// like "432" as octal would apply the wrong permissions to the socket.
 func parseSocketMode(s string, def fs.FileMode) fs.FileMode {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -200,7 +207,8 @@ func parseSocketMode(s string, def fs.FileMode) fs.FileMode {
 	}
 	n, err := strconv.ParseUint(s, 8, 32)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warn: invalid SOCKET_MODE %q, using %04o\n", s, def)
+		fmt.Fprintf(os.Stderr, "warn: invalid SOCKET_MODE %q (expected octal like 0666), using %04o; "+
+			"if set via a docker-compose environment block, quote it: SOCKET_MODE: \"0666\"\n", s, def)
 		return def
 	}
 	return fs.FileMode(n)
