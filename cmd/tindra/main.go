@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -54,6 +55,7 @@ type config struct {
 	trustedProxies         []*net.IPNet
 	skipAutoMigrate        bool
 	disableVersionCheck    bool
+	socketMode             fs.FileMode
 }
 
 func main() {
@@ -185,7 +187,23 @@ func loadConfig() config {
 		trustedProxies:         trustedProxies,
 		skipAutoMigrate:        os.Getenv("SKIP_AUTO_MIGRATE") == "true",
 		disableVersionCheck:    os.Getenv("DISABLE_VERSION_CHECK") == "true",
+		socketMode:             parseSocketMode(os.Getenv("SOCKET_MODE"), 0660),
 	}
+}
+
+// parseSocketMode parses an octal string like "0666" into a FileMode.
+// Falls back to def on empty input or parse error.
+func parseSocketMode(s string, def fs.FileMode) fs.FileMode {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return def
+	}
+	n, err := strconv.ParseUint(s, 8, 32)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warn: invalid SOCKET_MODE %q, using %04o\n", s, def)
+		return def
+	}
+	return fs.FileMode(n)
 }
 
 func setupLogger(level, format string) {
@@ -361,7 +379,7 @@ func serveCmd(cfg config) *cobra.Command {
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 
-			ln, err := listen(cfg.bindAddr)
+			ln, err := listen(cfg.bindAddr, cfg.socketMode)
 			if err != nil {
 				return fmt.Errorf("listen: %w", err)
 			}
@@ -387,7 +405,7 @@ func serveCmd(cfg config) *cobra.Command {
 	}
 }
 
-func listen(addr string) (net.Listener, error) {
+func listen(addr string, socketMode fs.FileMode) (net.Listener, error) {
 	lc := &net.ListenConfig{}
 	if strings.HasPrefix(addr, "unix:") {
 		path := strings.TrimPrefix(addr, "unix:")
@@ -397,11 +415,14 @@ func listen(addr string) (net.Listener, error) {
 		if err != nil {
 			return nil, err
 		}
-		// 0660 lets the tindra process owner and group-members (e.g. www-data) connect.
-		if err := os.Chmod(path, 0660); err != nil {
+		// Default 0660: owner + group (e.g. www-data) can connect; nothing else.
+		// Use SOCKET_MODE=0666 when the socket is bind-mounted out of a Docker
+		// container, where UID/GID matching with the host nginx is impractical.
+		if err := os.Chmod(path, socketMode); err != nil {
 			_ = ln.Close()
 			return nil, err
 		}
+		slog.Info("unix socket ready", "path", path, "mode", fmt.Sprintf("%04o", socketMode))
 		return ln, nil
 	}
 	return lc.Listen(context.Background(), "tcp", addr)
