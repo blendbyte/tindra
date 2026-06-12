@@ -33,6 +33,10 @@ import (
 var Version = "dev"
 var Commit = "unknown"
 
+// startupLog always emits regardless of the configured log level so startup
+// info (version, settings, addresses) is visible even at warn/error level.
+var startupLog = slog.Default()
+
 type config struct {
 	databaseURL            string
 	bindAddr               string
@@ -234,6 +238,15 @@ func setupLogger(level, format string) {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
 	}
 	slog.SetDefault(logger)
+
+	// startupLog uses the same format but no level filter so startup messages
+	// (version, settings, addresses) are always visible.
+	alwaysOpts := &slog.HandlerOptions{Level: slog.Level(-100)}
+	if format == "json" {
+		startupLog = slog.New(slog.NewJSONHandler(os.Stdout, alwaysOpts))
+	} else {
+		startupLog = slog.New(slog.NewTextHandler(os.Stdout, alwaysOpts))
+	}
 }
 
 func serveCmd(cfg config) *cobra.Command {
@@ -262,9 +275,9 @@ func serveCmd(cfg config) *cobra.Command {
 				}
 				after, _, _ := m.Version()
 				if after > before {
-					slog.Info("database migrations applied", "from", before, "to", after)
+					startupLog.Info("database migrations applied", "from", before, "to", after)
 				} else {
-					slog.Info("database schema up to date", "version", after)
+					startupLog.Info("database schema up to date", "version", after)
 				}
 			}
 
@@ -345,7 +358,7 @@ func serveCmd(cfg config) *cobra.Command {
 				}
 			}()
 
-			slog.Info("starting tindra",
+			startupLog.Info("starting tindra",
 				"version", Version,
 				"commit", Commit,
 				"addr", cfg.bindAddr,
@@ -401,7 +414,7 @@ func serveCmd(cfg config) *cobra.Command {
 				}
 			}()
 
-			slog.Info("starting server", "addr", cfg.bindAddr)
+			startupLog.Info("starting server", "addr", cfg.bindAddr)
 			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				return fmt.Errorf("serve: %w", err)
 			}
@@ -430,7 +443,7 @@ func listen(addr string, socketMode fs.FileMode) (net.Listener, error) {
 			_ = ln.Close()
 			return nil, err
 		}
-		slog.Info("unix socket ready", "path", path, "mode", fmt.Sprintf("%04o", socketMode))
+		startupLog.Info("unix socket ready", "path", path, "mode", fmt.Sprintf("%04o", socketMode))
 		return ln, nil
 	}
 	return lc.Listen(context.Background(), "tcp", addr)
