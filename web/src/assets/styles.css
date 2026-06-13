@@ -3446,12 +3446,10 @@ a { color: inherit; text-decoration: none; }
   position: relative;
   z-index: 1;
 }
-.login__logo-svg {
-  width: 220px;
-  height: auto;
-  margin-bottom: 36px;
-  color: var(--text-1);
-}
+.login__logo { width: 220px; height: auto; margin-bottom: 36px; display: block; }
+.login__logo--dark { display: none; }
+[data-theme="dark"] .login__logo--light { display: none; }
+[data-theme="dark"] .login__logo--dark { display: block; }
 
 .login__form { width: 100%; display: flex; flex-direction: column; gap: 14px; }
 

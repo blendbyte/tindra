@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import Icon from '@/components/Icon.vue'
+import logoLight from '@/assets/logo.png'
+import logoDark from '@/assets/logo-dark.png'
 
 const router = useRouter()
 const qc = useQueryClient()
@@ -120,56 +122,8 @@ function backToLogin() {
   <div class="login">
     <div class="login__card">
       <!-- Logo -->
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 416 144"
-        preserveAspectRatio="xMidYMid meet"
-        class="login__logo-svg"
-        aria-label="Tindra"
-      >
-        <defs>
-          <linearGradient id="ll-top" x1="120" y1="20" x2="55" y2="80" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#f4f7f7"/>
-            <stop offset="0.5" stop-color="#e6ecec"/>
-            <stop offset="1" stop-color="#d6dddd"/>
-          </linearGradient>
-          <linearGradient id="ll-right" x1="115" y1="18" x2="115" y2="95" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#f4f2fc"/>
-            <stop offset="0.30" stop-color="#dad7f4"/>
-            <stop offset="0.60" stop-color="#acaeea"/>
-            <stop offset="0.85" stop-color="#8087d4"/>
-            <stop offset="1" stop-color="#6a72c5"/>
-          </linearGradient>
-          <linearGradient id="ll-bottom" x1="28" y1="101" x2="110" y2="115" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#4a4a7d"/>
-            <stop offset="0.25" stop-color="#6c66a3"/>
-            <stop offset="0.55" stop-color="#a89ed4"/>
-            <stop offset="0.80" stop-color="#d6cef0"/>
-            <stop offset="1" stop-color="#ebe6f8"/>
-          </linearGradient>
-          <linearGradient id="ll-hull" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#1f2638"/>
-            <stop offset="1" stop-color="#161b29"/>
-          </linearGradient>
-        </defs>
-        <polygon points="133,4 127,120 8,96" fill="url(#ll-hull)" stroke="url(#ll-hull)" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
-        <polygon points="130,7 99,74 46,84" fill="url(#ll-top)" stroke="#0e1320" stroke-width="0.35" stroke-linejoin="round"/>
-        <polygon points="130,7 99,74 115,95" fill="url(#ll-right)" stroke="#0e1320" stroke-width="0.35" stroke-linejoin="round"/>
-        <polygon points="99,74 115,95 123,117 68,81" fill="#1a2033" stroke="#0e1320" stroke-width="0.35" stroke-linejoin="round"/>
-        <polygon points="68,81 123,117 28,101 46,84" fill="url(#ll-bottom)" stroke="#0e1320" stroke-width="0.35" stroke-linejoin="round"/>
-        <path d="M 46 84 L 99 74" stroke="#ffffff" stroke-opacity="0.25" stroke-width="0.5" fill="none"/>
-        <path d="M 99 74 L 130 7" stroke="#ffffff" stroke-opacity="0.18" stroke-width="0.5" fill="none"/>
-        <text
-          x="158" y="103"
-          font-family="Manrope, Helvetica Neue, Arial Black, Arial, sans-serif"
-          font-size="92"
-          font-weight="800"
-          textLength="248"
-          lengthAdjust="spacingAndGlyphs"
-          letter-spacing="-2"
-          fill="currentColor"
-        >Tindra</text>
-      </svg>
+      <img :src="logoLight" alt="Tindra" class="login__logo login__logo--light" />
+      <img :src="logoDark" alt="Tindra" class="login__logo login__logo--dark" />
 
       <!-- MFA step -->
       <template v-if="mfaToken">
