@@ -780,6 +780,7 @@ const loading = computed(
 
 .db-proj-expand {
   all: unset;
+  box-sizing: border-box;
   cursor: pointer;
   display: block;
   width: 100%;
