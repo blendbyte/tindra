@@ -1197,6 +1197,16 @@ const loading = computed(
     border-bottom: 1px solid var(--border);
   }
 
+  /* Project table: drop P50 + Error Rate, keep Project | Open Issues | Req/24h */
+  .db-proj-head,
+  .db-proj-row {
+    grid-template-columns: 1fr 110px 100px;
+  }
+  .db-proj-head > :nth-child(4),
+  .db-proj-head > :nth-child(5),
+  .db-proj-row > :nth-child(4),
+  .db-proj-row > :nth-child(5) { display: none; }
+
   /* Heatmap: allow horizontal scroll */
   .db-heatmap {
     overflow-x: auto;
@@ -1217,6 +1227,16 @@ const loading = computed(
 }
 
 @media (max-width: 480px) {
+  /* Project table: scroll horizontally so the name column never collapses */
+  .db-projects {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .db-proj-head,
+  .db-proj-row {
+    min-width: 360px;
+  }
+
   /* KPI strip: single column on very small phones */
   .db-kpis {
     grid-template-columns: 1fr 1fr;

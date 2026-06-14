@@ -6094,8 +6094,10 @@ select.field__input {
   .tx-sample-row { min-width: 480px; }
 
   /* Issue detail: tighter padding + scrollable breadcrumb */
-  .detail-breadcrumb { padding: 0 12px; overflow-x: auto; scrollbar-width: none; }
+  .detail-breadcrumb { padding: 0 12px; gap: 8px; overflow-x: auto; scrollbar-width: none; }
   .detail-breadcrumb::-webkit-scrollbar { display: none; }
+  .detail-breadcrumb .btn { padding: 0 8px; gap: 4px; }
+  .detail-breadcrumb .btn__kbd { display: none; }
   .detail-body { padding: 16px 12px 60px; }
 
   /* Settings: reduce padding + scrollable tab nav */
