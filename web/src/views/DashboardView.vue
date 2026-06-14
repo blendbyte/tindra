@@ -1227,14 +1227,11 @@ const loading = computed(
 }
 
 @media (max-width: 480px) {
-  /* Project table: scroll horizontally so the name column never collapses */
+  /* Project table: safety-net scroll only — no forced min-width so the grid
+     adapts naturally and doesn't create spurious horizontal overflow */
   .db-projects {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-  }
-  .db-proj-head,
-  .db-proj-row {
-    min-width: 360px;
   }
 
   /* KPI strip: single column on very small phones */

@@ -1474,7 +1474,7 @@ a { color: inherit; text-decoration: none; }
 .detail-hero__level { color: var(--text-2); }
 .detail-hero__unhandled { color: var(--danger); font-weight: 600; font-family: var(--sans); letter-spacing: 0.02em; }
 .detail-hero__sep { color: var(--border); }
-.detail-hero__project { color: var(--text-3); }
+.detail-hero__project { color: var(--text-3); overflow-wrap: break-word; word-break: break-all; }
 .detail-hero__env { color: var(--text-3); }
 .detail-hero__env--prod { color: var(--success); }
 .detail-hero__release { color: var(--text-3); }
@@ -1488,6 +1488,7 @@ a { color: inherit; text-decoration: none; }
   line-height: 1.25;
   margin: 0 0 12px;
   text-wrap: balance;
+  overflow-wrap: break-word;
 }
 .detail-hero__title .mono { color: var(--accent); font-weight: 500; letter-spacing: -0.01em; }
 
