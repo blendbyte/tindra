@@ -1208,6 +1208,12 @@ const loading = computed(
   .db-proj-row > :nth-child(4),
   .db-proj-row > :nth-child(5) { display: none; }
 
+  /* Separate major sections with visible gaps so they read as distinct blocks */
+  .db-projects { margin-top: 16px; border-top: 1px solid var(--border); }
+  .db-body     { margin-top: 16px; }
+  .db-sec + .db-sec { margin-top: 16px; }
+  .db-sec__head { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+
   /* Heatmap: allow horizontal scroll */
   .db-heatmap {
     overflow-x: auto;

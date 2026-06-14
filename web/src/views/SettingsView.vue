@@ -1142,7 +1142,7 @@ function actionKindOf(action: string) {
         <div class="pane-head">
           <div class="pane-head__title">Data volumes</div>
         </div>
-        <div class="proj-grid" style="margin-bottom: 24px">
+        <div class="overview-vol-wrap" style="margin-bottom: 24px">
           <div class="overview-vol-row overview-vol-row--head">
             <span></span>
             <span>Total</span>
