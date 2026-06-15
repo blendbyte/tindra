@@ -2,7 +2,7 @@
   <img src="logo.png" width="280" alt="Tindra">
 </p>
 
-<p align="center">Self-hosted error tracking, performance monitoring, cron job monitoring, and uptime monitoring.</p>
+<p align="center">Self-hosted error tracking, performance monitoring, uptime monitoring and cron monitoring.</p>
 
 <p align="center">
   <a href="https://tindra.sh">tindra.sh</a> &nbsp;·&nbsp;
