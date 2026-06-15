@@ -341,6 +341,20 @@ describe('TransactionListView', () => {
     })
   })
 
+  describe('apdex score coloring', () => {
+    it('applies fair class when apdex is between 0.70 and 0.94', () => {
+      setupMocks([{ ...makeSummary('/api/ok'), apdex: 0.82 }])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.tx-apdex--fair').exists()).toBe(true)
+    })
+
+    it('applies poor class when apdex is below 0.70', () => {
+      setupMocks([{ ...makeSummary('/api/slow'), apdex: 0.55 }])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.tx-apdex--poor').exists()).toBe(true)
+    })
+  })
+
   describe('failure rate formatting', () => {
     it('shows non-zero failure rate percentage', () => {
       const failedSummary = { ...makeSummary('/api/buggy'), failure_rate: 0.05 }
