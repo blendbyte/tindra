@@ -15,6 +15,14 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
+const maxDeliveryAttempts = 3
+
+// retryDelays[i] is the wait before attempt i+2 (after attempt i+1 fails).
+var retryDelays = []time.Duration{
+	2 * time.Minute,
+	10 * time.Minute,
+}
+
 // Evaluator checks alert rules every 15 seconds and fires deliveries.
 type Evaluator struct {
 	pool      *pgxpool.Pool
@@ -39,6 +47,7 @@ func (e *Evaluator) Run(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			e.evaluate(ctx)
+			e.processRetries(ctx)
 		case <-ctx.Done():
 			return
 		}
@@ -440,17 +449,8 @@ func (e *Evaluator) fire(ctx context.Context, rule *storage.AlertRule, details m
 	}
 	e.enrichPayload(ctx, &payload, rule)
 
-	var deliveryErr error
-	switch rule.Channel {
-	case "webhook":
-		deliveryErr = e.fireWebhook(ctx, rule, payload)
-	case "slack":
-		deliveryErr = e.fireSlack(ctx, rule, payload)
-	case "discord":
-		deliveryErr = e.fireDiscord(ctx, rule, payload)
-	case "email":
-		deliveryErr = e.fireEmail(ctx, rule, payload)
-	}
+	statusCode, deliveryErr := e.deliver(ctx, rule, payload)
+	e.logFiring(ctx, rule.ID, rule.Channel, payload, 1, statusCode, deliveryErr)
 	if deliveryErr != nil {
 		slog.Error("alert delivery failed", "rule", rule.ID, "channel", rule.Channel, "err", deliveryErr)
 	}
@@ -458,6 +458,122 @@ func (e *Evaluator) fire(ctx context.Context, rule *storage.AlertRule, details m
 	// Update last_fired_at regardless of delivery outcome - a broken endpoint
 	// must not cause a flood of retries within the same cooldown window.
 	storage.MarkAlertFired(ctx, e.pool, rule.ID)
+}
+
+// deliver dispatches the payload to the configured channel and returns the HTTP
+// status code (nil for email or network errors) along with any error.
+func (e *Evaluator) deliver(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) (*int, error) {
+	switch rule.Channel {
+	case "webhook":
+		return e.fireWebhook(ctx, rule, payload)
+	case "slack":
+		return e.fireSlack(ctx, rule, payload)
+	case "discord":
+		return e.fireDiscord(ctx, rule, payload)
+	case "email":
+		return nil, e.fireEmail(ctx, rule, payload)
+	}
+	return nil, fmt.Errorf("unknown channel: %s", rule.Channel)
+}
+
+// itemCountFromPayload extracts the total item count from the payload details map.
+func itemCountFromPayload(payload AlertPayload) *int {
+	var total int
+	found := false
+	for k, v := range payload.Details {
+		switch k {
+		case "new_issue_count", "regressed_count", "event_count",
+			"missed_count", "error_count", "resolved_count":
+			if n, ok := v.(int); ok {
+				total += n
+				found = true
+			}
+		}
+	}
+	if !found {
+		return nil
+	}
+	return &total
+}
+
+// logFiring records a delivery attempt in alert_firings. On failure it schedules
+// a retry (up to maxDeliveryAttempts total) by storing the payload for re-delivery.
+func (e *Evaluator) logFiring(ctx context.Context, ruleID, channel string, payload AlertPayload, attempt int, statusCode *int, deliveryErr error) {
+	f := &storage.AlertFiring{
+		RuleID:     ruleID,
+		Trigger:    payload.Trigger,
+		Channel:    channel,
+		Attempt:    attempt,
+		ItemCount:  itemCountFromPayload(payload),
+		StatusCode: statusCode,
+	}
+
+	if deliveryErr == nil {
+		f.Status = "success"
+	} else {
+		errStr := deliveryErr.Error()
+		f.Error = &errStr
+		if attempt < maxDeliveryAttempts {
+			f.Status = "pending"
+			t := time.Now().Add(retryDelays[attempt-1])
+			f.NextRetryAt = &t
+			f.Payload, _ = json.Marshal(payload)
+		} else {
+			f.Status = "failed"
+		}
+	}
+
+	if _, err := storage.CreateAlertFiring(ctx, e.pool, f); err != nil {
+		slog.Error("log alert firing", "rule", ruleID, "err", err)
+	}
+}
+
+// processRetries picks up firings scheduled for retry and re-attempts delivery.
+func (e *Evaluator) processRetries(ctx context.Context) {
+	firings, err := storage.ListPendingRetries(ctx, e.pool)
+	if err != nil {
+		slog.Error("list pending retries", "err", err)
+		return
+	}
+	for _, f := range firings {
+		e.retryFiring(ctx, f)
+	}
+}
+
+func (e *Evaluator) retryFiring(ctx context.Context, f *storage.AlertFiring) {
+	rule, err := storage.GetAlertRule(ctx, e.pool, f.RuleID)
+	if err != nil || rule == nil {
+		msg := "rule not found"
+		if err != nil {
+			msg = err.Error()
+		}
+		storage.ResolveAlertFiring(ctx, e.pool, f.ID, "failed", f.Attempt+1, nil, &msg)
+		return
+	}
+
+	var payload AlertPayload
+	if err := json.Unmarshal(f.Payload, &payload); err != nil {
+		msg := fmt.Sprintf("unmarshal payload: %v", err)
+		storage.ResolveAlertFiring(ctx, e.pool, f.ID, "failed", f.Attempt+1, nil, &msg)
+		return
+	}
+
+	attempt := f.Attempt + 1
+	statusCode, deliveryErr := e.deliver(ctx, rule, payload)
+
+	if deliveryErr == nil {
+		storage.ResolveAlertFiring(ctx, e.pool, f.ID, "success", attempt, statusCode, nil)
+	} else {
+		errStr := deliveryErr.Error()
+		if attempt < maxDeliveryAttempts {
+			nextRetry := time.Now().Add(retryDelays[attempt-1])
+			payloadJSON, _ := json.Marshal(payload)
+			storage.ScheduleAlertFiringRetry(ctx, e.pool, f.ID, attempt, nextRetry, statusCode, &errStr, payloadJSON)
+		} else {
+			storage.ResolveAlertFiring(ctx, e.pool, f.ID, "failed", attempt, statusCode, &errStr)
+			slog.Error("alert delivery permanently failed", "firing", f.ID, "rule", f.RuleID, "attempts", attempt, "err", deliveryErr)
+		}
+	}
 }
 
 // NotifyAutoResolved fires all enabled alert rules with an "issue_auto_resolved"
@@ -505,45 +621,37 @@ func (e *Evaluator) NotifyAutoResolved(ctx context.Context, issues []*storage.Is
 			_ = e.pool.QueryRow(ctx, `SELECT name FROM projects WHERE id = $1`, payload.ProjectID).Scan(&payload.ProjectName)
 		}
 
-		var deliveryErr error
-		switch rule.Channel {
-		case "webhook":
-			deliveryErr = e.fireWebhook(ctx, rule, payload)
-		case "slack":
-			deliveryErr = e.fireSlack(ctx, rule, payload)
-		case "discord":
-			deliveryErr = e.fireDiscord(ctx, rule, payload)
-		case "email":
-			deliveryErr = e.fireEmail(ctx, rule, payload)
-		}
+		statusCode, deliveryErr := e.deliver(ctx, rule, payload)
+		e.logFiring(ctx, rule.ID, rule.Channel, payload, 1, statusCode, deliveryErr)
 		if deliveryErr != nil {
 			slog.Error("auto-resolve notification failed", "rule", rule.ID, "channel", rule.Channel, "err", deliveryErr)
 		}
 	}
 }
 
-func (e *Evaluator) fireWebhook(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) error {
+func (e *Evaluator) fireWebhook(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) (*int, error) {
 	if rule.WebhookURL == nil || *rule.WebhookURL == "" {
-		return fmt.Errorf("webhook_url is empty")
+		return nil, fmt.Errorf("webhook_url is empty")
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+		return nil, fmt.Errorf("marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *rule.WebhookURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("post: %w", err)
+		return nil, fmt.Errorf("post: %w", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook returned %d", resp.StatusCode)
+	code := resp.StatusCode
+	if code < 200 || code >= 300 {
+		return &code, fmt.Errorf("webhook returned %d", code)
 	}
-	return nil
+	return &code, nil
 }
 
 var alertTriggerLabels = map[string]string{
@@ -556,9 +664,9 @@ var alertTriggerLabels = map[string]string{
 	"issue_auto_resolved": "Performance issue auto-resolved",
 }
 
-func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) error {
+func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) (*int, error) {
 	if rule.WebhookURL == nil || *rule.WebhookURL == "" {
-		return fmt.Errorf("webhook_url is empty")
+		return nil, fmt.Errorf("webhook_url is empty")
 	}
 
 	subject := buildAlertSubject(payload)
@@ -623,27 +731,28 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 
 	body, err := json.Marshal(slackMsg)
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+		return nil, fmt.Errorf("marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *rule.WebhookURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("post: %w", err)
+		return nil, fmt.Errorf("post: %w", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("slack returned %d", resp.StatusCode)
+	code := resp.StatusCode
+	if code < 200 || code >= 300 {
+		return &code, fmt.Errorf("slack returned %d", code)
 	}
-	return nil
+	return &code, nil
 }
 
-func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) error {
+func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) (*int, error) {
 	if rule.WebhookURL == nil || *rule.WebhookURL == "" {
-		return fmt.Errorf("webhook_url is empty")
+		return nil, fmt.Errorf("webhook_url is empty")
 	}
 
 	subject := buildAlertSubject(payload)
@@ -701,22 +810,23 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 
 	body, err := json.Marshal(msg)
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+		return nil, fmt.Errorf("marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *rule.WebhookURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("post: %w", err)
+		return nil, fmt.Errorf("post: %w", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("discord returned %d", resp.StatusCode)
+	code := resp.StatusCode
+	if code < 200 || code >= 300 {
+		return &code, fmt.Errorf("discord returned %d", code)
 	}
-	return nil
+	return &code, nil
 }
 
 func (e *Evaluator) fireEmail(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) error {
@@ -740,7 +850,7 @@ func (e *Evaluator) fireEmail(ctx context.Context, rule *storage.AlertRule, payl
 
 // FireTest fires the rule unconditionally, bypassing condition checks and cooldown.
 // Used by the API test endpoint to verify delivery configuration.
-// Does not update last_fired_at.
+// Does not update last_fired_at or create a firing log entry.
 func (e *Evaluator) FireTest(ctx context.Context, rule *storage.AlertRule) error {
 	payload := AlertPayload{
 		RuleID:    rule.ID,
@@ -751,17 +861,8 @@ func (e *Evaluator) FireTest(ctx context.Context, rule *storage.AlertRule) error
 		Details:   map[string]any{"test": true},
 	}
 	e.enrichPayload(ctx, &payload, rule)
-	switch rule.Channel {
-	case "webhook":
-		return e.fireWebhook(ctx, rule, payload)
-	case "slack":
-		return e.fireSlack(ctx, rule, payload)
-	case "discord":
-		return e.fireDiscord(ctx, rule, payload)
-	case "email":
-		return e.fireEmail(ctx, rule, payload)
-	}
-	return fmt.Errorf("unknown channel: %s", rule.Channel)
+	_, err := e.deliver(ctx, rule, payload)
+	return err
 }
 
 func buildAlertSubject(p AlertPayload) string {

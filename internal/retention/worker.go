@@ -56,6 +56,7 @@ func (w *Worker) purge(ctx context.Context) {
 	eventsDeleted, issuesDeleted := w.purgeEvents(ctx, cutoff)
 	txDeleted := w.purgeTransactions(ctx, cutoff)
 	logsDeleted := w.purgeLogs(ctx, cutoff)
+	firingsDeleted := w.purgeAlertFirings(ctx)
 	w.purgeExpiredAuthTokens(ctx)
 
 	slog.Info("retention: done",
@@ -63,6 +64,7 @@ func (w *Worker) purge(ctx context.Context) {
 		"issues_removed", issuesDeleted,
 		"transactions", txDeleted,
 		"logs", logsDeleted,
+		"alert_firings", firingsDeleted,
 	)
 }
 
@@ -136,6 +138,24 @@ func (w *Worker) purgeLogs(ctx context.Context, cutoff time.Time) int64 {
 	tag, err := w.pool.Exec(ctx, `DELETE FROM logs WHERE received_at < $1`, cutoff)
 	if err != nil {
 		slog.Error("retention: delete logs", "err", err)
+		return 0
+	}
+	return tag.RowsAffected()
+}
+
+// purgeAlertFirings keeps only the 1000 most recent firings per alert rule.
+func (w *Worker) purgeAlertFirings(ctx context.Context) int64 {
+	tag, err := w.pool.Exec(ctx, `
+		DELETE FROM alert_firings
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id, ROW_NUMBER() OVER (PARTITION BY rule_id ORDER BY fired_at DESC) AS rn
+				FROM alert_firings
+			) ranked
+			WHERE rn > 1000
+		)`)
+	if err != nil {
+		slog.Error("retention: purge alert firings", "err", err)
 		return 0
 	}
 	return tag.RowsAffected()
