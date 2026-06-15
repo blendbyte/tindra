@@ -135,6 +135,28 @@ func TestListAlertRules(t *testing.T) {
 	}
 }
 
+func TestListAlertRules_filteredByProject(t *testing.T) {
+	truncateProjects(t)
+	truncateAlerts(t)
+
+	p1, _ := storage.CreateProject(context.Background(), testPool, "proj-a", "Project A")
+	p2, _ := storage.CreateProject(context.Background(), testPool, "proj-b", "Project B")
+
+	storage.CreateAlertRule(context.Background(), testPool, webhookRule(p1.ID))
+	storage.CreateAlertRule(context.Background(), testPool, emailRule(p2.ID))
+
+	rules, err := storage.ListAlertRules(context.Background(), testPool, p1.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule for project p1, got %d", len(rules))
+	}
+	if len(rules[0].ProjectIDs) == 0 || rules[0].ProjectIDs[0] != p1.ID {
+		t.Errorf("returned rule does not belong to p1: %v", rules[0].ProjectIDs)
+	}
+}
+
 func TestUpdateAlertRule_disable(t *testing.T) {
 	p := setupProjectForAlerts(t)
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, webhookRule(p.ID))
