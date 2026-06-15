@@ -174,6 +174,22 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) {
 	}
 }
 
+// SetupDBWithDSN is like SetupDB but also returns the connection string for the
+// test database, which is needed by CLI commands that open their own connection.
+func SetupDBWithDSN(ctx context.Context) (*pgxpool.Pool, string, func()) {
+	pool, cleanup := SetupDB(ctx)
+	cc := pool.Config().ConnConfig
+	var dsn string
+	if cc.Password != "" {
+		dsn = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
+			cc.User, cc.Password, cc.Host, cc.Port, cc.Database)
+	} else {
+		dsn = fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=disable",
+			cc.User, cc.Host, cc.Port, cc.Database)
+	}
+	return pool, dsn, cleanup
+}
+
 func randomHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {

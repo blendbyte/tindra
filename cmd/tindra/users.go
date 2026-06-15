@@ -153,7 +153,7 @@ func usersSendInviteCmd(cfg config) *cobra.Command {
 				return fmt.Errorf("email sender: %w", err)
 			}
 			if emailSender == nil {
-				fmt.Printf("Email not configured. Share this invite link manually:\n%s\n", inviteURL)
+				fmt.Fprintf(cmd.OutOrStdout(), "Email not configured. Share this invite link manually:\n%s\n", inviteURL)
 				return nil
 			}
 
@@ -170,7 +170,7 @@ func usersSendInviteCmd(cfg config) *cobra.Command {
 				return fmt.Errorf("send email: %w", err)
 			}
 
-			fmt.Printf("Invite email sent to %s\n", email)
+			fmt.Fprintf(cmd.OutOrStdout(), "Invite email sent to %s\n", email)
 			return nil
 		},
 	}
