@@ -72,7 +72,16 @@ func TestListAuditLog_filterByKind(t *testing.T) {
 
 	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "auth.login"})
 	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "project.created"})
-	time.Sleep(50 * time.Millisecond)
+
+	// WriteAuditLog is async; poll until both rows land or 2s elapses.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		all, _ := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{})
+		if len(all) == 2 {
+			break
+		}
+	}
 
 	rows, err := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{Kind: "auth"})
 	if err != nil {
