@@ -34,8 +34,12 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	issuer := "Tindra"
+	if ro.publicURL != "" {
+		issuer = ro.publicURL
+	}
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "Tindra",
+		Issuer:      issuer,
 		AccountName: user.Email,
 	})
 	if err != nil {
