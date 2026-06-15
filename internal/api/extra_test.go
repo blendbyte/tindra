@@ -313,6 +313,20 @@ func TestChangePassword_missingFields(t *testing.T) {
 	}
 }
 
+func TestChangePassword_newPasswordTooShort(t *testing.T) {
+	// New password too short hits the non-ErrInvalidPassword error path.
+	body := bytes.NewBufferString(`{"current_password":"testpassword","new_password":"short"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/me/password", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for too-short new password, got %d", rec.Code)
+	}
+}
+
 // --- handleListComments / handleCreateComment ---
 
 func seedIssueForCommentAPI(t *testing.T) string {

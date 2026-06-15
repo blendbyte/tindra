@@ -398,6 +398,19 @@ func TestBulkUpdateIssues_success(t *testing.T) {
 	}
 }
 
+func TestBulkUpdateIssues_invalidStatus(t *testing.T) {
+	body := bytes.NewBufferString(`{"ids":["00000000-0000-0000-0000-000000000001"],"status":"garbage"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/issues/bulk", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid bulk status, got %d", rec.Code)
+	}
+}
+
 func TestBulkUpdateIssues_emptyIDs(t *testing.T) {
 	body := bytes.NewBufferString(`{"ids":[],"status":"resolved"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/issues/bulk", body)
@@ -1520,5 +1533,40 @@ func TestGetProjectStats_scopedByBearerToken(t *testing.T) {
 		if s.ProjectID != testProject.ID {
 			t.Errorf("bearer-scoped response includes unexpected project %q", s.ProjectID)
 		}
+	}
+}
+
+// --- handleGetStats ---
+
+func TestGetStats_success(t *testing.T) {
+	const statsKey = "test-stats-key-global"
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", statsKey, "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+statsKey)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["last_period_start"] == nil {
+		t.Error("expected last_period_start in stats response")
+	}
+}
+
+func TestGetStats_noKey(t *testing.T) {
+	// When statsAPIKey is empty the endpoint returns 404.
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer anything")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 when statsAPIKey not configured, got %d", rec.Code)
 	}
 }

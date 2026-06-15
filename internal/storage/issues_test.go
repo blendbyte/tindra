@@ -902,6 +902,27 @@ func TestGetIssueSparklines_empty(t *testing.T) {
 	}
 }
 
+func TestCountAllIssues_filterByLevels(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf-fatal", "Fatal", "fatal", "error", "", "", ts)
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf-warning", "Warning", "warning", "error", "", "", ts)
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf-info", "Info", "info", "error", "", "", ts)
+
+	n, err := storage.CountAllIssues(ctx, testPool, storage.IssueFilter{
+		Levels:     []string{"fatal", "warning"},
+		ProjectIDs: []string{project.ID},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 issues (fatal+warning), got %d", n)
+	}
+}
+
 // TestCountAllIssues_allCommonFilters exercises every branch in addCommonFilters by
 // passing a filter with all optional fields populated.
 func TestCountAllIssues_allCommonFilters(t *testing.T) {
