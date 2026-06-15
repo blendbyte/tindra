@@ -119,6 +119,12 @@ export const router = createRouter({
       component: () => import('@/views/ResetPasswordView.vue'),
       meta: { title: 'Reset password' },
     },
+    {
+      path: '/setup-mfa',
+      name: 'setup-mfa',
+      component: () => import('@/views/SetupMFAView.vue'),
+      meta: { requiresAuth: true, title: 'Set up two-factor authentication' },
+    },
   ],
   scrollBehavior() {
     return { top: 0 }
@@ -149,4 +155,6 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.init()
   if (to.meta.requiresAuth && !auth.user) return '/login'
+  if (to.meta.requiresAuth && auth.user && !auth.user.mfa_enabled && to.name !== 'setup-mfa') return '/setup-mfa'
+  if (to.name === 'setup-mfa' && auth.user?.mfa_enabled) return '/dashboard'
 })
