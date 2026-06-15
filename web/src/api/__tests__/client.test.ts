@@ -117,9 +117,8 @@ describe('apiFetch', () => {
       set: assign,
       get: () => '',
     })
-    const result = await apiFetch('/api/issues')
+    await expect(apiFetch('/api/issues')).rejects.toBeInstanceOf(ApiError)
     expect(assign).not.toHaveBeenCalled()
-    expect(result).toBeUndefined()
   })
 
   it('does not redirect on 401 when on an invite page', async () => {
@@ -128,8 +127,7 @@ describe('apiFetch', () => {
       writable: true,
       value: { pathname: '/invite/abc', href: '' },
     })
-    const result = await apiFetch('/api/issues')
-    expect(result).toBeUndefined()
+    await expect(apiFetch('/api/issues')).rejects.toBeInstanceOf(ApiError)
   })
 
   it('returns undefined when response has no content-type header', async () => {

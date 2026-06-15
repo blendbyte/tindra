@@ -49,8 +49,7 @@ func (ro *router) handleUploadSourcemap(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, sm)
+	writeJSONStatus(w, http.StatusCreated, sm)
 }
 
 func (ro *router) handleListSourcemaps(w http.ResponseWriter, r *http.Request) {

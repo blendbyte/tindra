@@ -123,7 +123,7 @@ func ListAlertRules(ctx context.Context, pool *pgxpool.Pool, projectID string) (
 	var args []any
 	if projectID != "" {
 		args = []any{projectID}
-		q = alertRuleQuery + ` WHERE EXISTS (SELECT 1 FROM alert_rule_projects WHERE alert_rule_id = ar.id AND project_id = $1::uuid) GROUP BY ar.id ORDER BY ar.created_at DESC`
+		q = alertRuleQuery + ` WHERE EXISTS (SELECT 1 FROM alert_rule_projects WHERE rule_id = ar.id AND project_id = $1::uuid) GROUP BY ar.id ORDER BY ar.created_at DESC`
 	}
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
@@ -267,7 +267,7 @@ func setAlertRuleProjects(ctx context.Context, tx pgx.Tx, ruleID string, project
 
 func normaliseProjectIDs(ids []string) []string {
 	// Remove blank entries so callers can safely pass a filtered slice.
-	out := ids[:0]
+	out := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if strings.TrimSpace(id) != "" {
 			out = append(out, id)

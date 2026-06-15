@@ -646,7 +646,7 @@ function toggleEventList() {
 }
 
 function selectEvent(ev: EventSummary) {
-  const idx = loadedEvents.value.findIndex(e => e.id === ev.id)
+  const idx = sortedEvents.value.findIndex(e => e.id === ev.id)
   if (idx !== -1) eventIndex.value = idx
 }
 
@@ -984,7 +984,7 @@ onUnmounted(() => {
                 v-for="ev in sortedEvents"
                 :key="ev.id"
                 class="evttable__row"
-                :class="{ 'evttable__row--active': loadedEvents[eventIndex]?.id === ev.id }"
+                :class="{ 'evttable__row--active': sortedEvents[eventIndex]?.id === ev.id }"
                 @click="selectEvent(ev)"
               >
                 <td class="evttable__time mono" :title="new Date(ev.received_at).toUTCString()">

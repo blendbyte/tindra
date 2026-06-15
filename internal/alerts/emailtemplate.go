@@ -350,6 +350,12 @@ func alertTriggerLine(p AlertPayload) string {
 			return "1 cron monitor reported an error."
 		}
 		return fmt.Sprintf("%d cron monitors reported errors.", count)
+	case "issue_auto_resolved":
+		count, _ := p.Details["resolved_count"].(int)
+		if count == 1 {
+			return "1 issue was automatically resolved."
+		}
+		return fmt.Sprintf("%d issues were automatically resolved.", count)
 	default:
 		return fmt.Sprintf("Alert rule %q fired.", p.RuleName)
 	}

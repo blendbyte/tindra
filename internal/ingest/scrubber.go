@@ -117,9 +117,11 @@ func buildScrubber(cfg ScrubConfig) (fields map[string]struct{}, regexps []*rege
 		}
 		pat := p.Pattern
 		if p.Builtin {
-			if bp, ok := builtinPatterns[p.Name]; ok {
-				pat = bp
+			bp, ok := builtinPatterns[p.Name]
+			if !ok {
+				continue
 			}
+			pat = bp
 		}
 		if pat == "" {
 			continue

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"mime/quotedprintable"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -292,6 +293,15 @@ func sanitizeHeader(s string) string {
 	}, s)
 }
 
+// qpEncode encodes s with quoted-printable so non-ASCII bytes survive SMTP transport.
+func qpEncode(s string) string {
+	var buf bytes.Buffer
+	w := quotedprintable.NewWriter(&buf)
+	_, _ = w.Write([]byte(s))
+	_ = w.Close()
+	return buf.String()
+}
+
 // smtpBuildMessage constructs the RFC 2822 message written to the SMTP DATA command.
 // When msg.HTML is set it produces a multipart/alternative message with a plain-text
 // fallback; otherwise it sends a simple text/plain message.
@@ -301,8 +311,8 @@ func smtpBuildMessage(from string, msg EmailMessage) string {
 
 	if msg.HTML == "" {
 		return baseHeaders +
-			"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
-			msg.Text
+			"Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" +
+			qpEncode(msg.Text)
 	}
 
 	boundary := "=_tindra_" + strings.ReplaceAll(fmt.Sprintf("%d", time.Now().UnixNano()), "-", "")
@@ -311,13 +321,13 @@ func smtpBuildMessage(from string, msg EmailMessage) string {
 	fmt.Fprintf(&b, "Content-Type: multipart/alternative; boundary=%q\r\n\r\n", boundary)
 
 	// Plain-text part (first = lowest preference per RFC 2046).
-	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n", boundary)
-	b.WriteString(msg.Text)
+	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n", boundary)
+	b.WriteString(qpEncode(msg.Text))
 	b.WriteString("\r\n\r\n")
 
 	// HTML part (last = highest preference).
-	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n", boundary)
-	b.WriteString(msg.HTML)
+	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n", boundary)
+	b.WriteString(qpEncode(msg.HTML))
 	b.WriteString("\r\n\r\n")
 
 	fmt.Fprintf(&b, "--%s--\r\n", boundary)

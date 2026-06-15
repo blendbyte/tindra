@@ -52,7 +52,8 @@ type IgnoreOptions struct {
 type IssueFilter struct {
 	Status         string
 	Level          string
-	Kind           string // "error" | "n1_query" | "" (all)
+	Levels         []string // non-empty = level = ANY(...); takes precedence over Level
+	Kind           string   // "error" | "n1_query" | "" (all)
 	Environment    string
 	AssigneeID     string
 	TagKey         string
@@ -236,7 +237,10 @@ func ListIssues(ctx context.Context, pool *pgxpool.Pool, projectID string, filte
 		args = append(args, filter.Status)
 		q += fmt.Sprintf(" AND status = $%d", len(args))
 	}
-	if filter.Level != "" {
+	if len(filter.Levels) > 0 {
+		args = append(args, filter.Levels)
+		q += fmt.Sprintf(" AND level = ANY($%d::text[])", len(args))
+	} else if filter.Level != "" {
 		args = append(args, filter.Level)
 		q += fmt.Sprintf(" AND level = $%d", len(args))
 	}
@@ -299,7 +303,10 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 		args = append(args, filter.Status)
 		q += fmt.Sprintf(" AND status = $%d", len(args))
 	}
-	if filter.Level != "" {
+	if len(filter.Levels) > 0 {
+		args = append(args, filter.Levels)
+		q += fmt.Sprintf(" AND level = ANY($%d::text[])", len(args))
+	} else if filter.Level != "" {
 		args = append(args, filter.Level)
 		q += fmt.Sprintf(" AND level = $%d", len(args))
 	}
@@ -603,6 +610,12 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 	var newIssues []*Issue
 	var totalUnmergedCount int64
 
+	// Get the project_id once; it's the same for all fingerprints.
+	var projectID string
+	if err := tx.QueryRow(ctx, `SELECT project_id FROM issues WHERE id = $1`, issueID).Scan(&projectID); err != nil {
+		return nil, fmt.Errorf("get project id: %w", err)
+	}
+
 	for _, fp := range fingerprints {
 		// Derive title, level, and time bounds from the events with this fingerprint.
 		var title, level string
@@ -625,14 +638,9 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 			// No events for this fingerprint (shouldn't happen in practice).
 			title, level = fp, "error"
 			firstSeen, lastSeen = time.Now(), time.Now()
+			count = 1
 		} else if err != nil {
 			return nil, fmt.Errorf("derive stats for %s: %w", fp, err)
-		}
-
-		// Get the project_id for this issue (needed for the new issue row).
-		var projectID string
-		if err := tx.QueryRow(ctx, `SELECT project_id FROM issues WHERE id = $1`, issueID).Scan(&projectID); err != nil {
-			return nil, fmt.Errorf("get project id: %w", err)
 		}
 
 		// Create the new issue.

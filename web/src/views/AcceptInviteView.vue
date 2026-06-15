@@ -2,12 +2,14 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/Icon.vue'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const token = route.params.token as string
 
 const state = ref<'loading' | 'ready' | 'submitting' | 'error' | 'invalid'>('loading')
@@ -39,6 +41,7 @@ async function submit(e: Event) {
       method: 'POST',
       body: JSON.stringify({ password: password.value, name: name.value.trim() }),
     })
+    auth.ready = false
     await router.push('/issues')
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Something went wrong. Try again.'

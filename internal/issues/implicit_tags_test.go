@@ -2,6 +2,7 @@ package issues
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -124,6 +125,36 @@ func TestExtractImplicitTags_truncatesLongValues(t *testing.T) {
 	tags := tagsToMap(extractImplicitTags(payload))
 	if got := tags["transaction"]; len(got) != tagMaxLen {
 		t.Errorf("expected truncation to %d chars, got %d", tagMaxLen, len(got))
+	}
+}
+
+func TestExtractImplicitTags_truncatesLongUTF8Values(t *testing.T) {
+	// "é" is a 2-byte rune; 250 of them exceed tagMaxLen in bytes but not in runes.
+	// The truncation must count runes, not bytes.
+	val := strings.Repeat("é", 250)
+	payload, _ := json.Marshal(map[string]string{"transaction": val})
+	tags := tagsToMap(extractImplicitTags(json.RawMessage(payload)))
+	got := tags["transaction"]
+	if len([]rune(got)) != tagMaxLen {
+		t.Errorf("expected rune length %d after truncation, got %d", tagMaxLen, len([]rune(got)))
+	}
+}
+
+func TestExtractImplicitTags_mechanismFromLastException(t *testing.T) {
+	payload := json.RawMessage(`{
+		"exception": {
+			"values": [
+				{"mechanism": {"type": "chained", "handled": true}},
+				{"mechanism": {"type": "unhandled", "handled": false}}
+			]
+		}
+	}`)
+	tags := tagsToMap(extractImplicitTags(payload))
+	if got := tags["mechanism"]; got != "unhandled" {
+		t.Errorf("mechanism: got %q, want unhandled (last exception)", got)
+	}
+	if got := tags["handled"]; got != "no" {
+		t.Errorf("handled: got %q, want no (from last exception)", got)
 	}
 }
 

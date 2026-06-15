@@ -168,6 +168,30 @@ func TestConditionMet_eventCount_overThreshold(t *testing.T) {
 	}
 }
 
+func TestConditionMet_eventCount_nilWindowMins(t *testing.T) {
+	threshold := 10
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Trigger: "event_count",
+		Threshold: &threshold, WindowMins: nil, // nil → should return error
+	}
+	_, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err == nil {
+		t.Error("expected error when WindowMins is nil")
+	}
+}
+
+func TestConditionMet_eventCount_nilThreshold(t *testing.T) {
+	window := 60
+	rule := &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Trigger: "event_count",
+		Threshold: nil, WindowMins: &window, // nil → should return error
+	}
+	_, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err == nil {
+		t.Error("expected error when Threshold is nil")
+	}
+}
+
 // --- fireWebhook ---
 
 func TestFireWebhook_success(t *testing.T) {
@@ -1477,6 +1501,31 @@ func TestEnrichPayload_withProjectName(t *testing.T) {
 	}
 }
 
+func TestEnrichPayload_withFilterLevel(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	filterLevel := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "new_issue",
+		CreatedAt:   time.Now().Add(-2 * time.Hour),
+		FilterLevel: &filterLevel,
+	}
+
+	testPool.Exec(context.Background(), `
+		INSERT INTO issues (project_id, fingerprint, title, level, first_seen, last_seen)
+		VALUES ($1, 'fp-enrich-fl', 'Error Issue', 'error', NOW(), NOW())
+	`, testProject.ID)
+
+	payload := &AlertPayload{Trigger: "new_issue"}
+	testEvaluator(nil).enrichPayload(context.Background(), payload, rule)
+
+	// Error-level issue should be included (levelsAtOrAbove("error") = [fatal, error])
+	if len(payload.Issues) == 0 {
+		t.Error("expected error-level issues to be included when FilterLevel=error")
+	}
+}
+
 // --- levelsAtOrAbove ---
 
 func TestLevelsAtOrAbove_performance(t *testing.T) {
@@ -1902,6 +1951,35 @@ func TestBuildAlertSubject_withProject(t *testing.T) {
 	got := buildAlertSubject(p)
 	if !strings.Contains(got, "My Project") {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestNotifyAutoResolved_skipsNonIssueTrigger(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
+
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	// event_count and cron_missed rules should NOT receive auto-resolve notifications.
+	threshold := 1
+	window := 60
+	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "event-count-rule",
+		Enabled: true, Trigger: "event_count", Channel: "webhook",
+		WebhookURL: &url, Threshold: &threshold, WindowMins: &window, CooldownMins: 60,
+	})
+
+	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000004", ProjectID: testProject.ID, Title: "some issue"}}
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.NotifyAutoResolved(context.Background(), issues)
+
+	if called {
+		t.Error("expected event_count rule to be skipped by NotifyAutoResolved")
 	}
 }
 

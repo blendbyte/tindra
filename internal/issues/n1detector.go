@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -30,13 +29,18 @@ const n1MinTotalMs = 50
 // together instead of being counted separately).
 var (
 	reSQLString  = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
-	reSQLNumber  = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	reSQLNumber  = regexp.MustCompile(`\$\d+|\b\d+(?:\.\d+)?\b`)
 	reWhitespace = regexp.MustCompile(`\s+`)
 )
 
 func normalizeSQL(s string) string {
 	s = reSQLString.ReplaceAllString(s, "?")
-	s = reSQLNumber.ReplaceAllString(s, "?")
+	s = reSQLNumber.ReplaceAllStringFunc(s, func(m string) string {
+		if m[0] == '$' {
+			return m
+		}
+		return "?"
+	})
 	s = strings.ToLower(strings.TrimSpace(s))
 	return reWhitespace.ReplaceAllString(s, " ")
 }
@@ -96,7 +100,7 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 
 		issue, _, _, err := storage.UpsertIssue(ctx, d.pool,
 			tx.ProjectID, fp, title, "performance", "n1_query",
-			tx.Environment, "", time.Now())
+			tx.Environment, "", tx.Timestamp)
 		if err != nil {
 			slog.Error("n1 upsert issue", "err", err)
 			continue

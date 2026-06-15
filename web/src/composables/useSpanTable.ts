@@ -4,8 +4,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
 import type { SpanSummary, SpanTimeseries } from '@/api/types'
-
-const WINDOW_MAP: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 }
+import { WINDOW_MAP } from '@/utils/time'
 
 export function useSpanTable(config: {
   endpoint: string

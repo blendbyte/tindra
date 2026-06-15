@@ -112,13 +112,13 @@ describe('projects store', () => {
       expect(store.selectedIds).toEqual(['a', 'b'])
     })
 
-    it('does not modify selection when project list is empty', async () => {
+    it('clears selection when project list becomes empty (e.g. new user)', async () => {
       const { useProjectsStore } = await import('../projects')
       const store = useProjectsStore()
       store.setSelected(['a', 'b'])
       projectsData.value = []
       await nextTick()
-      expect(store.selectedIds).toEqual(['a', 'b'])
+      expect(store.selectedIds).toEqual([])
     })
   })
 })

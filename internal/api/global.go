@@ -79,7 +79,8 @@ func (ro *router) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lastPeriodStart := time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, time.UTC)
+	prev := now.AddDate(0, -1, 0)
+	lastPeriodStart := time.Date(prev.Year(), prev.Month(), 1, 0, 0, 0, 0, time.UTC)
 
 	writeJSON(w, struct {
 		Projects        int64  `json:"projects"`
@@ -197,6 +198,7 @@ func (ro *router) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.created",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &p.ID,
 		IP:        r.RemoteAddr,
 	})
@@ -245,6 +247,7 @@ func (ro *router) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.updated",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &p.ID,
 		IP:        r.RemoteAddr,
 	})
@@ -288,6 +291,7 @@ func (ro *router) handleUpdateProjectPrivacy(w http.ResponseWriter, r *http.Requ
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.updated",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &p.ID,
 		IP:        r.RemoteAddr,
 	})
@@ -296,6 +300,9 @@ func (ro *router) handleUpdateProjectPrivacy(w http.ResponseWriter, r *http.Requ
 
 func (ro *router) handleGetProjectQuota(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
+	if !enforceTokenProject(w, r, projectID) {
+		return
+	}
 
 	events, err := storage.CountProjectEvents(r.Context(), ro.pool, projectID)
 	if err != nil {
@@ -352,6 +359,7 @@ func (ro *router) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.deleted",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &id,
 		IP:        r.RemoteAddr,
 	})
@@ -559,13 +567,24 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "ids must be a non-empty array", http.StatusBadRequest)
 		return
 	}
+	switch req.Status {
+	case "open", "resolved", "ignored":
+	default:
+		http.Error(w, "invalid status", http.StatusBadRequest)
+		return
+	}
 	var ignoreOpts *storage.IgnoreOptions
 	if req.Status == "ignored" && (req.IgnoreUntil != nil || req.IgnoreCountLimit != nil) {
 		ignoreOpts = &storage.IgnoreOptions{Until: req.IgnoreUntil, CountLimit: req.IgnoreCountLimit}
 	}
 	n, err := storage.BulkUpdateIssueStatus(r.Context(), ro.pool, req.IDs, req.Status, ignoreOpts, nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if strings.Contains(err.Error(), "invalid status") {
+			http.Error(w, "invalid status", http.StatusBadRequest)
+			return
+		}
+		slog.Error("bulk update issue status", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -657,8 +676,12 @@ func (ro *router) handleUpdateIssueGlobal(w http.ResponseWriter, r *http.Request
 		}
 		updated, err = storage.UpdateIssueStatus(r.Context(), ro.pool, issue.ProjectID, id, req.Status, ignoreOpts)
 		if err != nil {
-			slog.Error("update issue status", "err", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
+			if strings.Contains(err.Error(), "invalid status") {
+				http.Error(w, "bad request", http.StatusBadRequest)
+			} else {
+				slog.Error("update issue status", "err", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
 			return
 		}
 		storage.WriteAuditLog(ro.pool, storage.AuditEntry{
@@ -835,7 +858,12 @@ func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev, err := storage.GetEventForIssueAtOffset(r.Context(), ro.pool, issueID, offset)
-	if err != nil || ev == nil || ev.TraceID == nil || *ev.TraceID == "" {
+	if err != nil {
+		slog.Error("get event for issue", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if ev == nil || ev.TraceID == nil || *ev.TraceID == "" {
 		writeJSON(w, nil)
 		return
 	}

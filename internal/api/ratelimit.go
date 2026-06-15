@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -89,8 +90,14 @@ func (rl *rateLimiter) peek(key string) (count int, resetAt time.Time) {
 func (rl *rateLimiter) limitBy(keyFn func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !rl.allow(keyFn(r)) {
-				w.Header().Set("Retry-After", "60")
+			key := keyFn(r)
+			if !rl.allow(key) {
+				_, resetAt := rl.peek(key)
+				secs := int(time.Until(resetAt).Seconds()) + 1
+				if secs < 1 {
+					secs = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(secs))
 				http.Error(w, "too many requests", http.StatusTooManyRequests)
 				return
 			}

@@ -9,11 +9,11 @@ import type { WebVitalsSummary, WebVitalsPage } from '@/api/types'
 import FilterChip from '@/components/FilterChip.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
 import Icon from '@/components/Icon.vue'
+import { WINDOW_MAP } from '@/utils/time'
 
 const projects = useProjectsStore()
 const perf = usePerformanceStore()
 
-const WINDOW_MAP: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 }
 const hours = computed(() => WINDOW_MAP[perf.windowHrs] ?? 24)
 
 const params = computed(() => {

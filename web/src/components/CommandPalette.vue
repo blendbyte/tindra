@@ -160,6 +160,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onKey)
   document.removeEventListener('keydown', onGlobalKey)
+  if (searchTimer) clearTimeout(searchTimer)
 })
 </script>
 

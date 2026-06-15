@@ -2,6 +2,7 @@ package issues_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -342,6 +343,16 @@ func TestN1Detector_skipsEmptyTxID(t *testing.T) {
 	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
 	if len(list) != 0 {
 		t.Errorf("expected 0 issues when txID is empty, got %d", len(list))
+	}
+}
+
+func TestNormalizeSQL_preservesPostgresPlaceholders(t *testing.T) {
+	got := issues.NormalizeSQL("SELECT * FROM t WHERE id = $1 AND x = 2")
+	if !strings.Contains(got, "$1") {
+		t.Errorf("$1 placeholder should be preserved, got %q", got)
+	}
+	if !strings.Contains(got, "?") {
+		t.Errorf("literal 2 should be replaced with ?, got %q", got)
 	}
 }
 

@@ -78,7 +78,7 @@ func rewriteEnvelopeDSN(raw []byte, upstreamDSN string) ([]byte, error) {
 	}
 
 	var hdr map[string]json.RawMessage
-	if err := json.Unmarshal(bytes.TrimRight(headerLine, "\n"), &hdr); err != nil {
+	if err := json.Unmarshal(bytes.TrimRight(headerLine, "\r\n"), &hdr); err != nil {
 		return nil, fmt.Errorf("parse header: %w", err)
 	}
 	dsnJSON, _ := json.Marshal(upstreamDSN)

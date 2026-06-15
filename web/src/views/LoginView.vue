@@ -79,8 +79,8 @@ async function submit() {
       mfaCode.value = ''
       error.value = null
     } else {
-      auth.ready = false
       await qc.resetQueries()
+      auth.ready = false
       router.push('/dashboard')
     }
   } catch (e: unknown) {
@@ -99,8 +99,8 @@ async function submitMFA() {
       method: 'POST',
       body: JSON.stringify({ mfa_token: mfaToken.value, code: mfaCode.value }),
     })
-    auth.ready = false
     await qc.resetQueries()
+    auth.ready = false
     router.push('/dashboard')
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'invalid code'

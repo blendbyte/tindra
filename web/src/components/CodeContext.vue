@@ -16,11 +16,14 @@ const ready = shallowRef(false)
 
 const allLines = computed(() => [...props.preContext, props.contextLine, ...props.postContext])
 
-watchEffect(async () => {
+watchEffect((onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
   ready.value = false
   const lang = langForPlatform(props.platform)
-  tokenLines.value = await highlightBlock(allLines.value.join('\n'), lang)
-  ready.value = true
+  highlightBlock(allLines.value.join('\n'), lang).then(tokens => {
+    if (!cancelled) { tokenLines.value = tokens; ready.value = true }
+  })
 })
 
 function lineNo(idx: number): number {

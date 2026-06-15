@@ -57,7 +57,12 @@ func (ro *router) handleAdminSetPassword(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if strings.Contains(err.Error(), "password must be at least") {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		slog.Error("admin set password", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -145,7 +150,8 @@ func (ro *router) handleDoPasswordReset(w http.ResponseWriter, r *http.Request) 
 
 	u, err := storage.UsePasswordResetToken(r.Context(), ro.pool, token, req.Password)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		slog.Error("reset password", "err", err)
+		http.Error(w, "unable to reset password", http.StatusBadRequest)
 		return
 	}
 	if u == nil {

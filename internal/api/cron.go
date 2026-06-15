@@ -173,9 +173,12 @@ func (ro *router) handleListCheckins(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := 50
 	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			limit = n
 		}
+	}
+	if limit > 500 {
+		limit = 500
 	}
 	checkins, err := storage.ListCheckins(r.Context(), ro.pool, m.ID, limit)
 	if err != nil {
