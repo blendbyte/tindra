@@ -17,7 +17,7 @@ import (
 )
 
 func authHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 func TestHandleLogin_success(t *testing.T) {

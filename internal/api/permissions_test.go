@@ -15,7 +15,7 @@ import (
 )
 
 func permHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 // makeReadOnlyUser creates a user with no permissions (testUser is already first,
@@ -175,7 +175,7 @@ func TestCreateAlertRule_forbiddenWithoutPerm(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(roCookie)
 	rec := httptest.NewRecorder()
-	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil).ServeHTTP(rec, req)
+	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", rec.Code)

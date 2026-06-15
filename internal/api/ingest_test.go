@@ -65,7 +65,7 @@ func truncateEvents(t *testing.T) {
 }
 
 func newHandler(buf *ingest.Buffer) http.Handler {
-	return api.NewRouter(testPool, buf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	return api.NewRouter(testPool, buf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 func eventEnvelope(eventID, payload string) string {
@@ -305,7 +305,7 @@ func TestHandleEnvelope_logItem(t *testing.T) {
 	defer cancel()
 	go logBuf.Run(ctx, testPool)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	payload := `[{"timestamp":1700000000.0,"level":"info","body":"hello from log","trace_id":"abc123","span_id":"def456","attributes":{"sentry.environment":"test"}}]`
 	body := logEnvelope(payload)
@@ -327,7 +327,7 @@ func TestHandleEnvelope_logItem_singleObject(t *testing.T) {
 	defer cancel()
 	go logBuf.Run(ctx, testPool)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	// Single object (not array) format.
 	payload := `{"timestamp":1700000001.0,"level":"warn","body":"single log object"}`

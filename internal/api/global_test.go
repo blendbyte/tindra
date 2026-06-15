@@ -159,7 +159,7 @@ func TestCreateProject_duplicateSlug(t *testing.T) {
 
 func TestCreateProject_projectLimitReached(t *testing.T) {
 	// projectLimit=1; testProject already exists → 429.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 1, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 1, 0, 0, 0, 0, nil, false, true, nil)
 	body := bytes.NewBufferString(`{"name":"Limited","slug":"limited-proj"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/projects", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -221,7 +221,7 @@ func TestGetSettings_updateAvailable(t *testing.T) {
 	api.AppVersion = "v1.0.0"
 	defer func() { api.AppVersion = prev }()
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	api.SetLatestVersionForTest(h, "v9.9.9", "https://example.com/releases/v9.9.9")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
@@ -939,7 +939,7 @@ func TestTestAlertRule_noEvaluator(t *testing.T) {
 	})
 
 	// Router created without an evaluator → 503.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost,
 		fmt.Sprintf("/api/alert-rules/%s/test", rule.ID), nil)
 	req.AddCookie(authCookie())
@@ -954,7 +954,7 @@ func TestTestAlertRule_noEvaluator(t *testing.T) {
 func TestTestAlertRule_notFound(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/alert-rules/00000000-0000-0000-0000-000000000000/test", nil)
 	req.AddCookie(authCookie())

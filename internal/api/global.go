@@ -31,8 +31,9 @@ func truncSearch(s string) string {
 }
 
 func (ro *router) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]string{
-		"public_url": ro.publicURL,
+	writeJSON(w, map[string]any{
+		"public_url":  ro.publicURL,
+		"require_mfa": ro.requireMFA,
 	})
 }
 
