@@ -438,12 +438,16 @@ func TestGetReleaseIssues_categories(t *testing.T) {
 	ts := time.Now().UTC()
 	newIssue, _, _, _ := storage.UpsertIssue(ctx, testPool, p.ID, "fp-cat-new", "New Issue", "error", "error", "", "7.0.0", ts)
 
-	// Insert an event linked to this issue tagged with the release
+	// release is a generated column (payload->>'release'), so put the version
+	// in the payload JSON and let the DB extract it; inserting the column
+	// directly would error and silently produce no row.
 	var evID string
-	testPool.QueryRow(ctx, `
-		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id, release)
-		VALUES ($1, NOW(), NOW(), '{"level":"error"}'::jsonb, 'fp-cat-new', $2, '7.0.0') RETURNING id
-	`, p.ID, newIssue.ID).Scan(&evID)
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO events (project_id, timestamp, payload)
+		VALUES ($1, NOW(), '{"level":"error","release":"7.0.0"}'::jsonb) RETURNING id
+	`, p.ID).Scan(&evID); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
 	storage.LinkEventToIssue(ctx, testPool, evID, newIssue.ID, "fp-cat-new")
 
 	issues, err := storage.GetReleaseIssues(ctx, testPool, relID)

@@ -244,9 +244,23 @@ func TestGrouper_storesImplicitTags(t *testing.T) {
 		t.Fatalf("expected 1 issue after grouping, got 0")
 	}
 
-	tags, err := storage.GetIssueTags(context.Background(), testPool, issueList[0].ID)
-	if err != nil {
-		t.Fatalf("get issue tags: %v", err)
+	// InsertEventTags runs after UpsertIssue+LinkEventToIssue in processBatch,
+	// so poll until tags are non-empty rather than reading immediately.
+	var tags []storage.TagSummary
+	tagDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(tagDeadline) {
+		time.Sleep(100 * time.Millisecond)
+		var err error
+		tags, err = storage.GetIssueTags(context.Background(), testPool, issueList[0].ID)
+		if err != nil {
+			t.Fatalf("get issue tags: %v", err)
+		}
+		if len(tags) > 0 {
+			break
+		}
+	}
+	if len(tags) == 0 {
+		t.Fatal("timed out waiting for tags to be stored")
 	}
 
 	tagMap := make(map[string]string)
