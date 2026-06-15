@@ -159,12 +159,18 @@ func TestHandleEnvelope_passthroughUpstreamFailDoesNotAffectIngest(t *testing.T)
 		t.Errorf("ingest should return 200 even when passthrough fails, got %d", rec.Code)
 	}
 
-	time.Sleep(350 * time.Millisecond) // wait for buffer flush
-
+	// Poll for up to 2s for the buffer's 200ms flush cycle to complete.
+	deadline := time.Now().Add(2 * time.Second)
 	var count int
-	testPool.QueryRow(context.Background(),
-		"SELECT COUNT(*) FROM events WHERE project_id = $1", testProject.ID,
-	).Scan(&count)
+	for time.Now().Before(deadline) {
+		testPool.QueryRow(context.Background(),
+			"SELECT COUNT(*) FROM events WHERE project_id = $1", testProject.ID,
+		).Scan(&count)
+		if count >= 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if count < 1 {
 		t.Error("event should be stored in DB even when passthrough upstream fails")
 	}
