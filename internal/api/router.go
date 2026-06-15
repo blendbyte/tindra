@@ -239,7 +239,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		// manage_users: invite management, user deletion, permission management, and admin user actions.
 		r.With(ro.requirePerm("manage_users")).Post("/api/invites", ro.handleCreateInvite)
 		r.With(ro.requirePerm("manage_users")).Get("/api/invites", ro.handleListInvites)
-		r.With(ro.requirePerm("manage_users")).Delete("/api/invites/{token}", ro.handleRevokeInvite)
+		r.With(ro.requirePerm("manage_users")).Delete("/api/invites/{id}", ro.handleRevokeInvite)
 		r.With(ro.requirePerm("manage_users")).Delete("/api/users/{userID}", ro.handleDeleteUser)
 		r.With(ro.requirePerm("manage_users")).Put("/api/users/{userID}/permissions", ro.handleUpdateUserPermissions)
 		r.With(ro.requirePerm("manage_users")).Delete("/api/users/{userID}/mfa", ro.handleAdminDisableMFA)

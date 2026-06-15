@@ -44,8 +44,8 @@ func TestGetInvite_found(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	require.NotNil(t, inv)
-	if inv.Token != token {
-		t.Errorf("token: got %q, want %q", inv.Token, token)
+	if inv.ID == "" {
+		t.Error("expected non-empty ID")
 	}
 	if inv.Email != "found@example.com" {
 		t.Errorf("email: got %q", inv.Email)
@@ -134,7 +134,12 @@ func TestDeleteInvite_found(t *testing.T) {
 
 	token, _ := storage.CreateInvite(context.Background(), testPool, "", "del@example.com", "")
 
-	deleted, err := storage.DeleteInvite(context.Background(), testPool, token)
+	inv, err := storage.GetInvite(context.Background(), testPool, token)
+	if err != nil || inv == nil {
+		t.Fatalf("get before delete: %v, inv=%v", err, inv)
+	}
+
+	deleted, err := storage.DeleteInvite(context.Background(), testPool, inv.ID)
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -142,19 +147,19 @@ func TestDeleteInvite_found(t *testing.T) {
 		t.Error("expected deleted=true")
 	}
 
-	inv, _ := storage.GetInvite(context.Background(), testPool, token)
-	if inv != nil {
+	inv2, _ := storage.GetInvite(context.Background(), testPool, token)
+	if inv2 != nil {
 		t.Error("expected nil after delete")
 	}
 }
 
 func TestDeleteInvite_notFound(t *testing.T) {
-	deleted, err := storage.DeleteInvite(context.Background(), testPool, "nosuchtoken000000000000000000000000000000000000")
+	deleted, err := storage.DeleteInvite(context.Background(), testPool, "00000000-0000-0000-0000-000000000000")
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if deleted {
-		t.Error("expected deleted=false for non-existent token")
+		t.Error("expected deleted=false for non-existent id")
 	}
 }
 

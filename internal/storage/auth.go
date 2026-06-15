@@ -371,7 +371,7 @@ func CreateSession(ctx context.Context, pool *pgxpool.Pool, userID string) (*Ses
 		INSERT INTO sessions (token_hash, user_id, expires_at)
 		VALUES ($1, $2, $3)
 		RETURNING user_id, expires_at, created_at
-	`, sessionTokenHash(token), userID, expiresAt).Scan(&s.UserID, &s.ExpiresAt, &s.CreatedAt)
+	`, tokenHash(token), userID, expiresAt).Scan(&s.UserID, &s.ExpiresAt, &s.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert: %w", err)
 	}
@@ -383,7 +383,7 @@ func GetSession(ctx context.Context, pool *pgxpool.Pool, token string) (*Session
 	err := pool.QueryRow(ctx, `
 		SELECT user_id, expires_at, created_at
 		FROM sessions WHERE token_hash = $1 AND expires_at > NOW()
-	`, sessionTokenHash(token)).Scan(&s.UserID, &s.ExpiresAt, &s.CreatedAt)
+	`, tokenHash(token)).Scan(&s.UserID, &s.ExpiresAt, &s.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -394,7 +394,7 @@ func GetSession(ctx context.Context, pool *pgxpool.Pool, token string) (*Session
 }
 
 func DeleteSession(ctx context.Context, pool *pgxpool.Pool, token string) error {
-	_, err := pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, sessionTokenHash(token))
+	_, err := pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash(token))
 	if err != nil {
 		return fmt.Errorf("delete: %w", err)
 	}
@@ -405,7 +405,7 @@ func DeleteSession(ctx context.Context, pool *pgxpool.Pool, token string) error 
 // ID in a single round-trip. Returns an empty string if the session didn't exist.
 func DeleteSessionReturningUserID(ctx context.Context, pool *pgxpool.Pool, token string) (string, error) {
 	var userID string
-	err := pool.QueryRow(ctx, `DELETE FROM sessions WHERE token_hash = $1 RETURNING user_id`, sessionTokenHash(token)).Scan(&userID)
+	err := pool.QueryRow(ctx, `DELETE FROM sessions WHERE token_hash = $1 RETURNING user_id`, tokenHash(token)).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -471,7 +471,7 @@ func generateSessionToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func sessionTokenHash(token string) string {
+func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }

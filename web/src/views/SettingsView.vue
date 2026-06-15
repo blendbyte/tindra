@@ -451,16 +451,12 @@ function closeInviteForm() {
 }
 
 const { mutate: revokeInvite } = useMutation({
-  mutationFn: (token: string) => apiFetch(`/api/invites/${token}`, { method: 'DELETE' }),
+  mutationFn: (id: string) => apiFetch(`/api/invites/${id}`, { method: 'DELETE' }),
   onSuccess: () => {
     qc.invalidateQueries({ queryKey: ['invites'] })
     showToast('Invite revoked')
   },
 })
-
-function inviteURL(token: string): string {
-  return `${window.location.origin}/invite/${token}`
-}
 
 function copyInviteURL(url: string) {
   navigator.clipboard.writeText(url)
@@ -2120,7 +2116,7 @@ function actionKindOf(action: string) {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="inv in invites" :key="inv.token">
+              <tr v-for="inv in invites" :key="inv.id">
                 <td class="mono" style="font-size: 12px">{{ inv.email }}</td>
                 <td class="muted" style="font-size: 12px">{{ inv.name || '–' }}</td>
                 <td class="muted" style="font-size: 11px">{{ formatDate(inv.expires_at) }}</td>
@@ -2128,19 +2124,14 @@ function actionKindOf(action: string) {
                   <div class="user-menu" @click.stop>
                     <button
                       class="user-menu__trigger"
-                      :class="{ 'user-menu__trigger--open': openMenuId === inv.token }"
-                      :aria-expanded="openMenuId === inv.token"
-                      @click="toggleUserMenu(inv.token, $event)"
+                      :class="{ 'user-menu__trigger--open': openMenuId === inv.id }"
+                      :aria-expanded="openMenuId === inv.id"
+                      @click="toggleUserMenu(inv.id, $event)"
                     >
                       <Icon name="more-horizontal" :size="15" />
                     </button>
-                    <div v-if="openMenuId === inv.token" class="user-menu__dropdown">
-                      <button class="user-menu__item" @click="copyInviteURL(inviteURL(inv.token)); closeUserMenus()">
-                        <Icon name="copy" :size="13" class="user-menu__item-icon" />
-                        Copy link
-                      </button>
-                      <div class="user-menu__divider" />
-                      <button class="user-menu__item user-menu__item--danger" @click="revokeInvite(inv.token); closeUserMenus()">
+                    <div v-if="openMenuId === inv.id" class="user-menu__dropdown">
+                      <button class="user-menu__item user-menu__item--danger" @click="revokeInvite(inv.id); closeUserMenus()">
                         <Icon name="trash-2" :size="13" class="user-menu__item-icon" />
                         Revoke
                       </button>

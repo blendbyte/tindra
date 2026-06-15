@@ -19,9 +19,9 @@ func CreatePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, userID st
 	}
 	token := hex.EncodeToString(b)
 	_, err := pool.Exec(ctx, `
-		INSERT INTO password_reset_tokens (token, user_id, expires_at)
+		INSERT INTO password_reset_tokens (token_hash, user_id, expires_at)
 		VALUES ($1, $2, NOW() + INTERVAL '24 hours')
-	`, token, userID)
+	`, tokenHash(token), userID)
 	if err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
@@ -36,8 +36,8 @@ func GetPasswordResetUser(ctx context.Context, pool *pgxpool.Pool, token string)
 			u.created_at
 		FROM password_reset_tokens t
 		JOIN users u ON u.id = t.user_id
-		WHERE t.token = $1 AND t.expires_at > NOW() AND t.used_at IS NULL
-	`, token).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
+		WHERE t.token_hash = $1 AND t.expires_at > NOW() AND t.used_at IS NULL
+	`, tokenHash(token)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -69,7 +69,7 @@ func UsePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 		WITH reset AS (
 			UPDATE password_reset_tokens
 			SET used_at = NOW()
-			WHERE token = $1 AND expires_at > NOW() AND used_at IS NULL
+			WHERE token_hash = $1 AND expires_at > NOW() AND used_at IS NULL
 			RETURNING user_id
 		)
 		UPDATE users
@@ -79,7 +79,7 @@ func UsePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 		RETURNING users.id, users.email, users.name, users.password_hash, users.mfa_enabled,
 			users.perm_manage_projects, users.perm_manage_users, users.perm_manage_alerts, users.perm_manage_issues,
 			users.created_at
-	`, token, string(hash)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
+	`, tokenHash(token), string(hash)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
