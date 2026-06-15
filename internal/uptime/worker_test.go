@@ -110,8 +110,10 @@ func TestWorker_probesAndRecordsDown_wrongStatusCode(t *testing.T) {
 	m := seedMonitor(t, srv.URL, "GET", "200-299")
 	w := uptime.NewWorker(testPool)
 
-	// Two probes to cross the failure threshold
+	// Two probes to cross the failure threshold; reset next_check_at between
+	// calls so the monitor is immediately due again (interval_secs=300 by default).
 	w.RunOnce(ctx)
+	testPool.Exec(ctx, `UPDATE uptime_monitors SET next_check_at = NOW() - INTERVAL '1 second' WHERE id=$1`, m.ID)
 	w.RunOnce(ctx)
 
 	updated, _ := storage.GetUptimeMonitor(ctx, testPool, m.ID)
