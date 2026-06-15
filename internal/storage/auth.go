@@ -209,7 +209,7 @@ func AuthenticateUser(ctx context.Context, pool *pgxpool.Pool, email, password s
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues,
 		&u.CreatedAt, &failedAttempts, &lockedUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
-		bcrypt.CompareHashAndPassword(dummyHash, []byte(password)) //nolint:errcheck
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return nil, nil
 	}
 	if err != nil {
@@ -217,7 +217,7 @@ func AuthenticateUser(ctx context.Context, pool *pgxpool.Pool, email, password s
 	}
 
 	if lockedUntil != nil && time.Now().Before(*lockedUntil) {
-		bcrypt.CompareHashAndPassword(dummyHash, []byte(password)) //nolint:errcheck
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return nil, nil
 	}
 

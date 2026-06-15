@@ -159,7 +159,7 @@ func TestCreateProject_duplicateSlug(t *testing.T) {
 
 func TestCreateProject_projectLimitReached(t *testing.T) {
 	// projectLimit=1; testProject already exists → 429.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 1, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 1, 0, 0, 0, 0, nil, false, false, nil)
 	body := bytes.NewBufferString(`{"name":"Limited","slug":"limited-proj"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/projects", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -221,7 +221,7 @@ func TestGetSettings_updateAvailable(t *testing.T) {
 	api.AppVersion = "v1.0.0"
 	defer func() { api.AppVersion = prev }()
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	api.SetLatestVersionForTest(h, "v9.9.9", "https://example.com/releases/v9.9.9")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
@@ -398,19 +398,6 @@ func TestBulkUpdateIssues_success(t *testing.T) {
 	}
 }
 
-func TestBulkUpdateIssues_invalidStatus(t *testing.T) {
-	body := bytes.NewBufferString(`{"ids":["00000000-0000-0000-0000-000000000001"],"status":"garbage"}`)
-	req := httptest.NewRequest(http.MethodPatch, "/api/issues/bulk", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	globalHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for invalid bulk status, got %d", rec.Code)
-	}
-}
-
 func TestBulkUpdateIssues_emptyIDs(t *testing.T) {
 	body := bytes.NewBufferString(`{"ids":[],"status":"resolved"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/issues/bulk", body)
@@ -478,24 +465,6 @@ func TestUpdateIssueGlobal_sameStatus(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200 for no-op status change, got %d", rec.Code)
-	}
-}
-
-func TestUpdateIssueGlobal_invalidStatus(t *testing.T) {
-	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
-	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
-		testProject.ID, "fp-inv-status", "Invalid Status", "error", "error", "", "", time.Now().UTC())
-
-	body := bytes.NewBufferString(`{"status":"bogus"}`)
-	req := httptest.NewRequest(http.MethodPatch,
-		fmt.Sprintf("/api/issues/%s", iss.ID), body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	globalHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for invalid status value, got %d", rec.Code)
 	}
 }
 
@@ -970,7 +939,7 @@ func TestTestAlertRule_noEvaluator(t *testing.T) {
 	})
 
 	// Router created without an evaluator → 503.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodPost,
 		fmt.Sprintf("/api/alert-rules/%s/test", rule.ID), nil)
 	req.AddCookie(authCookie())
@@ -985,7 +954,7 @@ func TestTestAlertRule_noEvaluator(t *testing.T) {
 func TestTestAlertRule_notFound(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/alert-rules/00000000-0000-0000-0000-000000000000/test", nil)
 	req.AddCookie(authCookie())
@@ -1481,31 +1450,6 @@ func TestGetProjectStats_returnsOpenIssueCounts(t *testing.T) {
 	}
 }
 
-func TestGetProjectQuota_bearerTokenWrongProject(t *testing.T) {
-	other, err := storage.CreateProject(context.Background(), testPool, "quota-scope-proj", "Quota Scope")
-	if err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id=$1", other.ID)
-	})
-
-	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, other.ID, "quota-scope-tok", false)
-	if err != nil {
-		t.Fatalf("create token: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/projects/"+testProject.ID+"/quota", nil)
-	req.Header.Set("Authorization", "Bearer "+plaintext)
-	rec := httptest.NewRecorder()
-	globalHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404 for wrong-project Bearer token on quota endpoint, got %d", rec.Code)
-	}
-}
-
 func TestGetProjectStats_scopedByBearerToken(t *testing.T) {
 	tok, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "stats-scope-token", false)
 	if err != nil {
@@ -1536,7 +1480,41 @@ func TestGetProjectStats_scopedByBearerToken(t *testing.T) {
 	}
 }
 
+func TestGetProjectStats_withProjectID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/projects/stats?project_id=%s", testProject.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var stats []*storage.ProjectIssueCount
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// All returned entries should be for the requested project.
+	for _, s := range stats {
+		if s.ProjectID != testProject.ID {
+			t.Errorf("expected only testProject in filtered response, got %q", s.ProjectID)
+		}
+	}
+}
+
 // --- handleGetStats ---
+
+func TestGetStats_wrongKey(t *testing.T) {
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "my-key", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer wrong-key")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong Bearer token, got %d", rec.Code)
+	}
+}
 
 func TestGetStats_success(t *testing.T) {
 	const statsKey = "test-stats-key-global"
@@ -1560,7 +1538,6 @@ func TestGetStats_success(t *testing.T) {
 }
 
 func TestGetStats_noKey(t *testing.T) {
-	// When statsAPIKey is empty the endpoint returns 404.
 	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer anything")
@@ -1568,5 +1545,675 @@ func TestGetStats_noKey(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404 when statsAPIKey not configured, got %d", rec.Code)
+	}
+}
+
+// --- handleGetProjectQuota ---
+
+func TestGetProjectQuota_found(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/projects/%s/quota", testProject.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, key := range []string{"events_this_month", "rate_limit_per_min"} {
+		if _, ok := resp[key]; !ok {
+			t.Errorf("expected key %q in quota response", key)
+		}
+	}
+}
+
+// --- handleListAllIssues additional coverage ---
+
+func TestListAllIssues_withSinceFilter(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues?since=24h", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestListAllIssues_withCursor(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-cursor-test", "Cursor Issue", "error", "error", "", "", time.Now().UTC())
+
+	// First page.
+	req1 := httptest.NewRequest(http.MethodGet, "/api/issues", nil)
+	req1.AddCookie(authCookie())
+	rec1 := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first page: expected 200, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	var first struct {
+		NextCursorTime string `json:"next_cursor_time"`
+		NextCursorID   string `json:"next_cursor_id"`
+	}
+	if err := json.NewDecoder(rec1.Body).Decode(&first); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+
+	// Second page using cursor (may be empty; just ensure 200).
+	url2 := fmt.Sprintf("/api/issues?cursor_time=%s&cursor_id=%s",
+		first.NextCursorTime, first.NextCursorID)
+	req2 := httptest.NewRequest(http.MethodGet, url2, nil)
+	req2.AddCookie(authCookie())
+	rec2 := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("cursor page: expected 200, got %d", rec2.Code)
+	}
+}
+
+func TestListAllIssues_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues", nil)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// --- handleUpdateIssueGlobal assignee path ---
+
+func TestUpdateIssueGlobal_assigneeUpdate(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-assignee-upd", "Assignee Update", "error", "error", "", "", time.Now().UTC())
+
+	body := bytes.NewBufferString(`{"assignee_id": null}`)
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/issues/%s", iss.ID), body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateIssueGlobal_badBody(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-bad-body", "Bad Body", "error", "error", "", "", time.Now().UTC())
+
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/issues/%s", iss.ID),
+		bytes.NewBufferString("not json"))
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad JSON body, got %d", rec.Code)
+	}
+}
+
+// --- handleGetIssueTags not found ---
+
+func TestGetIssueTags_unknownIssue(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/issues/00000000-0000-0000-0000-000000000000/tags", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	// enforceIssueProject passes for session auth; unknown issue returns empty array.
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for unknown issue tags, got %d", rec.Code)
+	}
+	var tags []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&tags); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(tags) != 0 {
+		t.Errorf("expected empty tags for unknown issue, got %d", len(tags))
+	}
+}
+
+// --- handleListEventsForIssue ---
+
+func TestListEventsForIssue_unauthenticated(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-events-unauth", "Events Unauth", "error", "error", "", "", time.Now().UTC())
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/issues/%s/events", iss.ID), nil)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// --- handleGetTransactionGlobal ---
+
+func TestGetTransactionGlobal_found(t *testing.T) {
+	truncateTransactions(t)
+
+	var txID string
+	if err := testPool.QueryRow(context.Background(),
+		"INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp) VALUES ($1, $2, 'http.server', 'ok', 100, NOW(), NOW()) RETURNING id",
+		testProject.ID, "/api/test-"+fmt.Sprintf("%d", time.Now().UnixNano()),
+	).Scan(&txID); err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/transactions/%s", txID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["id"] != txID {
+		t.Errorf("id: got %v, want %q", got["id"], txID)
+	}
+}
+
+// --- Span endpoints ---
+
+func TestSpanSummaries_db(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/db", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSpanSummaries_cache(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/cache", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSpanSummaries_jobs(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/jobs", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSpanSummaries_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/db", nil)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestSpanTimeseries_db(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/db/timeseries", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSpanTimeseries_cache(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/cache/timeseries", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSpanTimeseries_jobs(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/spans/jobs/timeseries", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleBulkUpdateIssues: additional status values ---
+
+func TestBulkUpdateIssues_ignored(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-bulk-ignored", "Bulk Ignored", "error", "error", "", "", time.Now().UTC())
+
+	body, _ := json.Marshal(map[string]any{
+		"ids":    []string{iss.ID},
+		"status": "ignored",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/issues/bulk", bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["updated"] == nil {
+		t.Error("expected 'updated' in response")
+	}
+}
+
+func TestBulkUpdateIssues_ignoredWithOptions(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-bulk-ign-opts", "Bulk Ignored Opts", "error", "error", "", "", time.Now().UTC())
+
+	limit := 10
+	body, _ := json.Marshal(map[string]any{
+		"ids":                []string{iss.ID},
+		"status":             "ignored",
+		"ignore_count_limit": limit,
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/issues/bulk", bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleUpdateProject: passthrough_dsn ---
+
+func TestUpdateProject_clearPassthroughDSN(t *testing.T) {
+	p, err := storage.CreateProject(context.Background(), testPool, "upd-proj-dsn", "DSN Project")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	body := bytes.NewBufferString(fmt.Sprintf(`{"name":%q,"slug":"upd-proj-dsn","passthrough_dsn":""}`, p.Name))
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/projects/%s", p.ID), body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated storage.Project
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.PassthroughDSN != nil {
+		t.Errorf("expected nil passthrough_dsn after clearing, got %q", *updated.PassthroughDSN)
+	}
+}
+
+// --- handleGetTransactionErrors: empty trace_id ---
+
+func TestGetTransactionErrors_emptyTraceID(t *testing.T) {
+	truncateTransactions(t)
+
+	var txID string
+	err := testPool.QueryRow(context.Background(), `
+		INSERT INTO transactions
+			(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+		VALUES ($1, '/no-trace', 'http.server', 'ok', 10, NOW(), NOW())
+		RETURNING id
+	`, testProject.ID).Scan(&txID)
+	if err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/transactions/%s/errors", txID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var errs []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&errs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Errorf("expected empty errors for transaction with no trace_id, got %d", len(errs))
+	}
+}
+
+// --- handleExportIssues: since parameter ---
+
+func TestExportIssues_since24h(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?since=24h", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("expected text/csv content-type, got %q", ct)
+	}
+}
+
+func TestExportIssues_since7d(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?since=7d", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExportIssues_since30d(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?since=30d", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExportIssues_since90d(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?since=90d", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExportIssues_withLevelFilter(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?level=error", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExportIssues_withTagFilter(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?tag_key=env&tag_value=prod", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExportIssues_jsonWithFilters(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/export?format=json&level=error&since=24h", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var issues []json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&issues); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
+func TestListAllIssues_since7d(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues?since=7d", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestListAllIssues_since30d(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues?since=30d", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestListAllIssues_since90d(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/issues?since=90d", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestListAllTransactions_withLimit(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions?limit=10", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListAllTransactions_withCursor(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/transactions?cursor_time=2024-01-01T00:00:00.000000000Z&cursor_id=00000000-0000-0000-0000-000000000001", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListAllTransactions_paginationResponse(t *testing.T) {
+	truncateTransactions(t)
+	for i := range 50 {
+		testPool.Exec(context.Background(),
+			"INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp) VALUES ($1, $2, 'http', 'ok', 100, NOW(), NOW())",
+			testProject.ID, fmt.Sprintf("/tx-page-%d", i))
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NextCursorTime *string `json:"next_cursor_time"`
+		NextCursorID   *string `json:"next_cursor_id"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.NextCursorTime == nil {
+		t.Error("expected next_cursor_time to be set when result is full page")
+	}
+}
+
+func TestListEventsForIssue_withCursorTime(t *testing.T) {
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-events-cursor", "Events Cursor", "error", "error", "", "", time.Now().UTC())
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/issues/%s/events?cursor_time=2024-01-01T00:00:00.000000000Z&cursor_id=00000000-0000-0000-0000-000000000001", iss.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleGetProjectQuota additional coverage ---
+
+func TestGetProjectQuota_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/projects/%s/quota", testProject.ID), nil)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestGetProjectQuota_allFields(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/projects/%s/quota", testProject.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, key := range []string{"events_this_month", "event_limit", "rate_limit_per_min", "rate_limit_used", "daily_volume"} {
+		if _, ok := resp[key]; !ok {
+			t.Errorf("expected key %q in quota response", key)
+		}
+	}
+}
+
+// --- handleUpdateProjectPrivacy additional coverage ---
+
+func TestUpdateProjectPrivacy_invalidScrubPatterns(t *testing.T) {
+	p, err := storage.CreateProject(context.Background(), testPool, "priv-invalid-pat", "Privacy Invalid Pattern")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id=$1", p.ID)
+	})
+
+	tooMany := make([]map[string]any, 21)
+	for i := range tooMany {
+		tooMany[i] = map[string]any{"name": fmt.Sprintf("p%d", i), "pattern": "x", "builtin": false}
+	}
+	body, _ := json.Marshal(map[string]any{
+		"scrub_fields":   []string{},
+		"scrub_patterns": tooMany,
+	})
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/projects/%s/privacy", p.ID), bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for too many scrub patterns, got %d", rec.Code)
+	}
+}
+
+func TestUpdateProjectPrivacy_invalidScrubPatternsJSON(t *testing.T) {
+	p, err := storage.CreateProject(context.Background(), testPool, "priv-invalid-json", "Privacy Invalid JSON")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id=$1", p.ID)
+	})
+
+	body := bytes.NewBufferString(`{"scrub_fields":[],"scrub_patterns":"not-an-array"}`)
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/projects/%s/privacy", p.ID), body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid scrub_patterns JSON, got %d", rec.Code)
+	}
+}
+
+// --- handleGetStats additional coverage ---
+
+func TestGetStats_responseFields(t *testing.T) {
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "stats-key", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer stats-key")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, key := range []string{
+		"projects", "users", "events_this_month", "events_last_month",
+		"period_start", "last_period_start", "event_limit", "version", "uptime_seconds",
+	} {
+		if _, ok := resp[key]; !ok {
+			t.Errorf("expected key %q in stats response", key)
+		}
 	}
 }

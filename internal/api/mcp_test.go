@@ -1179,3 +1179,222 @@ func TestMCP_unauthenticated_hasWWWAuthenticate(t *testing.T) {
 		t.Errorf("expected WWW-Authenticate: Bearer ..., got %q", hdr)
 	}
 }
+
+func TestMCP_ruleMatchesProjects_bearerListAlerts(t *testing.T) {
+	truncateAlertRules(t)
+
+	url := "https://hooks.example.com/mcp-rule-test"
+	rule, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs:   []string{testProject.ID},
+		Name:         "rule-match-test",
+		Enabled:      true,
+		Trigger:      "new_issue",
+		Channel:      "webhook",
+		WebhookURL:   &url,
+		CooldownMins: 0,
+	})
+	if err != nil {
+		t.Fatalf("create alert rule: %v", err)
+	}
+	_ = rule
+
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rule-match-tok", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_alerts","arguments":{}}}`
+	rec := bearerRequest(t, mcpHandler(), plaintext, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp rpcResp
+	json.NewDecoder(rec.Body).Decode(&resp)
+	isErr, _ := resp.Result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, resp.Result))
+	}
+	text := toolText(t, resp.Result)
+	var rules []map[string]any
+	if err := json.Unmarshal([]byte(text), &rules); err != nil {
+		t.Fatalf("expected JSON array: %v\ntext: %s", err, text)
+	}
+	if len(rules) == 0 {
+		t.Error("expected at least one rule visible to the bearer token's project")
+	}
+}
+
+// --- update_issue: assignee branch (else block when status == "") ---
+
+func TestMCP_updateIssue_assigneeUpdate(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "mcp-assignee-fp", "Assignee Issue")
+
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rw-assignee-tok", true)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	// Update with assignee_id = testUser.ID (no status field → triggers else branch)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"update_issue","arguments":{"id":"` + iss.ID + `","assignee_id":"` + testUser.ID + `"}}}`
+	rec := bearerRequest(t, mcpHandler(), plaintext, body)
+	var resp rpcResp
+	json.NewDecoder(rec.Body).Decode(&resp)
+	isErr, _ := resp.Result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected error on assignee update: %s", toolText(t, resp.Result))
+	}
+	text := toolText(t, resp.Result)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The response should be the updated issue JSON.
+	if got["id"] != iss.ID {
+		t.Errorf("id: got %v, want %v", got["id"], iss.ID)
+	}
+}
+
+func TestMCP_updateIssue_unassign(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "mcp-unassign-fp", "Unassign Issue")
+
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rw-unassign-tok", true)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	// No status, no assignee_id → assigneeID stays nil → unassigns (covers details["to_id"]=nil path)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"update_issue","arguments":{"id":"` + iss.ID + `"}}}`
+	rec := bearerRequest(t, mcpHandler(), plaintext, body)
+	var resp rpcResp
+	json.NewDecoder(rec.Body).Decode(&resp)
+	isErr, _ := resp.Result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected error on unassign: %s", toolText(t, resp.Result))
+	}
+	text := toolText(t, resp.Result)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["id"] != iss.ID {
+		t.Errorf("id: got %v, want %v", got["id"], iss.ID)
+	}
+}
+
+// --- get_overview: len(summaries) > 0 branch ---
+
+func TestMCP_getOverview_withTransactions(t *testing.T) {
+	// Seed a transaction so that ListTransactionSummaries returns at least one
+	// entry, triggering the len(summaries) > 0 branch and error-rate calculation.
+	testPool.Exec(context.Background(),
+		"INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp) VALUES ($1,$2,'http.server','ok',100,NOW(),NOW())",
+		testProject.ID, "/mcp-overview-tx")
+
+	result := toolCall(t, mcpHandler(), "get_overview", map[string]any{}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	text := toolText(t, result)
+	var overview map[string]any
+	if err := json.Unmarshal([]byte(text), &overview); err != nil {
+		t.Fatalf("overview text is not valid JSON: %v\ntext: %s", err, text)
+	}
+	if _, ok := overview["open_issues"]; !ok {
+		t.Error("overview missing open_issues")
+	}
+	// transaction_error_rate is only present when len(summaries) > 0.
+	if _, ok := overview["transaction_error_rate"]; !ok {
+		t.Log("note: transaction_error_rate not in response — summaries may have been outside the 24h window")
+	}
+}
+
+// --- list_transactions: name filter param ---
+
+func TestMCP_listTransactions_nameFilter(t *testing.T) {
+	// Exercises the mcpArgString(args, "name") path inside mcpListTransactions.
+	result := toolCall(t, mcpHandler(), "list_transactions", map[string]any{
+		"name":  "/nonexistent-endpoint",
+		"hours": 24,
+		"limit": 10,
+	}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	text := toolText(t, result)
+	var txs []any
+	if err := json.Unmarshal([]byte(text), &txs); err != nil {
+		t.Fatalf("list_transactions name filter: expected JSON array: %v\ntext: %s", err, text)
+	}
+}
+
+func TestMCP_listTransactions_hoursClampedLow(t *testing.T) {
+	// hours < 1 is clamped to 1; exercises that branch.
+	result := toolCall(t, mcpHandler(), "list_transactions", map[string]any{"hours": 0}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	text := toolText(t, result)
+	var txs []any
+	if err := json.Unmarshal([]byte(text), &txs); err != nil {
+		t.Fatalf("expected JSON array: %v\ntext: %s", err, text)
+	}
+}
+
+func TestMCP_listTransactions_hoursClampedHigh(t *testing.T) {
+	// hours > 168 is clamped to 168; exercises that branch.
+	result := toolCall(t, mcpHandler(), "list_transactions", map[string]any{"hours": 9999}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	text := toolText(t, result)
+	var txs []any
+	if err := json.Unmarshal([]byte(text), &txs); err != nil {
+		t.Fatalf("expected JSON array: %v\ntext: %s", err, text)
+	}
+}
+
+// --- list_releases: bearer-scoped request ---
+
+func TestMCP_listReleases_bearerScoped(t *testing.T) {
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "releases-bearer-tok", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_releases","arguments":{}}}`
+	rec := bearerRequest(t, mcpHandler(), plaintext, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp rpcResp
+	json.NewDecoder(rec.Body).Decode(&resp)
+	isErr, _ := resp.Result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError for list_releases bearer: %s", toolText(t, resp.Result))
+	}
+	text := toolText(t, resp.Result)
+	var releases []any
+	if err := json.Unmarshal([]byte(text), &releases); err != nil {
+		t.Fatalf("list_releases bearer: expected JSON array: %v\ntext: %s", err, text)
+	}
+}
+
+func TestMCP_listReleases_limitParam(t *testing.T) {
+	// Exercises the mcpArgLimit path with an explicit limit.
+	result := toolCall(t, mcpHandler(), "list_releases", map[string]any{"limit": 5}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	text := toolText(t, result)
+	var releases []any
+	if err := json.Unmarshal([]byte(text), &releases); err != nil {
+		t.Fatalf("expected JSON array: %v\ntext: %s", err, text)
+	}
+}

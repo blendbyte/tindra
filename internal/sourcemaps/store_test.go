@@ -562,3 +562,47 @@ func TestStore_setCachedLines_lruEviction(t *testing.T) {
 	_ = lastURL
 	// If we get here without panic, LRU eviction worked correctly
 }
+
+func TestStore_fetchContextLine_colnoNearStart(t *testing.T) {
+	// colno=10 on a 200-char line: start = 10-70 = -60 → clamped to 0 (covers if start<0 body)
+	longLine := strings.Repeat("b", 200)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, longLine)
+	}))
+	defer srv.Close()
+
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/start.js","lineno":1,"colno":10}]}}]}}`, srv.URL))
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+
+	var out map[string]any
+	json.Unmarshal(got, &out)
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	cl, _ := frame["context_line"].(string)
+	if cl == "" {
+		t.Errorf("expected non-empty context_line for near-start colno, got empty")
+	}
+}
+
+func TestStore_fetchContextLine_colnoNearEnd(t *testing.T) {
+	// colno=170 on a 200-char line: start=100, end=240 > 200 → end clamped to 200 (covers if end>len body)
+	longLine := strings.Repeat("c", 200)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, longLine)
+	}))
+	defer srv.Close()
+
+	store := sourcemaps.NewStore(testDataDir, testPool)
+	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/end.js","lineno":1,"colno":170}]}}]}}`, srv.URL))
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
+
+	var out map[string]any
+	json.Unmarshal(got, &out)
+	frames := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)
+	frame := frames[0].(map[string]any)
+	cl, _ := frame["context_line"].(string)
+	if cl == "" {
+		t.Errorf("expected non-empty context_line for near-end colno, got empty")
+	}
+}

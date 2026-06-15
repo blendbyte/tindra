@@ -163,3 +163,124 @@ func TestSendInviteCmd_emailNormalised(t *testing.T) {
 		t.Errorf("email not lowercased: got %q", invites[0].Email)
 	}
 }
+
+// --- create ---
+
+func TestCreateUserCmd_missingEmail(t *testing.T) {
+	cmd := usersCreateCmd(inviteCfg())
+	cmd.SetArgs([]string{"--password", "password1234"})
+	if err := cmd.Execute(); err == nil {
+		t.Error("expected error when --email flag is missing")
+	}
+}
+
+func TestCreateUserCmd_missingPassword(t *testing.T) {
+	cmd := usersCreateCmd(inviteCfg())
+	cmd.SetArgs([]string{"--email", "admin@example.com"})
+	if err := cmd.Execute(); err == nil {
+		t.Error("expected error when --password flag is missing")
+	}
+}
+
+func TestCreateUserCmd_success(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	cmd := usersCreateCmd(inviteCfg())
+	cmd.SetArgs([]string{"--email", "admin@example.com", "--password", "password1234"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	count, err := storage.CountUsers(context.Background(), testUserPool)
+	if err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 user, got %d", count)
+	}
+}
+
+func TestCreateUserCmd_limitReached(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	if _, err := storage.CreateUser(context.Background(), testUserPool, "first@example.com", "password1234"); err != nil {
+		t.Fatalf("create initial user: %v", err)
+	}
+
+	cfg := inviteCfg()
+	cfg.userLimit = 1
+
+	cmd := usersCreateCmd(cfg)
+	cmd.SetArgs([]string{"--email", "second@example.com", "--password", "password1234"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error when user limit is reached")
+	}
+	if !strings.Contains(err.Error(), "user limit") {
+		t.Errorf("expected user limit error, got: %v", err)
+	}
+}
+
+// --- list ---
+
+func TestListUsersCmd_empty(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	cmd := usersListCmd(inviteCfg())
+	cmd.SetArgs([]string{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+}
+
+func TestListUsersCmd_withUser(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	if _, err := storage.CreateUser(context.Background(), testUserPool, "listme@example.com", "password1234"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	cmd := usersListCmd(inviteCfg())
+	cmd.SetArgs([]string{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+}
+
+// --- send-password-reset ---
+
+func TestSendPasswordResetCmd_missingArg(t *testing.T) {
+	cmd := usersSendPasswordResetCmd(inviteCfg())
+	cmd.SetArgs([]string{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("expected error when email argument is missing")
+	}
+}
+
+func TestSendPasswordResetCmd_userNotFound(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	cmd := usersSendPasswordResetCmd(inviteCfg())
+	cmd.SetArgs([]string{"nobody@example.com"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error for unknown email")
+	}
+	if !strings.Contains(err.Error(), "no user found") {
+		t.Errorf("expected 'no user found' error, got: %v", err)
+	}
+}
+
+func TestSendPasswordResetCmd_noEmailSender(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	if _, err := storage.CreateUser(context.Background(), testUserPool, "reset@example.com", "password1234"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	cmd := usersSendPasswordResetCmd(inviteCfg())
+	cmd.SetArgs([]string{"reset@example.com"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+}

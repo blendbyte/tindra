@@ -251,3 +251,119 @@ func TestEnforceIssueProject_issueNotFound(t *testing.T) {
 		t.Errorf("expected 404 for unknown issue, got %d", rec.Code)
 	}
 }
+
+// --- enforceIssueProject via globalHandler /api/issues/{id}/events ---
+
+func TestEnforceIssueProject_wrongProject_listEvents(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	truncateTokens(t)
+
+	iss, _, _, err := storage.UpsertIssue(context.Background(), testPool, testProject.ID, "fp-eip-lev-w", "EIP List Ev Wrong", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+
+	other, err := storage.CreateProject(context.Background(), testPool, "eip-lev-other", "EIP List Ev Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID)
+	})
+	tok := bearerToken(t, other.ID)
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/issues/%s/events", iss.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for cross-project list events, got %d", rec.Code)
+	}
+}
+
+func TestEnforceIssueProject_correctProject_listEvents(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	truncateTokens(t)
+
+	iss, _, _, err := storage.UpsertIssue(context.Background(), testPool, testProject.ID, "fp-eip-lev-ok", "EIP List Ev OK", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+	tok := bearerToken(t, testProject.ID)
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/issues/%s/events", iss.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for same-project list events, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleGetIssueGlobal bearer token scope check ---
+
+func TestGetIssueGlobal_bearerTokenWrongProject(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	truncateTokens(t)
+
+	iss, _, _, err := storage.UpsertIssue(context.Background(), testPool, testProject.ID, "fp-gi-scope-w", "GI Scope Wrong", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+
+	other, err := storage.CreateProject(context.Background(), testPool, "gi-scope-other", "GI Scope Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID)
+	})
+	tok := bearerToken(t, other.ID)
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/issues/%s", iss.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for wrong-project bearer token, got %d", rec.Code)
+	}
+}
+
+func TestEnforceIssueProject_wrongProject_tags(t *testing.T) {
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-eip-tags", "EIP Tags", "error", "error", "", "", time.Now().UTC())
+
+	other, _ := storage.CreateProject(context.Background(), testPool, "eip-tags-other", "EIP Tags Other")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id=$1", other.ID) })
+	tok := bearerToken(t, other.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/"+iss.ID+"/tags", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for wrong-project bearer on tags, got %d", rec.Code)
+	}
+}
+
+func TestGetIssueHistogram_wrongProjectBearer(t *testing.T) {
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-hist-bearer", "Hist Bearer", "error", "error", "", "", time.Now().UTC())
+	other, _ := storage.CreateProject(context.Background(), testPool, "hist-scope-other", "Hist Scope")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id=$1", other.ID) })
+	tok := bearerToken(t, other.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/"+iss.ID+"/events/histogram", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for wrong-project bearer on histogram, got %d", rec.Code)
+	}
+}

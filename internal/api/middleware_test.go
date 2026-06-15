@@ -204,3 +204,49 @@ func TestSecurityHeaders_nextHandlerIsCalled(t *testing.T) {
 		t.Errorf("expected status from next handler, got %d", rec.Code)
 	}
 }
+
+func TestCORS_headersSent(t *testing.T) {
+	mw := corsMiddleware("http://localhost:3000")
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	for _, key := range []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+		"Access-Control-Allow-Credentials",
+		"Access-Control-Max-Age",
+		"Vary",
+	} {
+		if rec.Header().Get(key) == "" {
+			t.Errorf("expected header %q to be set", key)
+		}
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+		t.Errorf("Access-Control-Allow-Origin: got %q", got)
+	}
+}
+
+func TestCORS_preflightOptions(t *testing.T) {
+	mw := corsMiddleware("http://localhost:3000")
+	called := false
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204 for OPTIONS preflight, got %d", rec.Code)
+	}
+	if called {
+		t.Error("next handler should not be called for OPTIONS preflight")
+	}
+}
