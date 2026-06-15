@@ -2,6 +2,8 @@ package storage_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -9,6 +11,11 @@ import (
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
+
+func oauthTestHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 func truncateOAuth(t *testing.T) {
 	t.Helper()
@@ -111,9 +118,9 @@ func TestConsumeOAuthState_expired(t *testing.T) {
 
 	token := "expired-oauth-state-000000000000001"
 	_, err := testPool.Exec(context.Background(), `
-		INSERT INTO oauth_states (token, provider, verifier, expires_at)
+		INSERT INTO oauth_states (token_hash, provider, verifier, expires_at)
 		VALUES ($1, 'github', 'v', $2)
-	`, token, time.Now().Add(-time.Hour))
+	`, oauthTestHash(token), time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("insert expired state: %v", err)
 	}

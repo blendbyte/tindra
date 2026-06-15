@@ -54,15 +54,19 @@ func limitedHandler(userLimit int) http.Handler {
 	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "https://example.com", "", "", 0, 0, 0, userLimit, 0, 0, nil, false, nil)
 }
 
-// seedInvite creates an invite record directly and removes it on cleanup.
+// seedInvite creates an invite record and removes it on cleanup. Returns the plaintext token.
 func seedInvite(t *testing.T, email, name string) string {
 	t.Helper()
 	token, err := storage.CreateInvite(context.Background(), testPool, testUser.ID, email, name)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
+	inv, err := storage.GetInvite(context.Background(), testPool, token)
+	if err != nil || inv == nil {
+		t.Fatalf("get invite for cleanup setup: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), "DELETE FROM invites WHERE token = $1", token)
+		storage.DeleteInvite(context.Background(), testPool, inv.ID)
 	})
 	return token
 }
@@ -271,8 +275,12 @@ func TestCreateInvite_forbidden(t *testing.T) {
 
 func TestRevokeInvite_success(t *testing.T) {
 	token := seedInvite(t, "revoke-me@example.com", "")
+	inv, err := storage.GetInvite(context.Background(), testPool, token)
+	if err != nil || inv == nil {
+		t.Fatalf("get invite: %v", err)
+	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/invites/"+token, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/invites/"+inv.ID, nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	issuesHandler().ServeHTTP(rec, req)
@@ -283,7 +291,7 @@ func TestRevokeInvite_success(t *testing.T) {
 }
 
 func TestRevokeInvite_notFound(t *testing.T) {
-	req := httptest.NewRequest(http.MethodDelete, "/api/invites/nosuchtoken", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/invites/00000000-0000-0000-0000-000000000000", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	issuesHandler().ServeHTTP(rec, req)
