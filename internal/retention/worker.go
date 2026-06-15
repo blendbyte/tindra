@@ -56,6 +56,7 @@ func (w *Worker) purge(ctx context.Context) {
 	eventsDeleted, issuesDeleted := w.purgeEvents(ctx, cutoff)
 	txDeleted := w.purgeTransactions(ctx, cutoff)
 	logsDeleted := w.purgeLogs(ctx, cutoff)
+	uptimeChecksDeleted := w.purgeUptimeChecks(ctx, cutoff)
 	w.purgeExpiredAuthTokens(ctx)
 
 	slog.Info("retention: done",
@@ -63,6 +64,7 @@ func (w *Worker) purge(ctx context.Context) {
 		"issues_removed", issuesDeleted,
 		"transactions", txDeleted,
 		"logs", logsDeleted,
+		"uptime_checks", uptimeChecksDeleted,
 	)
 }
 
@@ -136,6 +138,15 @@ func (w *Worker) purgeLogs(ctx context.Context, cutoff time.Time) int64 {
 	tag, err := w.pool.Exec(ctx, `DELETE FROM logs WHERE received_at < $1`, cutoff)
 	if err != nil {
 		slog.Error("retention: delete logs", "err", err)
+		return 0
+	}
+	return tag.RowsAffected()
+}
+
+func (w *Worker) purgeUptimeChecks(ctx context.Context, cutoff time.Time) int64 {
+	tag, err := w.pool.Exec(ctx, `DELETE FROM uptime_checks WHERE checked_at < $1`, cutoff)
+	if err != nil {
+		slog.Error("retention: delete uptime checks", "err", err)
 		return 0
 	}
 	return tag.RowsAffected()

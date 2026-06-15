@@ -281,6 +281,8 @@ export type AlertTrigger =
   | 'event_count'
   | 'cron_missed'
   | 'cron_error'
+  | 'uptime_down'
+  | 'uptime_recovered'
 
 export type CronMonitorState = 'unknown' | 'ok' | 'missed' | 'error' | 'in_progress'
 export type CronMonitorStatus = 'active' | 'paused'
@@ -336,6 +338,53 @@ export interface AlertRule {
   min_occurrences: number | null
   last_fired_at: string | null
   created_at: string
+}
+
+export type UptimeMonitorState = 'unknown' | 'up' | 'down'
+export type UptimeMonitorStatus = 'active' | 'paused'
+
+export interface UptimeCheckDot {
+  status: 'up' | 'down'
+  checked_at: string
+}
+
+export interface UptimeMonitor {
+  id: string
+  project_id: string
+  name: string
+  url: string
+  method: 'GET' | 'HEAD'
+  interval_secs: number
+  timeout_secs: number
+  expected_codes: string
+  body_contains: string | null
+  status: UptimeMonitorStatus
+  state: UptimeMonitorState
+  consecutive_failures: number
+  last_checked_at: string | null
+  last_ok_at: string | null
+  next_check_at: string | null
+  last_status_code: number | null
+  last_response_ms: number | null
+  created_at: string
+  recent_checks: UptimeCheckDot[]
+}
+
+export interface UptimeCheck {
+  id: string
+  monitor_id: string
+  status: 'up' | 'down'
+  status_code: number | null
+  response_ms: number | null
+  error: string | null
+  checked_at: string
+}
+
+export interface UptimeStats {
+  uptime_24h: number
+  uptime_7d: number
+  uptime_30d: number
+  avg_response_ms: number | null
 }
 
 export interface Log {

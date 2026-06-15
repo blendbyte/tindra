@@ -285,6 +285,41 @@ func TestWorker_deletesIgnoredIssueAfterEventsPurged(t *testing.T) {
 	}
 }
 
+func TestWorker_deletesOldUptimeChecks(t *testing.T) {
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "TRUNCATE uptime_monitors CASCADE")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "TRUNCATE uptime_monitors CASCADE") })
+
+	var monitorID string
+	err := testPool.QueryRow(ctx, `
+		INSERT INTO uptime_monitors (project_id, name, url, method, interval_secs, timeout_secs, expected_codes)
+		VALUES ($1, 'ret-uptime', 'https://example.com', 'GET', 300, 10, '200-299')
+		RETURNING id
+	`, testProject.ID).Scan(&monitorID)
+	if err != nil {
+		t.Fatalf("insert monitor: %v", err)
+	}
+
+	staleTS := time.Now().AddDate(0, 0, -91)
+	testPool.Exec(ctx, `
+		INSERT INTO uptime_checks (monitor_id, status, checked_at)
+		VALUES ($1, 'up', $2)
+	`, monitorID, staleTS)
+	testPool.Exec(ctx, `
+		INSERT INTO uptime_checks (monitor_id, status, checked_at)
+		VALUES ($1, 'up', NOW())
+	`, monitorID)
+
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
+
+	var count int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM uptime_checks WHERE monitor_id = $1", monitorID).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 uptime check (fresh only), got %d", count)
+	}
+}
+
 func TestWorker_Run_disabled(t *testing.T) {
 	done := make(chan struct{})
 	go func() {

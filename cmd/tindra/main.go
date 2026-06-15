@@ -26,6 +26,7 @@ import (
 	"github.com/blendbyte/tindra/internal/retention"
 	"github.com/blendbyte/tindra/internal/sourcemaps"
 	"github.com/blendbyte/tindra/internal/storage"
+	"github.com/blendbyte/tindra/internal/uptime"
 	"github.com/blendbyte/tindra/internal/version"
 )
 
@@ -320,6 +321,7 @@ func serveCmd(cfg config) *cobra.Command {
 
 			go retention.NewWorker(pool, cfg.retentionDays).Run(ctx)
 			go digest.NewWorker(pool, emailSender, cfg.publicURL).Run(ctx)
+			go uptime.NewWorker(pool).Run(ctx)
 
 			go func() {
 				ticker := time.NewTicker(60 * time.Second)

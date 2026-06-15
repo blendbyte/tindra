@@ -278,6 +278,52 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			return false, nil, nil
 		}
 		return true, map[string]any{"error_count": count}, nil
+
+	case "uptime_down":
+		var clauses []string
+		var args []any
+		if len(rule.ProjectIDs) > 0 {
+			args = append(args, rule.ProjectIDs)
+			clauses = append(clauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(args)))
+		}
+		clauses = append(clauses, "status = 'active'", "state = 'down'")
+		where := strings.Join(clauses, " AND ")
+		var count int
+		if err := e.pool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM uptime_monitors WHERE "+where, args...,
+		).Scan(&count); err != nil {
+			return false, nil, fmt.Errorf("uptime_down count: %w", err)
+		}
+		if count == 0 {
+			return false, nil, nil
+		}
+		return true, map[string]any{"down_count": count}, nil
+
+	case "uptime_recovered":
+		since := rule.CreatedAt
+		if rule.LastFiredAt != nil {
+			since = *rule.LastFiredAt
+		}
+		var clauses []string
+		var args []any
+		if len(rule.ProjectIDs) > 0 {
+			args = append(args, rule.ProjectIDs)
+			clauses = append(clauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(args)))
+		}
+		clauses = append(clauses, "status = 'active'", "state = 'up'")
+		args = append(args, since)
+		clauses = append(clauses, fmt.Sprintf("last_ok_at > $%d", len(args)))
+		where := strings.Join(clauses, " AND ")
+		var count int
+		if err := e.pool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM uptime_monitors WHERE "+where, args...,
+		).Scan(&count); err != nil {
+			return false, nil, fmt.Errorf("uptime_recovered count: %w", err)
+		}
+		if count == 0 {
+			return false, nil, nil
+		}
+		return true, map[string]any{"recovered_count": count}, nil
 	}
 	return false, nil, nil
 }
@@ -285,16 +331,17 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 // AlertPayload is the JSON body sent to webhook endpoints and used to build
 // the email body.
 type AlertPayload struct {
-	RuleID       string                 `json:"rule_id"`
-	RuleName     string                 `json:"rule_name"`
-	ProjectID    string                 `json:"project_id"`
-	ProjectName  string                 `json:"project_name,omitempty"`
-	ProjectNames map[string]string      `json:"project_names,omitempty"`
-	Trigger      string                 `json:"trigger"`
-	FiredAt      time.Time              `json:"fired_at"`
-	Details      map[string]any         `json:"details"`
-	Issues       []*storage.Issue       `json:"issues,omitempty"`
-	Monitors     []*storage.CronMonitor `json:"monitors,omitempty"`
+	RuleID         string                   `json:"rule_id"`
+	RuleName       string                   `json:"rule_name"`
+	ProjectID      string                   `json:"project_id"`
+	ProjectName    string                   `json:"project_name,omitempty"`
+	ProjectNames   map[string]string        `json:"project_names,omitempty"`
+	Trigger        string                   `json:"trigger"`
+	FiredAt        time.Time                `json:"fired_at"`
+	Details        map[string]any           `json:"details"`
+	Issues         []*storage.Issue         `json:"issues,omitempty"`
+	Monitors       []*storage.CronMonitor   `json:"monitors,omitempty"`
+	UptimeMonitors []*storage.UptimeMonitor `json:"uptime_monitors,omitempty"`
 }
 
 // firstProjectID returns the first project ID for scoped rules, or "" for global.
@@ -394,6 +441,26 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		}
 		if err == nil {
 			payload.Monitors = monitors
+		}
+	case "uptime_down":
+		monitors, err := storage.ListDownUptimeMonitors(ctx, e.pool, rule.ProjectIDs)
+		if err == nil && len(monitors) > 5 {
+			monitors = monitors[:5]
+		}
+		if err == nil {
+			payload.UptimeMonitors = monitors
+		}
+	case "uptime_recovered":
+		since := rule.CreatedAt
+		if rule.LastFiredAt != nil {
+			since = *rule.LastFiredAt
+		}
+		monitors, err := storage.ListRecoveredUptimeMonitors(ctx, e.pool, rule.ProjectIDs, since)
+		if err == nil && len(monitors) > 5 {
+			monitors = monitors[:5]
+		}
+		if err == nil {
+			payload.UptimeMonitors = monitors
 		}
 	}
 
@@ -553,6 +620,8 @@ var alertTriggerLabels = map[string]string{
 	"event_count":         "Event count",
 	"cron_missed":         "Cron monitor missed",
 	"cron_error":          "Cron monitor error",
+	"uptime_down":         "Uptime monitor down",
+	"uptime_recovered":    "Uptime monitor recovered",
 	"issue_auto_resolved": "Performance issue auto-resolved",
 }
 
@@ -816,6 +885,18 @@ func buildAlertSubject(p AlertPayload) string {
 			return "[Tindra] " + prefix + "1 cron check-in error"
 		}
 		return fmt.Sprintf("[Tindra] %s%d cron check-in errors", prefix, count)
+	case "uptime_down":
+		count, _ := p.Details["down_count"].(int)
+		if count == 1 {
+			return "[Tindra] " + prefix + "1 uptime monitor down"
+		}
+		return fmt.Sprintf("[Tindra] %s%d uptime monitors down", prefix, count)
+	case "uptime_recovered":
+		count, _ := p.Details["recovered_count"].(int)
+		if count == 1 {
+			return "[Tindra] " + prefix + "1 uptime monitor recovered"
+		}
+		return fmt.Sprintf("[Tindra] %s%d uptime monitors recovered", prefix, count)
 	case "issue_auto_resolved":
 		count, _ := p.Details["resolved_count"].(int)
 		if count == 1 {

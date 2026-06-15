@@ -294,7 +294,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	r.With(cronRL).Post("/api/cron/{monitorID}/finished", ro.handleOhDearFinished)
 	r.With(cronRL).Post("/api/cron/{monitorID}/failed", ro.handleOhDearFailed)
 
-	// Monitor CRUD - authenticated.
+	// Cron monitor CRUD - authenticated.
 	r.Group(func(r chi.Router) {
 		r.Use(ro.requireAuth)
 		r.Get("/api/monitors", ro.handleListMonitors)
@@ -303,6 +303,18 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.With(ro.requirePerm("manage_projects")).Post("/api/monitors", ro.handleCreateMonitor)
 		r.With(ro.requirePerm("manage_projects")).Patch("/api/monitors/{monitorID}", ro.handleUpdateMonitor)
 		r.With(ro.requirePerm("manage_projects")).Delete("/api/monitors/{monitorID}", ro.handleDeleteMonitor)
+	})
+
+	// Uptime monitor CRUD - authenticated.
+	r.Group(func(r chi.Router) {
+		r.Use(ro.requireAuth)
+		r.Get("/api/uptime-monitors", ro.handleListUptimeMonitors)
+		r.Get("/api/uptime-monitors/{monitorID}", ro.handleGetUptimeMonitor)
+		r.Get("/api/uptime-monitors/{monitorID}/checks", ro.handleListUptimeChecks)
+		r.Get("/api/uptime-monitors/{monitorID}/stats", ro.handleGetUptimeStats)
+		r.With(ro.requirePerm("manage_projects")).Post("/api/uptime-monitors", ro.handleCreateUptimeMonitor)
+		r.With(ro.requirePerm("manage_projects")).Patch("/api/uptime-monitors/{monitorID}", ro.handleUpdateUptimeMonitor)
+		r.With(ro.requirePerm("manage_projects")).Delete("/api/uptime-monitors/{monitorID}", ro.handleDeleteUptimeMonitor)
 	})
 
 	// MCP OAuth discovery endpoints — must be registered before the SPA catch-all so
