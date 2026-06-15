@@ -46,13 +46,20 @@ func TestGrouper_createsIssueForUngroupedEvent(t *testing.T) {
 	defer cancel()
 	go g.Run(ctx)
 
-	// Wait for grouper tick (500ms) + a bit of headroom
-	time.Sleep(700 * time.Millisecond)
-
-	issueList, err := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
-	if err != nil {
-		t.Fatalf("list issues: %v", err)
+	var issueList []*storage.Issue
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		var err error
+		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		if err != nil {
+			t.Fatalf("list issues: %v", err)
+		}
+		if len(issueList) == 1 {
+			break
+		}
 	}
+
 	if len(issueList) != 1 {
 		t.Fatalf("expected 1 issue, got %d", len(issueList))
 	}
@@ -114,12 +121,20 @@ func TestGrouper_separateFingerprints(t *testing.T) {
 	defer cancel()
 	go g.Run(ctx)
 
-	time.Sleep(700 * time.Millisecond)
-
-	issueList, err := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
-	if err != nil {
-		t.Fatalf("list issues: %v", err)
+	var issueList []*storage.Issue
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		var err error
+		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		if err != nil {
+			t.Fatalf("list issues: %v", err)
+		}
+		if len(issueList) == 2 {
+			break
+		}
 	}
+
 	if len(issueList) != 2 {
 		t.Errorf("expected 2 issues for different messages, got %d", len(issueList))
 	}
@@ -138,9 +153,16 @@ func TestGrouper_defaultsLevelToError(t *testing.T) {
 	defer cancel()
 	go g.Run(ctx)
 
-	time.Sleep(700 * time.Millisecond)
+	var issueList []*storage.Issue
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		issueList, _ = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		if len(issueList) == 1 {
+			break
+		}
+	}
 
-	issueList, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
 	if len(issueList) != 1 {
 		t.Fatalf("expected 1 issue, got %d", len(issueList))
 	}
@@ -161,15 +183,20 @@ func TestGrouper_setsEventIssueID(t *testing.T) {
 	defer cancel()
 	go g.Run(ctx)
 
-	time.Sleep(700 * time.Millisecond)
-
 	var issueID interface{}
-	err := testPool.QueryRow(context.Background(),
-		"SELECT issue_id FROM events WHERE id = $1", eventID,
-	).Scan(&issueID)
-	if err != nil {
-		t.Fatalf("query event: %v", err)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		if err := testPool.QueryRow(context.Background(),
+			"SELECT issue_id FROM events WHERE id = $1", eventID,
+		).Scan(&issueID); err != nil {
+			t.Fatalf("query event: %v", err)
+		}
+		if issueID != nil {
+			break
+		}
 	}
+
 	if issueID == nil {
 		t.Error("expected issue_id to be set on event after grouping")
 	}
@@ -198,11 +225,23 @@ func TestGrouper_storesImplicitTags(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go g.Run(ctx)
-	time.Sleep(700 * time.Millisecond)
 
-	issueList, err := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
-	if err != nil || len(issueList) == 0 {
-		t.Fatalf("expected 1 issue after grouping, got %d (err: %v)", len(issueList), err)
+	var issueList []*storage.Issue
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		var err error
+		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		if err != nil {
+			t.Fatalf("list issues: %v", err)
+		}
+		if len(issueList) == 1 {
+			break
+		}
+	}
+
+	if len(issueList) == 0 {
+		t.Fatalf("expected 1 issue after grouping, got 0")
 	}
 
 	tags, err := storage.GetIssueTags(context.Background(), testPool, issueList[0].ID)
