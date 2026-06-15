@@ -161,6 +161,44 @@ func TestCreateAlertRule_regressedTrigger(t *testing.T) {
 	}
 }
 
+func TestCreateAlertRule_uptimeDownTrigger(t *testing.T) {
+	truncateAlertRules(t)
+
+	b, _ := json.Marshal(map[string]any{
+		"name":        "uptime down alert",
+		"trigger":     "uptime_down",
+		"channel":     "webhook",
+		"webhook_url": "https://example.com/wh",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for uptime_down trigger, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_uptimeRecoveredTrigger(t *testing.T) {
+	truncateAlertRules(t)
+
+	b, _ := json.Marshal(map[string]any{
+		"name":        "uptime recovered alert",
+		"trigger":     "uptime_recovered",
+		"channel":     "webhook",
+		"webhook_url": "https://example.com/wh",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for uptime_recovered trigger, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // alerts.go — validateAlertRule: event_count boundary values
 // ---------------------------------------------------------------------------

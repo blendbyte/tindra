@@ -18,6 +18,8 @@ var validTriggers = map[string]bool{
 	"event_count":      true,
 	"cron_missed":      true,
 	"cron_error":       true,
+	"uptime_down":      true,
+	"uptime_recovered": true,
 }
 var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "email": true}
 var validLevels = map[string]bool{"fatal": true, "error": true, "warning": true, "info": true, "debug": true}
@@ -27,7 +29,7 @@ func validateAlertRule(r *storage.AlertRule) string {
 		return "name is required"
 	}
 	if !validTriggers[r.Trigger] {
-		return "trigger must be new_issue, regressed, new_or_regressed, event_count, cron_missed, or cron_error"
+		return "trigger must be new_issue, regressed, new_or_regressed, event_count, cron_missed, cron_error, uptime_down, or uptime_recovered"
 	}
 	if r.Trigger == "event_count" {
 		if r.Threshold == nil || r.WindowMins == nil {
