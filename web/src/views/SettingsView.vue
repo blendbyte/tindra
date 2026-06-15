@@ -621,13 +621,6 @@ const { data: alertRulesData } = useQuery({
 
 const alertRules = computed(() => alertRulesData.value ?? [])
 
-const { data: expandedRuleFiringsData } = useQuery({
-  queryKey: computed(() => ['alert-firings', expandedRule.value]),
-  queryFn: () => apiFetch<{ firings: AlertFiring[] }>(`/api/alert-rules/${expandedRule.value}/firings`).then(r => r.firings ?? []),
-  enabled: computed(() => expandedRule.value !== null && tab.value === 'alerts'),
-})
-const expandedRuleFirings = computed(() => expandedRuleFiringsData.value ?? [])
-
 function firingTriggerLabel(trigger: string): string {
   const labels: Record<string, string> = {
     new_issue: 'New issue',
@@ -892,6 +885,14 @@ const { data: quotaData } = useQuery({
   enabled: computed(() => expandedProject.value !== null && tab.value === 'projects'),
   staleTime: 30_000,
 })
+
+const { data: expandedRuleFiringsData } = useQuery({
+  queryKey: computed(() => ['alert-firings', expandedRule.value]),
+  queryFn: () => apiFetch<{ firings: AlertFiring[] }>(`/api/alert-rules/${expandedRule.value}/firings`).then(r => r.firings ?? []),
+  enabled: computed(() => expandedRule.value !== null && tab.value === 'alerts'),
+})
+const expandedRuleFirings = computed(() => expandedRuleFiringsData.value ?? [])
+
 const showNewProject = ref(false)
 const newProjectName = ref('')
 const newProjectSlug = ref('')
