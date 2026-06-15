@@ -83,6 +83,9 @@ func (w *Worker) sendDue(ctx context.Context) {
 }
 
 func (w *Worker) sendSlot(ctx context.Context, slot int) {
+	if w.pool == nil {
+		return
+	}
 	users, err := storage.ListDigestDueUsers(ctx, w.pool, false)
 	if err != nil {
 		slog.Error("digest: list due users", "err", err)
