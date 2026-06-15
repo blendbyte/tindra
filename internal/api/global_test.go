@@ -468,6 +468,24 @@ func TestUpdateIssueGlobal_sameStatus(t *testing.T) {
 	}
 }
 
+func TestUpdateIssueGlobal_invalidStatus(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
+	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
+		testProject.ID, "fp-inv-status", "Invalid Status", "error", "error", "", "", time.Now().UTC())
+
+	body := bytes.NewBufferString(`{"status":"bogus"}`)
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/issues/%s", iss.ID), body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid status value, got %d", rec.Code)
+	}
+}
+
 func TestUpdateIssueGlobal_notFound(t *testing.T) {
 	body := bytes.NewBufferString(`{"status":"resolved"}`)
 	req := httptest.NewRequest(http.MethodPatch,

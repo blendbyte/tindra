@@ -230,3 +230,22 @@ func TestScrubTransaction_SpanData(t *testing.T) {
 		t.Errorf("expected email in span data redacted, got %q", data["db.user"])
 	}
 }
+
+func TestScrubEvent_UnknownBuiltin_ignored(t *testing.T) {
+	// An unknown builtin name must be skipped entirely — it must not fall
+	// through to treating p.Pattern as a user-supplied regex.
+	payload := json.RawMessage(`{"message":"alice@example.com"}`)
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{
+			{Name: "notabuiltin", Builtin: true, Enabled: true, Pattern: `\S+@\S+`},
+		},
+	}
+	got := ScrubEvent(payload, cfg)
+	var result map[string]any
+	if err := json.Unmarshal(got, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["message"] != "alice@example.com" {
+		t.Errorf("unknown builtin should be skipped, got %q", result["message"])
+	}
+}
