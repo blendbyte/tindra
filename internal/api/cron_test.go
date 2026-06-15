@@ -480,3 +480,191 @@ func TestListCheckins_afterPing(t *testing.T) {
 		t.Errorf("expected 2 checkins, got %d", len(checkins))
 	}
 }
+
+func TestCronCheckinStart_pausedMonitor(t *testing.T) {
+	m := createTestMonitor(t, "Paused Start", "0 * * * *")
+	m.Status = "paused"
+	storage.UpdateCronMonitor(context.Background(), testPool, m)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/cron/%s/checkins/", m.ID), bytes.NewBufferString(`{"status":"in_progress"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.ID != "00000000-0000-0000-0000-000000000000" {
+		t.Errorf("expected synthetic zero UUID, got %q", resp.ID)
+	}
+}
+
+func TestCronCheckinFinish_invalidStatus(t *testing.T) {
+	m := createTestMonitor(t, "Finish Invalid Status", "0 * * * *")
+
+	startReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/cron/%s/checkins/", m.ID), bytes.NewBufferString(`{"status":"in_progress"}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	startRec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusCreated {
+		t.Fatalf("start: expected 201, got %d", startRec.Code)
+	}
+	var startResp struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(startRec.Body).Decode(&startResp); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/cron/%s/checkins/%s/", m.ID, startResp.ID),
+		bytes.NewBufferString(`{"status":"running"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid status, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCronCheckinFinish_unknownCheckin(t *testing.T) {
+	m := createTestMonitor(t, "Finish Unknown Checkin", "0 * * * *")
+
+	req := httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/cron/%s/checkins/00000000-0000-0000-0000-000000000000/", m.ID),
+		bytes.NewBufferString(`{"status":"ok"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for unknown checkin, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOhDearStarting_pausedMonitor(t *testing.T) {
+	m := createTestMonitor(t, "Oh Dear Paused Start", "0 * * * *")
+	m.Status = "paused"
+	storage.UpdateCronMonitor(context.Background(), testPool, m)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cron/"+m.ID+"/starting", nil)
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for paused monitor, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOhDearFinished_pausedMonitor(t *testing.T) {
+	m := createTestMonitor(t, "Oh Dear Paused Finish", "0 * * * *")
+	m.Status = "paused"
+	storage.UpdateCronMonitor(context.Background(), testPool, m)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cron/"+m.ID+"/finished", bytes.NewBufferString(`{"runtime":1.0}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for paused monitor, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOhDearFailed_pausedMonitor(t *testing.T) {
+	m := createTestMonitor(t, "Oh Dear Paused Fail", "0 * * * *")
+	m.Status = "paused"
+	storage.UpdateCronMonitor(context.Background(), testPool, m)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cron/"+m.ID+"/failed", nil)
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for paused monitor, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateMonitor_setStatus_paused(t *testing.T) {
+	m := createTestMonitor(t, "Set Paused", "0 * * * *")
+	body, _ := json.Marshal(map[string]any{"status": "paused"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/monitors/"+m.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated storage.CronMonitor
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.Status != "paused" {
+		t.Errorf("status: got %q, want %q", updated.Status, "paused")
+	}
+}
+
+func TestUpdateMonitor_setStatus_invalid(t *testing.T) {
+	m := createTestMonitor(t, "Set Invalid Status", "0 * * * *")
+	body, _ := json.Marshal(map[string]any{"status": "running"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/monitors/"+m.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid status, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateMonitor_badBody(t *testing.T) {
+	m := createTestMonitor(t, "Bad Body", "0 * * * *")
+	req := httptest.NewRequest(http.MethodPatch, "/api/monitors/"+m.ID, bytes.NewBufferString(`not-json`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-JSON body, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListCheckins_withLimit(t *testing.T) {
+	m := createTestMonitor(t, "Checkin Limit", "*/5 * * * *")
+
+	for i := range 5 {
+		req := httptest.NewRequest(http.MethodPost, "/api/cron/"+m.ID+"?status=ok", nil)
+		rec := httptest.NewRecorder()
+		cronHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ping %d: expected 200, got %d", i, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/monitors/"+m.ID+"/checkins?limit=10", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var checkins []*storage.CronCheckin
+	if err := json.NewDecoder(rec.Body).Decode(&checkins); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(checkins) != 5 {
+		t.Errorf("expected 5 checkins with limit=10, got %d", len(checkins))
+	}
+}
+
+func TestDeleteMonitor_unauthenticated(t *testing.T) {
+	m := createTestMonitor(t, "Delete Unauth", "0 * * * *")
+	req := httptest.NewRequest(http.MethodDelete, "/api/monitors/"+m.ID, nil)
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}

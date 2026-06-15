@@ -668,3 +668,133 @@ func TestCreateAdminUser(t *testing.T) {
 		t.Errorf("admin user should have all permissions, got %+v", u.Permissions)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// CreateUser password validation (lines 65-70)
+// ---------------------------------------------------------------------------
+
+func TestCreateUser_shortPassword(t *testing.T) {
+	_, err := storage.CreateUser(context.Background(), testPool, "short-pw@example.com", "short")
+	if err == nil {
+		t.Error("expected error for password shorter than 12 chars")
+	}
+}
+
+func TestCreateUser_longPassword(t *testing.T) {
+	_, err := storage.CreateUser(context.Background(), testPool, "long-pw@example.com", strings.Repeat("x", 73))
+	if err == nil {
+		t.Error("expected error for password longer than 72 chars")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CreateAdminUser password validation and duplicate email (lines 98-120)
+// ---------------------------------------------------------------------------
+
+func TestCreateAdminUser_shortPassword(t *testing.T) {
+	_, err := storage.CreateAdminUser(context.Background(), testPool, "admin-short@example.com", "Admin", "short")
+	if err == nil {
+		t.Error("expected error for password shorter than 12 chars")
+	}
+}
+
+func TestCreateAdminUser_longPassword(t *testing.T) {
+	_, err := storage.CreateAdminUser(context.Background(), testPool, "admin-long@example.com", "Admin", strings.Repeat("x", 73))
+	if err == nil {
+		t.Error("expected error for password longer than 72 chars")
+	}
+}
+
+func TestCreateAdminUser_duplicateEmail(t *testing.T) {
+	truncateUsers(t)
+
+	if _, err := storage.CreateAdminUser(context.Background(), testPool, "admin-dup@example.com", "Admin One", "adminpassword1"); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	_, err := storage.CreateAdminUser(context.Background(), testPool, "admin-dup@example.com", "Admin Two", "adminpassword2")
+	if err == nil {
+		t.Error("expected error for duplicate email")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CreateOAuthUser duplicate email (line 142)
+// ---------------------------------------------------------------------------
+
+func TestCreateOAuthUser_duplicateEmail(t *testing.T) {
+	truncateUsers(t)
+
+	if _, err := storage.CreateOAuthUser(context.Background(), testPool, "oauth-dup@example.com"); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	_, err := storage.CreateOAuthUser(context.Background(), testPool, "oauth-dup@example.com")
+	if err == nil {
+		t.Error("expected error for duplicate OAuth email")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AuthenticateUser locked user (lines 211-213)
+// ---------------------------------------------------------------------------
+
+func TestAuthenticateUser_lockedUser(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "locked@example.com", "correctpass12")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Lock the user by setting locked_until to a future time.
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE users SET locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $1`, u.ID); err != nil {
+		t.Fatalf("lock user: %v", err)
+	}
+
+	got, err := storage.AuthenticateUser(context.Background(), testPool, "locked@example.com", "correctpass12")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Error("expected nil for locked user")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ChangeUserPassword additional paths (lines 330,336,342)
+// ---------------------------------------------------------------------------
+
+func TestChangeUserPassword_longPassword(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateUser(context.Background(), testPool, "changepw-long@example.com", "oldpassword1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = storage.ChangeUserPassword(context.Background(), testPool, u.ID, "oldpassword1", strings.Repeat("x", 73))
+	if err == nil {
+		t.Error("expected error for too-long new password")
+	}
+}
+
+func TestChangeUserPassword_userNotFound(t *testing.T) {
+	err := storage.ChangeUserPassword(context.Background(), testPool,
+		"00000000-0000-0000-0000-000000000000", "anypassword1", "newpassword1")
+	if err == nil {
+		t.Error("expected error for nonexistent user")
+	}
+}
+
+func TestChangeUserPassword_oauthUser(t *testing.T) {
+	truncateUsers(t)
+
+	u, err := storage.CreateOAuthUser(context.Background(), testPool, "oauth-changepw@example.com")
+	if err != nil {
+		t.Fatalf("create oauth user: %v", err)
+	}
+
+	err = storage.ChangeUserPassword(context.Background(), testPool, u.ID, "", "newpassword1")
+	if err == nil {
+		t.Error("expected error for OAuth user with no password hash")
+	}
+}

@@ -388,3 +388,36 @@ func TestDoPasswordReset_passwordTooShort(t *testing.T) {
 		t.Errorf("expected 400 for too-short password, got %d", rec.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// handleDoPasswordReset — MFA enabled path (lines 163-174)
+// ---------------------------------------------------------------------------
+
+func TestDoPasswordReset_withMFAEnabled(t *testing.T) {
+	target := seedUser(t, "do-reset-mfa@example.com")
+	if err := storage.EnableMFA(context.Background(), testPool, target.ID); err != nil {
+		t.Fatalf("enable MFA: %v", err)
+	}
+	token := seedPasswordResetToken(t, target.ID)
+
+	body := bytes.NewBufferString(`{"password":"newlongpassword1"}`)
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/auth/password-reset/"+token, body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for MFA user password reset, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var result map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v, _ := result["mfa_required"].(bool); !v {
+		t.Errorf("expected mfa_required:true, got %v", result)
+	}
+	if _, ok := result["mfa_token"]; !ok {
+		t.Error("expected mfa_token in response")
+	}
+}
