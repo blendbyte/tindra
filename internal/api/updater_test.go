@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/blendbyte/tindra/internal/ingest"
 )
@@ -169,5 +170,30 @@ func TestCheckLatestVersion_sendsUserAgent(t *testing.T) {
 	}
 	if len(gotUA) < 7 || gotUA[:7] != "Tindra/" {
 		t.Errorf("User-Agent: got %q, want prefix Tindra/", gotUA)
+	}
+}
+
+func TestStartVersionChecker_cancelsCleanly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(githubRelease{TagName: "v1.0.0", HTMLURL: "https://example.com"})
+	}))
+	defer srv.Close()
+
+	old := updateCheckURL
+	updateCheckURL = srv.URL
+	defer func() { updateCheckURL = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h := newTestRouter()
+	h.StartVersionChecker(ctx)
+
+	// Give the goroutine time to run its first check.
+	time.Sleep(50 * time.Millisecond)
+	cancel() // triggers the ctx.Done() case in the select loop
+	time.Sleep(10 * time.Millisecond)
+
+	ver, _ := h.ro.getLatestRelease()
+	if ver != "v1.0.0" {
+		t.Errorf("expected v1.0.0 after StartVersionChecker, got %q", ver)
 	}
 }
