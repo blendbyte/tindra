@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -300,6 +301,10 @@ func (ro *router) handleUnmergeIssue(w http.ResponseWriter, r *http.Request) {
 
 	newIssues, err := storage.UnmergeFingerprints(r.Context(), ro.pool, issueID, req.Fingerprints)
 	if err != nil {
+		if strings.Contains(err.Error(), "cannot unmerge all fingerprints") {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		slog.Error("unmerge fingerprints", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

@@ -57,6 +57,10 @@ func (ro *router) handleAdminSetPassword(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		if strings.Contains(err.Error(), "password must be at least") {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		slog.Error("admin set password", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
