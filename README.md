@@ -2,7 +2,7 @@
   <img src="logo.png" width="280" alt="Tindra">
 </p>
 
-<p align="center">Self-hosted error tracking, performance and cron job monitoring.</p>
+<p align="center">Self-hosted error tracking, performance monitoring, cron job monitoring, and uptime monitoring.</p>
 
 <p align="center">
   <a href="https://tindra.sh">tindra.sh</a> &nbsp;·&nbsp;
@@ -31,6 +31,7 @@ One Go binary. One Postgres database. Compatible with every Sentry SDK: point yo
 - **Error tracking** with grouping, stack traces, breadcrumbs, tags, assignees, merge and resolve
 - **Performance monitoring** with transaction list, span waterfall, and p50/p75/p95/p99 percentiles
 - **Cron monitors** with check-in history, missed/error alerts, and Sentry, Oh Dear, and Spatie SDK compatibility
+- **Uptime monitors** with HTTP/HTTPS probing, configurable intervals and timeouts, expected status codes and body assertions, 24h/7d/30d uptime stats, and down/recovery alerts
 - **Releases** linked to issues and regressions
 - **Alerts** via email, Slack, Discord, and webhooks, with filters, thresholds, and cooldowns
 - **Source maps** resolved server-side, no client exposure
