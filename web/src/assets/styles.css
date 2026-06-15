@@ -816,7 +816,7 @@ a { color: inherit; text-decoration: none; }
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
-  width: 460px;
+  width: 560px;
   box-shadow: 0 12px 48px oklch(0 0 0 / 0.22), 0 2px 8px oklch(0 0 0 / 0.12), inset 0 1px 0 oklch(1 0 0 / 0.04);
 }
 
@@ -857,6 +857,7 @@ a { color: inherit; text-decoration: none; }
 .empty-state__actions {
   display: flex;
   gap: 8px;
+  margin-top: 24px;
 }
 
 .empty-state__endpoint {
@@ -6289,7 +6290,7 @@ select.field__input {
   .txstat__value { font-size: var(--text-base); white-space: nowrap; }
 
   /* Empty state card: respect viewport width */
-  .empty-state__card { width: min(460px, calc(100vw - 32px)); }
+  .empty-state__card { width: min(560px, calc(100vw - 32px)); }
 
   /* Popovers: pin to viewport so they never overflow left or right */
   .nav__projects .popover {
