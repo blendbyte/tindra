@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -73,17 +74,22 @@ func (w *Worker) tick(ctx context.Context) {
 		slog.Error("uptime: get due monitors", "err", err)
 		return
 	}
+	var wg sync.WaitGroup
 	for _, m := range monitors {
 		select {
 		case w.sem <- struct{}{}:
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				defer func() { <-w.sem }()
 				w.probe(ctx, m)
 			}()
 		case <-ctx.Done():
+			wg.Wait()
 			return
 		}
 	}
+	wg.Wait()
 }
 
 func (w *Worker) probe(ctx context.Context, m *storage.UptimeMonitor) {

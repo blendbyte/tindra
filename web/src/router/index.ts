@@ -155,6 +155,6 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.init()
   if (to.meta.requiresAuth && !auth.user) return '/login'
-  if (to.meta.requiresAuth && auth.user && !auth.user.mfa_enabled && to.name !== 'setup-mfa') return '/setup-mfa'
+  if (to.meta.requiresAuth && auth.user && auth.requireMfa && !auth.user.mfa_enabled && to.name !== 'setup-mfa') return '/setup-mfa'
   if (to.name === 'setup-mfa' && auth.user?.mfa_enabled) return '/dashboard'
 })

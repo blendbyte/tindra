@@ -51,7 +51,7 @@ func setAppEmailSender(t *testing.T, s alerts.EmailSender) {
 
 // limitedHandler creates a router with userLimit set.
 func limitedHandler(userLimit int) http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "https://example.com", "", "", 0, 0, 0, userLimit, 0, 0, nil, false, nil)
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "https://example.com", "", "", 0, 0, 0, userLimit, 0, 0, nil, false, true, nil)
 }
 
 // seedInvite creates an invite record directly and removes it on cleanup.
@@ -210,7 +210,7 @@ func TestCreateInvite_withEmailSender_success(t *testing.T) {
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	// Use a handler with publicURL so the invite_url has a real base.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "https://tindra.example.com", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "https://tindra.example.com", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
