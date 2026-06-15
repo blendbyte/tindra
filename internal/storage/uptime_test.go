@@ -758,3 +758,124 @@ func TestListRecoveredUptimeMonitors_sinceFilter(t *testing.T) {
 		t.Errorf("expected 0 monitors with future since, got %d", len(monitors))
 	}
 }
+
+func TestListUptimeMonitors_noProjectFilter(t *testing.T) {
+	p := setupProjectForUptime(t)
+	seedUptimeMonitor(t, p.ID, "global-list", "https://example.com")
+
+	// Empty projectIDs — should return all monitors (no WHERE clause)
+	monitors, err := storage.ListUptimeMonitors(context.Background(), testPool, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, m := range monitors {
+		if m.ProjectID == p.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected monitor to appear when listing without project filter")
+	}
+}
+
+func TestListDownUptimeMonitors_noProjectFilter(t *testing.T) {
+	p := setupProjectForUptime(t)
+	m := seedUptimeMonitor(t, p.ID, "global-down", "https://example.com")
+
+	code := 503
+	for range 2 {
+		storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "down", StatusCode: &code})
+	}
+
+	// Empty projectIDs — should match any project
+	monitors, err := storage.ListDownUptimeMonitors(context.Background(), testPool, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, mon := range monitors {
+		if mon.ID == m.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected down monitor to appear in global (no-filter) query")
+	}
+}
+
+func TestListRecoveredUptimeMonitors_noProjectFilter(t *testing.T) {
+	p := setupProjectForUptime(t)
+	m := seedUptimeMonitor(t, p.ID, "global-recovered", "https://example.com")
+
+	code := 200
+	storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "up", StatusCode: &code})
+
+	since := time.Now().UTC().Add(-1 * time.Minute)
+	monitors, err := storage.ListRecoveredUptimeMonitors(context.Background(), testPool, nil, since)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, mon := range monitors {
+		if mon.ID == m.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected recovered monitor to appear in global (no-filter) query")
+	}
+}
+
+func TestListUptimeChecks_zeroLimit(t *testing.T) {
+	p := setupProjectForUptime(t)
+	m := seedUptimeMonitor(t, p.ID, "zero-limit", "https://example.com")
+	code := 200
+	storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "up", StatusCode: &code})
+
+	// limit <= 0 should use the default of 100
+	checks, err := storage.ListUptimeChecks(context.Background(), testPool, m.ID, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(checks) != 1 {
+		t.Errorf("expected 1 check with limit=0 (default), got %d", len(checks))
+	}
+}
+
+func TestListUptimeChecks_overMaxLimit(t *testing.T) {
+	p := setupProjectForUptime(t)
+	m := seedUptimeMonitor(t, p.ID, "over-limit", "https://example.com")
+	code := 200
+	storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "up", StatusCode: &code})
+
+	// limit > 500 should use the default of 100
+	checks, err := storage.ListUptimeChecks(context.Background(), testPool, m.ID, 999)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(checks) != 1 {
+		t.Errorf("expected 1 check with limit=999 (clamped to 100), got %d", len(checks))
+	}
+}
+
+func TestParseExpectedCodes_loTooLow(t *testing.T) {
+	_, err := storage.ParseExpectedCodes("99-200")
+	if err == nil {
+		t.Error("expected error for range starting below 100")
+	}
+}
+
+func TestParseExpectedCodes_hiTooHigh(t *testing.T) {
+	_, err := storage.ParseExpectedCodes("200-600")
+	if err == nil {
+		t.Error("expected error for range ending above 599")
+	}
+}
+
+func TestParseExpectedCodes_invalidRangeBound(t *testing.T) {
+	_, err := storage.ParseExpectedCodes("abc-299")
+	if err == nil {
+		t.Error("expected error for non-numeric range lower bound")
+	}
+}

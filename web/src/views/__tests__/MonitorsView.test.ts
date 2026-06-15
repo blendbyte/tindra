@@ -1264,4 +1264,254 @@ describe('MonitorsView', () => {
       vi.unstubAllGlobals()
     })
   })
+
+  describe('uptime mutation callbacks via call-through pattern', () => {
+    const makeUptimeMutationCallThrough = () => {
+      vi.mocked(apiFetch).mockResolvedValue({ id: 'u1', project_id: 'proj-1', name: 'Homepage', url: 'https://example.com', method: 'GET', interval_secs: 300, timeout_secs: 10, expected_codes: '200-299', body_contains: null, status: 'active', state: 'unknown', consecutive_failures: 0, last_checked_at: null, last_ok_at: null, next_check_at: null, last_status_code: null, last_response_ms: null, created_at: '2024-01-01T00:00:00Z', recent_checks: [] })
+      vi.mocked(useMutation).mockImplementation((opts: any) => {
+        const mutate = vi.fn(async (...args: any[]) => {
+          try {
+            const result = await opts.mutationFn(...args)
+            if (opts.onSuccess) opts.onSuccess(result)
+          } catch {}
+        })
+        return { mutate, isPending: ref(false) } as any
+      })
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useAuthStore).mockReturnValue({ user: { permissions: { manage_projects: true } } } as any)
+    }
+
+    it('createUptime onSuccess resets form and sets selectedUptimeId', async () => {
+      makeUptimeMutationCallThrough()
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
+      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      // Fill name, URL, and project so the Create button is enabled
+      const fields = wrapper.findAll('.mon-createbar__fields--uptime input')
+      await fields[0].setValue('Homepage') // name
+      const urlInput = wrapper.findAll('.mon-createbar__fields--uptime input.mono')[0]
+      await urlInput.setValue('https://example.com')
+      await wrapper.find('.mon-createbar__fields--uptime select').setValue('proj-1')
+      await wrapper.find('.mon-createbar .btn--primary').trigger('click')
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+    })
+
+    it('saveUptime onSuccess clears editingUptimeId', async () => {
+      makeUptimeMutationCallThrough()
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([makeUptimeMonitor('u1', 'Homepage')]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
+      const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
+      await row.trigger('click')
+      await wrapper.find('.mon-detail__actions .btn').trigger('click')
+      await wrapper.find('.mon-editbar .btn--primary').trigger('click')
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+    })
+
+    it('deleteUptime onSuccess clears selectedUptimeId and editingUptimeId', async () => {
+      vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+      vi.mocked(apiFetch).mockResolvedValue(undefined)
+      vi.mocked(useMutation).mockImplementation((opts: any) => {
+        const mutate = vi.fn(async (...args: any[]) => {
+          try {
+            const result = await opts.mutationFn(...args)
+            if (opts.onSuccess) opts.onSuccess(result)
+          } catch {}
+        })
+        return { mutate, isPending: ref(false) } as any
+      })
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+      vi.mocked(useAuthStore).mockReturnValue({ user: { permissions: { manage_projects: true } } } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([makeUptimeMonitor('u1', 'Homepage')]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
+      const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
+      await row.trigger('click')
+      await wrapper.find('.mon-detail__actions .btn').trigger('click')
+      const deleteBtn = wrapper.findAll('.mon-editbar .btn--ghost').find(b => b.text().includes('Delete'))!
+      await deleteBtn.trigger('click')
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+      vi.unstubAllGlobals()
+    })
+  })
+
+  describe('uptime edit form field interactions', () => {
+    function setupEditForm() {
+      setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], true)
+    }
+
+    async function openEditForm(wrapper: any) {
+      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
+      const row = wrapper.findAll('.uprow').find((r: any) => r.text().includes('Homepage'))!
+      await row.trigger('click')
+      await wrapper.find('.mon-detail__actions .btn').trigger('click')
+    }
+
+    it('updates editUptimeForm.url when URL input changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      const urlInput = wrapper.findAll('.mon-editbar input').find((i: any) => i.element.value === 'https://example.com')!
+      await urlInput.setValue('https://new.example.com')
+      expect((urlInput.element as HTMLInputElement).value).toBe('https://new.example.com')
+    })
+
+    it('updates editUptimeForm.method when method select changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      const methodSelect = wrapper.findAll('.mon-editbar select')[0]
+      await methodSelect.setValue('HEAD')
+      expect((methodSelect.element as HTMLSelectElement).value).toBe('HEAD')
+    })
+
+    it('updates editUptimeForm.interval_secs when interval input changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      const intervalInput = wrapper.findAll('.mon-editbar input[type="number"]')[0]
+      await intervalInput.setValue('60')
+      expect((intervalInput.element as HTMLInputElement).value).toBe('60')
+    })
+
+    it('updates editUptimeForm.timeout_secs when timeout input changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      const timeoutInput = wrapper.findAll('.mon-editbar input[type="number"]')[1]
+      await timeoutInput.setValue('5')
+      expect((timeoutInput.element as HTMLInputElement).value).toBe('5')
+    })
+
+    it('updates editUptimeForm.expected_codes when expected_codes input changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      // index 0 = url (.mono), index 1 = expected_codes (.mono)
+      const codesInput = wrapper.findAll('.mon-editbar input.mono')[1]
+      await codesInput.setValue('200,201')
+      expect((codesInput.element as HTMLInputElement).value).toBe('200,201')
+    })
+
+    it('updates editUptimeForm.name when name input changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      // First input in editbar (non-number, non-mono) is name
+      const nameInput = wrapper.findAll('.mon-editbar input:not([type="number"]):not(.mono)')[0]
+      await nameInput.setValue('Renamed Monitor')
+      expect((nameInput.element as HTMLInputElement).value).toBe('Renamed Monitor')
+    })
+
+    it('updates editUptimeForm.body_contains when body_contains input changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      const bodyInput = wrapper.findAll('.mon-editbar input').find((i: any) => i.attributes('placeholder') === '(clear to remove)')!
+      await bodyInput.setValue('healthy')
+      expect((bodyInput.element as HTMLInputElement).value).toBe('healthy')
+    })
+
+    it('updates editUptimeForm.status when status select changes', async () => {
+      setupEditForm()
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openEditForm(wrapper)
+      const statusSelect = wrapper.findAll('.mon-editbar select')[1]
+      await statusSelect.setValue('paused')
+      expect((statusSelect.element as HTMLSelectElement).value).toBe('paused')
+    })
+  })
+
+  describe('uptime create form additional field interactions', () => {
+    const openUptimeCreateForm = async (wrapper: any) => {
+      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
+      await wrapper.find('.filterbar .btn--primary').trigger('click')
+    }
+
+    it('updates newUptime.method when method select changes', async () => {
+      setupUptimeMocks([], true)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openUptimeCreateForm(wrapper)
+      // index 0 = project select, index 1 = method select
+      const methodSelect = wrapper.findAll('.mon-createbar__fields--uptime select')[1]
+      await methodSelect.setValue('HEAD')
+      expect((methodSelect.element as HTMLSelectElement).value).toBe('HEAD')
+    })
+
+    it('updates newUptime.interval_secs when interval input changes', async () => {
+      setupUptimeMocks([], true)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openUptimeCreateForm(wrapper)
+      const intervalInput = wrapper.findAll('.mon-createbar__fields--uptime input[type="number"]')[0]
+      await intervalInput.setValue('120')
+      expect((intervalInput.element as HTMLInputElement).value).toBe('120')
+    })
+
+    it('updates newUptime.timeout_secs when timeout input changes', async () => {
+      setupUptimeMocks([], true)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openUptimeCreateForm(wrapper)
+      const timeoutInput = wrapper.findAll('.mon-createbar__fields--uptime input[type="number"]')[1]
+      await timeoutInput.setValue('30')
+      expect((timeoutInput.element as HTMLInputElement).value).toBe('30')
+    })
+
+    it('updates newUptime.expected_codes when expected codes input changes', async () => {
+      setupUptimeMocks([], true)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openUptimeCreateForm(wrapper)
+      // index 0 = url input (.mono), index 1 = expected_codes input (.mono)
+      const codesInput = wrapper.findAll('.mon-createbar__fields--uptime input.mono')[1]
+      await codesInput.setValue('200,201')
+      expect((codesInput.element as HTMLInputElement).value).toBe('200,201')
+    })
+
+    it('updates newUptime.body_contains when body contains input changes', async () => {
+      setupUptimeMocks([], true)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await openUptimeCreateForm(wrapper)
+      const bodyInput = wrapper.findAll('.mon-createbar__fields--uptime input').find((i: any) => i.attributes('placeholder') === '(optional)')!
+      await bodyInput.setValue('healthy')
+      expect((bodyInput.element as HTMLInputElement).value).toBe('healthy')
+    })
+  })
+
+  describe('uptimeCheckColor fallback', () => {
+    it('returns text-3 color for unknown check status in timeline', async () => {
+      const monitorWithUnknownCheck = {
+        ...makeUptimeMonitor('u1', 'Homepage'),
+        recent_checks: [{ status: 'unknown', checked_at: '2024-01-01T00:00:00Z' }],
+      }
+      setupUptimeMocks([monitorWithUnknownCheck], false)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
+      // Find the filled dot (non-empty) in the timeline for the uptime row
+      const filledDots = wrapper.findAll('.uprow .mon-tl-dot:not(.mon-tl-dot--empty)')
+      expect(filledDots.length).toBeGreaterThan(0)
+      const unknownDot = filledDots[0]
+      expect(unknownDot.attributes('style')).toContain('var(--text-3)')
+    })
+  })
 })

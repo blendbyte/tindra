@@ -334,3 +334,70 @@ func TestWorker_Run_stopsOnCancel(t *testing.T) {
 		t.Error("Run did not stop after context cancellation")
 	}
 }
+
+func TestWorker_timeout(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	// Server that sleeps longer than the monitor timeout
+	ready := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(ready)
+		time.Sleep(3 * time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	m, err := storage.CreateUptimeMonitor(ctx, testPool, &storage.UptimeMonitor{
+		ProjectID:     testProject.ID,
+		Name:          "timeout-monitor",
+		URL:           srv.URL,
+		Method:        "GET",
+		IntervalSecs:  300,
+		TimeoutSecs:   1, // 1-second timeout, server sleeps 3s
+		ExpectedCodes: "200-299",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	uptime.NewWorker(testPool).RunOnce(ctx)
+
+	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(checks))
+	}
+	if checks[0].Status != "down" {
+		t.Errorf("status: got %q, want down (timeout)", checks[0].Status)
+	}
+	if checks[0].Error == nil || *checks[0].Error != "timeout" {
+		t.Errorf("expected error='timeout', got %v", checks[0].Error)
+	}
+}
+
+func TestWorker_invalidExpectedCodes(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	m := seedMonitor(t, srv.URL, "GET", "200-299")
+	// Corrupt expected_codes directly in the DB to simulate misconfiguration
+	testPool.Exec(ctx, `UPDATE uptime_monitors SET expected_codes='invalid-codes' WHERE id=$1`, m.ID)
+
+	uptime.NewWorker(testPool).RunOnce(ctx)
+
+	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(checks))
+	}
+	if checks[0].Status != "down" {
+		t.Errorf("status: got %q, want down (invalid expected_codes)", checks[0].Status)
+	}
+	if checks[0].Error == nil || !strings.Contains(*checks[0].Error, "invalid expected_codes") {
+		t.Errorf("expected 'invalid expected_codes' error, got %v", checks[0].Error)
+	}
+}
