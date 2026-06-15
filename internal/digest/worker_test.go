@@ -60,9 +60,9 @@ func TestWorker_Run_nilEmailReturnsEarly(t *testing.T) {
 
 func TestWorker_Run_cancelStopsLoop(t *testing.T) {
 	sender := &mockEmailSender{}
-	// Use a nil pool so sendDue will fail fast if it tries to query; but since
-	// sendDue only runs in the 07-09 UTC window, it may not fire at all.
-	// What we test is that cancelling the context stops the Run loop.
+	// Use a nil pool — sendSlot guards against nil pool and returns early,
+	// so this is safe regardless of the time of day. What we test is that
+	// cancelling the context stops the Run loop.
 	w := NewWorker(nil, sender, "https://example.com")
 	ctx, cancel := context.WithCancel(context.Background())
 
