@@ -2,6 +2,8 @@ package storage_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -9,6 +11,11 @@ import (
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
+
+func mfaTestHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 func setupUserForMFA(t *testing.T) *storage.User {
 	t.Helper()
@@ -123,12 +130,12 @@ func TestCreateMFAChallenge_and_consume(t *testing.T) {
 func TestConsumeMFAChallenge_expired(t *testing.T) {
 	u := setupUserForMFA(t)
 
-	// Insert an already-expired challenge directly
+	// Insert an already-expired challenge directly (store the hash, as the storage layer does).
 	token := "expired-mfa-token-0000000000000001"
 	_, err := testPool.Exec(context.Background(), `
-		INSERT INTO mfa_challenges (token, user_id, expires_at)
+		INSERT INTO mfa_challenges (token_hash, user_id, expires_at)
 		VALUES ($1, $2, $3)
-	`, token, u.ID, time.Now().Add(-time.Hour))
+	`, mfaTestHash(token), u.ID, time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("insert expired challenge: %v", err)
 	}

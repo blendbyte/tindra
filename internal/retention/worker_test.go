@@ -2,6 +2,8 @@ package retention_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log"
 	"os"
 	"testing"
@@ -15,6 +17,11 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 	"github.com/blendbyte/tindra/internal/testutil"
 )
+
+func workerTestHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 var (
 	testPool    *pgxpool.Pool
@@ -160,24 +167,24 @@ func TestWorker_purgesExpiredOAuthStates(t *testing.T) {
 	})
 
 	testPool.Exec(ctx, `
-		INSERT INTO oauth_states (token, provider, verifier, expires_at)
-		VALUES ('expired-oauth-state', 'github', 'verifier1', NOW() - INTERVAL '1 minute')
-	`)
+		INSERT INTO oauth_states (token_hash, provider, verifier, expires_at)
+		VALUES ($1, 'github', 'verifier1', NOW() - INTERVAL '1 minute')
+	`, workerTestHash("expired-oauth-state"))
 	testPool.Exec(ctx, `
-		INSERT INTO oauth_states (token, provider, verifier, expires_at)
-		VALUES ('valid-oauth-state', 'github', 'verifier2', NOW() + INTERVAL '10 minutes')
-	`)
+		INSERT INTO oauth_states (token_hash, provider, verifier, expires_at)
+		VALUES ($1, 'github', 'verifier2', NOW() + INTERVAL '10 minutes')
+	`, workerTestHash("valid-oauth-state"))
 
 	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	var expiredCount int
-	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM oauth_states WHERE token = 'expired-oauth-state'`).Scan(&expiredCount)
+	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM oauth_states WHERE token_hash = $1`, workerTestHash("expired-oauth-state")).Scan(&expiredCount)
 	if expiredCount != 0 {
 		t.Errorf("expected expired oauth state to be deleted, got count=%d", expiredCount)
 	}
 
 	var validCount int
-	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM oauth_states WHERE token = 'valid-oauth-state'`).Scan(&validCount)
+	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM oauth_states WHERE token_hash = $1`, workerTestHash("valid-oauth-state")).Scan(&validCount)
 	if validCount != 1 {
 		t.Errorf("expected valid oauth state to survive, got count=%d", validCount)
 	}
@@ -201,28 +208,28 @@ func TestWorker_purgesExpiredMFAChallenges(t *testing.T) {
 	})
 
 	testPool.Exec(ctx, `
-		INSERT INTO mfa_challenges (token, user_id, expires_at)
-		VALUES ('expired-token-retention', $1, NOW() - INTERVAL '1 minute')
-	`, userID)
+		INSERT INTO mfa_challenges (token_hash, user_id, expires_at)
+		VALUES ($1, $2, NOW() - INTERVAL '1 minute')
+	`, workerTestHash("expired-token-retention"), userID)
 	testPool.Exec(ctx, `
-		INSERT INTO mfa_challenges (token, user_id, expires_at)
-		VALUES ('valid-token-retention', $1, NOW() + INTERVAL '10 minutes')
-	`, userID)
+		INSERT INTO mfa_challenges (token_hash, user_id, expires_at)
+		VALUES ($1, $2, NOW() + INTERVAL '10 minutes')
+	`, workerTestHash("valid-token-retention"), userID)
 
 	retention.NewWorker(testPool, 90).RunOnce(ctx)
 
 	var expiredCount int
 	testPool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM mfa_challenges WHERE token = 'expired-token-retention'
-	`).Scan(&expiredCount)
+		SELECT COUNT(*) FROM mfa_challenges WHERE token_hash = $1
+	`, workerTestHash("expired-token-retention")).Scan(&expiredCount)
 	if expiredCount != 0 {
 		t.Errorf("expected expired MFA challenge to be deleted, got count=%d", expiredCount)
 	}
 
 	var validCount int
 	testPool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM mfa_challenges WHERE token = 'valid-token-retention'
-	`).Scan(&validCount)
+		SELECT COUNT(*) FROM mfa_challenges WHERE token_hash = $1
+	`, workerTestHash("valid-token-retention")).Scan(&validCount)
 	if validCount != 1 {
 		t.Errorf("expected valid MFA challenge to survive, got count=%d", validCount)
 	}

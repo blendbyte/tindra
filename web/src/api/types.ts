@@ -266,7 +266,7 @@ export interface Comment {
 }
 
 export interface Invite {
-  token: string
+  id: string
   email: string
   name?: string
   inviter_id?: string

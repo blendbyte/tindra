@@ -63,8 +63,8 @@ func CreateMFAChallenge(ctx context.Context, pool *pgxpool.Pool, userID string) 
 	token := hex.EncodeToString(b)
 	expiresAt := time.Now().Add(10 * time.Minute)
 	_, err := pool.Exec(ctx, `
-		INSERT INTO mfa_challenges (token, user_id, expires_at) VALUES ($1, $2, $3)
-	`, token, userID, expiresAt)
+		INSERT INTO mfa_challenges (token_hash, user_id, expires_at) VALUES ($1, $2, $3)
+	`, tokenHash(token), userID, expiresAt)
 	if err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
@@ -77,8 +77,8 @@ func GetMFAChallenge(ctx context.Context, pool *pgxpool.Pool, token string) (str
 	var userID string
 	err := pool.QueryRow(ctx, `
 		SELECT user_id FROM mfa_challenges
-		WHERE token = $1 AND expires_at > NOW()
-	`, token).Scan(&userID)
+		WHERE token_hash = $1 AND expires_at > NOW()
+	`, tokenHash(token)).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -95,9 +95,9 @@ func ConsumeMFAChallenge(ctx context.Context, pool *pgxpool.Pool, token string) 
 	var userID string
 	err := pool.QueryRow(ctx, `
 		DELETE FROM mfa_challenges
-		WHERE token = $1 AND expires_at > NOW()
+		WHERE token_hash = $1 AND expires_at > NOW()
 		RETURNING user_id
-	`, token).Scan(&userID)
+	`, tokenHash(token)).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}

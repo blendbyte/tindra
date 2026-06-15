@@ -71,8 +71,8 @@ func CreateOAuthState(ctx context.Context, pool *pgxpool.Pool, provider, verifie
 	token := hex.EncodeToString(b)
 	expiresAt := time.Now().Add(10 * time.Minute)
 	_, err := pool.Exec(ctx, `
-		INSERT INTO oauth_states (token, provider, verifier, expires_at) VALUES ($1, $2, $3, $4)
-	`, token, provider, verifier, expiresAt)
+		INSERT INTO oauth_states (token_hash, provider, verifier, expires_at) VALUES ($1, $2, $3, $4)
+	`, tokenHash(token), provider, verifier, expiresAt)
 	if err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
@@ -90,9 +90,9 @@ func ConsumeOAuthState(ctx context.Context, pool *pgxpool.Pool, token string) (*
 	var s oauthState
 	err := pool.QueryRow(ctx, `
 		DELETE FROM oauth_states
-		WHERE token = $1 AND expires_at > NOW()
+		WHERE token_hash = $1 AND expires_at > NOW()
 		RETURNING provider, verifier
-	`, token).Scan(&s.Provider, &s.Verifier)
+	`, tokenHash(token)).Scan(&s.Provider, &s.Verifier)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

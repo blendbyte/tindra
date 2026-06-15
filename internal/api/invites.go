@@ -107,8 +107,8 @@ func (ro *router) handleListInvites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ro *router) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
-	token := chi.URLParam(r, "token")
-	found, err := storage.DeleteInvite(r.Context(), ro.pool, token)
+	id := chi.URLParam(r, "id")
+	found, err := storage.DeleteInvite(r.Context(), ro.pool, id)
 	if err != nil {
 		slog.Error("delete invite", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
