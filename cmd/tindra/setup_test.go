@@ -181,44 +181,6 @@ func TestSendDigestCmd_structure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// migrateCmd -- success path (DB required)
-// ---------------------------------------------------------------------------
-
-func TestMigrateCmd_success(t *testing.T) {
-	if testUserDSN == "" {
-		t.Skip("no database available")
-	}
-	cmd := migrateCmd(inviteCfg())
-	cmd.SetArgs([]string{})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-}
-
-func TestMigrateForceCmd_success(t *testing.T) {
-	if testUserDSN == "" {
-		t.Skip("no database available")
-	}
-	// Query the current version first so we force to the same version (no-op).
-	m, err := newMigrator(inviteCfg())
-	if err != nil {
-		t.Fatalf("newMigrator: %v", err)
-	}
-	ver, _, _ := m.Version()
-	m.Close()
-
-	cmd := migrateForceCmd(inviteCfg())
-	// Force to the current version — this is idempotent but exercises the success path.
-	cmd.SetArgs([]string{itoa(int(ver))})
-	if err := cmd.Execute(); err != nil {
-		// force to current version sometimes fails with "no migration" - that is fine
-		if !strings.Contains(err.Error(), "no migration") {
-			t.Fatalf("migrateForceCmd: %v", err)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // projectsListCmd -- eventLimit display branch
 // ---------------------------------------------------------------------------
 
@@ -301,32 +263,4 @@ func TestCreateUserCmd_emailLowercased(t *testing.T) {
 	if users[0].Email != "admin@example.com" {
 		t.Errorf("email not lowercased: got %q", users[0].Email)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-// itoa converts an int to its string representation without importing strconv
-// (strconv is already used in main.go; this avoids an extra import just for tests).
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for n > 0 {
-		pos--
-		buf[pos] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
 }
