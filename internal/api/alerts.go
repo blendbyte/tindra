@@ -322,6 +322,33 @@ func (ro *router) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (ro *router) handleListAlertFirings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "ruleID")
+	rule, err := storage.GetAlertRule(r.Context(), ro.pool, id)
+	if err != nil {
+		slog.Error("get alert rule for firings", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if rule == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	firings, err := storage.ListAlertFirings(r.Context(), ro.pool, id, 50)
+	if err != nil {
+		slog.Error("list alert firings", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if firings == nil {
+		firings = []*storage.AlertFiring{}
+	}
+	writeJSON(w, struct {
+		Firings []*storage.AlertFiring `json:"firings"`
+	}{Firings: firings})
+}
+
 func (ro *router) handleTestAlertRule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "ruleID")
 	rule, err := storage.GetAlertRule(r.Context(), ro.pool, id)

@@ -271,6 +271,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 
 		r.Get("/api/alert-rules", ro.handleListAlertRules)
 		r.Get("/api/alert-rules/{ruleID}", ro.handleGetAlertRule)
+		r.Get("/api/alert-rules/{ruleID}/firings", ro.handleListAlertFirings)
 
 		// manage_alerts: write operations.
 		r.With(ro.requirePerm("manage_alerts")).Post("/api/alert-rules", ro.handleCreateAlertRule)

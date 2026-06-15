@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -182,7 +183,7 @@ func TestFireWebhook_success(t *testing.T) {
 	rule := &storage.AlertRule{ID: "r1", ProjectIDs: []string{testProject.ID}, WebhookURL: &url}
 	payload := AlertPayload{RuleID: "r1", RuleName: "test", FiredAt: time.Now(), Details: map[string]any{}}
 
-	if err := e.fireWebhook(context.Background(), rule, payload); err != nil {
+	if _, err := e.fireWebhook(context.Background(), rule, payload); err != nil {
 		t.Fatalf("fireWebhook: %v", err)
 	}
 
@@ -199,7 +200,7 @@ func TestFireWebhook_nilURL(t *testing.T) {
 	e := testEvaluator(nil)
 	rule := &storage.AlertRule{WebhookURL: nil}
 	payload := AlertPayload{}
-	if err := e.fireWebhook(context.Background(), rule, payload); err == nil {
+	if _, err := e.fireWebhook(context.Background(), rule, payload); err == nil {
 		t.Error("expected error for nil webhook_url")
 	}
 }
@@ -208,7 +209,7 @@ func TestFireWebhook_emptyURL(t *testing.T) {
 	e := testEvaluator(nil)
 	empty := ""
 	rule := &storage.AlertRule{WebhookURL: &empty}
-	if err := e.fireWebhook(context.Background(), rule, AlertPayload{}); err == nil {
+	if _, err := e.fireWebhook(context.Background(), rule, AlertPayload{}); err == nil {
 		t.Error("expected error for empty webhook_url")
 	}
 }
@@ -224,7 +225,7 @@ func TestFireWebhook_non2xx(t *testing.T) {
 	url := srv.URL
 	rule := &storage.AlertRule{WebhookURL: &url}
 
-	if err := e.fireWebhook(context.Background(), rule, AlertPayload{}); err == nil {
+	if _, err := e.fireWebhook(context.Background(), rule, AlertPayload{}); err == nil {
 		t.Error("expected error for 500 response")
 	}
 }
@@ -249,7 +250,7 @@ func TestFireSlack_success(t *testing.T) {
 		Trigger: "new_or_regressed", FiredAt: time.Now(), Details: map[string]any{},
 	}
 
-	if err := e.fireSlack(context.Background(), rule, payload); err != nil {
+	if _, err := e.fireSlack(context.Background(), rule, payload); err != nil {
 		t.Fatalf("fireSlack: %v", err)
 	}
 	if ct != "application/json" {
@@ -302,7 +303,7 @@ func TestFireSlack_withIssues(t *testing.T) {
 		},
 	}
 
-	if err := e.fireSlack(context.Background(), rule, payload); err != nil {
+	if _, err := e.fireSlack(context.Background(), rule, payload); err != nil {
 		t.Fatalf("fireSlack: %v", err)
 	}
 
@@ -320,7 +321,7 @@ func TestFireSlack_withIssues(t *testing.T) {
 func TestFireSlack_nilURL(t *testing.T) {
 	e := testEvaluator(nil)
 	rule := &storage.AlertRule{WebhookURL: nil}
-	if err := e.fireSlack(context.Background(), rule, AlertPayload{}); err == nil {
+	if _, err := e.fireSlack(context.Background(), rule, AlertPayload{}); err == nil {
 		t.Error("expected error for nil webhook_url")
 	}
 }
@@ -329,7 +330,7 @@ func TestFireSlack_emptyURL(t *testing.T) {
 	e := testEvaluator(nil)
 	empty := ""
 	rule := &storage.AlertRule{WebhookURL: &empty}
-	if err := e.fireSlack(context.Background(), rule, AlertPayload{}); err == nil {
+	if _, err := e.fireSlack(context.Background(), rule, AlertPayload{}); err == nil {
 		t.Error("expected error for empty webhook_url")
 	}
 }
@@ -344,7 +345,7 @@ func TestFireSlack_non2xx(t *testing.T) {
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
 	rule := &storage.AlertRule{WebhookURL: &url}
-	if err := e.fireSlack(context.Background(), rule, AlertPayload{FiredAt: time.Now()}); err == nil {
+	if _, err := e.fireSlack(context.Background(), rule, AlertPayload{FiredAt: time.Now()}); err == nil {
 		t.Error("expected error for 403 response")
 	}
 }
@@ -374,7 +375,7 @@ func TestFireSlack_triggerLabels(t *testing.T) {
 			url := srv.URL
 			rule := &storage.AlertRule{WebhookURL: &url}
 			payload := AlertPayload{Trigger: tt.trigger, FiredAt: time.Now(), Details: map[string]any{}}
-			if err := e.fireSlack(context.Background(), rule, payload); err != nil {
+			if _, err := e.fireSlack(context.Background(), rule, payload); err != nil {
 				t.Fatalf("fireSlack: %v", err)
 			}
 			if !strings.Contains(string(body), tt.want) {
@@ -432,7 +433,7 @@ func TestFireDiscord_success(t *testing.T) {
 		Trigger: "new_or_regressed", FiredAt: time.Now(), Details: map[string]any{},
 	}
 
-	if err := e.fireDiscord(context.Background(), rule, payload); err != nil {
+	if _, err := e.fireDiscord(context.Background(), rule, payload); err != nil {
 		t.Fatalf("fireDiscord: %v", err)
 	}
 	if ct != "application/json" {
@@ -502,7 +503,7 @@ func TestFireDiscord_withIssues(t *testing.T) {
 		},
 	}
 
-	if err := e.fireDiscord(context.Background(), rule, payload); err != nil {
+	if _, err := e.fireDiscord(context.Background(), rule, payload); err != nil {
 		t.Fatalf("fireDiscord: %v", err)
 	}
 	if !strings.Contains(string(body), "TypeError") {
@@ -519,7 +520,7 @@ func TestFireDiscord_withIssues(t *testing.T) {
 func TestFireDiscord_nilURL(t *testing.T) {
 	e := testEvaluator(nil)
 	rule := &storage.AlertRule{WebhookURL: nil}
-	if err := e.fireDiscord(context.Background(), rule, AlertPayload{}); err == nil {
+	if _, err := e.fireDiscord(context.Background(), rule, AlertPayload{}); err == nil {
 		t.Error("expected error for nil webhook_url")
 	}
 }
@@ -528,7 +529,7 @@ func TestFireDiscord_emptyURL(t *testing.T) {
 	e := testEvaluator(nil)
 	empty := ""
 	rule := &storage.AlertRule{WebhookURL: &empty}
-	if err := e.fireDiscord(context.Background(), rule, AlertPayload{}); err == nil {
+	if _, err := e.fireDiscord(context.Background(), rule, AlertPayload{}); err == nil {
 		t.Error("expected error for empty webhook_url")
 	}
 }
@@ -543,7 +544,7 @@ func TestFireDiscord_non2xx(t *testing.T) {
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
 	rule := &storage.AlertRule{WebhookURL: &url}
-	if err := e.fireDiscord(context.Background(), rule, AlertPayload{FiredAt: time.Now()}); err == nil {
+	if _, err := e.fireDiscord(context.Background(), rule, AlertPayload{FiredAt: time.Now()}); err == nil {
 		t.Error("expected error for 401 response")
 	}
 }
@@ -573,7 +574,7 @@ func TestFireDiscord_triggerLabels(t *testing.T) {
 			url := srv.URL
 			rule := &storage.AlertRule{WebhookURL: &url}
 			payload := AlertPayload{Trigger: tt.trigger, FiredAt: time.Now(), Details: map[string]any{}}
-			if err := e.fireDiscord(context.Background(), rule, payload); err != nil {
+			if _, err := e.fireDiscord(context.Background(), rule, payload); err != nil {
 				t.Fatalf("fireDiscord: %v", err)
 			}
 			if !strings.Contains(string(body), tt.want) {
@@ -1909,5 +1910,260 @@ func TestBuildAlertSubject_projectIDFallback(t *testing.T) {
 	got := buildAlertSubject(p)
 	if !strings.Contains(got, "proj-abc") {
 		t.Errorf("expected project ID in subject, got %q", got)
+	}
+}
+
+// --- itemCountFromPayload ---
+
+func TestItemCountFromPayload_noDetails(t *testing.T) {
+	p := AlertPayload{Details: map[string]any{}}
+	if got := itemCountFromPayload(p); got != nil {
+		t.Errorf("expected nil for empty details, got %v", *got)
+	}
+}
+
+func TestItemCountFromPayload_newIssue(t *testing.T) {
+	p := AlertPayload{Details: map[string]any{"new_issue_count": 3}}
+	got := itemCountFromPayload(p)
+	if got == nil || *got != 3 {
+		t.Errorf("expected 3, got %v", got)
+	}
+}
+
+func TestItemCountFromPayload_newOrRegressed(t *testing.T) {
+	p := AlertPayload{Details: map[string]any{"new_issue_count": 2, "regressed_count": 1}}
+	got := itemCountFromPayload(p)
+	if got == nil || *got != 3 {
+		t.Errorf("expected 3 (sum), got %v", got)
+	}
+}
+
+func TestItemCountFromPayload_unknownKey(t *testing.T) {
+	p := AlertPayload{Details: map[string]any{"some_other_key": 5}}
+	if got := itemCountFromPayload(p); got != nil {
+		t.Errorf("expected nil for unknown key, got %v", *got)
+	}
+}
+
+// --- logFiring ---
+
+func TestLogFiring_successCreatesRecord(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	threshold, window := 1, 60
+	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "log test", Enabled: true,
+		Trigger: "event_count", Threshold: &threshold, WindowMins: &window,
+		Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.evaluate(context.Background())
+
+	var count int
+	testPool.QueryRow(context.Background(), `SELECT COUNT(*) FROM alert_firings WHERE rule_id = $1 AND status = 'success'`, rule.ID).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 success firing, got %d", count)
+	}
+}
+
+func TestLogFiring_failureSchedulesRetry(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.WriteHeader(500)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	threshold, window := 1, 60
+	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "retry test", Enabled: true,
+		Trigger: "event_count", Threshold: &threshold, WindowMins: &window,
+		Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.evaluate(context.Background())
+
+	var status string
+	var nextRetryAt *time.Time
+	testPool.QueryRow(context.Background(),
+		`SELECT status, next_retry_at FROM alert_firings WHERE rule_id = $1`, rule.ID,
+	).Scan(&status, &nextRetryAt)
+	if status != "pending" {
+		t.Errorf("status: got %q, want pending", status)
+	}
+	if nextRetryAt == nil {
+		t.Error("expected next_retry_at to be set")
+	}
+}
+
+func TestLogFiring_permanentFailureAfterMaxAttempts(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+
+	url := "https://example.com"
+	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "perm fail", Enabled: true,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+
+	payload := AlertPayload{Trigger: "new_issue", Details: map[string]any{"new_issue_count": 1}}
+	err := fmt.Errorf("permanent error")
+	e := &Evaluator{pool: testPool, client: &http.Client{}}
+
+	// Call logFiring at maxDeliveryAttempts (attempt=3 = no more retries)
+	e.logFiring(context.Background(), rule.ID, "webhook", payload, maxDeliveryAttempts, nil, err)
+
+	var status string
+	var nextRetryAt *time.Time
+	testPool.QueryRow(context.Background(),
+		`SELECT status, next_retry_at FROM alert_firings WHERE rule_id = $1`, rule.ID,
+	).Scan(&status, &nextRetryAt)
+	if status != "failed" {
+		t.Errorf("status: got %q, want failed", status)
+	}
+	if nextRetryAt != nil {
+		t.Error("next_retry_at should be nil for permanent failure")
+	}
+}
+
+// --- processRetries / retryFiring ---
+
+func TestProcessRetries_success(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+
+	fired := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		fired = true
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "retry success", Enabled: true,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+
+	// Insert a pending retry due now
+	payload := AlertPayload{RuleID: rule.ID, RuleName: rule.Name, Trigger: "new_issue", FiredAt: time.Now(), Details: map[string]any{"new_issue_count": 1}}
+	payloadJSON, _ := json.Marshal(payload)
+	past := time.Now().Add(-time.Minute)
+	errMsg := "previous error"
+	storage.CreateAlertFiring(context.Background(), testPool, &storage.AlertFiring{
+		RuleID: rule.ID, Trigger: "new_issue", Channel: "webhook",
+		Status: "pending", Error: &errMsg, Attempt: 1, NextRetryAt: &past, Payload: payloadJSON,
+	})
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.processRetries(context.Background())
+
+	if !fired {
+		t.Error("expected webhook to be called on retry")
+	}
+
+	var status string
+	var attempt int
+	testPool.QueryRow(context.Background(),
+		`SELECT status, attempt FROM alert_firings WHERE rule_id = $1`, rule.ID,
+	).Scan(&status, &attempt)
+	if status != "success" {
+		t.Errorf("status after retry: got %q, want success", status)
+	}
+	if attempt != 2 {
+		t.Errorf("attempt after retry: got %d, want 2", attempt)
+	}
+}
+
+func TestProcessRetries_continuesToFail_schedulesNextRetry(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.WriteHeader(500)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "retry fail", Enabled: true,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+
+	payload := AlertPayload{RuleID: rule.ID, Trigger: "new_issue", FiredAt: time.Now(), Details: map[string]any{}}
+	payloadJSON, _ := json.Marshal(payload)
+	past := time.Now().Add(-time.Minute)
+	errMsg := "err"
+	storage.CreateAlertFiring(context.Background(), testPool, &storage.AlertFiring{
+		RuleID: rule.ID, Trigger: "new_issue", Channel: "webhook",
+		Status: "pending", Error: &errMsg, Attempt: 1, NextRetryAt: &past, Payload: payloadJSON,
+	})
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.processRetries(context.Background())
+
+	var status string
+	var attempt int
+	var nextRetryAt *time.Time
+	testPool.QueryRow(context.Background(),
+		`SELECT status, attempt, next_retry_at FROM alert_firings WHERE rule_id = $1`, rule.ID,
+	).Scan(&status, &attempt, &nextRetryAt)
+	if status != "pending" {
+		t.Errorf("status: got %q, want pending (should schedule another retry)", status)
+	}
+	if attempt != 2 {
+		t.Errorf("attempt: got %d, want 2", attempt)
+	}
+	if nextRetryAt == nil {
+		t.Error("next_retry_at should be set for next retry")
+	}
+}
+
+func TestProcessRetries_permanentFailureAfterMaxAttempts(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.WriteHeader(500)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "perm fail retry", Enabled: true,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+
+	payload := AlertPayload{RuleID: rule.ID, Trigger: "new_issue", FiredAt: time.Now(), Details: map[string]any{}}
+	payloadJSON, _ := json.Marshal(payload)
+	past := time.Now().Add(-time.Minute)
+	errMsg := "err"
+	// attempt=2 means this is the last retry (attempt+1=3 == maxDeliveryAttempts)
+	storage.CreateAlertFiring(context.Background(), testPool, &storage.AlertFiring{
+		RuleID: rule.ID, Trigger: "new_issue", Channel: "webhook",
+		Status: "pending", Error: &errMsg, Attempt: maxDeliveryAttempts - 1, NextRetryAt: &past, Payload: payloadJSON,
+	})
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.processRetries(context.Background())
+
+	var status string
+	testPool.QueryRow(context.Background(),
+		`SELECT status FROM alert_firings WHERE rule_id = $1`, rule.ID,
+	).Scan(&status)
+	if status != "failed" {
+		t.Errorf("status: got %q, want failed after max attempts", status)
 	}
 }

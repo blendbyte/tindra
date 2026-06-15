@@ -337,6 +337,22 @@ export interface AlertRule {
   created_at: string
 }
 
+export type AlertFiringStatus = 'pending' | 'success' | 'failed'
+
+export interface AlertFiring {
+  id: string
+  rule_id: string
+  fired_at: string
+  trigger: string
+  channel: AlertChannel
+  status: AlertFiringStatus
+  status_code?: number
+  error?: string
+  item_count?: number
+  attempt: number
+  next_retry_at?: string
+}
+
 export interface Log {
   id: string
   project_id: string

@@ -7,7 +7,7 @@ import { useConfig } from '@/composables/useConfig'
 import { useFormatters } from '@/composables/useFormatters'
 import { useTimezone } from '@/composables/useTimezone'
 import { apiFetch } from '@/api/client'
-import type { ApiToken, Invite, InstanceHealth, Project, ProjectQuota, ScrubPattern, ServerSettings, User, UserPermissions, AuditRow, AlertRule, AlertTrigger, AlertChannel } from '@/api/types'
+import type { ApiToken, Invite, InstanceHealth, Project, ProjectQuota, ScrubPattern, ServerSettings, User, UserPermissions, AuditRow, AlertRule, AlertFiring, AlertTrigger, AlertChannel } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import { useUiStore } from '@/stores/ui'
@@ -620,6 +620,26 @@ const { data: alertRulesData } = useQuery({
 })
 
 const alertRules = computed(() => alertRulesData.value ?? [])
+
+const { data: expandedRuleFiringsData } = useQuery({
+  queryKey: computed(() => ['alert-firings', expandedRule.value]),
+  queryFn: () => apiFetch<{ firings: AlertFiring[] }>(`/api/alert-rules/${expandedRule.value}/firings`).then(r => r.firings ?? []),
+  enabled: computed(() => expandedRule.value !== null && tab.value === 'alerts'),
+})
+const expandedRuleFirings = computed(() => expandedRuleFiringsData.value ?? [])
+
+function firingTriggerLabel(trigger: string): string {
+  const labels: Record<string, string> = {
+    new_issue: 'New issue',
+    regressed: 'Regression',
+    new_or_regressed: 'New issue / regression',
+    event_count: 'Event count',
+    cron_missed: 'Cron missed',
+    cron_error: 'Cron error',
+    issue_auto_resolved: 'Auto-resolved',
+  }
+  return labels[trigger] ?? trigger
+}
 
 function ruleProjectNames(rule: AlertRule): string {
   if (!rule.project_ids?.length) return 'Global'
@@ -2441,6 +2461,27 @@ function actionKindOf(action: string) {
                 >
                   Delete rule
                 </button>
+              </div>
+
+              <div class="rule__history">
+                <div class="rule__history-head">Delivery history</div>
+                <div v-if="expandedRuleFirings.length === 0" class="rule__history-empty">
+                  No deliveries recorded yet.
+                </div>
+                <div v-for="f in expandedRuleFirings" :key="f.id" class="rule__history-row">
+                  <span class="rule__history-dot" :class="`rule__history-dot--${f.status}`"></span>
+                  <span class="rule__history-time">{{ formatRel(f.fired_at) }}</span>
+                  <span class="rule__history-trigger">{{ firingTriggerLabel(f.trigger) }}</span>
+                  <span v-if="f.item_count != null" class="rule__history-count">{{ f.item_count }} item{{ f.item_count !== 1 ? 's' : '' }}</span>
+                  <span v-if="f.status === 'pending'" class="rule__history-badge rule__history-badge--pending">
+                    retry {{ f.attempt }}/{{ 3 }}
+                  </span>
+                  <span v-else-if="f.status === 'failed'" class="rule__history-badge rule__history-badge--failed">
+                    failed after {{ f.attempt }} {{ f.attempt === 1 ? 'attempt' : 'attempts' }}
+                  </span>
+                  <span v-if="f.status_code" class="rule__history-code">HTTP {{ f.status_code }}</span>
+                  <span v-if="f.error" class="rule__history-error" :title="f.error">{{ f.error }}</span>
+                </div>
               </div>
             </template>
           </div>
