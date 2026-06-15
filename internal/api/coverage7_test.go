@@ -234,10 +234,12 @@ func TestListAllIssues_tagFiltersWithStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListEventsForIssue_withValidCursorTime(t *testing.T) {
-	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
 	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
 		testProject.ID, "fp-ev-cursor-cov7", "Events Cursor Cov7",
 		"error", "error", "", "", time.Now().UTC())
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM issues WHERE id=$1", iss.ID)
+	})
 
 	cursorTime := time.Now().UTC().Format(time.RFC3339Nano)
 	req := httptest.NewRequest(http.MethodGet,
@@ -258,10 +260,12 @@ func TestListEventsForIssue_withValidCursorTime(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListEventsForIssue_withCursorTimeAndID(t *testing.T) {
-	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")
 	iss, _, _, _ := storage.UpsertIssue(context.Background(), testPool,
 		testProject.ID, "fp-ev-cursor2-cov7", "Events Cursor2 Cov7",
 		"error", "error", "", "", time.Now().UTC())
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM issues WHERE id=$1", iss.ID)
+	})
 
 	cursorTime := time.Now().UTC().Format(time.RFC3339Nano)
 	cursorID := "00000000-0000-0000-0000-000000000001"
