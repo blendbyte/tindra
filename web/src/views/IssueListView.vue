@@ -134,11 +134,10 @@ const { data: firstPage, isFetching, isError, refetch } = useQuery({
   refetchOnWindowFocus: false,
 })
 
-// When filters change: discard extra pages and re-run the query with new params.
+// When filters change: discard extra pages. The reactive queryKey triggers a re-fetch automatically.
 watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, effectiveProjectIds], () => {
   extraIssues.value = []
   nextCursor.value = null
-  refetch()
 })
 
 // When first page changes (initial load, filter change, or auto-refresh),
@@ -174,6 +173,7 @@ async function loadMore() {
   isFetchingMore.value = true
   try {
     const data = await apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(nextCursor.value)}`)
+    if (!data) return
     extraIssues.value = [...extraIssues.value, ...(data.issues ?? [])]
     nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
       ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }

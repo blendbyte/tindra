@@ -31,7 +31,7 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
       <button class="btn" @click="refetch()">Retry</button>
     </div>
 
-    <div v-if="timeseries && timeseries.buckets.length > 0" class="txcharts">
+    <div v-if="!isError && timeseries && timeseries.buckets.length > 0" class="txcharts">
       <div class="txchart-panel">
         <div class="txchart-panel__label">TPM</div>
         <TimeseriesChart

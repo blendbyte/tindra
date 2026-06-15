@@ -29,13 +29,18 @@ const n1MinTotalMs = 50
 // together instead of being counted separately).
 var (
 	reSQLString  = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
-	reSQLNumber  = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	reSQLNumber  = regexp.MustCompile(`\$\d+|\b\d+(?:\.\d+)?\b`)
 	reWhitespace = regexp.MustCompile(`\s+`)
 )
 
 func normalizeSQL(s string) string {
 	s = reSQLString.ReplaceAllString(s, "?")
-	s = reSQLNumber.ReplaceAllString(s, "?")
+	s = reSQLNumber.ReplaceAllStringFunc(s, func(m string) string {
+		if m[0] == '$' {
+			return m
+		}
+		return "?"
+	})
 	s = strings.ToLower(strings.TrimSpace(s))
 	return reWhitespace.ReplaceAllString(s, " ")
 }

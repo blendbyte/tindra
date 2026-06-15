@@ -121,6 +121,7 @@ const { mutate: createToken, isPending: creatingToken } = useMutation({
       body: JSON.stringify({ name, project_id, writable }),
     }),
   onSuccess: (data) => {
+    if (!data) return
     flashToken.value = data.token
     newTokenName.value = ''
     newTokenProject.value = ''

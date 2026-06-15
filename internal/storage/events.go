@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -281,7 +282,9 @@ func ListEventsForIssue(ctx context.Context, pool *pgxpool.Pool, issueID string,
 			FROM event_tags
 			WHERE event_id::text = ANY($1)
 		`, ids)
-		if tagErr == nil {
+		if tagErr != nil {
+			slog.Error("list events: fetch tags", "err", tagErr)
+		} else {
 			defer tagRows.Close()
 			for tagRows.Next() {
 				var evID, key, value string
@@ -291,6 +294,9 @@ func ListEventsForIssue(ctx context.Context, pool *pgxpool.Pool, issueID string,
 				if i, ok := idxByID[evID]; ok {
 					events[i].Tags[key] = value
 				}
+			}
+			if err := tagRows.Err(); err != nil {
+				slog.Error("list events: iterate tag rows", "err", err)
 			}
 		}
 	}

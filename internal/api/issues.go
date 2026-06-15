@@ -301,7 +301,7 @@ func (ro *router) handleUnmergeIssue(w http.ResponseWriter, r *http.Request) {
 	newIssues, err := storage.UnmergeFingerprints(r.Context(), ro.pool, issueID, req.Fingerprints)
 	if err != nil {
 		slog.Error("unmerge fingerprints", "err", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 

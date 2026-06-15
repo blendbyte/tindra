@@ -297,6 +297,9 @@ func (ro *router) handleUpdateProjectPrivacy(w http.ResponseWriter, r *http.Requ
 
 func (ro *router) handleGetProjectQuota(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
+	if !enforceTokenProject(w, r, projectID) {
+		return
+	}
 
 	events, err := storage.CountProjectEvents(r.Context(), ro.pool, projectID)
 	if err != nil {
@@ -566,7 +569,12 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 	}
 	n, err := storage.BulkUpdateIssueStatus(r.Context(), ro.pool, req.IDs, req.Status, ignoreOpts, nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if strings.Contains(err.Error(), "invalid status") {
+			http.Error(w, "invalid status", http.StatusBadRequest)
+			return
+		}
+		slog.Error("bulk update issue status", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	actor := actorFromContext(r.Context())

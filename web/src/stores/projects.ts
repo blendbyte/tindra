@@ -30,7 +30,7 @@ export const useProjectsStore = defineStore('projects', () => {
 
   // Drop stale IDs that no longer correspond to real projects.
   watch(projects, (ps) => {
-    if (!ps || ps.length === 0) return
+    if (!ps) return
     const valid = new Set(ps.map((p) => p.id))
     const cleaned = selectedIds.value.filter((id) => valid.has(id))
     if (cleaned.length !== selectedIds.value.length) selectedIds.value = cleaned

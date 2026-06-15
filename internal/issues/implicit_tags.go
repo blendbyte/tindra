@@ -50,8 +50,8 @@ func extractImplicitTags(payload json.RawMessage) [][2]string {
 		if v == "" {
 			return
 		}
-		if len(v) > tagMaxLen {
-			v = v[:tagMaxLen]
+		if len([]rune(v)) > tagMaxLen {
+			v = string([]rune(v)[:tagMaxLen])
 		}
 		tags = append(tags, [2]string{k, v})
 	}
@@ -123,9 +123,9 @@ func extractImplicitTags(payload json.RawMessage) [][2]string {
 		}
 	}
 
-	// Exception mechanism
+	// Exception mechanism — use innermost (last) value, matching fingerprint behaviour.
 	if len(p.Exception.Values) > 0 {
-		mech := p.Exception.Values[0].Mechanism
+		mech := p.Exception.Values[len(p.Exception.Values)-1].Mechanism
 		add("mechanism", mech.Type)
 		if mech.Handled != nil {
 			if *mech.Handled {

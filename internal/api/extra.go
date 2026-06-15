@@ -158,7 +158,7 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Error("change password", "err", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "unable to change password", http.StatusBadRequest)
 		return
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
@@ -171,6 +171,10 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // handleListUsers returns all users (for assignee picker and team management).
 func (ro *router) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	if actorFromContext(r.Context()) == nil {
+		http.Error(w, "session required", http.StatusForbidden)
+		return
+	}
 	users, err := storage.ListUsers(r.Context(), ro.pool)
 	if err != nil {
 		slog.Error("list users", "err", err)

@@ -81,9 +81,11 @@ func (w *Worker) purgeEvents(ctx context.Context, cutoff time.Time) (eventsDelet
 	issueIDs := make(map[string]struct{})
 	for rows.Next() {
 		var id *string
-		if err := rows.Scan(&id); err == nil && id != nil {
-			issueIDs[*id] = struct{}{}
+		if err := rows.Scan(&id); err == nil {
 			eventsDeleted++
+			if id != nil {
+				issueIDs[*id] = struct{}{}
+			}
 		}
 	}
 	rows.Close()

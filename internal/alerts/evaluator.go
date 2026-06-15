@@ -974,8 +974,8 @@ func singleIssueTitle(p AlertPayload) string {
 		return ""
 	}
 	t := p.Issues[0].Title
-	if len(t) > 120 {
-		t = t[:117] + "..."
+	if len([]rune(t)) > 120 {
+		t = string([]rune(t)[:117]) + "..."
 	}
 	return t
 }

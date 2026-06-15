@@ -317,6 +317,9 @@ func UpdateUserProfile(ctx context.Context, pool *pgxpool.Pool, id, name, email,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("update profile: %w", err)
 	}
 	u.HasPassword = u.PasswordHash != ""

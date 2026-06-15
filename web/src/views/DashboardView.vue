@@ -107,7 +107,7 @@ const { data: alertRules, isLoading: alertsLoading } = useQuery({
 })
 
 const { data: projectIssueCounts, isFetching: projStatsFetching } = useQuery({
-  queryKey: ['dash-proj-stats'],
+  queryKey: computed(() => ['dash-proj-stats', [...projects.selectedIds].sort().join(',')]),
   queryFn: () => apiFetch<ProjectIssueCount[]>('/api/projects/stats'),
   enabled: computed(() => projects.projects.length >= 2),
   refetchInterval: 30_000,
