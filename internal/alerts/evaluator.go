@@ -206,6 +206,9 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 		}, nil
 
 	case "event_count":
+		if rule.WindowMins == nil || rule.Threshold == nil {
+			return false, nil, fmt.Errorf("event_count rule %s missing window_mins or threshold", rule.ID)
+		}
 		var clauses []string
 		var args []any
 		if len(rule.ProjectIDs) > 0 {
@@ -328,6 +331,11 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 	if rule.FilterEnvironment != nil {
 		filterEnv = *rule.FilterEnvironment
 	}
+	// Use severity-range filter so enriched issues match what conditionMet counted.
+	var filterLevels []string
+	if filterLevel != "" {
+		filterLevels = levelsAtOrAbove(filterLevel)
+	}
 
 	switch rule.Trigger {
 	case "new_issue":
@@ -338,7 +346,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		issues, err := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
 			Limit:       5,
 			Since:       &since,
-			Level:       filterLevel,
+			Levels:      filterLevels,
 			Environment: filterEnv,
 		})
 		if err == nil {
@@ -353,7 +361,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			Status:         "regressed",
 			SinceRegressed: &since,
 			Limit:          5,
-			Level:          filterLevel,
+			Levels:         filterLevels,
 			Environment:    filterEnv,
 		})
 		if err == nil {
@@ -367,14 +375,14 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		newIssues, _ := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
 			Since:       &since,
 			Limit:       5,
-			Level:       filterLevel,
+			Levels:      filterLevels,
 			Environment: filterEnv,
 		})
 		regIssues, _ := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
 			Status:         "regressed",
 			SinceRegressed: &since,
 			Limit:          5,
-			Level:          filterLevel,
+			Levels:         filterLevels,
 			Environment:    filterEnv,
 		})
 		seen := map[string]bool{}
@@ -596,6 +604,13 @@ func (e *Evaluator) NotifyAutoResolved(ctx context.Context, issues []*storage.Is
 	}
 
 	for _, rule := range rules {
+		// Only rules that track issue state should receive auto-resolve notifications.
+		switch rule.Trigger {
+		case "new_issue", "regressed", "new_or_regressed":
+		default:
+			continue
+		}
+
 		var ruleIssues []*storage.Issue
 		if len(rule.ProjectIDs) == 0 {
 			ruleIssues = issues

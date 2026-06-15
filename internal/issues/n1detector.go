@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -96,7 +95,7 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 
 		issue, _, _, err := storage.UpsertIssue(ctx, d.pool,
 			tx.ProjectID, fp, title, "performance", "n1_query",
-			tx.Environment, "", time.Now())
+			tx.Environment, "", tx.Timestamp)
 		if err != nil {
 			slog.Error("n1 upsert issue", "err", err)
 			continue

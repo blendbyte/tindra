@@ -88,6 +88,7 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, email, password string)
 	if err != nil {
 		return nil, fmt.Errorf("insert: %w", err)
 	}
+	u.HasPassword = u.PasswordHash != ""
 	return &u, nil
 }
 
@@ -227,11 +228,9 @@ func AuthenticateUser(ctx context.Context, pool *pgxpool.Pool, email, password s
 	}
 
 	// Reset lockout state on successful authentication.
-	go func() {
-		_, _ = pool.Exec(context.Background(), `
-			UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = $1
-		`, u.ID)
-	}()
+	_, _ = pool.Exec(ctx, `
+		UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = $1
+	`, u.ID)
 
 	u.HasPassword = u.PasswordHash != ""
 	return &u, nil
@@ -302,6 +301,7 @@ func UpdateUserPermissions(ctx context.Context, pool *pgxpool.Pool, id string, p
 	if err != nil {
 		return nil, fmt.Errorf("update permissions: %w", err)
 	}
+	u.HasPassword = u.PasswordHash != ""
 	return &u, nil
 }
 

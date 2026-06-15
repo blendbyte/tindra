@@ -73,6 +73,7 @@ function setupMocks(summaries: unknown[] = [], isLoading = false, isError = fals
     .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
+    .mockReturnValueOnce({ data: ref(undefined) } as any)
 }
 
 beforeEach(() => {
@@ -398,13 +399,13 @@ describe('TransactionListView', () => {
     }
 
     it('renders chart panel when timeseries data has buckets', async () => {
-      vi.mocked(apiFetch).mockResolvedValue(timeseriesData as any)
       vi.mocked(useProjectsStore).mockReturnValue({ projects: [{ id: '1', name: 'App', slug: 'app' }], selectedIds: [] } as any)
       vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref([makeSummary('/api/users')]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(timeseriesData) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
       await flushPromises()
       expect(wrapper.find('.txcharts').exists()).toBe(true)
@@ -419,6 +420,7 @@ describe('TransactionListView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')

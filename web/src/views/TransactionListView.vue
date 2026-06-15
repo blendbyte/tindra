@@ -168,14 +168,10 @@ function getDelta(s: TransactionSummary, metric: 'p50' | 'p95') {
   }
 }
 
-const timeseries = ref<TxTimeseries | null>(null)
-watch(
-  txParamsWithOp,
-  async (params) => {
-    timeseries.value = await apiFetch<TxTimeseries>(`/api/transactions/timeseries?${params}`)
-  },
-  { immediate: true },
-)
+const { data: timeseries } = useQuery({
+  queryKey: ['transaction-timeseries', txParamsWithOp],
+  queryFn: () => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${txParamsWithOp.value}`),
+})
 
 // Distinct ops and per-op counts, derived live from the full unfiltered dataset
 const availableOps = computed(() => {

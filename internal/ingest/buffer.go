@@ -104,7 +104,6 @@ func writeBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedEvent) 
 		`, e.ProjectID, e.EventID, e.Timestamp, sanitizeJSONPayload(e.Payload), nullableString(e.TraceID), nullableString(e.SpanID))
 	}
 	results := pool.SendBatch(ctx, b)
-	defer results.Close()
 	for range batch {
 		if _, err := results.Exec(); err != nil {
 			slog.Error("event insert", "err", err)

@@ -79,7 +79,8 @@ func (ro *router) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lastPeriodStart := time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, time.UTC)
+	prev := now.AddDate(0, -1, 0)
+	lastPeriodStart := time.Date(prev.Year(), prev.Month(), 1, 0, 0, 0, 0, time.UTC)
 
 	writeJSON(w, struct {
 		Projects        int64  `json:"projects"`
@@ -657,8 +658,12 @@ func (ro *router) handleUpdateIssueGlobal(w http.ResponseWriter, r *http.Request
 		}
 		updated, err = storage.UpdateIssueStatus(r.Context(), ro.pool, issue.ProjectID, id, req.Status, ignoreOpts)
 		if err != nil {
-			slog.Error("update issue status", "err", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
+			if strings.Contains(err.Error(), "invalid status") {
+				http.Error(w, "bad request", http.StatusBadRequest)
+			} else {
+				slog.Error("update issue status", "err", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
 			return
 		}
 		storage.WriteAuditLog(ro.pool, storage.AuditEntry{
@@ -835,7 +840,12 @@ func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev, err := storage.GetEventForIssueAtOffset(r.Context(), ro.pool, issueID, offset)
-	if err != nil || ev == nil || ev.TraceID == nil || *ev.TraceID == "" {
+	if err != nil {
+		slog.Error("get event for issue", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if ev == nil || ev.TraceID == nil || *ev.TraceID == "" {
 		writeJSON(w, nil)
 		return
 	}

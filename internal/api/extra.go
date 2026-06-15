@@ -222,8 +222,7 @@ func (ro *router) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, comment)
+	writeJSONStatus(w, http.StatusCreated, comment)
 }
 
 // handleUpdateComment edits a comment body. Only the author may edit.
