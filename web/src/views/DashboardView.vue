@@ -882,6 +882,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 .db-projects {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  margin-bottom: 32px;
 }
 
 .db-proj-head,
@@ -961,7 +962,6 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 .db-body {
   display: grid;
   grid-template-columns: 1fr 280px;
-  align-items: start;
   flex: 1;
 }
 
@@ -972,12 +972,21 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 
 .db-aside {
   min-width: 0;
+  background: var(--surface);
+}
+
+.db-aside .db-sec__head {
+  background: var(--bg);
 }
 
 /* ── Sections ───────────────────────────────────────────────────────────────── */
 
-.db-sec + .db-sec {
+.db-sec {
   border-top: 1px solid var(--border);
+}
+
+.db-sec + .db-sec {
+  margin-top: 36px;
 }
 
 .db-sec__head {
