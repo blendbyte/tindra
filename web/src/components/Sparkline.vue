@@ -12,7 +12,7 @@ const props = withDefaults(
 )
 
 const points = computed(() => {
-  if (!props.data || props.data.length === 0) return ''
+  if (!props.data || props.data.length <= 1) return ''
   const max = Math.max(...props.data, 1)
   const stepX = props.width / (props.data.length - 1)
   return props.data
@@ -27,7 +27,7 @@ const points = computed(() => {
 
 <template>
   <svg
-    v-if="data && data.length > 0"
+    v-if="data && data.length > 1"
     class="spark"
     :width="width"
     :height="height"

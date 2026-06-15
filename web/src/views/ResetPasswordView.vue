@@ -2,12 +2,14 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/Icon.vue'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const token = route.params.token as string
 
 const state = ref<'loading' | 'ready' | 'submitting' | 'done' | 'invalid'>('loading')
@@ -53,6 +55,7 @@ async function submit(e: Event) {
       mfaCode.value = ''
       state.value = 'ready'
     } else {
+      auth.ready = false
       await router.push('/issues')
     }
   } catch (err) {
@@ -70,6 +73,7 @@ async function submitMFA() {
       method: 'POST',
       body: JSON.stringify({ mfa_token: mfaToken.value, code: mfaCode.value }),
     })
+    auth.ready = false
     await router.push('/issues')
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Invalid code.'
