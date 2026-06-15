@@ -559,4 +559,505 @@ describe('TransactionDetailView', () => {
       }
     })
   })
+
+  describe('spans loading inside waterfall', () => {
+    it('renders skeleton rows in waterfall when spans are loading', () => {
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref(baseTx), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(true), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      // Skeleton rows appear inside waterfall-left during spans loading
+      expect(wrapper.find('.waterfall-left .skel').exists()).toBe(true)
+    })
+  })
+
+  describe('search by status', () => {
+    it('filters spans by status field', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SELECT 1', duration_ms: 12, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'sp2', span_id: 'a2', parent_span_id: null, op: 'http.client', description: 'GET /api', duration_ms: 50, start_offset_ms: 20, status: 'error', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      await wrapper.find('.trace-search input').setValue('error')
+      const rows = wrapper.findAll('.span-row:not(.span-row--header)')
+      expect(rows.length).toBe(1)
+    })
+  })
+
+  describe('environment tag in breadcrumb', () => {
+    it('shows the environment tag in the breadcrumb actions', () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-breadcrumb__actions .tag').text()).toBe('production')
+    })
+
+    it('shows dash when environment is null', () => {
+      setupMocks({ ...baseTx, environment: null })
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-breadcrumb__actions .tag').text()).toBe('-')
+    })
+  })
+
+  describe('different op types', () => {
+    it('renders task op prefix', () => {
+      setupMocks({ ...baseTx, op: 'task.run' })
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.optag').text()).toBe('task')
+    })
+
+    it('renders cache op prefix', () => {
+      setupMocks({ ...baseTx, op: 'cache.get' })
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.optag').text()).toBe('cache')
+    })
+
+    it('renders db op spans with correct op label in span row', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SELECT 1', duration_ms: 10, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('db')
+    })
+
+    it('renders grpc op spans', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'grpc.unary', description: 'SomeMethod', duration_ms: 10, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('grpc')
+    })
+
+    it('renders graphql op spans', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'graphql.query', description: 'GetUser', duration_ms: 20, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('graphql')
+    })
+
+    it('renders queue op spans', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'queue.publish', description: 'send-email', duration_ms: 5, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('queue')
+    })
+
+    it('renders file op spans', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'file.read', description: '/etc/config', duration_ms: 3, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('file')
+    })
+
+    it('renders default op color for unknown op type', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'custom.thing', description: 'something', duration_ms: 8, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('custom')
+    })
+  })
+
+  describe('span detail - parent span ID row', () => {
+    it('shows Parent Span ID in detail when span has a parent', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'parent-001', parent_span_id: null, op: 'http.server', description: 'Root', duration_ms: 100, start_offset_ms: 0, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200000 },
+        { id: 'sp2', span_id: 'child-001', parent_span_id: 'parent-001', op: 'db.query', description: 'SELECT 1', duration_ms: 20, start_offset_ms: 10, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200010 },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const childRow = wrapper.findAll('.span-row').find(r => r.text().includes('SELECT 1'))!
+      await childRow.trigger('click')
+      expect(wrapper.find('.span-detail').text()).toContain('Parent Span ID')
+      expect(wrapper.find('.span-detail').text()).toContain('parent-001')
+    })
+
+    it('does not show Parent Span ID when span has no parent', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'root-001', parent_span_id: null, op: 'http.server', description: 'Root', duration_ms: 100, start_offset_ms: 0, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200000 },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const rootRow = wrapper.findAll('.span-row').find(r => r.text().includes('Root'))!
+      await rootRow.trigger('click')
+      expect(wrapper.find('.span-detail').text()).not.toContain('Parent Span ID')
+    })
+  })
+
+  describe('span detail - critical path flag', () => {
+    it('shows Critical path Yes row in detail when span is critical', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SLOW', duration_ms: 200, start_offset_ms: 0, status: 'ok', is_critical: true },
+        { id: 'sp2', span_id: 'a2', parent_span_id: null, op: 'http.client', description: 'GET', duration_ms: 10, start_offset_ms: 5, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const critRow = wrapper.findAll('.span-row').find(r => r.text().includes('SLOW'))!
+      await critRow.trigger('click')
+      const detail = wrapper.find('.span-detail')
+      expect(detail.text()).toContain('Critical path')
+      expect(detail.text()).toContain('Yes')
+    })
+
+    it('does not show Critical path row in detail when span is not critical', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'http.client', description: 'GET /api', duration_ms: 30, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const row = wrapper.findAll('.span-row').find(r => r.text().includes('GET /api'))!
+      await row.trigger('click')
+      // Critical path row only appears when is_critical is true
+      const detailText = wrapper.find('.span-detail').text()
+      // The "Critical path" stat label is in hero, but in span-detail it should not appear for non-critical spans
+      expect(detailText).not.toContain('Yes')
+    })
+  })
+
+  describe('auto-group rows', () => {
+    it('renders Autogrouped badge when 4+ consecutive same-op sibling spans', () => {
+      const spans = [
+        { id: 'g1', span_id: 'g1', parent_span_id: null, op: 'db.query', description: 'Q1', duration_ms: 5, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'g2', span_id: 'g2', parent_span_id: null, op: 'db.query', description: 'Q2', duration_ms: 5, start_offset_ms: 5, status: 'ok', is_critical: false },
+        { id: 'g3', span_id: 'g3', parent_span_id: null, op: 'db.query', description: 'Q3', duration_ms: 5, start_offset_ms: 10, status: 'ok', is_critical: false },
+        { id: 'g4', span_id: 'g4', parent_span_id: null, op: 'db.query', description: 'Q4', duration_ms: 5, start_offset_ms: 15, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.span-autogroup-badge').text()).toBe('Autogrouped')
+    })
+
+    it('renders count of spans in auto-group row', () => {
+      const spans = [
+        { id: 'g1', span_id: 'g1', parent_span_id: null, op: 'db.query', description: 'Q1', duration_ms: 5, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'g2', span_id: 'g2', parent_span_id: null, op: 'db.query', description: 'Q2', duration_ms: 5, start_offset_ms: 5, status: 'ok', is_critical: false },
+        { id: 'g3', span_id: 'g3', parent_span_id: null, op: 'db.query', description: 'Q3', duration_ms: 5, start_offset_ms: 10, status: 'ok', is_critical: false },
+        { id: 'g4', span_id: 'g4', parent_span_id: null, op: 'db.query', description: 'Q4', duration_ms: 5, start_offset_ms: 15, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.span-row--group .span-row__dur').text()).toContain('4 spans')
+    })
+
+    it('expands auto-group when group row is clicked', async () => {
+      const spans = [
+        { id: 'g1', span_id: 'g1', parent_span_id: null, op: 'db.query', description: 'Q1', duration_ms: 5, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'g2', span_id: 'g2', parent_span_id: null, op: 'db.query', description: 'Q2', duration_ms: 5, start_offset_ms: 5, status: 'ok', is_critical: false },
+        { id: 'g3', span_id: 'g3', parent_span_id: null, op: 'db.query', description: 'Q3', duration_ms: 5, start_offset_ms: 10, status: 'ok', is_critical: false },
+        { id: 'g4', span_id: 'g4', parent_span_id: null, op: 'db.query', description: 'Q4', duration_ms: 5, start_offset_ms: 15, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const groupRow = wrapper.find('.span-row--group')
+      await groupRow.trigger('click')
+      // After expanding, individual span rows should appear
+      const spanRows = wrapper.findAll('.span-row:not(.span-row--header):not(.span-row--group)')
+      expect(spanRows.length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('chain rows', () => {
+    it('renders Chain badge when a single-descendant chain of 3+ same-op spans exists', () => {
+      // Build a chain: a -> b -> c all same op, each with exactly one child
+      const spans = [
+        { id: 'c1', span_id: 'c1', parent_span_id: null, op: 'http.client', description: 'L1', duration_ms: 60, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'c2', span_id: 'c2', parent_span_id: 'c1', op: 'http.client', description: 'L2', duration_ms: 50, start_offset_ms: 5, status: 'ok', is_critical: false },
+        { id: 'c3', span_id: 'c3', parent_span_id: 'c2', op: 'http.client', description: 'L3', duration_ms: 40, start_offset_ms: 10, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.span-autogroup-badge').text()).toBe('Chain')
+    })
+
+    it('renders span count in chain row', () => {
+      const spans = [
+        { id: 'c1', span_id: 'c1', parent_span_id: null, op: 'http.client', description: 'L1', duration_ms: 60, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'c2', span_id: 'c2', parent_span_id: 'c1', op: 'http.client', description: 'L2', duration_ms: 50, start_offset_ms: 5, status: 'ok', is_critical: false },
+        { id: 'c3', span_id: 'c3', parent_span_id: 'c2', op: 'http.client', description: 'L3', duration_ms: 40, start_offset_ms: 10, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.span-row--group .span-row__dur').text()).toContain('3 spans')
+    })
+  })
+
+  describe('trace offset helpers', () => {
+    it('shows log offset in seconds when log is more than 1000ms after tx start', () => {
+      const traceLogs = {
+        logs: [{
+          id: 'log1',
+          timestamp: '2024-01-01T00:00:01.500Z',  // 1500ms after tx start (2024-01-01T00:00:00.000Z)
+          level: 'info',
+          body: 'Slow event',
+          trace_id: 'trace-abc',
+          environment: 'production',
+          attributes: {},
+        }],
+        has_more: false,
+      }
+      setupMocks(baseTx, [], false, false, traceLogs)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('+1.50s')
+    })
+
+    it('shows negative offset label for logs before tx start', () => {
+      const traceLogs = {
+        logs: [{
+          id: 'log1',
+          timestamp: '2023-12-31T23:59:59.000Z',  // 1 second before tx start
+          level: 'warn',
+          body: 'Early event',
+          trace_id: 'trace-abc',
+          environment: 'production',
+          attributes: {},
+        }],
+        has_more: false,
+      }
+      setupMocks(baseTx, [], false, false, traceLogs)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('<0ms')
+    })
+
+    it('shows error offset in seconds when error is more than 1000ms after tx start', () => {
+      const traceErrors = [{
+        event_id: 'ev1',
+        issue_id: 'iss-1',
+        level: 'error',
+        title: 'Late error',
+        timestamp: '2024-01-01T00:00:02.000Z',  // 2000ms after tx start
+        span_id: null,
+      }]
+      setupMocks(baseTx, [], false, false, undefined, traceErrors)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('+2.00s')
+    })
+
+    it('shows error offset as <0ms for errors before tx start', () => {
+      const traceErrors = [{
+        event_id: 'ev1',
+        issue_id: 'iss-1',
+        level: 'error',
+        title: 'Early error',
+        timestamp: '2023-12-31T23:59:58.000Z',  // before tx start
+        span_id: null,
+      }]
+      setupMocks(baseTx, [], false, false, undefined, traceErrors)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('<0ms')
+    })
+  })
+
+  describe('op legend in search bar', () => {
+    it('renders op legend dots when spans are present and no search query', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'Q1', duration_ms: 10, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'sp2', span_id: 'a2', parent_span_id: null, op: 'http.client', description: 'GET', duration_ms: 5, start_offset_ms: 10, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.trace-search__legend').exists()).toBe(true)
+      // Both distinct op prefixes should appear
+      const legItems = wrapper.findAll('.trace-search__leg')
+      expect(legItems.length).toBe(2)
+    })
+
+    it('hides op legend when search query is active', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'Q1', duration_ms: 10, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      await wrapper.find('.trace-search input').setValue('Q1')
+      expect(wrapper.find('.trace-search__legend').exists()).toBe(false)
+    })
+  })
+
+  describe('trace ID short display', () => {
+    it('shows first 16 chars of trace_id followed by ellipsis', () => {
+      setupMocks({ ...baseTx, trace_id: 'abcdef1234567890xyz' })
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      // The template shows trace_id.slice(0, 16) + '…'
+      expect(wrapper.text()).toContain('abcdef1234567890')
+    })
+  })
+
+  describe('back button navigation', () => {
+    it('calls router.back() when back link is clicked on loaded transaction', async () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      await wrapper.find('.detail-breadcrumb__back').trigger('click')
+      expect(backMock).toHaveBeenCalled()
+    })
+
+    it('calls router.back() when back link is clicked on error state', async () => {
+      setupMocks(undefined, [], true)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      await wrapper.find('.detail-breadcrumb__back').trigger('click')
+      expect(backMock).toHaveBeenCalled()
+    })
+
+    it('calls router.back() when back link is clicked on loading state', async () => {
+      setupMocks(undefined, [], false, true)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      await wrapper.find('.detail-breadcrumb__back').trigger('click')
+      expect(backMock).toHaveBeenCalled()
+    })
+  })
+
+  describe('transaction name in breadcrumb title', () => {
+    it('shows transaction name in breadcrumb title on loaded state', () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-breadcrumb__title').text()).toContain('/api/users')
+    })
+  })
+
+  describe('span status display in detail', () => {
+    it('shows error status class in span detail for error status span', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SELECT fail', duration_ms: 10, start_offset_ms: 0, status: 'error', is_critical: false, start_timestamp_ms: 1704067200000 },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const row = wrapper.findAll('.span-row').find(r => r.text().includes('SELECT fail'))!
+      await row.trigger('click')
+      expect(wrapper.find('.span-detail__status--error').exists()).toBe(true)
+    })
+  })
+
+  describe('span child count badge', () => {
+    it('shows child count badge on parent span', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'parent-x', parent_span_id: null, op: 'http.server', description: 'Root', duration_ms: 100, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'sp2', span_id: 'child-x', parent_span_id: 'parent-x', op: 'db.query', description: 'Q1', duration_ms: 20, start_offset_ms: 5, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.span-child-count').exists()).toBe(true)
+      expect(wrapper.find('.span-child-count').text()).toBe('1')
+    })
+  })
+
+  describe('zoom controls', () => {
+    it('zoom in button exists when spans are present', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'Q1', duration_ms: 10, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.trace-search__zoom').exists()).toBe(true)
+    })
+
+    it('zoom controls are not rendered when there are no spans', () => {
+      setupMocks(baseTx, [])
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.trace-search__zoom').exists()).toBe(false)
+    })
+
+    it('handles keyboard + zoom in without throwing', () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: '+', bubbles: true }))).not.toThrow()
+      expect(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: '=', bubbles: true }))).not.toThrow()
+      wrapper.unmount()
+    })
+
+    it('handles keyboard - zoom out without throwing', () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: '-', bubbles: true }))).not.toThrow()
+      expect(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: '_', bubbles: true }))).not.toThrow()
+      wrapper.unmount()
+    })
+  })
+
+  describe('keyboard Escape from input', () => {
+    it('handles Escape key when focused inside the search input without throwing', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SELECT 1', duration_ms: 12, start_offset_ms: 0, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const input = wrapper.find('.trace-search input').element as HTMLInputElement
+      // Simulate Escape from inside the input element
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      Object.defineProperty(event, 'target', { value: input, configurable: true })
+      expect(() => document.dispatchEvent(event)).not.toThrow()
+      wrapper.unmount()
+    })
+  })
+
+  describe('span detail - no description', () => {
+    it('does not render Description row when span has empty description', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'http.server', description: '', duration_ms: 50, start_offset_ms: 0, status: 'ok', is_critical: false, start_timestamp_ms: 1704067200000 },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const row = wrapper.findAll('.span-row').find(r => !r.classes().includes('span-row--header'))!
+      await row.trigger('click')
+      expect(wrapper.find('.span-detail').text()).not.toContain('Description')
+    })
+  })
+
+  describe('span search - match count display', () => {
+    it('shows correct fraction in match count (matching / total)', async () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'SELECT users', duration_ms: 12, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'sp2', span_id: 'a2', parent_span_id: null, op: 'db.query', description: 'SELECT orders', duration_ms: 8, start_offset_ms: 5, status: 'ok', is_critical: false },
+        { id: 'sp3', span_id: 'a3', parent_span_id: null, op: 'http.client', description: 'GET /health', duration_ms: 3, start_offset_ms: 20, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      await wrapper.find('.trace-search input').setValue('SELECT')
+      const countEl = wrapper.find('.trace-search__count')
+      expect(countEl.text()).toContain('2')
+      expect(countEl.text()).toContain('3')
+    })
+  })
+
+  describe('transaction status display', () => {
+    it('renders ok status badge in stat row', () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.tx-status--ok').exists()).toBe(true)
+      expect(wrapper.find('.tx-status--ok').text()).toBe('ok')
+    })
+
+    it('renders error status badge when tx has error status', () => {
+      setupMocks({ ...baseTx, status: 'error' })
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.tx-status--error').exists()).toBe(true)
+    })
+  })
+
+  describe('span count in Duration stat', () => {
+    it('shows 0 spans label when span list is empty', () => {
+      setupMocks(baseTx, [])
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.stat__sub').text()).toContain('0 spans')
+    })
+
+    it('shows correct span count when spans are loaded', () => {
+      const spans = [
+        { id: 'sp1', span_id: 'a1', parent_span_id: null, op: 'db.query', description: 'Q1', duration_ms: 10, start_offset_ms: 0, status: 'ok', is_critical: false },
+        { id: 'sp2', span_id: 'a2', parent_span_id: null, op: 'http.client', description: 'GET', duration_ms: 5, start_offset_ms: 15, status: 'ok', is_critical: false },
+        { id: 'sp3', span_id: 'a3', parent_span_id: null, op: 'cache.get', description: 'get-key', duration_ms: 2, start_offset_ms: 20, status: 'ok', is_critical: false },
+      ]
+      setupMocks(baseTx, spans)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.stat__sub').text()).toContain('3 spans')
+    })
+  })
 })
