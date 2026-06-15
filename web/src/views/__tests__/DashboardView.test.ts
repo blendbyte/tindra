@@ -97,19 +97,20 @@ afterEach(() => {
 
 describe('DashboardView', () => {
   describe('KPI strip', () => {
-    it('renders all four KPI labels', () => {
+    it('renders all five KPI labels', () => {
       const wrapper = makeWrapper()
       const text = wrapper.text()
       expect(text).toContain('Open Issues')
       expect(text).toContain('Error Rate')
       expect(text).toContain('P95 Latency')
+      expect(text).toContain('Apdex')
       expect(text).toContain('Transactions / 24h')
     })
 
     it('shows muted dashes when transaction data is not yet available', () => {
       const wrapper = makeWrapper()
-      // error rate, p95, and tx count all depend on tx queries which return undefined
-      expect(wrapper.findAll('.db-kpi__value--muted')).toHaveLength(3)
+      // error rate, p95, apdex, and tx count all depend on tx queries which return undefined
+      expect(wrapper.findAll('.db-kpi__value--muted')).toHaveLength(4)
     })
   })
 
@@ -258,7 +259,7 @@ describe('DashboardView', () => {
       const wrapper = makeWrapper({ issues })
       // The open count KPI should show '2' not '–'
       const muted = wrapper.findAll('.db-kpi__value--muted')
-      expect(muted.length).toBe(3) // error rate, p95, tx count are still muted; issues count is not
+      expect(muted.length).toBe(4) // error rate, p95, apdex, tx count are still muted; issues count is not
     })
   })
 

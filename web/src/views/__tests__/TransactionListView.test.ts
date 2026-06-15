@@ -54,6 +54,7 @@ const makeSummary = (transaction: string, op = 'http.server') => ({
   tpm: 1.5,
   p50: 120,
   p95: 450,
+  apdex: 0.95,
   failure_rate: 0,
   time_spent_ms: 12000,
 })
