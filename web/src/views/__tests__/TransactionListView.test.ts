@@ -54,6 +54,7 @@ const makeSummary = (transaction: string, op = 'http.server') => ({
   tpm: 1.5,
   p50: 120,
   p95: 450,
+  apdex: 0.95,
   failure_rate: 0,
   time_spent_ms: 12000,
 })
@@ -337,6 +338,20 @@ describe('TransactionListView', () => {
       setupMocks([medTimeSummary])
       const wrapper = mount(TransactionListView, { global: { stubs } })
       expect(wrapper.text()).toContain('min')
+    })
+  })
+
+  describe('apdex score coloring', () => {
+    it('applies fair class when apdex is between 0.70 and 0.94', () => {
+      setupMocks([{ ...makeSummary('/api/ok'), apdex: 0.82 }])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.tx-apdex--fair').exists()).toBe(true)
+    })
+
+    it('applies poor class when apdex is below 0.70', () => {
+      setupMocks([{ ...makeSummary('/api/slow'), apdex: 0.55 }])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.tx-apdex--poor').exists()).toBe(true)
     })
   })
 

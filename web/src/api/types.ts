@@ -173,6 +173,7 @@ export interface TransactionSummary {
   tpm: number
   p50: number
   p95: number
+  apdex: number
   failure_rate: number
   time_spent_ms: number
 }

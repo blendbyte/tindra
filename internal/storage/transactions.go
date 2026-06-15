@@ -249,6 +249,7 @@ type TransactionSummary struct {
 	TPM         float64 `json:"tpm"`
 	P50         float64 `json:"p50"`
 	P95         float64 `json:"p95"`
+	Apdex       float64 `json:"apdex"`
 	FailureRate float64 `json:"failure_rate"`
 	TimeSpentMs int64   `json:"time_spent_ms"`
 }
@@ -378,6 +379,12 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 			COUNT(*)::float8 / $1 AS tpm,
 			COALESCE(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY duration_ms), 0) AS p50,
 			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 0) AS p95,
+			COALESCE(
+				(
+					COUNT(CASE WHEN duration_ms <= 500 THEN 1 END)::float8 +
+					COUNT(CASE WHEN duration_ms > 500 AND duration_ms <= 2000 THEN 1 END)::float8 * 0.5
+				) / NULLIF(COUNT(*), 0),
+			0) AS apdex,
 			COUNT(CASE WHEN status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded') THEN 1 END)::float8 / COUNT(*) AS failure_rate,
 			SUM(duration_ms)::bigint AS time_spent_ms
 		FROM transactions
@@ -396,7 +403,7 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 		var s TransactionSummary
 		if err := rows.Scan(
 			&s.Transaction, &s.Op, &s.ProjectID,
-			&s.SampleCount, &s.TPM, &s.P50, &s.P95, &s.FailureRate, &s.TimeSpentMs,
+			&s.SampleCount, &s.TPM, &s.P50, &s.P95, &s.Apdex, &s.FailureRate, &s.TimeSpentMs,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
