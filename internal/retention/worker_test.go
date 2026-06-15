@@ -347,3 +347,64 @@ func TestWorker_Run_stopsOnCancel(t *testing.T) {
 		t.Error("Run did not stop after context cancellation")
 	}
 }
+
+func TestWorker_purgesOldAlertFirings(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	// Create an alert rule to attach firings to
+	url := "https://example.com/hook"
+	rule, err := storage.CreateAlertRule(ctx, testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "retention test", Enabled: true,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+
+	// Insert 1005 firings
+	for i := 0; i < 1005; i++ {
+		testPool.Exec(ctx, `
+			INSERT INTO alert_firings (rule_id, trigger, channel, status, attempt)
+			VALUES ($1, 'new_issue', 'webhook', 'success', 1)`, rule.ID)
+	}
+
+	var before int
+	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM alert_firings WHERE rule_id = $1`, rule.ID).Scan(&before)
+	if before != 1005 {
+		t.Fatalf("expected 1005 firings before purge, got %d", before)
+	}
+
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM alert_firings WHERE rule_id = $1`, rule.ID).Scan(&after)
+	if after != 1000 {
+		t.Errorf("expected 1000 firings after purge, got %d", after)
+	}
+}
+
+func TestWorker_doesNotPurgeWhenUnder1000(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	url := "https://example.com/hook"
+	rule, _ := storage.CreateAlertRule(ctx, testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "retention small", Enabled: true,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+
+	for i := 0; i < 5; i++ {
+		testPool.Exec(ctx, `
+			INSERT INTO alert_firings (rule_id, trigger, channel, status, attempt)
+			VALUES ($1, 'new_issue', 'webhook', 'success', 1)`, rule.ID)
+	}
+
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM alert_firings WHERE rule_id = $1`, rule.ID).Scan(&after)
+	if after != 5 {
+		t.Errorf("expected 5 firings to survive, got %d", after)
+	}
+}
