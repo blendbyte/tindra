@@ -2167,3 +2167,35 @@ func TestProcessRetries_permanentFailureAfterMaxAttempts(t *testing.T) {
 		t.Errorf("status: got %q, want failed after max attempts", status)
 	}
 }
+
+func TestRetryFiring_invalidPayload(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+
+	url := "https://example.com/hook"
+	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "invalid payload", Enabled: true,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+
+	// Insert a firing whose payload is valid JSONB but not an AlertPayload struct.
+	past := time.Now().Add(-time.Minute)
+	testPool.Exec(context.Background(), `
+		INSERT INTO alert_firings (rule_id, trigger, channel, status, attempt, next_retry_at, payload)
+		VALUES ($1, 'new_issue', 'webhook', 'pending', 1, $2, '"not-an-object"'::jsonb)`,
+		rule.ID, past)
+
+	e := &Evaluator{pool: testPool, client: &http.Client{}}
+	e.processRetries(context.Background())
+
+	var status string
+	var errMsg *string
+	testPool.QueryRow(context.Background(),
+		`SELECT status, error FROM alert_firings WHERE rule_id = $1`, rule.ID,
+	).Scan(&status, &errMsg)
+	if status != "failed" {
+		t.Errorf("status: got %q, want failed (invalid payload)", status)
+	}
+	if errMsg == nil || len(*errMsg) == 0 {
+		t.Error("expected error message to be set for unmarshal failure")
+	}
+}
