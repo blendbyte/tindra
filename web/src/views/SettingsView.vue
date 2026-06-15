@@ -626,6 +626,8 @@ function firingTriggerLabel(trigger: string): string {
     event_count: 'Event count',
     cron_missed: 'Cron missed',
     cron_error: 'Cron error',
+    uptime_down: 'Uptime down',
+    uptime_recovered: 'Uptime recovered',
     issue_auto_resolved: 'Auto-resolved',
   }
   return labels[trigger] ?? trigger
@@ -644,6 +646,8 @@ function triggerLabel(rule: AlertRule): string {
   if (rule.trigger === 'event_count') return `>${rule.threshold} events in ${rule.window_mins}m`
   if (rule.trigger === 'cron_missed') return 'Cron monitor missed'
   if (rule.trigger === 'cron_error') return 'Cron monitor error'
+  if (rule.trigger === 'uptime_down') return 'Uptime monitor down'
+  if (rule.trigger === 'uptime_recovered') return 'Uptime monitor recovered'
   return rule.trigger
 }
 
@@ -2204,6 +2208,8 @@ function actionKindOf(action: string) {
                 <option value="event_count">Event count above threshold</option>
                 <option value="cron_missed">Cron monitor missed check-in</option>
                 <option value="cron_error">Cron monitor check-in error</option>
+                <option value="uptime_down">Uptime monitor went down</option>
+                <option value="uptime_recovered">Uptime monitor recovered</option>
               </select>
             </div>
             <template v-if="newRule.trigger === 'event_count'">
@@ -2326,6 +2332,8 @@ function actionKindOf(action: string) {
                     <option value="event_count">Event count above threshold</option>
                     <option value="cron_missed">Cron monitor missed check-in</option>
                     <option value="cron_error">Cron monitor check-in error</option>
+                    <option value="uptime_down">Uptime monitor went down</option>
+                    <option value="uptime_recovered">Uptime monitor recovered</option>
                   </select>
                 </div>
                 <template v-if="editRule.trigger === 'event_count'">

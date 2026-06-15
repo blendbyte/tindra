@@ -5,6 +5,11 @@ import { flushPromises } from '@vue/test-utils'
 
 let cronstrueThrows = false
 
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn(),
+  RouterLink: { template: '<a href="#"><slot /></a>' },
+}))
+
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
   useMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: ref(false) })),
@@ -42,6 +47,7 @@ import { useQuery, useMutation } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/api/client'
+import { useRoute } from 'vue-router'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -111,6 +117,7 @@ function setupMocks(monitors: unknown[] = [], canManage = false, isLoading = fal
 
 beforeEach(() => {
   cronstrueThrows = false
+  vi.mocked(useRoute).mockReturnValue({ path: '/monitors/cron' } as any)
   vi.mocked(useQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
   vi.mocked(useAuthStore).mockReset()
@@ -699,11 +706,14 @@ describe('MonitorsView', () => {
   })
 
   describe('uptime tab', () => {
+    beforeEach(() => {
+      vi.mocked(useRoute).mockReturnValue({ path: '/monitors/uptime' } as any)
+    })
+
     describe('tab switching', () => {
-      it('switches to uptime tab and shows empty state', async () => {
+      it('shows uptime empty state', async () => {
         setupUptimeMocks([])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.text()).toContain('No uptime monitors yet')
       })
     })
@@ -712,21 +722,18 @@ describe('MonitorsView', () => {
       it('shows "New monitor" in empty state when user can manage', async () => {
         setupUptimeMocks([], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.empty-state__actions').exists()).toBe(true)
       })
 
       it('hides empty state actions when user cannot manage', async () => {
         setupUptimeMocks([], false)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.empty-state__actions').exists()).toBe(false)
       })
 
       it('shows create form when empty state "New monitor" is clicked', async () => {
         setupUptimeMocks([], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         await wrapper.find('.empty-state__actions .btn--primary').trigger('click')
         expect(wrapper.find('.mon-createbar').exists()).toBe(true)
       })
@@ -736,7 +743,6 @@ describe('MonitorsView', () => {
       it('shows skeleton rows while loading', async () => {
         setupUptimeMocks([], false, true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.uprow').exists()).toBe(true)
       })
     })
@@ -745,7 +751,6 @@ describe('MonitorsView', () => {
       it('renders a row for each uptime monitor', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage'), makeUptimeMonitor('u2', 'API')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.text()).toContain('Homepage')
         expect(wrapper.text()).toContain('API')
       })
@@ -753,14 +758,12 @@ describe('MonitorsView', () => {
       it('shows the uptime list header', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.text()).toContain('Last 20 checks')
       })
 
       it('expands detail on row click', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.find('.mon-detail').exists()).toBe(true)
@@ -769,7 +772,6 @@ describe('MonitorsView', () => {
       it('collapses detail when clicking the same row again', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await row.trigger('click')
@@ -779,7 +781,6 @@ describe('MonitorsView', () => {
       it('shows "–" when last_checked_at is null', async () => {
         setupUptimeMocks([{ ...makeUptimeMonitor('u1', 'Homepage'), last_checked_at: null }])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.monrow__time').text()).toBe('–')
       })
     })
@@ -788,21 +789,18 @@ describe('MonitorsView', () => {
       it('shows "Up" for up state', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage', 'up')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.monrow__state').text()).toBe('Up')
       })
 
       it('shows "Down" for down state', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage', 'down')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.monrow__state').text()).toBe('Down')
       })
 
       it('shows "Unknown" for unknown state', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage', 'unknown')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.monrow__state').text()).toBe('Unknown')
       })
     })
@@ -815,7 +813,6 @@ describe('MonitorsView', () => {
         ]}
         setupUptimeMocks([mon])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const dots = wrapper.findAll('.mon-tl-dot:not(.mon-tl-dot--empty)')
         expect(dots.length).toBe(2)
       })
@@ -825,14 +822,12 @@ describe('MonitorsView', () => {
       it('shows "New monitor" in filterbar when user can manage', async () => {
         setupUptimeMocks([], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.filterbar .btn--primary').exists()).toBe(true)
       })
 
       it('toggles the create form when clicking "New monitor"', async () => {
         setupUptimeMocks([], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         expect(wrapper.find('.mon-createbar').exists()).toBe(false)
         await wrapper.find('.filterbar .btn--primary').trigger('click')
         expect(wrapper.find('.mon-createbar').exists()).toBe(true)
@@ -841,7 +836,6 @@ describe('MonitorsView', () => {
       it('hides create form when Cancel is clicked', async () => {
         setupUptimeMocks([], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         await wrapper.find('.filterbar .btn--primary').trigger('click')
         await wrapper.find('.mon-createbar__actions .btn--ghost').trigger('click')
         expect(wrapper.find('.mon-createbar').exists()).toBe(false)
@@ -850,7 +844,6 @@ describe('MonitorsView', () => {
       it('updates URL input in create form', async () => {
         setupUptimeMocks([], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         await wrapper.find('.filterbar .btn--primary').trigger('click')
         const urlInput = wrapper.find('.mon-createbar input.mono')
         await urlInput.setValue('https://example.com')
@@ -860,7 +853,6 @@ describe('MonitorsView', () => {
       it('calls createUptime when Create button is clicked', async () => {
         setupUptimeMocks([], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         await wrapper.find('.filterbar .btn--primary').trigger('click')
         const createBtn = wrapper.find('.mon-createbar__actions .btn--primary')
         await createBtn.trigger('click')
@@ -872,7 +864,6 @@ describe('MonitorsView', () => {
       it('shows "Check history" heading', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.text()).toContain('Check history')
@@ -881,7 +872,6 @@ describe('MonitorsView', () => {
       it('shows "No checks yet." when there are no checks', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.text()).toContain('No checks yet.')
@@ -898,7 +888,6 @@ describe('MonitorsView', () => {
           .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(true) } as any)
           .mockReturnValueOnce({ data: ref(null) } as any)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.text()).toContain('Loading')
@@ -908,7 +897,6 @@ describe('MonitorsView', () => {
         const check = { id: 'ck1', monitor_id: 'u1', status: 'up', status_code: 200, response_ms: 120, error: null, checked_at: '2024-01-01T00:00:00Z' }
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], false, false, [check])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.find('.up-ci-row:not(.mon-ci-row--header)').exists()).toBe(true)
@@ -918,7 +906,6 @@ describe('MonitorsView', () => {
         const check = { id: 'ck1', monitor_id: 'u1', status: 'up', status_code: 200, response_ms: null, error: null, checked_at: '2024-01-01T00:00:00Z' }
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], false, false, [check])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.find('.up-ci-row:not(.mon-ci-row--header)').text()).toContain('–')
@@ -928,7 +915,6 @@ describe('MonitorsView', () => {
         const check = { id: 'ck1', monitor_id: 'u1', status: 'down', status_code: 503, response_ms: 1500, error: 'timeout', checked_at: '2024-01-01T00:00:00Z' }
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], false, false, [check])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.text()).toContain('1.50s')
@@ -937,7 +923,6 @@ describe('MonitorsView', () => {
       it('shows Edit button when user can manage', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.find('.mon-detail__actions .btn').text()).toContain('Edit')
@@ -946,9 +931,8 @@ describe('MonitorsView', () => {
 
     describe('stats bar', () => {
       it('shows stats bar when uptimeStats is non-null', async () => {
-        setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], false, false, [], { uptime_24h: 99.5, uptime_7d: 99.2, uptime_30d: 98.8, avg_response_ms: 142 })
+        setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], false, false, [], { uptime_pct_24h: 99.5, uptime_pct_7d: 99.2, uptime_pct_30d: 98.8, avg_response_ms_24h: 142 })
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.find('.up-stats').exists()).toBe(true)
@@ -956,9 +940,8 @@ describe('MonitorsView', () => {
       })
 
       it('shows "–" for null avg_response_ms in stats bar', async () => {
-        setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], false, false, [], { uptime_24h: 100, uptime_7d: 100, uptime_30d: 100, avg_response_ms: null })
+        setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], false, false, [], { uptime_pct_24h: 100, uptime_pct_7d: 100, uptime_pct_30d: 100, avg_response_ms_24h: null })
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.find('.up-stats').text()).toContain('–')
@@ -967,7 +950,6 @@ describe('MonitorsView', () => {
       it('does not show stats bar when uptimeStats is null', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')])
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         expect(wrapper.find('.up-stats').exists()).toBe(false)
@@ -978,7 +960,6 @@ describe('MonitorsView', () => {
       it('shows edit form when Edit is clicked', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -988,7 +969,6 @@ describe('MonitorsView', () => {
       it('shows edit form prefilled with monitor values', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -999,7 +979,6 @@ describe('MonitorsView', () => {
       it('hides edit form when Cancel is clicked', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1011,7 +990,6 @@ describe('MonitorsView', () => {
       it('shows Delete button in edit form', async () => {
         setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], true)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1037,7 +1015,6 @@ describe('MonitorsView', () => {
           .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
           .mockReturnValueOnce({ data: ref(null) } as any)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1063,7 +1040,6 @@ describe('MonitorsView', () => {
           .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
           .mockReturnValueOnce({ data: ref(null) } as any)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1090,7 +1066,6 @@ describe('MonitorsView', () => {
           .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
           .mockReturnValueOnce({ data: ref(null) } as any)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1120,7 +1095,6 @@ describe('MonitorsView', () => {
           .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
           .mockReturnValueOnce({ data: ref(null) } as any)
         const wrapper = mount(MonitorsView, { global: { stubs } })
-        await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
         const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
         await row.trigger('click')
         await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1266,6 +1240,10 @@ describe('MonitorsView', () => {
   })
 
   describe('uptime mutation callbacks via call-through pattern', () => {
+    beforeEach(() => {
+      vi.mocked(useRoute).mockReturnValue({ path: '/monitors/uptime' } as any)
+    })
+
     const makeUptimeMutationCallThrough = () => {
       vi.mocked(apiFetch).mockResolvedValue({ id: 'u1', project_id: 'proj-1', name: 'Homepage', url: 'https://example.com', method: 'GET', interval_secs: 300, timeout_secs: 10, expected_codes: '200-299', body_contains: null, status: 'active', state: 'unknown', consecutive_failures: 0, last_checked_at: null, last_ok_at: null, next_check_at: null, last_status_code: null, last_response_ms: null, created_at: '2024-01-01T00:00:00Z', recent_checks: [] })
       vi.mocked(useMutation).mockImplementation((opts: any) => {
@@ -1291,7 +1269,6 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
-      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
       await wrapper.find('.filterbar .btn--primary').trigger('click')
       // Fill name, URL, and project so the Create button is enabled
       const fields = wrapper.findAll('.mon-createbar__fields--uptime input')
@@ -1314,7 +1291,6 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
-      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
       const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
       await row.trigger('click')
       await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1345,7 +1321,6 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
-      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
       const row = wrapper.findAll('.uprow').find(r => r.text().includes('Homepage'))!
       await row.trigger('click')
       await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1358,12 +1333,15 @@ describe('MonitorsView', () => {
   })
 
   describe('uptime edit form field interactions', () => {
+    beforeEach(() => {
+      vi.mocked(useRoute).mockReturnValue({ path: '/monitors/uptime' } as any)
+    })
+
     function setupEditForm() {
       setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage')], true)
     }
 
     async function openEditForm(wrapper: any) {
-      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
       const row = wrapper.findAll('.uprow').find((r: any) => r.text().includes('Homepage'))!
       await row.trigger('click')
       await wrapper.find('.mon-detail__actions .btn').trigger('click')
@@ -1445,8 +1423,11 @@ describe('MonitorsView', () => {
   })
 
   describe('uptime create form additional field interactions', () => {
+    beforeEach(() => {
+      vi.mocked(useRoute).mockReturnValue({ path: '/monitors/uptime' } as any)
+    })
+
     const openUptimeCreateForm = async (wrapper: any) => {
-      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
       await wrapper.find('.filterbar .btn--primary').trigger('click')
     }
 
@@ -1499,6 +1480,10 @@ describe('MonitorsView', () => {
   })
 
   describe('uptimeCheckColor fallback', () => {
+    beforeEach(() => {
+      vi.mocked(useRoute).mockReturnValue({ path: '/monitors/uptime' } as any)
+    })
+
     it('returns text-3 color for unknown check status in timeline', async () => {
       const monitorWithUnknownCheck = {
         ...makeUptimeMonitor('u1', 'Homepage'),
@@ -1506,7 +1491,6 @@ describe('MonitorsView', () => {
       }
       setupUptimeMocks([monitorWithUnknownCheck], false)
       const wrapper = mount(MonitorsView, { global: { stubs } })
-      await wrapper.findAll('.tab-bar__tab')[1].trigger('click')
       // Find the filled dot (non-empty) in the timeline for the uptime row
       const filledDots = wrapper.findAll('.uprow .mon-tl-dot:not(.mon-tl-dot--empty)')
       expect(filledDots.length).toBeGreaterThan(0)
