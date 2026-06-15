@@ -642,7 +642,7 @@ func TestAcceptInvite_weakPassword(t *testing.T) {
 		t.Fatalf("create invite: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), "DELETE FROM user_invites WHERE token=$1", token)
+		testPool.Exec(context.Background(), "DELETE FROM user_invites WHERE email='weak-pw-invite-cov4@example.com'")
 		testPool.Exec(context.Background(), "DELETE FROM users WHERE email='weak-pw-invite-cov4@example.com'")
 	})
 

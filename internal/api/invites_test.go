@@ -74,7 +74,7 @@ func seedInvite(t *testing.T, email, name string) string {
 // --- handleListInvites ---
 
 func TestListInvites_empty(t *testing.T) {
-	testPool.Exec(context.Background(), "DELETE FROM invites")
+	testPool.Exec(context.Background(), "DELETE FROM user_invites")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/invites", nil)
 	req.AddCookie(authCookie())
@@ -92,7 +92,7 @@ func TestListInvites_empty(t *testing.T) {
 }
 
 func TestListInvites_withPending(t *testing.T) {
-	testPool.Exec(context.Background(), "DELETE FROM invites")
+	testPool.Exec(context.Background(), "DELETE FROM user_invites")
 	seedInvite(t, "list-pending@example.com", "Pending")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/invites", nil)
