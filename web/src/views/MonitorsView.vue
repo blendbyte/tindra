@@ -459,7 +459,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
           <div class="empty-state__icon">
             <Icon name="clock" :size="24" style="color: var(--accent)" />
           </div>
-          <h2 class="empty-state__title">No cron monitors yet</h2>
+          <h2 class="empty-state__title">No monitors yet</h2>
           <p class="empty-state__body">Create a monitor to track whether your scheduled jobs check in on time.</p>
           <div v-if="canManage" class="empty-state__actions">
             <button class="btn btn--primary" @click="showCreate = true">

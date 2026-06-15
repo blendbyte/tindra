@@ -70,6 +70,9 @@ function setupMocks(monitors: unknown[] = [], canManage = false, isLoading = fal
     .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
     .mockReturnValueOnce({ data: ref(monitors), isLoading: ref(isLoading) } as any)
     .mockReturnValueOnce({ data: ref(checkins), isLoading: ref(false) } as any)
+    .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+    .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+    .mockReturnValueOnce({ data: ref(null) } as any)
 }
 
 beforeEach(() => {
@@ -405,6 +408,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
       await row.trigger('click')
@@ -427,6 +433,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
       await row.trigger('click')
@@ -450,6 +459,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
       await row.trigger('click')
@@ -469,6 +481,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(true) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
       await row.trigger('click')
@@ -529,6 +544,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
       await row.trigger('click')
@@ -675,6 +693,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('unknown-project-id', 'My Monitor')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('My Monitor'))!
       await row.trigger('click')
@@ -701,6 +722,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       await wrapper.find('.filterbar .btn--primary').trigger('click')
       await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('New Monitor')
@@ -728,6 +752,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
       await row.trigger('click')
@@ -755,6 +782,9 @@ describe('MonitorsView', () => {
         .mockReturnValueOnce({ data: ref([{ id: 'proj-1', name: 'App' }]) } as any)
         .mockReturnValueOnce({ data: ref([makeMonitor('m1', 'Daily backup')]), isLoading: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       const row = wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!
       await row.trigger('click')

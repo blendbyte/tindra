@@ -295,9 +295,9 @@ func RecordUptimeCheck(ctx context.Context, pool *pgxpool.Pool, monitorID string
             UPDATE uptime_monitors SET
                 state = 'up',
                 consecutive_failures = 0,
-                last_checked_at = $2,
-                last_ok_at = $2,
-                next_check_at = $2 + make_interval(secs => interval_secs),
+                last_checked_at = $2::timestamptz,
+                last_ok_at = $2::timestamptz,
+                next_check_at = $2::timestamptz + make_interval(secs => interval_secs),
                 last_status_code = $3,
                 last_response_ms = $4
             WHERE id = $1`,
@@ -311,8 +311,8 @@ func RecordUptimeCheck(ctx context.Context, pool *pgxpool.Pool, monitorID string
                     WHEN consecutive_failures + 1 >= $2 THEN 'down'
                     ELSE state
                 END,
-                last_checked_at = $3,
-                next_check_at = $3 + make_interval(secs => interval_secs),
+                last_checked_at = $3::timestamptz,
+                next_check_at = $3::timestamptz + make_interval(secs => interval_secs),
                 last_status_code = $4,
                 last_response_ms = $5
             WHERE id = $1`,
