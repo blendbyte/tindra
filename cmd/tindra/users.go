@@ -18,7 +18,7 @@ func usersCmd(cfg config) *cobra.Command {
 		Use:   "users",
 		Short: "Manage users",
 	}
-	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg), usersSendPasswordResetCmd(cfg))
+	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg), usersSendPasswordResetCmd(cfg), usersSendInviteCmd(cfg))
 	return cmd
 }
 
@@ -116,6 +116,68 @@ func usersSendPasswordResetCmd(cfg config) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func usersSendInviteCmd(cfg config) *cobra.Command {
+	var email, name string
+	cmd := &cobra.Command{
+		Use:   "send-invite",
+		Short: "Create an invite link (and send an email if configured)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			pool, err := storage.Connect(ctx, cfg.databaseURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			if cfg.userLimit > 0 {
+				count, err := storage.CountUsers(ctx, pool)
+				if err != nil {
+					return fmt.Errorf("count users: %w", err)
+				}
+				if count >= int64(cfg.userLimit) {
+					return fmt.Errorf("user limit of %d reached (set USER_LIMIT to increase)", cfg.userLimit)
+				}
+			}
+
+			token, err := storage.CreateInvite(ctx, pool, "", strings.ToLower(email), name)
+			if err != nil {
+				return fmt.Errorf("create invite: %w", err)
+			}
+
+			inviteURL := strings.TrimRight(cfg.publicURL, "/") + "/invite/" + token
+
+			emailSender, err := alerts.NewEmailSenderFromEnv()
+			if err != nil {
+				return fmt.Errorf("email sender: %w", err)
+			}
+			if emailSender == nil {
+				fmt.Printf("Email not configured. Share this invite link manually:\n%s\n", inviteURL)
+				return nil
+			}
+
+			html, text, err := alerts.RenderInviteEmail(inviteURL, cfg.publicURL)
+			if err != nil {
+				return fmt.Errorf("render email: %w", err)
+			}
+			if err := emailSender.Send(ctx, alerts.EmailMessage{
+				To:      email,
+				Subject: "You've been invited to Tindra",
+				HTML:    html,
+				Text:    text,
+			}); err != nil {
+				return fmt.Errorf("send email: %w", err)
+			}
+
+			fmt.Printf("Invite email sent to %s\n", email)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&email, "email", "", "Email address to invite")
+	cmd.Flags().StringVar(&name, "name", "", "Display name for the invited user (optional)")
+	_ = cmd.MarkFlagRequired("email")
+	return cmd
 }
 
 func usersListCmd(cfg config) *cobra.Command {
