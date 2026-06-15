@@ -22,7 +22,14 @@ var BcryptCost = 12
 // dummyHash is pre-computed so we can run a constant-time bcrypt comparison
 // when a user is not found or their account is locked, preventing user
 // enumeration and lockout detection via response timing.
-var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("tindra-timing-dummy-v1"), 12)
+var dummyHash []byte
+
+func init() {
+	var err error
+	if dummyHash, err = bcrypt.GenerateFromPassword([]byte("tindra-timing-dummy-v1"), 12); err != nil {
+		panic(err)
+	}
+}
 
 type UserPermissions struct {
 	ManageProjects bool `json:"manage_projects"`

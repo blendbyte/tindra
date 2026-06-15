@@ -198,6 +198,7 @@ func (ro *router) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.created",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &p.ID,
 		IP:        r.RemoteAddr,
 	})
@@ -246,6 +247,7 @@ func (ro *router) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.updated",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &p.ID,
 		IP:        r.RemoteAddr,
 	})
@@ -289,6 +291,7 @@ func (ro *router) handleUpdateProjectPrivacy(w http.ResponseWriter, r *http.Requ
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.updated",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &p.ID,
 		IP:        r.RemoteAddr,
 	})
@@ -356,6 +359,7 @@ func (ro *router) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "project.deleted",
+		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &id,
 		IP:        r.RemoteAddr,
 	})
@@ -561,6 +565,12 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
 		http.Error(w, "ids must be a non-empty array", http.StatusBadRequest)
+		return
+	}
+	switch req.Status {
+	case "open", "resolved", "ignored":
+	default:
+		http.Error(w, "invalid status", http.StatusBadRequest)
 		return
 	}
 	var ignoreOpts *storage.IgnoreOptions

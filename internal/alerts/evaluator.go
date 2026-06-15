@@ -432,7 +432,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 				ids = append(ids, iss.ProjectID)
 			}
 		}
-		rows, err := e.pool.Query(ctx, `SELECT id, name FROM projects WHERE id = ANY($1)`, ids)
+		rows, err := e.pool.Query(ctx, `SELECT id, name FROM projects WHERE id = ANY($1::uuid[])`, ids)
 		if err == nil {
 			payload.ProjectNames = make(map[string]string, len(ids))
 			for rows.Next() {

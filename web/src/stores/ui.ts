@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, onScopeDispose } from 'vue'
 
 type ExplicitTheme = 'dark' | 'light'
 
@@ -22,9 +22,10 @@ export const useUiStore = defineStore('ui', () => {
   const cmdOpen = ref(false)
   const shortcutsOpen = ref(false)
 
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    systemTheme.value = e.matches ? 'dark' : 'light'
-  })
+  const mql = window.matchMedia('(prefers-color-scheme: dark)')
+  const onSchemeChange = (e: MediaQueryListEvent) => { systemTheme.value = e.matches ? 'dark' : 'light' }
+  mql.addEventListener('change', onSchemeChange)
+  onScopeDispose(() => mql.removeEventListener('change', onSchemeChange))
 
   const resolvedTheme = computed<ExplicitTheme>(() => theme.value ?? systemTheme.value)
 

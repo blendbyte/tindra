@@ -377,7 +377,7 @@ func (ro *router) projectFromSlug(w http.ResponseWriter, r *http.Request) (*stor
 		http.Error(w, "not found", http.StatusNotFound)
 		return nil, false
 	}
-	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok {
+	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
 		if tokenProjID != project.ID {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return nil, false

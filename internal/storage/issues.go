@@ -638,6 +638,7 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 			// No events for this fingerprint (shouldn't happen in practice).
 			title, level = fp, "error"
 			firstSeen, lastSeen = time.Now(), time.Now()
+			count = 1
 		} else if err != nil {
 			return nil, fmt.Errorf("derive stats for %s: %w", fp, err)
 		}

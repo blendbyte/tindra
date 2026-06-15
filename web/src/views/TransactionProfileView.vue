@@ -7,6 +7,7 @@ import { apiFetch } from '@/api/client'
 import type { TransactionSummary, TxTimeseries, TxListPage } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
 import { useTimezone } from '@/composables/useTimezone'
+import { WINDOW_MAP } from '@/utils/time'
 import FilterChip from '@/components/FilterChip.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import Icon from '@/components/Icon.vue'
@@ -25,7 +26,6 @@ const activeProjectIds = computed(() =>
 
 const windowHrs = ref('24h')
 const envFilter = ref('All')
-const WINDOW_MAP: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 }
 const hours = computed(() => WINDOW_MAP[windowHrs.value] ?? 24)
 
 const profileParams = computed(() => {
