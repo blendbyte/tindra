@@ -737,5 +737,34 @@ describe('DashboardView', () => {
       })
       expect(wrapper.find('.db-kpis').exists()).toBe(true)
     })
+
+    it('copies DSN to clipboard and shows toast when Copy DSN is clicked', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      const wrapper = makeWrapper({
+        issues: { issues: [], total: 0, has_more: false },
+        txSummaries: [],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      await wrapper.find('.btn--primary').trigger('click')
+      expect(writeText).toHaveBeenCalledWith('https://key1@tindra.test/p1')
+    })
+
+    it('picks the selected project DSN when selectedIds is non-empty', () => {
+      vi.mocked(useProjectsStore).mockReturnValue({
+        selectedIds: ['p1'],
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1' }],
+      } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
+        .mockReturnValueOnce({ data: ref({ issues: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
+      const wrapper = mount(DashboardView, { global: { stubs } })
+      expect(wrapper.text()).toContain('https://key1@tindra.test/p1')
+    })
   })
 })
