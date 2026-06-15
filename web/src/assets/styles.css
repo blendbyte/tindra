@@ -3585,6 +3585,135 @@ a { color: inherit; text-decoration: none; }
 }
 .login__back:hover { color: var(--text-1); }
 
+/* ---------- MFA Gate (enforce setup) ---------- */
+
+.mfa-gate-card {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.mfa-gate {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.mfa-gate__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.mfa-gate__badge {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.mfa-gate__title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.35;
+}
+
+.mfa-gate__hint {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+
+.mfa-gate__divider {
+  height: 1px;
+  background: var(--border);
+  margin-bottom: 20px;
+}
+
+.mfa-gate__step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.mfa-gate__qr {
+  display: flex;
+  justify-content: flex-start;
+  margin: 14px 0 10px 30px;
+}
+
+.mfa-gate__secret-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mfa-gate__code-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.mfa-gate__code-input {
+  width: 140px !important;
+}
+
+.mfa-gate__success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 12px 0;
+  width: 100%;
+}
+
+.mfa-gate__success-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: oklch(0.22 0.05 145 / 0.18);
+  border: 1px solid oklch(0.4 0.12 145 / 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #22c55e;
+  margin-bottom: 4px;
+}
+
+[data-theme="light"] .mfa-gate__success-icon {
+  background: oklch(0.94 0.05 145 / 0.4);
+  border-color: oklch(0.65 0.15 145 / 0.4);
+}
+
+.mfa-gate__success-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.mfa-gate__loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0;
+  width: 100%;
+}
+
 /* ---------- Settings ---------- */
 
 .settings {
