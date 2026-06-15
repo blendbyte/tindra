@@ -1468,6 +1468,31 @@ func TestGetProjectStats_returnsOpenIssueCounts(t *testing.T) {
 	}
 }
 
+func TestGetProjectQuota_bearerTokenWrongProject(t *testing.T) {
+	other, err := storage.CreateProject(context.Background(), testPool, "quota-scope-proj", "Quota Scope")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id=$1", other.ID)
+	})
+
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, other.ID, "quota-scope-tok", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/projects/"+testProject.ID+"/quota", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for wrong-project Bearer token on quota endpoint, got %d", rec.Code)
+	}
+}
+
 func TestGetProjectStats_scopedByBearerToken(t *testing.T) {
 	tok, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "stats-scope-token", false)
 	if err != nil {

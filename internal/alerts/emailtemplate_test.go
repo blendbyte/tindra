@@ -135,6 +135,22 @@ func TestAlertTriggerLine_eventCount(t *testing.T) {
 	}
 }
 
+func TestAlertTriggerLine_autoResolved_single(t *testing.T) {
+	p := AlertPayload{Trigger: "issue_auto_resolved", Details: map[string]any{"resolved_count": 1}}
+	got := alertTriggerLine(p)
+	if got != "1 issue was automatically resolved." {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestAlertTriggerLine_autoResolved_multiple(t *testing.T) {
+	p := AlertPayload{Trigger: "issue_auto_resolved", Details: map[string]any{"resolved_count": 3}}
+	got := alertTriggerLine(p)
+	if got != "3 issues were automatically resolved." {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestAlertTriggerLine_default(t *testing.T) {
 	p := AlertPayload{Trigger: "unknown", RuleName: "my rule"}
 	got := alertTriggerLine(p)

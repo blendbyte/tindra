@@ -188,6 +188,23 @@ func TestListUsers_unauthenticated(t *testing.T) {
 	}
 }
 
+func TestListUsers_bearerToken_forbidden(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE api_tokens")
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "list-users-token", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for Bearer token auth on /api/users, got %d", rec.Code)
+	}
+}
+
 // --- handleDeleteUser ---
 
 func TestDeleteUser_self(t *testing.T) {
