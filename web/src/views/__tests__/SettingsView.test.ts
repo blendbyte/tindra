@@ -89,7 +89,7 @@ function setupMocks(meData: unknown = adminUser) {
   vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
   // useQuery call order in SettingsView:
   // 1. tokens, 2. projects, 3. users, 4. auditLogData, 5. me,
-  // 6. invites, 7. alertRules, 8. settings, 9. health, 10. quota
+  // 6. invites, 7. alertRules, 8. settings, 9. health, 10. quota, 11. expandedRuleFirings
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref([]) } as any)           // 1. tokens
     .mockReturnValueOnce({ data: ref([]) } as any)           // 2. projects
@@ -1471,9 +1471,9 @@ describe('SettingsView', () => {
   // 17 deleteAlertRule, 18 toggleAlertRule, 19 testAlertRule, 20 saveAlertRule,
   // 21 createProject, 22 updateProject, 23 deleteProject, 24 updatePrivacy
   //
-  // useQuery is called 10 times:
+  // useQuery is called 11 times:
   // 1 tokens, 2 projects, 3 users, 4 auditLogData, 5 me,
-  // 6 invites, 7 alertRules, 8 settings, 9 health, 10 quota
+  // 6 invites, 7 alertRules, 8 settings, 9 health, 10 quota, 11 expandedRuleFirings
 
   describe('profile tab - password change callbacks', () => {
     async function mountProfileWithMutation(mutationPos: number, callbacks: Record<string, (args: any) => void>) {

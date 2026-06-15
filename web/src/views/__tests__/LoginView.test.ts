@@ -4,6 +4,11 @@ import { ref } from 'vue'
 
 const pushMock = vi.fn()
 const resetQueriesMock = vi.fn()
+const authStoreMock = { ready: true as boolean }
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(() => authStoreMock),
+}))
 
 vi.mock('vue-router', () => ({
   useRouter: vi.fn(() => ({ push: pushMock })),
@@ -35,6 +40,7 @@ beforeEach(() => {
   resetQueriesMock.mockReset()
   vi.mocked(apiFetch).mockReset()
   vi.mocked(useQuery).mockReset()
+  authStoreMock.ready = true
 })
 
 describe('LoginView', () => {
@@ -202,6 +208,45 @@ describe('LoginView', () => {
       await wrapper.find('.login__submit').trigger('click')
       await new Promise((r) => setTimeout(r, 0))
       expect(wrapper.find('.login__error-title').text()).toBe("That code didn't work.")
+    })
+  })
+
+  describe('auth store sync on successful login', () => {
+    it('resets auth.ready to false before navigating after password login', async () => {
+      vi.mocked(apiFetch).mockResolvedValue({})
+      const wrapper = mountLogin()
+      await wrapper.find('#email').setValue('a@b.com')
+      await wrapper.find('#password').setValue('pw')
+
+      let readyAtNavigate: boolean | undefined
+      pushMock.mockImplementation(() => { readyAtNavigate = authStoreMock.ready })
+
+      await wrapper.find('form').trigger('submit')
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(readyAtNavigate).toBe(false)
+      expect(pushMock).toHaveBeenCalledWith('/dashboard')
+    })
+
+    it('resets auth.ready to false before navigating after MFA verification', async () => {
+      vi.mocked(apiFetch)
+        .mockResolvedValueOnce({ mfa_required: true, mfa_token: 'tok-123' })
+        .mockResolvedValueOnce(undefined)
+      const wrapper = mountLogin()
+      await wrapper.find('#email').setValue('a@b.com')
+      await wrapper.find('#password').setValue('pw')
+      await wrapper.find('form').trigger('submit')
+      await new Promise((r) => setTimeout(r, 0))
+
+      let readyAtNavigate: boolean | undefined
+      pushMock.mockImplementation(() => { readyAtNavigate = authStoreMock.ready })
+
+      await wrapper.find('.login__mfa-code').setValue('123456')
+      await wrapper.find('.login__submit').trigger('click')
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(readyAtNavigate).toBe(false)
+      expect(pushMock).toHaveBeenCalledWith('/dashboard')
     })
   })
 

@@ -188,6 +188,23 @@ func TestListUsers_unauthenticated(t *testing.T) {
 	}
 }
 
+func TestListUsers_bearerToken_forbidden(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE api_tokens")
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "list-users-token", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for Bearer token auth on /api/users, got %d", rec.Code)
+	}
+}
+
 // --- handleDeleteUser ---
 
 func TestDeleteUser_self(t *testing.T) {
@@ -293,6 +310,20 @@ func TestChangePassword_missingFields(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for missing fields, got %d", rec.Code)
+	}
+}
+
+func TestChangePassword_newPasswordTooShort(t *testing.T) {
+	// New password too short hits the non-ErrInvalidPassword error path.
+	body := bytes.NewBufferString(`{"current_password":"testpassword","new_password":"short"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/me/password", body)
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for too-short new password, got %d", rec.Code)
 	}
 }
 

@@ -20,7 +20,7 @@ export function useChartInteraction() {
   function handleMouseMove(e: MouseEvent, n: number, isBar: boolean, cw: number) {
     mouseX.value = e.clientX
     mouseY.value = e.clientY
-    if (n === 0) { hovered.value = null; return }
+    if (n === 0 || cw === 0) { hovered.value = null; return }
     const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect()
     const relX = e.clientX - rect.left - PAD_LEFT
     const idx = isBar

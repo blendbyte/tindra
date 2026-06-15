@@ -20,8 +20,8 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
         here === '/login' || here.startsWith('/invite/') || here.startsWith('/reset-password/')
       if (!isPublic) {
         window.location.href = '/login'
+        return undefined as T
       }
-      return undefined as T
     }
     const text = await res.text().catch(() => res.statusText)
     throw new ApiError(res.status, text)

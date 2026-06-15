@@ -38,7 +38,7 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 		return EnvelopeHeader{}, nil, fmt.Errorf("read envelope header: %w", err)
 	}
 	var header EnvelopeHeader
-	if err := json.Unmarshal(bytes.TrimRight(line, "\n"), &header); err != nil {
+	if err := json.Unmarshal(bytes.TrimRight(line, "\r\n"), &header); err != nil {
 		return EnvelopeHeader{}, nil, fmt.Errorf("parse envelope header: %w", err)
 	}
 
@@ -53,7 +53,7 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 		}
 
 		var ih ItemHeader
-		if err := json.Unmarshal(bytes.TrimRight(line, "\n"), &ih); err != nil {
+		if err := json.Unmarshal(bytes.TrimRight(line, "\r\n"), &ih); err != nil {
 			return header, items, fmt.Errorf("parse item header: %w", err)
 		}
 
@@ -72,7 +72,7 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 			if err != nil && err != io.EOF {
 				return header, items, fmt.Errorf("read item payload: %w", err)
 			}
-			payload = bytes.TrimRight(payload, "\n")
+			payload = bytes.TrimRight(payload, "\r\n")
 		}
 
 		items = append(items, Item{Header: ih, Payload: payload})

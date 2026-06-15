@@ -659,6 +659,21 @@ func TestListCheckins_withLimit(t *testing.T) {
 	}
 }
 
+func TestListCheckins_limitCap(t *testing.T) {
+	m := createTestMonitor(t, "Checkin Limit Cap", "0 * * * *")
+	req := httptest.NewRequest(http.MethodGet, "/api/monitors/"+m.ID+"/checkins?limit=1000", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with oversized limit, got %d", rec.Code)
+	}
+	var checkins []*storage.CronCheckin
+	if err := json.NewDecoder(rec.Body).Decode(&checkins); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
 func TestDeleteMonitor_unauthenticated(t *testing.T) {
 	m := createTestMonitor(t, "Delete Unauth", "0 * * * *")
 	req := httptest.NewRequest(http.MethodDelete, "/api/monitors/"+m.ID, nil)

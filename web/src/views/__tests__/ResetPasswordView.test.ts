@@ -3,6 +3,11 @@ import { mount } from '@vue/test-utils'
 
 const pushMock = vi.fn()
 const tokenParam = { token: 'reset-token-xyz' }
+const authStoreMock = { ready: true as boolean }
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(() => authStoreMock),
+}))
 
 vi.mock('vue-router', () => ({
   useRoute: vi.fn(() => ({ params: tokenParam })),

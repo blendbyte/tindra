@@ -473,6 +473,18 @@ func TestUpdateUserProfile_normalizesEmail(t *testing.T) {
 	}
 }
 
+func TestUpdateUserProfile_notFound(t *testing.T) {
+	// UpdateUserProfile with a non-existent user ID should return nil, nil (not an error).
+	got, err := storage.UpdateUserProfile(context.Background(), testPool,
+		"00000000-0000-0000-0000-000000000000", "Ghost", "ghost@example.com", "UTC")
+	if err != nil {
+		t.Fatalf("expected nil error for unknown user, got: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil user for unknown ID, got %+v", got)
+	}
+}
+
 func TestChangeUserPassword(t *testing.T) {
 	truncateUsers(t)
 

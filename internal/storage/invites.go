@@ -82,6 +82,9 @@ func ListPendingInvites(ctx context.Context, pool *pgxpool.Pool) ([]*Invite, err
 		}
 		invites = append(invites, &inv)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
 	return invites, nil
 }
 

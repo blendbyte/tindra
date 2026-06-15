@@ -58,6 +58,7 @@ type router struct {
 	passthroughClient      *http.Client
 	retentionDays          int
 	webhookAllowPrivateIPs bool
+	requireMFA             bool
 	trustedProxies         []*net.IPNet
 	loginEmailRL           *rateLimiter
 	envelopeRL             *rateLimiter
@@ -83,7 +84,7 @@ func (h *Handle) SetLimits(projectLimit, eventLimit, userLimit int) {
 	h.ro.userLimit.Store(int32(userLimit))
 }
 
-func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.TransactionBuffer, logBuf *ingest.LogBuffer, smStore *sourcemaps.Store, oauthProviders []oauthProvider, cookieSecure bool, corsOrigin string, publicURL string, statsAPIKey string, billingURL string, retentionDays int, projectLimit int, eventLimit int, userLimit int, rateLimitLogin int, rateLimitEnvelope int, evaluator *alerts.Evaluator, webhookAllowPrivateIPs bool, trustedProxies []*net.IPNet) *Handle {
+func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.TransactionBuffer, logBuf *ingest.LogBuffer, smStore *sourcemaps.Store, oauthProviders []oauthProvider, cookieSecure bool, corsOrigin string, publicURL string, statsAPIKey string, billingURL string, retentionDays int, projectLimit int, eventLimit int, userLimit int, rateLimitLogin int, rateLimitEnvelope int, evaluator *alerts.Evaluator, webhookAllowPrivateIPs bool, requireMFA bool, trustedProxies []*net.IPNet) *Handle {
 	ro := &router{
 		pool:                   pool,
 		buf:                    buf,
@@ -100,6 +101,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		evaluator:              evaluator,
 		passthroughClient:      alerts.NewWebhookClient(webhookAllowPrivateIPs),
 		webhookAllowPrivateIPs: webhookAllowPrivateIPs,
+		requireMFA:             requireMFA,
 		trustedProxies:         trustedProxies,
 		startedAt:              time.Now().UTC(),
 	}
@@ -271,6 +273,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 
 		r.Get("/api/alert-rules", ro.handleListAlertRules)
 		r.Get("/api/alert-rules/{ruleID}", ro.handleGetAlertRule)
+		r.Get("/api/alert-rules/{ruleID}/firings", ro.handleListAlertFirings)
 
 		// manage_alerts: write operations.
 		r.With(ro.requirePerm("manage_alerts")).Post("/api/alert-rules", ro.handleCreateAlertRule)

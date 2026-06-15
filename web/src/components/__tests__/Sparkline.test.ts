@@ -14,9 +14,9 @@ describe('Sparkline', () => {
       expect(wrapper.find('svg').exists()).toBe(true)
     })
 
-    it('renders an SVG for a single data point', () => {
+    it('renders nothing for a single data point (prevents divide-by-zero)', () => {
       const wrapper = mount(Sparkline, { props: { data: [5] } })
-      expect(wrapper.find('svg').exists()).toBe(true)
+      expect(wrapper.find('svg').exists()).toBe(false)
     })
   })
 

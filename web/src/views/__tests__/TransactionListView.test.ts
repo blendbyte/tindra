@@ -54,6 +54,7 @@ const makeSummary = (transaction: string, op = 'http.server') => ({
   tpm: 1.5,
   p50: 120,
   p95: 450,
+  apdex: 0.95,
   failure_rate: 0,
   time_spent_ms: 12000,
 })
@@ -71,6 +72,7 @@ function setupMocks(summaries: unknown[] = [], isLoading = false, isError = fals
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref(undefined) } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
 }
 
@@ -340,6 +342,20 @@ describe('TransactionListView', () => {
     })
   })
 
+  describe('apdex score coloring', () => {
+    it('applies fair class when apdex is between 0.70 and 0.94', () => {
+      setupMocks([{ ...makeSummary('/api/ok'), apdex: 0.82 }])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.tx-apdex--fair').exists()).toBe(true)
+    })
+
+    it('applies poor class when apdex is below 0.70', () => {
+      setupMocks([{ ...makeSummary('/api/slow'), apdex: 0.55 }])
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.tx-apdex--poor').exists()).toBe(true)
+    })
+  })
+
   describe('failure rate formatting', () => {
     it('shows non-zero failure rate percentage', () => {
       const failedSummary = { ...makeSummary('/api/buggy'), failure_rate: 0.05 }
@@ -383,13 +399,13 @@ describe('TransactionListView', () => {
     }
 
     it('renders chart panel when timeseries data has buckets', async () => {
-      vi.mocked(apiFetch).mockResolvedValue(timeseriesData as any)
       vi.mocked(useProjectsStore).mockReturnValue({ projects: [{ id: '1', name: 'App', slug: 'app' }], selectedIds: [] } as any)
       vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref([makeSummary('/api/users')]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(timeseriesData) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
       await flushPromises()
       expect(wrapper.find('.txcharts').exists()).toBe(true)
@@ -404,6 +420,7 @@ describe('TransactionListView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')

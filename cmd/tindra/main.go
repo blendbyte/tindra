@@ -56,6 +56,7 @@ type config struct {
 	rateLimitLogin         int // max login attempts per 15 min per IP; 0 = disabled
 	rateLimitEnvelope      int // max envelope requests per minute per project; 0 = disabled
 	webhookAllowPrivateIPs bool
+	requireMFA             bool
 	trustedProxies         []*net.IPNet
 	skipAutoMigrate        bool
 	disableVersionCheck    bool
@@ -188,6 +189,7 @@ func loadConfig() config {
 		rateLimitLogin:         rateLimitLogin,
 		rateLimitEnvelope:      rateLimitEnvelope,
 		webhookAllowPrivateIPs: os.Getenv("WEBHOOK_ALLOW_PRIVATE_IPS") == "true",
+		requireMFA:             os.Getenv("REQUIRE_MFA") != "false",
 		trustedProxies:         trustedProxies,
 		skipAutoMigrate:        os.Getenv("SKIP_AUTO_MIGRATE") == "true",
 		disableVersionCheck:    os.Getenv("DISABLE_VERSION_CHECK") == "true",
@@ -370,7 +372,7 @@ func serveCmd(cfg config) *cobra.Command {
 				"rate_limit_envelope", cfg.rateLimitEnvelope,
 			)
 
-			handler := api.NewRouter(pool, buf, txBuf, logBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.trustedProxies)
+			handler := api.NewRouter(pool, buf, txBuf, logBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.requireMFA, cfg.trustedProxies)
 			if !cfg.disableVersionCheck {
 				handler.StartVersionChecker(ctx)
 			}

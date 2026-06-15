@@ -4,6 +4,7 @@ import { apiFetch } from '@/api/client'
 
 interface AppConfig {
   public_url: string
+  require_mfa: boolean
 }
 
 export function useConfig() {

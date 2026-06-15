@@ -13,7 +13,7 @@ import (
 // --- SetLimits ---
 
 func TestSetLimits_updatesLimitsAtRuntime(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "test-stats-key", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "test-stats-key", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	// Initial state: limits are 0 (unlimited). Confirm via the quota endpoint first.
 	req := httptest.NewRequest(http.MethodGet,
@@ -59,7 +59,7 @@ func TestSetLimits_updatesLimitsAtRuntime(t *testing.T) {
 
 func TestSetLimits_zeroDisablesLimit(t *testing.T) {
 	// projectLimit=0, eventLimit=999, userLimit=0
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "test-stats-key", "", 0, 0, 999, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "test-stats-key", "", 0, 0, 999, 0, 0, 0, nil, false, true, nil)
 
 	// Confirm the initial non-zero event limit is visible.
 	req := httptest.NewRequest(http.MethodGet,
@@ -117,7 +117,7 @@ func TestMFASetup_unauthenticated(t *testing.T) {
 // --- writeJSONStatus: verify Content-Type and status code propagation ---
 
 func TestWriteJSONStatus_viaStatsEndpoint(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "my-stats-key", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "my-stats-key", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer my-stats-key")

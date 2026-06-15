@@ -61,8 +61,8 @@ const releaseFilter = ref((() => {
 
 const hours = computed(() => WINDOW_MAP[perf.windowHrs] ?? 24)
 
-type SortCol = 'transaction' | 'sample_count' | 'tpm' | 'p50' | 'p95' | 'failure_rate' | 'time_spent_ms'
-const VALID_SORT_COLS: SortCol[] = ['transaction', 'sample_count', 'tpm', 'p50', 'p95', 'failure_rate', 'time_spent_ms']
+type SortCol = 'transaction' | 'sample_count' | 'tpm' | 'p50' | 'p95' | 'apdex' | 'failure_rate' | 'time_spent_ms'
+const VALID_SORT_COLS: SortCol[] = ['transaction', 'sample_count', 'tpm', 'p50', 'p95', 'apdex', 'failure_rate', 'time_spent_ms']
 const rawSort = (() => { const v = route.query['sort']; return typeof v === 'string' ? v : (lsGet('sort') ?? 'time_spent_ms') })()
 const sortCol = ref<SortCol>(VALID_SORT_COLS.includes(rawSort as SortCol) ? rawSort as SortCol : 'time_spent_ms')
 const sortDir = ref<'asc' | 'desc'>((() => { const v = route.query['dir']; return (typeof v === 'string' ? v : (lsGet('dir') ?? 'desc')) === 'asc' ? 'asc' : 'desc' })())
@@ -168,14 +168,10 @@ function getDelta(s: TransactionSummary, metric: 'p50' | 'p95') {
   }
 }
 
-const timeseries = ref<TxTimeseries | null>(null)
-watch(
-  txParamsWithOp,
-  async (params) => {
-    timeseries.value = await apiFetch<TxTimeseries>(`/api/transactions/timeseries?${params}`)
-  },
-  { immediate: true },
-)
+const { data: timeseries } = useQuery({
+  queryKey: ['transaction-timeseries', txParamsWithOp],
+  queryFn: () => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${txParamsWithOp.value}`),
+})
 
 // Distinct ops and per-op counts, derived live from the full unfiltered dataset
 const availableOps = computed(() => {
@@ -251,9 +247,16 @@ const stats = computed(() => {
   const totalTpm = list.reduce((s, x) => s + x.tpm, 0)
   const p50 = totalCount > 0 ? list.reduce((s, x) => s + x.p50 * x.sample_count, 0) / totalCount : 0
   const p95 = totalCount > 0 ? list.reduce((s, x) => s + x.p95 * x.sample_count, 0) / totalCount : 0
+  const apdex = totalCount > 0 ? list.reduce((s, x) => s + x.apdex * x.sample_count, 0) / totalCount : 0
   const failureRate = totalCount > 0 ? list.reduce((s, x) => s + x.failure_rate * x.sample_count, 0) / totalCount : 0
-  return { totalCount, totalTpm, p50, p95, failureRate }
+  return { totalCount, totalTpm, p50, p95, apdex, failureRate }
 })
+
+function apdexClass(score: number): string {
+  if (score >= 0.94) return 'tx-apdex--good'
+  if (score >= 0.70) return 'tx-apdex--fair'
+  return 'tx-apdex--poor'
+}
 
 </script>
 
@@ -361,6 +364,10 @@ const stats = computed(() => {
           <span class="txstat__value">{{ formatDuration(stats.p95) }}</span>
         </div>
         <div class="txstat">
+          <span class="txstat__label">Apdex</span>
+          <span class="txstat__value" :class="apdexClass(stats.apdex)">{{ stats.apdex.toFixed(2) }}</span>
+        </div>
+        <div class="txstat">
           <span class="txstat__label">Error rate</span>
           <span class="txstat__value" :class="stats.failureRate > 0 ? 'tx-failure' : ''">{{ formatFailureRate(stats.failureRate) }}</span>
         </div>
@@ -437,6 +444,9 @@ const stats = computed(() => {
           <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'p95' }" @click="toggleSort('p95')">
             P95 <em class="col-sort__icon">{{ sortIcon('p95') }}</em>
           </button>
+          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'apdex' }" @click="toggleSort('apdex')">
+            Apdex <em class="col-sort__icon">{{ sortIcon('apdex') }}</em>
+          </button>
           <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'failure_rate' }" @click="toggleSort('failure_rate')">
             Failure % <em class="col-sort__icon">{{ sortIcon('failure_rate') }}</em>
           </button>
@@ -454,6 +464,7 @@ const stats = computed(() => {
             <span class="ghost ghost--bar" style="width:48px" />
             <span class="ghost ghost--bar" style="width:32px" />
             <span class="ghost ghost--bar" style="width:32px" />
+            <span class="ghost ghost--bar" style="width:28px" />
             <span class="ghost ghost--bar" style="width:24px" />
             <span class="ghost ghost--bar" style="width:40px" />
           </div>
@@ -478,6 +489,7 @@ const stats = computed(() => {
               <span>{{ formatDuration(s.p95) }}</span>
               <span v-if="getDelta(s, 'p95')" class="tx-delta" :class="getDelta(s, 'p95')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p95')!.label }}</span>
             </span>
+            <span class="tx-num-cell" :class="apdexClass(s.apdex)">{{ s.apdex.toFixed(2) }}</span>
             <span class="tx-num-cell" :class="s.failure_rate > 0 ? 'tx-failure' : ''">{{ formatFailureRate(s.failure_rate) }}</span>
             <span class="tx-num-cell tx-num-cell--right">{{ formatTimeSpent(s.time_spent_ms) }}</span>
           </RouterLink>

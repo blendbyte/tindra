@@ -228,6 +228,33 @@ func TestListIssues_filterByLevel(t *testing.T) {
 	}
 }
 
+func TestListIssues_filterByLevels(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-levels-fatal", "Fatal", "fatal", "error", "", "", ts)
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-levels-error", "Error", "error", "error", "", "", ts)
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-levels-info", "Info", "info", "error", "", "", ts)
+
+	// Levels filter: fatal and error, not info
+	got, err := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{
+		Levels: []string{"fatal", "error"},
+		Limit:  50,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 issues (fatal+error), got %d", len(got))
+	}
+	for _, iss := range got {
+		if iss.Level != "fatal" && iss.Level != "error" {
+			t.Errorf("unexpected level %q in Levels-filtered result", iss.Level)
+		}
+	}
+}
+
 func TestListIssues_cursor(t *testing.T) {
 	project, _ := setupProjectAndEvent(t)
 	ctx := context.Background()
@@ -872,6 +899,27 @@ func TestGetIssueSparklines_empty(t *testing.T) {
 	}
 	if len(sparklines) != 0 {
 		t.Errorf("expected empty map, got %v", sparklines)
+	}
+}
+
+func TestCountAllIssues_filterByLevels(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	ts := time.Now().UTC()
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf-fatal", "Fatal", "fatal", "error", "", "", ts)
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf-warning", "Warning", "warning", "error", "", "", ts)
+	storage.UpsertIssue(ctx, testPool, project.ID, "fp-caf-info", "Info", "info", "error", "", "", ts)
+
+	n, err := storage.CountAllIssues(ctx, testPool, storage.IssueFilter{
+		Levels:     []string{"fatal", "warning"},
+		ProjectIDs: []string{project.ID},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 issues (fatal+warning), got %d", n)
 	}
 }
 

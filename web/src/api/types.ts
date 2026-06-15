@@ -173,6 +173,7 @@ export interface TransactionSummary {
   tpm: number
   p50: number
   p95: number
+  apdex: number
   failure_rate: number
   time_spent_ms: number
 }
@@ -335,6 +336,22 @@ export interface AlertRule {
   min_occurrences: number | null
   last_fired_at: string | null
   created_at: string
+}
+
+export type AlertFiringStatus = 'pending' | 'success' | 'failed'
+
+export interface AlertFiring {
+  id: string
+  rule_id: string
+  fired_at: string
+  trigger: string
+  channel: AlertChannel
+  status: AlertFiringStatus
+  status_code?: number
+  error?: string
+  item_count?: number
+  attempt: number
+  next_retry_at?: string
 }
 
 export interface Log {

@@ -2705,6 +2705,17 @@ func main() {
 // =============================================================================
 
 func seedAlertRules(pool *pgxpool.Pool) {
+	// firingDef describes one alert_firings row to seed for a rule.
+	type firingDef struct {
+		firedAgo   time.Duration
+		status     string // "success", "failed", "pending"
+		statusCode *int
+		errMsg     *string
+		itemCount  *int
+		attempt    int
+		retryIn    *time.Duration // only for pending: offset from now for next_retry_at
+	}
+
 	type alertDef struct {
 		name         string
 		enabled      bool
@@ -2718,6 +2729,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 		filterLevel  *string
 		filterEnv    *string
 		lastFiredAgo *time.Duration
+		firings      []firingDef
 	}
 
 	ip := func(v int) *int { return &v }
@@ -2731,6 +2743,13 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			channel: "email", emailTo: sp("alerts@example.com"),
 			cooldownMins: 60, filterEnv: sp("production"),
 			lastFiredAgo: dp(45 * time.Minute),
+			firings: []firingDef{
+				{firedAgo: 45 * time.Minute, status: "success", statusCode: ip(200), itemCount: ip(67), attempt: 1},
+				{firedAgo: 3 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(52), attempt: 1},
+				{firedAgo: 8 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(88), attempt: 1},
+				{firedAgo: 29 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(44), attempt: 1},
+				{firedAgo: 53 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(71), attempt: 1},
+			},
 		},
 		{
 			name: "New fatal issues", enabled: true,
@@ -2738,6 +2757,14 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			channel: "slack", webhookURL: sp("https://hooks.slack.com/services/example/placeholder"),
 			cooldownMins: 30, filterLevel: sp("fatal"),
 			lastFiredAgo: dp(3 * time.Hour),
+			firings: []firingDef{
+				{firedAgo: 3 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(3), attempt: 1},
+				{firedAgo: 6 * time.Hour, status: "failed", statusCode: ip(503), errMsg: sp("Slack returned 503 Service Unavailable"), itemCount: ip(2), attempt: 3},
+				{firedAgo: 11 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(1), attempt: 1},
+				// Pending retry: got 429, scheduled for retry in ~8 minutes.
+				{firedAgo: 27 * time.Hour, status: "pending", statusCode: ip(429), errMsg: sp("Too Many Requests"), itemCount: ip(4), attempt: 2, retryIn: dp(8 * time.Minute)},
+				{firedAgo: 51 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(2), attempt: 1},
+			},
 		},
 		{
 			name: "Production regression", enabled: true,
@@ -2745,6 +2772,11 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			channel: "email", emailTo: sp("team@example.com"),
 			cooldownMins: 120, filterEnv: sp("production"),
 			lastFiredAgo: dp(26 * time.Hour),
+			firings: []firingDef{
+				{firedAgo: 26 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(1), attempt: 1},
+				{firedAgo: 72 * time.Hour, status: "failed", statusCode: ip(500), errMsg: sp("SMTP delivery failed: connection timed out after 30s"), itemCount: ip(1), attempt: 3},
+				{firedAgo: 120 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(1), attempt: 1},
+			},
 		},
 		{
 			name: "New or regressed — all envs", enabled: true,
@@ -2752,6 +2784,13 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			channel: "email", emailTo: sp("oncall@example.com"),
 			cooldownMins: 60,
 			lastFiredAgo: dp(8 * time.Hour),
+			firings: []firingDef{
+				{firedAgo: 8 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(5), attempt: 1},
+				// Pending: first attempt failed with connection refused, retrying shortly.
+				{firedAgo: 30 * time.Hour, status: "pending", errMsg: sp("dial tcp: connection refused"), itemCount: ip(8), attempt: 1, retryIn: dp(3 * time.Minute)},
+				{firedAgo: 54 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(3), attempt: 1},
+				{firedAgo: 96 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(2), attempt: 1},
+			},
 		},
 		{
 			name: "Missed scheduled jobs", enabled: true,
@@ -2759,6 +2798,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			channel: "email", emailTo: sp("alerts@example.com"),
 			cooldownMins: 30,
 			lastFiredAgo: nil, // never fired
+			firings:      nil,
 		},
 		{
 			name: "High error volume (disabled)", enabled: false,
@@ -2766,6 +2806,11 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			channel: "discord", webhookURL: sp("https://discord.com/api/webhooks/example/placeholder"),
 			cooldownMins: 60,
 			lastFiredAgo: dp(48 * time.Hour),
+			firings: []firingDef{
+				{firedAgo: 48 * time.Hour, status: "failed", statusCode: ip(401), errMsg: sp("Discord returned 401 Unauthorized: invalid webhook token"), itemCount: ip(234), attempt: 3},
+				{firedAgo: 96 * time.Hour, status: "success", statusCode: ip(204), itemCount: ip(189), attempt: 1},
+				{firedAgo: 144 * time.Hour, status: "success", statusCode: ip(204), itemCount: ip(211), attempt: 1},
+			},
 		},
 	}
 
@@ -2802,6 +2847,34 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			fmt.Printf("  OK    %q (%s, %s) last fired %s ago\n", r.name, r.trigger, status, r.lastFiredAgo.Round(time.Minute))
 		} else {
 			fmt.Printf("  OK    %q (%s, %s) — never fired\n", r.name, r.trigger, status)
+		}
+
+		for _, f := range r.firings {
+			firedAt := time.Now().UTC().Add(-f.firedAgo)
+			var nextRetryAt *time.Time
+			if f.retryIn != nil {
+				t := time.Now().UTC().Add(*f.retryIn)
+				nextRetryAt = &t
+			}
+			var firingID string
+			ferr := pool.QueryRow(context.Background(), `
+				INSERT INTO alert_firings
+					(rule_id, fired_at, trigger, channel, status, status_code, error, item_count, attempt, next_retry_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+				RETURNING id`,
+				id, firedAt, r.trigger, r.channel,
+				f.status, f.statusCode, f.errMsg, f.itemCount,
+				f.attempt, nextRetryAt,
+			).Scan(&firingID)
+			if ferr != nil {
+				fmt.Printf("    FAIL  firing (%s, -%s): %v\n", f.status, f.firedAgo.Round(time.Minute), ferr)
+			} else {
+				retryNote := ""
+				if nextRetryAt != nil {
+					retryNote = fmt.Sprintf(" retry in %s", f.retryIn.Round(time.Minute))
+				}
+				fmt.Printf("    firing  %-8s attempt=%d -%s%s\n", f.status, f.attempt, f.firedAgo.Round(time.Minute), retryNote)
+			}
 		}
 	}
 }

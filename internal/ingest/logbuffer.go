@@ -101,7 +101,6 @@ func writeLogBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedLog)
 		)
 	}
 	results := pool.SendBatch(ctx, b)
-	defer results.Close()
 	for range batch {
 		if _, err := results.Exec(); err != nil {
 			slog.Error("log insert", "err", err)

@@ -41,6 +41,14 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(),
 }))
 
+vi.mock('@/composables/useConfig', () => ({
+  useConfig: vi.fn(() => ({ dsnFor: vi.fn((key: string, id: string) => `https://${key}@tindra.test/${id}`), baseUrl: ref('') })),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: vi.fn(() => ({ show: vi.fn() })),
+}))
+
 import DashboardView from '../DashboardView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -50,6 +58,7 @@ const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
   Icon: { template: '<span />' },
   Sparkline: { template: '<span />' },
+  BrandMark: { template: '<span />' },
 }
 
 // Queries are called in declaration order: me, issues, tx-summaries, tx-timeseries, releases, alert-rules, proj-stats
@@ -62,7 +71,7 @@ function setupQueries({
   releases = undefined as unknown,
   alertRules = [] as unknown[],
   alertsLoading = false,
-  projects = [] as Array<{ id: string; name: string; slug: string }>,
+  projects = [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1' }] as Array<{ id: string; name: string; slug: string; public_key?: string }>,
   projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
   projStatsFetching = false,
 } = {}) {
@@ -97,19 +106,20 @@ afterEach(() => {
 
 describe('DashboardView', () => {
   describe('KPI strip', () => {
-    it('renders all four KPI labels', () => {
+    it('renders all five KPI labels', () => {
       const wrapper = makeWrapper()
       const text = wrapper.text()
       expect(text).toContain('Open Issues')
       expect(text).toContain('Error Rate')
       expect(text).toContain('P95 Latency')
+      expect(text).toContain('Apdex')
       expect(text).toContain('Transactions / 24h')
     })
 
     it('shows muted dashes when transaction data is not yet available', () => {
       const wrapper = makeWrapper()
-      // error rate, p95, and tx count all depend on tx queries which return undefined
-      expect(wrapper.findAll('.db-kpi__value--muted')).toHaveLength(3)
+      // error rate, p95, apdex, and tx count all depend on tx queries which return undefined
+      expect(wrapper.findAll('.db-kpi__value--muted')).toHaveLength(4)
     })
   })
 
@@ -258,7 +268,7 @@ describe('DashboardView', () => {
       const wrapper = makeWrapper({ issues })
       // The open count KPI should show '2' not '–'
       const muted = wrapper.findAll('.db-kpi__value--muted')
-      expect(muted.length).toBe(3) // error rate, p95, tx count are still muted; issues count is not
+      expect(muted.length).toBe(4) // error rate, p95, apdex, tx count are still muted; issues count is not
     })
   })
 
@@ -422,7 +432,7 @@ describe('DashboardView', () => {
         time: new Date(now.getTime() - 3_600_000).toISOString(),
         count: 1200,
       }
-      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [] } as any)
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'App', slug: 'app' }] } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
@@ -665,6 +675,97 @@ describe('DashboardView', () => {
         const rows = wrapper.findAll('.db-proj-row')
         expect(rows).toHaveLength(5)
       })
+    })
+  })
+
+  describe('first-run / empty state', () => {
+    it('shows no-projects card when projects list is empty and data has loaded', () => {
+      const wrapper = makeWrapper({
+        projects: [],
+        issues: { issues: [], total: 0, has_more: false },
+        txSummaries: [],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      expect(wrapper.text()).toContain('No projects yet')
+      expect(wrapper.find('.db-kpis').exists()).toBe(false)
+    })
+
+    it('navigates to create project when button is clicked', async () => {
+      const wrapper = makeWrapper({
+        projects: [],
+        issues: { issues: [], total: 0, has_more: false },
+        txSummaries: [],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      await wrapper.find('.btn--primary').trigger('click')
+      expect(pushMock).toHaveBeenCalledWith('/settings/projects?new=1')
+    })
+
+    it('shows waiting-for-event card when projects exist but no tx or releases', () => {
+      const wrapper = makeWrapper({
+        issues: { issues: [], total: 0, has_more: false },
+        txSummaries: [],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      expect(wrapper.text()).toContain('Waiting for your first event')
+      expect(wrapper.find('.db-kpis').exists()).toBe(false)
+    })
+
+    it('shows the DSN in the waiting card', () => {
+      const wrapper = makeWrapper({
+        issues: { issues: [], total: 0, has_more: false },
+        txSummaries: [],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      expect(wrapper.text()).toContain('https://key1@tindra.test/p1')
+    })
+
+    it('does not show empty state when data is still loading', () => {
+      const wrapper = makeWrapper({
+        issuesFetching: true,
+        issues: undefined,
+        txSummaries: undefined,
+        releases: undefined,
+      })
+      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('Waiting for your first event')
+    })
+
+    it('does not show empty state when transactions exist', () => {
+      const wrapper = makeWrapper({
+        txSummaries: [{ transaction: '/api/health', op: 'http.server', p50: 10, p95: 30, failure_rate: 0, sample_count: 1, project_id: 'p1' }],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+    })
+
+    it('copies DSN to clipboard and shows toast when Copy DSN is clicked', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      const wrapper = makeWrapper({
+        issues: { issues: [], total: 0, has_more: false },
+        txSummaries: [],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      await wrapper.find('.btn--primary').trigger('click')
+      expect(writeText).toHaveBeenCalledWith('https://key1@tindra.test/p1')
+    })
+
+    it('picks the selected project DSN when selectedIds is non-empty', () => {
+      vi.mocked(useProjectsStore).mockReturnValue({
+        selectedIds: ['p1'],
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1' }],
+      } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
+        .mockReturnValueOnce({ data: ref({ issues: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
+      const wrapper = mount(DashboardView, { global: { stubs } })
+      expect(wrapper.text()).toContain('https://key1@tindra.test/p1')
     })
   })
 })

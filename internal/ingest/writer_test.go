@@ -56,18 +56,21 @@ func TestBuffer_Run_tickerFlush(t *testing.T) {
 
 	go buf.Run(ctx, testPool)
 
-	// Wait longer than the 200ms ticker interval
-	time.Sleep(400 * time.Millisecond)
-
+	// Poll until the ticker flushes the event or the deadline passes.
+	// A fixed sleep is fragile under CI load; polling is resilient.
+	deadline := time.Now().Add(2 * time.Second)
 	var count int
-	testPool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM events WHERE project_id = $1 AND event_id = $2`,
-		testProject.ID, eventID,
-	).Scan(&count)
-
-	if count != 1 {
-		t.Errorf("expected 1 event in DB after ticker flush, got %d", count)
+	for time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		testPool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM events WHERE project_id = $1 AND event_id = $2`,
+			testProject.ID, eventID,
+		).Scan(&count)
+		if count == 1 {
+			return
+		}
 	}
+	t.Errorf("expected 1 event in DB after ticker flush, got %d", count)
 }
 
 func TestBuffer_Run_deduplicates(t *testing.T) {

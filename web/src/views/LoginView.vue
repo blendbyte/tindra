@@ -3,12 +3,14 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/Icon.vue'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
 
 const router = useRouter()
 const qc = useQueryClient()
+const auth = useAuthStore()
 const email = ref('')
 const password = ref('')
 const error = ref<string | null>(null)
@@ -78,6 +80,7 @@ async function submit() {
       error.value = null
     } else {
       await qc.resetQueries()
+      auth.ready = false
       router.push('/dashboard')
     }
   } catch (e: unknown) {
@@ -97,6 +100,7 @@ async function submitMFA() {
       body: JSON.stringify({ mfa_token: mfaToken.value, code: mfaCode.value }),
     })
     await qc.resetQueries()
+    auth.ready = false
     router.push('/dashboard')
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'invalid code'

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import { useFormatters } from '@/composables/useFormatters'
@@ -58,6 +58,7 @@ function onSearchInput(e: Event) {
     searchQuery.value = (e.target as HTMLInputElement).value
   }, 300)
 }
+onUnmounted(() => clearTimeout(debounceTimer))
 </script>
 
 <template>

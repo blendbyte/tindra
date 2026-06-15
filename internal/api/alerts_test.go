@@ -15,7 +15,7 @@ import (
 )
 
 func alertHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, nil)
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 func truncateAlertRules(t *testing.T) {
@@ -737,4 +737,104 @@ func TestCreateAlertRule_emailEmptyEmailTo(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for email channel with empty email_to, got %d", rec.Code)
 	}
+}
+
+// --- handleListAlertFirings ---
+
+func TestListAlertFirings_empty(t *testing.T) {
+	truncateAlertRules(t)
+
+	rule := createTestAlertRule(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/alert-rules/"+rule.ID+"/firings", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Firings []storage.AlertFiring `json:"firings"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Firings) != 0 {
+		t.Errorf("expected empty firings array, got %d", len(resp.Firings))
+	}
+}
+
+func TestListAlertFirings_notFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/alert-rules/00000000-0000-0000-0000-000000000000/firings", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestListAlertFirings_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/alert-rules/00000000-0000-0000-0000-000000000000/firings", nil)
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestListAlertFirings_withData(t *testing.T) {
+	truncateAlertRules(t)
+
+	rule := createTestAlertRule(t)
+
+	// Insert a firing directly
+	testPool.Exec(context.Background(), `
+		INSERT INTO alert_firings (rule_id, trigger, channel, status, attempt)
+		VALUES ($1, 'new_issue', 'webhook', 'success', 1)`, rule.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/alert-rules/"+rule.ID+"/firings", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Firings []storage.AlertFiring `json:"firings"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Firings) != 1 {
+		t.Errorf("expected 1 firing, got %d", len(resp.Firings))
+	}
+	if resp.Firings[0].Status != "success" {
+		t.Errorf("status: got %q, want success", resp.Firings[0].Status)
+	}
+}
+
+func createTestAlertRule(t *testing.T) storage.AlertRule {
+	t.Helper()
+	b, _ := json.Marshal(map[string]any{
+		"name": "test rule", "trigger": "new_issue", "channel": "webhook",
+		"webhook_url": "https://203.0.113.1/hook",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create rule: %d %s", rec.Code, rec.Body.String())
+	}
+	var rule storage.AlertRule
+	json.NewDecoder(rec.Body).Decode(&rule)
+	return rule
 }

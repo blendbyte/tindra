@@ -31,11 +31,16 @@ interface ProjectStatRow {
 }
 import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
+import BrandMark from '@/components/BrandMark.vue'
+import { useConfig } from '@/composables/useConfig'
+import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const projects = useProjectsStore()
 const { formatRel } = useFormatters()
 const timezone = useTimezone()
+const { dsnFor } = useConfig()
+const { show: showToast } = useToast()
 
 const { data: me } = useQuery({
   queryKey: ['me'],
@@ -102,7 +107,7 @@ const { data: alertRules, isLoading: alertsLoading } = useQuery({
 })
 
 const { data: projectIssueCounts, isFetching: projStatsFetching } = useQuery({
-  queryKey: ['dash-proj-stats'],
+  queryKey: computed(() => ['dash-proj-stats', [...projects.selectedIds].sort().join(',')]),
   queryFn: () => apiFetch<ProjectIssueCount[]>('/api/projects/stats'),
   enabled: computed(() => projects.projects.length >= 2),
   refetchInterval: 30_000,
@@ -126,6 +131,14 @@ const p95Weighted = computed((): number | null => {
   const total = s.reduce((acc, t) => acc + t.sample_count, 0)
   if (!total) return null
   return s.reduce((acc, t) => acc + t.p95 * t.sample_count, 0) / total
+})
+
+const apdex = computed((): number | null => {
+  const s = txSummaries.value
+  if (!s?.length) return null
+  const total = s.reduce((acc, t) => acc + t.sample_count, 0)
+  if (!total) return null
+  return s.reduce((acc, t) => acc + t.apdex * t.sample_count, 0) / total
 })
 
 const events24h = computed((): number | null => {
@@ -319,10 +332,113 @@ const loading = computed(
     (txFetching.value && !txSummaries.value) ||
     (releasesFetching.value && !releasesPage.value),
 )
+
+// ── First-run / empty state ───────────────────────────────────────────────────
+
+const noProjects = computed(() => !(projects.projects?.length))
+
+const firstProject = computed(() => {
+  if (projects.selectedIds.length > 0) {
+    return projects.projects.find(p => projects.selectedIds.includes(p.id)) ?? projects.projects[0] ?? null
+  }
+  return projects.projects[0] ?? null
+})
+
+const firstDsn = computed(() => {
+  const p = firstProject.value
+  if (!p) return null
+  return dsnFor(p.public_key, p.id)
+})
+
+const isFirstRun = computed(() => {
+  if (loading.value) return false
+  if (noProjects.value) return true
+  if (issuesPage.value === undefined || txSummaries.value === undefined) return false
+  return (txSummaries.value?.length ?? 0) === 0 && (releasesPage.value?.releases?.length ?? 0) === 0
+})
+
+function copyDsn() {
+  const dsn = firstDsn.value
+  if (!dsn) return
+  navigator.clipboard?.writeText(dsn).catch(() => {})
+  showToast('DSN copied')
+}
 </script>
 
 <template>
-  <div class="page">
+  <!-- First-run / empty state ───────────────────────────────────────────────── -->
+  <div v-if="isFirstRun" class="empty-state">
+    <div class="empty-state__ghosts" aria-hidden="true">
+      <div
+        v-for="(w, i) in ['72%','58%','81%','64%','76%','53%','69%','44%']"
+        :key="i"
+        class="ghost-row"
+      >
+        <span />
+        <span class="ghost ghost--dot" />
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span class="ghost ghost--bar" :style="{ width: w }" />
+          <span class="ghost ghost--bar" style="width:88px;height:7px;opacity:0.6" />
+        </div>
+        <span class="ghost ghost--pill" />
+        <span class="ghost ghost--bar" style="width:48px;margin-left:auto" />
+        <span class="ghost ghost--bar" style="width:54px;margin-left:auto" />
+        <span class="ghost ghost--pill" style="width:58px" />
+        <span />
+      </div>
+    </div>
+
+    <div v-if="noProjects" class="empty-state__card">
+      <div class="empty-state__icon">
+        <BrandMark :size="32" />
+      </div>
+      <h2 class="empty-state__title">No projects yet</h2>
+      <p class="empty-state__body">
+        Create a project to get your DSN, then point any Sentry-compatible SDK at Tindra.
+        Errors and traces will appear here automatically.
+      </p>
+      <div class="empty-state__actions">
+        <button class="btn btn--primary" @click="router.push('/settings/projects?new=1')">
+          <Icon name="plus" :size="12" />
+          Create project
+        </button>
+      </div>
+    </div>
+
+    <div v-else class="empty-state__card">
+      <div class="empty-state__icon">
+        <Icon name="zap" :size="26" />
+      </div>
+      <h2 class="empty-state__title">Waiting for your first event</h2>
+      <p class="empty-state__body">
+        Point any Sentry-compatible SDK at Tindra using your project DSN.
+        Errors, transactions, and releases will appear on this dashboard automatically.
+      </p>
+      <div v-if="firstDsn" class="empty-state__endpoint">
+        <span class="empty-state__endpoint-label">Your DSN</span>
+        <code class="mono">{{ firstDsn }}</code>
+      </div>
+      <div class="es-snippet">
+        <span class="es-snippet__label">Quick start</span>
+        <pre class="es-snippet__code">import * as Sentry from "@sentry/node"
+
+Sentry.init({ dsn: "{{ firstDsn ?? 'YOUR_DSN' }}" })
+Sentry.captureException(new Error("Hello, Tindra!"))</pre>
+      </div>
+      <div class="empty-state__actions">
+        <button class="btn btn--primary" @click="copyDsn">
+          <Icon name="copy" :size="12" />
+          Copy DSN
+        </button>
+        <button class="btn" @click="router.push('/settings/projects')">
+          Project settings
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
+  <div v-else class="page">
 
     <!-- KPI strip ──────────────────────────────────────────────────────────── -->
     <div class="db-kpis">
@@ -372,6 +488,25 @@ const loading = computed(
         >{{ formatDuration(p95Weighted) }}</div>
         <div v-else class="db-kpi__value db-kpi__value--muted">–</div>
         <div class="db-kpi__sub">weighted average · 24h</div>
+      </div>
+
+      <div class="db-kpi">
+        <div class="db-kpi__label">Apdex</div>
+        <div v-if="loading" class="skel" style="width: 48px; height: 28px; margin-bottom: 4px" />
+        <div
+          v-else-if="apdex !== null"
+          class="db-kpi__value"
+          :style="{
+            color:
+              apdex < 0.70
+                ? 'var(--danger)'
+                : apdex < 0.94
+                  ? 'var(--warning)'
+                  : undefined,
+          }"
+        >{{ apdex.toFixed(2) }}</div>
+        <div v-else class="db-kpi__value db-kpi__value--muted">–</div>
+        <div class="db-kpi__sub">weighted · T=500ms · 24h</div>
       </div>
 
       <div class="db-kpi">
@@ -696,7 +831,7 @@ const loading = computed(
 
 .db-kpis {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -747,6 +882,7 @@ const loading = computed(
 .db-projects {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  margin-bottom: 32px;
 }
 
 .db-proj-head,
@@ -826,7 +962,6 @@ const loading = computed(
 .db-body {
   display: grid;
   grid-template-columns: 1fr 280px;
-  align-items: start;
   flex: 1;
 }
 
@@ -837,12 +972,21 @@ const loading = computed(
 
 .db-aside {
   min-width: 0;
+  background: var(--surface);
+}
+
+.db-aside .db-sec__head {
+  background: var(--bg);
 }
 
 /* ── Sections ───────────────────────────────────────────────────────────────── */
 
-.db-sec + .db-sec {
+.db-sec {
   border-top: 1px solid var(--border);
+}
+
+.db-sec + .db-sec {
+  margin-top: 36px;
 }
 
 .db-sec__head {
@@ -1181,13 +1325,14 @@ const loading = computed(
 }
 
 @media (max-width: 768px) {
-  /* KPI strip: 2×2 grid */
+  /* KPI strip: 2-column grid (5 cards → 2+2+1) */
   .db-kpis {
     grid-template-columns: 1fr 1fr;
   }
   .db-kpi:nth-child(2) { border-right: none; }
   .db-kpi:nth-child(3) { border-top: 1px solid var(--border); }
-  .db-kpi:nth-child(4) { border-top: 1px solid var(--border); }
+  .db-kpi:nth-child(4) { border-top: 1px solid var(--border); border-right: none; }
+  .db-kpi:nth-child(5) { border-top: 1px solid var(--border); grid-column: 1 / -1; border-right: none; }
 
   /* Body: single column, sidebar below main */
   .db-body {
@@ -1254,4 +1399,35 @@ const loading = computed(
 }
 
 .db-tx-row__pct--warn { color: var(--danger); }
+
+/* ── First-run snippet ──────────────────────────────────────────────────────── */
+
+.es-snippet {
+  margin-top: 16px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  text-align: left;
+  width: 100%;
+}
+
+.es-snippet__label {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 8px;
+}
+
+.es-snippet__code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+}
 </style>

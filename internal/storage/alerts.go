@@ -267,7 +267,7 @@ func setAlertRuleProjects(ctx context.Context, tx pgx.Tx, ruleID string, project
 
 func normaliseProjectIDs(ids []string) []string {
 	// Remove blank entries so callers can safely pass a filtered slice.
-	out := ids[:0]
+	out := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if strings.TrimSpace(id) != "" {
 			out = append(out, id)

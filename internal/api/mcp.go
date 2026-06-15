@@ -491,7 +491,7 @@ func (ro *router) mcpGetOverview(ctx context.Context, args map[string]any) (stri
 	projectIDs := mcpProjectIDs(ctx, args)
 
 	openCount, err := storage.CountAllIssues(ctx, ro.pool, storage.IssueFilter{
-		Status:     "unresolved",
+		Status:     "open",
 		ProjectIDs: projectIDs,
 	})
 	if err != nil {
@@ -706,7 +706,7 @@ func ruleMatchesProjects(rule *storage.AlertRule, projectIDs []string) bool {
 // mcpCheckWrite verifies that the caller is allowed to perform a write operation.
 // Bearer tokens must have writable=true. Session users must hold the named permission.
 func mcpCheckWrite(ctx context.Context, perm string) error {
-	if _, ok := ctx.Value(ctxTokenProjID).(string); ok {
+	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
 		if writable, _ := ctx.Value(ctxTokenWritable).(bool); !writable {
 			return mcpToolError{"this token is read-only; create a writable token to use write operations"}
 		}
