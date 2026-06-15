@@ -86,6 +86,25 @@ describe('auth store', () => {
       expect(mockFetch).toHaveBeenCalledOnce()
     })
 
+    it('re-fetches /api/me when ready is reset to false after a prior init', async () => {
+      const updated: User = { ...mockUser, name: 'Re-fetched User' }
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(mockUser) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(updated) })
+      vi.stubGlobal('fetch', mockFetch)
+
+      const store = useAuthStore()
+      await store.init()
+      expect(store.user).toEqual(mockUser)
+      expect(mockFetch).toHaveBeenCalledOnce()
+
+      store.ready = false
+      await store.init()
+
+      expect(store.user).toEqual(updated)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+
     it('ready guard prevents re-fetch even after setUser', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: true,
