@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useRoute, RouterLink } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import { formatDuration } from '@/utils/formatters'
@@ -26,7 +27,8 @@ const { formatRel } = useFormatters()
 const canManage = computed(() => auth.user?.permissions.manage_projects ?? false)
 
 // ---- tab ----
-const activeTab = ref<'cron' | 'uptime'>('cron')
+const route = useRoute()
+const activeTab = computed(() => route.path.startsWith('/monitors/uptime') ? 'uptime' : 'cron')
 
 // ---- project list (for create dialogs) ----
 const { data: projectList } = useQuery({
@@ -49,7 +51,7 @@ const selectedMonitorId = ref<string | null>(null)
 const { data: monitorsData, isLoading } = useQuery({
   queryKey: computed(() => ['monitors', queryParams.value]),
   queryFn: () => apiFetch<CronMonitor[]>(`/api/monitors?${queryParams.value}`),
-  refetchInterval: 30_000,
+  refetchInterval: 60_000,
 })
 const monitors = computed(() => monitorsData.value ?? [])
 
@@ -183,7 +185,7 @@ const selectedUptimeId = ref<string | null>(null)
 const { data: uptimeData, isLoading: uptimeLoading } = useQuery({
   queryKey: computed(() => ['uptime-monitors', queryParams.value]),
   queryFn: () => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${queryParams.value}`),
-  refetchInterval: 30_000,
+  refetchInterval: 60_000,
 })
 const uptimeMonitors = computed(() => uptimeData.value ?? [])
 
@@ -350,20 +352,22 @@ function confirmDeleteUptime(m: UptimeMonitor) {
 
 <template>
   <div class="page">
-    <!-- Tab switcher + action button -->
+    <!-- Sub-navigation -->
+    <div class="mon-subnav">
+      <RouterLink
+        to="/monitors/cron"
+        class="mon-subnav__tab"
+        :class="{ 'mon-subnav__tab--active': activeTab === 'cron' }"
+      >Cron monitors</RouterLink>
+      <RouterLink
+        to="/monitors/uptime"
+        class="mon-subnav__tab"
+        :class="{ 'mon-subnav__tab--active': activeTab === 'uptime' }"
+      >Uptime monitors</RouterLink>
+    </div>
+
+    <!-- Action bar -->
     <div class="filterbar">
-      <div class="tab-bar">
-        <button
-          class="tab-bar__tab"
-          :class="{ 'tab-bar__tab--active': activeTab === 'cron' }"
-          @click="activeTab = 'cron'"
-        >Cron monitors</button>
-        <button
-          class="tab-bar__tab"
-          :class="{ 'tab-bar__tab--active': activeTab === 'uptime' }"
-          @click="activeTab = 'uptime'"
-        >Uptime monitors</button>
-      </div>
       <span class="filterbar__spacer" />
       <button
         v-if="canManage && activeTab === 'cron'"
@@ -568,7 +572,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
                 </div>
                 <div class="mon-detail__actions">
                   <button v-if="canManage" class="btn btn--ghost" @click="startEdit(m)">
-                    <Icon name="edit" :size="12" />
+                    <Icon name="pencil" :size="12" />
                     Edit
                   </button>
                 </div>
@@ -856,7 +860,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
                 </div>
                 <div class="mon-detail__actions">
                   <button v-if="canManage" class="btn btn--ghost" @click="startUptimeEdit(m)">
-                    <Icon name="edit" :size="12" />
+                    <Icon name="pencil" :size="12" />
                     Edit
                   </button>
                 </div>
@@ -866,25 +870,25 @@ function confirmDeleteUptime(m: UptimeMonitor) {
               <div v-if="uptimeStats" class="up-stats">
                 <div class="up-stat">
                   <span class="up-stat__label">24h uptime</span>
-                  <span class="up-stat__value" :style="{ color: uptimeStats.uptime_24h >= 99 ? 'var(--success)' : uptimeStats.uptime_24h >= 95 ? 'var(--warning)' : 'var(--danger)' }">
-                    {{ fmtUptime(uptimeStats.uptime_24h) }}
+                  <span class="up-stat__value" :style="{ color: uptimeStats.uptime_pct_24h >= 99 ? 'var(--success)' : uptimeStats.uptime_pct_24h >= 95 ? 'var(--warning)' : 'var(--danger)' }">
+                    {{ fmtUptime(uptimeStats.uptime_pct_24h) }}
                   </span>
                 </div>
                 <div class="up-stat">
                   <span class="up-stat__label">7d uptime</span>
-                  <span class="up-stat__value" :style="{ color: uptimeStats.uptime_7d >= 99 ? 'var(--success)' : uptimeStats.uptime_7d >= 95 ? 'var(--warning)' : 'var(--danger)' }">
-                    {{ fmtUptime(uptimeStats.uptime_7d) }}
+                  <span class="up-stat__value" :style="{ color: uptimeStats.uptime_pct_7d >= 99 ? 'var(--success)' : uptimeStats.uptime_pct_7d >= 95 ? 'var(--warning)' : 'var(--danger)' }">
+                    {{ fmtUptime(uptimeStats.uptime_pct_7d) }}
                   </span>
                 </div>
                 <div class="up-stat">
                   <span class="up-stat__label">30d uptime</span>
-                  <span class="up-stat__value" :style="{ color: uptimeStats.uptime_30d >= 99 ? 'var(--success)' : uptimeStats.uptime_30d >= 95 ? 'var(--warning)' : 'var(--danger)' }">
-                    {{ fmtUptime(uptimeStats.uptime_30d) }}
+                  <span class="up-stat__value" :style="{ color: uptimeStats.uptime_pct_30d >= 99 ? 'var(--success)' : uptimeStats.uptime_pct_30d >= 95 ? 'var(--warning)' : 'var(--danger)' }">
+                    {{ fmtUptime(uptimeStats.uptime_pct_30d) }}
                   </span>
                 </div>
                 <div class="up-stat">
                   <span class="up-stat__label">Avg response</span>
-                  <span class="up-stat__value">{{ fmtMs(uptimeStats.avg_response_ms) }}</span>
+                  <span class="up-stat__value">{{ fmtMs(uptimeStats.avg_response_ms_24h) }}</span>
                 </div>
               </div>
 
@@ -920,28 +924,41 @@ function confirmDeleteUptime(m: UptimeMonitor) {
 </template>
 
 <style scoped>
-/* ---------- Tab bar ---------- */
+/* ---------- Sub-navigation (mirrors .perf-subnav) ---------- */
 
-.tab-bar {
+.mon-subnav {
   display: flex;
+  align-items: center;
   gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 48px;
+  z-index: 10;
+  height: 40px;
+  flex: 0 0 40px;
 }
 
-.tab-bar__tab {
-  padding: 0 14px;
-  height: 32px;
+.mon-subnav__tab {
   font-size: var(--text-sm);
-  font-weight: 500;
   color: var(--text-3);
-  background: none;
-  border: none;
+  padding: 10px 14px;
   border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: color 120ms, border-color 120ms;
+  margin-bottom: -1px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 120ms ease;
 }
 
-.tab-bar__tab:hover { color: var(--text-2); }
-.tab-bar__tab--active { color: var(--text-1); border-bottom-color: var(--accent); }
+.mon-subnav__tab:hover { color: var(--text-1); }
+.mon-subnav__tab--active {
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
+}
+
+/* Filterbar sits below nav (48px) + subnav (40px) = 88px */
+.mon-subnav ~ .filterbar { top: 88px; }
 
 /* ---------- Full-width monitor rows ---------- */
 
@@ -973,7 +990,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   position: sticky;
-  top: 92px;
+  top: 132px;
   z-index: 5;
 }
 
@@ -1302,5 +1319,8 @@ select.mon-field__input { cursor: pointer; }
   }
   .up-ci-row > :nth-child(4) { display: none; }
   .up-ci-row > :nth-child(5) { display: none; }
+
+  .mon-subnav { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+  .mon-subnav::-webkit-scrollbar { display: none; }
 }
 </style>

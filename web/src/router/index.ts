@@ -85,9 +85,19 @@ export const router = createRouter({
     },
     {
       path: '/monitors',
-      name: 'monitors',
+      redirect: '/monitors/cron',
+    },
+    {
+      path: '/monitors/cron',
+      name: 'monitors-cron',
       component: () => import('@/views/MonitorsView.vue'),
-      meta: { requiresAuth: true, title: 'Monitors' },
+      meta: { requiresAuth: true, title: 'Cron Monitors' },
+    },
+    {
+      path: '/monitors/uptime',
+      name: 'monitors-uptime',
+      component: () => import('@/views/MonitorsView.vue'),
+      meta: { requiresAuth: true, title: 'Uptime Monitors' },
     },
     {
       path: '/releases',

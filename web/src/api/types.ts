@@ -381,10 +381,10 @@ export interface UptimeCheck {
 }
 
 export interface UptimeStats {
-  uptime_24h: number
-  uptime_7d: number
-  uptime_30d: number
-  avg_response_ms: number | null
+  uptime_pct_24h: number
+  uptime_pct_7d: number
+  uptime_pct_30d: number
+  avg_response_ms_24h: number | null
 }
 
 export type AlertFiringStatus = 'pending' | 'success' | 'failed'

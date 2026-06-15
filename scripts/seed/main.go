@@ -2287,6 +2287,263 @@ func cronCheckinFinish(baseURL, monitorID, checkinID, status string, durationSec
 	return nil
 }
 
+// =============================================================================
+// Uptime monitor seeding
+// =============================================================================
+
+func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
+	ctx := context.Background()
+
+	// outageWindow is a closed interval [startAgo, endAgo] where startAgo is
+	// further back in time (larger duration). A check whose "ago" falls in this
+	// range is seeded as "down".
+	type outageWindow struct {
+		startAgo time.Duration
+		endAgo   time.Duration
+		errMsg   string
+		code     int // 0 means no HTTP response (network error)
+	}
+
+	type monitorSpec struct {
+		name          string
+		url           string
+		method        string
+		intervalSecs  int
+		expectedCodes string
+		bodyContains  *string
+		monitorStatus string // "active" or "paused"
+		description   string
+		baseRespMs    int // median response time for healthy checks
+		outages       []outageWindow
+		forceDown     bool // force last 3 historical checks + fresh check to "down"
+		noChecks      bool // skip all check history (state remains "unknown")
+	}
+
+	sp := func(v string) *string { return &v }
+	ip := func(v int) *int { return &v }
+
+	specs := []monitorSpec{
+		{
+			name: "API health check", url: "https://api.example.com/health",
+			method: "GET", intervalSecs: 60, expectedCodes: "200",
+			monitorStatus: "active", description: "mostly up — small outage 3 days ago and 10 days ago",
+			baseRespMs: 85,
+			outages: []outageWindow{
+				{startAgo: 73 * time.Hour, endAgo: 71 * time.Hour, errMsg: "upstream timeout: no response within 10s"},
+				{startAgo: 240 * time.Hour, endAgo: 236 * time.Hour, errMsg: "connection refused: ECONNREFUSED"},
+			},
+		},
+		{
+			name: "Marketing site", url: "https://www.example.com",
+			method: "GET", intervalSecs: 300, expectedCodes: "200",
+			bodyContains:  sp("Welcome"),
+			monitorStatus: "active", description: "100% uptime over 7 days",
+			baseRespMs: 125,
+		},
+		{
+			name: "Payment gateway", url: "https://pay.example.com/ping",
+			method: "HEAD", intervalSecs: 60, expectedCodes: "200",
+			monitorStatus: "active", description: "currently down — 503 errors",
+			baseRespMs: 95,
+			outages: []outageWindow{
+				{startAgo: 6 * time.Hour, endAgo: 5 * time.Hour, errMsg: "503 Service Unavailable", code: 503},
+			},
+			forceDown: true,
+		},
+		{
+			name: "Admin panel", url: "https://admin.example.com",
+			method: "GET", intervalSecs: 300, expectedCodes: "200",
+			monitorStatus: "active", description: "up with two planned maintenance windows",
+			baseRespMs: 210,
+			outages: []outageWindow{
+				{startAgo: 26 * time.Hour, endAgo: 24 * time.Hour, errMsg: "connection refused: maintenance window"},
+				{startAgo: 146 * time.Hour, endAgo: 144 * time.Hour, errMsg: "connection refused: maintenance window"},
+			},
+		},
+		{
+			name: "Staging environment", url: "https://staging.example.com/health",
+			method: "GET", intervalSecs: 300, expectedCodes: "200",
+			monitorStatus: "paused", description: "paused — 30 checks recorded before pause",
+			baseRespMs: 155,
+		},
+		{
+			name: "CDN edge node", url: "https://cdn.example.com/assets/app.js",
+			method: "HEAD", intervalSecs: 300, expectedCodes: "200,304",
+			monitorStatus: "active", description: "no history yet — state unknown",
+			noChecks: true,
+		},
+	}
+
+	fmt.Println("\n=== Uptime Monitors ===")
+
+	for _, spec := range specs {
+		var monID string
+		err := pool.QueryRow(ctx, `
+			INSERT INTO uptime_monitors
+				(project_id, name, url, method, interval_secs, timeout_secs,
+				 expected_codes, body_contains, status)
+			VALUES ($1,$2,$3,$4,$5,10,$6,$7,$8)
+			RETURNING id`,
+			projectID, spec.name, spec.url, spec.method, spec.intervalSecs,
+			spec.expectedCodes, spec.bodyContains, spec.monitorStatus,
+		).Scan(&monID)
+		if err != nil {
+			fmt.Printf("  FAIL  create monitor %q: %v\n", spec.name, err)
+			continue
+		}
+
+		if spec.noChecks {
+			fmt.Printf("  OK    %q — %s\n", spec.name, spec.description)
+			continue
+		}
+
+		// Generate check history.
+		//
+		// Phase 1 — historical bulk: 168 checks at 1-hour spacing over the past
+		// 7 days. This is enough to populate the 24h / 7d uptime stats and the
+		// 20-check recent-checks strip.
+		// Paused monitors get 30 checks at 1-hour spacing (~1.25 days).
+		//
+		// Phase 2 — fresh probe: one additional check placed at ~intervalSecs ago
+		// so the monitor looks like it was just polled.
+		now := time.Now().UTC()
+		numHistorical := 168
+		historyDuration := 7 * 24 * time.Hour
+		if spec.monitorStatus == "paused" {
+			numHistorical = 30
+			historyDuration = 30 * time.Hour
+		}
+		spacing := historyDuration / time.Duration(numHistorical)
+
+		var lastCode *int
+		var lastRespMs *int
+		var lastCheckedAt time.Time
+		var lastOkAt time.Time
+		consecutiveFailures := 0
+		totalChecks := 0
+
+		insertCheck := func(status string, code *int, respMs *int, errMsg *string, checkedAt time.Time) {
+			_, ierr := pool.Exec(ctx, `
+				INSERT INTO uptime_checks
+					(monitor_id, status, status_code, response_ms, error, checked_at)
+				VALUES ($1,$2,$3,$4,$5,$6)`,
+				monID, status, code, respMs, errMsg, checkedAt,
+			)
+			if ierr != nil {
+				fmt.Printf("    FAIL  check at %s: %v\n", checkedAt.Format(time.RFC3339), ierr)
+				return
+			}
+			totalChecks++
+			lastCode = code
+			lastRespMs = respMs
+			lastCheckedAt = checkedAt
+			if status == "up" {
+				lastOkAt = checkedAt
+				consecutiveFailures = 0
+			} else {
+				consecutiveFailures++
+			}
+		}
+
+		// Phase 1: historical checks, oldest to newest.
+		for i := 0; i < numHistorical; i++ {
+			ago := historyDuration - time.Duration(i)*spacing
+			checkedAt := now.Add(-ago)
+
+			// Determine whether this check falls in a configured outage window.
+			isDown := false
+			var downCode *int
+			var downErr string
+
+			if spec.forceDown && i >= numHistorical-3 {
+				isDown = true
+				downCode = ip(503)
+				downErr = "503 Service Unavailable"
+			} else {
+				for _, o := range spec.outages {
+					if ago <= o.startAgo && ago >= o.endAgo {
+						isDown = true
+						downErr = o.errMsg
+						if o.code != 0 {
+							downCode = ip(o.code)
+						}
+						break
+					}
+				}
+			}
+
+			if isDown {
+				errStr := downErr
+				insertCheck("down", downCode, nil, &errStr, checkedAt)
+			} else {
+				c := 200
+				r := spec.baseRespMs + rand.Intn(40) - 20 //nolint:gosec
+				if r < 10 {
+					r = 10
+				}
+				insertCheck("up", &c, &r, nil, checkedAt)
+			}
+		}
+
+		// Phase 2: fresh probe to make the monitor look live.
+		if spec.monitorStatus == "active" {
+			freshAgo := time.Duration(spec.intervalSecs) * time.Second
+			if freshAgo > 2*time.Minute {
+				freshAgo = 2 * time.Minute
+			}
+			freshAt := now.Add(-freshAgo)
+			if spec.forceDown {
+				code := 503
+				errStr := "503 Service Unavailable"
+				insertCheck("down", &code, nil, &errStr, freshAt)
+			} else {
+				c := 200
+				r := spec.baseRespMs + rand.Intn(20) - 10 //nolint:gosec
+				if r < 10 {
+					r = 10
+				}
+				insertCheck("up", &c, &r, nil, freshAt)
+			}
+		}
+
+		// Derive final monitor state and persist it.
+		// failureThreshold is 2 (mirrors the constant in internal/storage/uptime.go).
+		finalState := "up"
+		if lastCheckedAt.IsZero() {
+			finalState = "unknown"
+		} else if consecutiveFailures >= 2 {
+			finalState = "down"
+		}
+
+		nextCheckAt := lastCheckedAt.Add(time.Duration(spec.intervalSecs) * time.Second)
+		var lastOkAtPtr *time.Time
+		if !lastOkAt.IsZero() {
+			lastOkAtPtr = &lastOkAt
+		}
+
+		_, err = pool.Exec(ctx, `
+			UPDATE uptime_monitors SET
+				state                = $2,
+				consecutive_failures = $3,
+				last_checked_at      = $4,
+				last_ok_at           = $5,
+				next_check_at        = $6,
+				last_status_code     = $7,
+				last_response_ms     = $8
+			WHERE id = $1`,
+			monID, finalState, consecutiveFailures,
+			lastCheckedAt, lastOkAtPtr, nextCheckAt,
+			lastCode, lastRespMs,
+		)
+		if err != nil {
+			fmt.Printf("    FAIL  update state: %v\n", err)
+		}
+
+		fmt.Printf("  OK    %q — %s (state=%s, %d checks)\n",
+			spec.name, spec.description, finalState, totalChecks)
+	}
+}
+
 func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
 	type monitorDef struct {
 		name        string
@@ -2673,6 +2930,7 @@ func main() {
 			}
 			defer pool.Close()
 			seedCronMonitors(target, pool)
+			seedUptimeMonitors(pool, target.projectID)
 		} else {
 			fmt.Println("\n(skip monitors - set DATABASE_URL in .env or pass --db=POSTGRES_URL)")
 		}
