@@ -243,6 +243,74 @@ describe('Navbar', () => {
     })
   })
 
+  describe('project filter popover — empty state actions', () => {
+    it('navigates to create-project URL and closes popover when Create project is clicked', async () => {
+      const wrapper = makeWrapper([])
+      await wrapper.find('.nav__projects-trigger').trigger('click')
+      expect(wrapper.find('.popover-empty').exists()).toBe(true)
+      const createBtn = wrapper.find('.popover-empty .btn--primary')
+      await createBtn.trigger('click')
+      expect(pushMock).toHaveBeenCalledWith('/settings/projects?new=1')
+      expect(wrapper.find('.popover').exists()).toBe(false)
+    })
+
+    it('closes the popover when the Done footer button is clicked', async () => {
+      const wrapper = makeWrapper([makeProject('1', 'Alpha')])
+      await wrapper.find('.nav__projects-trigger').trigger('click')
+      expect(wrapper.find('.popover').exists()).toBe(true)
+      const doneBtn = wrapper.findAll('.popover__footer button').find((b) => b.text() === 'Done')!
+      await doneBtn.trigger('click')
+      expect(wrapper.find('.popover').exists()).toBe(false)
+    })
+  })
+
+  describe('mobile nav drawer', () => {
+    // The drawer uses <Teleport to="body">, so it lives in document.body.
+    // Each test unmounts its wrapper to prevent DOM leakage between tests.
+
+    it('is hidden by default', () => {
+      const wrapper = makeWrapper()
+      expect(document.body.querySelector('.nav__mobile-drawer')).toBeNull()
+      wrapper.unmount()
+    })
+
+    it('opens when the hamburger button is clicked', async () => {
+      const wrapper = makeWrapper()
+      await wrapper.find('.nav__hamburger').trigger('click')
+      expect(document.body.querySelector('.nav__mobile-drawer')).not.toBeNull()
+      wrapper.unmount()
+    })
+
+    it('closes when the hamburger button is clicked again', async () => {
+      const wrapper = makeWrapper()
+      await wrapper.find('.nav__hamburger').trigger('click')
+      await wrapper.find('.nav__hamburger').trigger('click')
+      expect(document.body.querySelector('.nav__mobile-drawer')).toBeNull()
+      wrapper.unmount()
+    })
+
+    it('shows all nav links in the mobile drawer', async () => {
+      const wrapper = makeWrapper()
+      await wrapper.find('.nav__hamburger').trigger('click')
+      const text = document.body.querySelector('.nav__mobile-drawer')!.textContent ?? ''
+      expect(text).toContain('Dashboard')
+      expect(text).toContain('Issues')
+      expect(text).toContain('Monitors')
+      expect(text).toContain('Releases')
+      wrapper.unmount()
+    })
+
+    it('closes when the backdrop is clicked', async () => {
+      const wrapper = makeWrapper()
+      await wrapper.find('.nav__hamburger').trigger('click')
+      const drawer = document.body.querySelector<HTMLElement>('.nav__mobile-drawer')!
+      drawer.click()
+      await nextTick()
+      expect(document.body.querySelector('.nav__mobile-drawer')).toBeNull()
+      wrapper.unmount()
+    })
+  })
+
   describe('dashboard nav link', () => {
     it('renders a Dashboard link in the nav', () => {
       const wrapper = makeWrapper()

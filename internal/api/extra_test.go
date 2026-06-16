@@ -967,6 +967,39 @@ func TestDeleteComment_forbidden(t *testing.T) {
 	}
 }
 
+func TestDeleteComment_manageIssues(t *testing.T) {
+	// A non-author with manage_issues permission can delete another user's comment.
+	_, commentID := seedCommentForTest(t)
+
+	// Create a second user and grant them manage_issues.
+	u, err := storage.CreateUser(context.Background(), testPool, "mgr-delete-comment@example.com", "managerpass123")
+	if err != nil {
+		t.Fatalf("create manager user: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", u.ID)
+	})
+	if _, err := storage.UpdateUserPermissions(context.Background(), testPool, u.ID,
+		storage.UserPermissions{ManageIssues: true}); err != nil {
+		t.Fatalf("grant manage_issues: %v", err)
+	}
+	sess, err := storage.CreateSession(context.Background(), testPool, u.ID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	mgrCookie := &http.Cookie{Name: "tindra_session", Value: sess.Token}
+
+	req := httptest.NewRequest(http.MethodDelete,
+		fmt.Sprintf("/api/comments/%s", commentID), nil)
+	req.AddCookie(mgrCookie)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestListAuditLog_withSearchQuery(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/audit?q=project", nil)
 	req.AddCookie(authCookie())
