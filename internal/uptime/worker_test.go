@@ -320,6 +320,40 @@ func TestWorker_customExpectedCode(t *testing.T) {
 	}
 }
 
+func TestWorker_doesNotFollowRedirects(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	redirected := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/destination" {
+			redirected = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/destination", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	// expected_codes includes only 200-299 so a 302 should be recorded as down
+	m := seedMonitor(t, srv.URL, "GET", "200-299")
+	uptime.NewWorker(testPool).RunOnce(ctx)
+
+	if redirected {
+		t.Error("worker followed a redirect but should not have")
+	}
+	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(checks))
+	}
+	if checks[0].Status != "down" {
+		t.Errorf("status: got %q, want down (302 not in expected_codes)", checks[0].Status)
+	}
+	if checks[0].StatusCode == nil || *checks[0].StatusCode != http.StatusFound {
+		t.Errorf("status_code: got %v, want 302", checks[0].StatusCode)
+	}
+}
+
 func TestWorker_Run_stopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

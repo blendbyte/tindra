@@ -36,10 +36,7 @@ func NewWorker(pool *pgxpool.Pool) *Worker {
 		client: &http.Client{
 			Timeout: 70 * time.Second, // hard cap well above any per-monitor timeout
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 5 {
-					return http.ErrUseLastResponse
-				}
-				return nil
+				return http.ErrUseLastResponse
 			},
 		},
 		sem: make(chan struct{}, maxConcurrent),
