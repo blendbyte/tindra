@@ -137,12 +137,18 @@ func TestListAuditLog_limitCap(t *testing.T) {
 func TestListAuditLog_orderNewestFirst(t *testing.T) {
 	truncateAuditLog(t)
 
-	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "auth.login"})
-	time.Sleep(10 * time.Millisecond)
-	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "auth.logout"})
-	time.Sleep(50 * time.Millisecond)
+	ctx := context.Background()
+	// Insert with explicit timestamps to avoid async goroutine ordering races.
+	// auth.login is 1 second older than auth.logout, so auth.logout must appear first.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO audit_log (event_type, created_at) VALUES
+			($1, NOW() - INTERVAL '1 second'),
+			($2, NOW())
+	`, "auth.login", "auth.logout"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
 
-	rows, err := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{})
+	rows, err := storage.ListAuditLog(ctx, testPool, storage.AuditFilter{})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
