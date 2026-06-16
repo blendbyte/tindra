@@ -179,6 +179,7 @@ func (s *FakeSMTPServer) handleConn(conn net.Conn) {
 			if upper == "" {
 				return // connection closed
 			}
+			write("500 Command not recognized")
 		}
 	}
 }
