@@ -317,6 +317,177 @@ func TestRenderAlertEmail_newOrRegressed(t *testing.T) {
 	}
 }
 
+// --- uptime alerts ---
+
+func TestAlertTriggerLine_uptimeDown(t *testing.T) {
+	cases := []struct {
+		count int
+		want  string
+	}{
+		{1, "1 uptime monitor is down."},
+		{3, "3 uptime monitors are down."},
+	}
+	for _, c := range cases {
+		got := alertTriggerLine(AlertPayload{Trigger: "uptime_down", Details: map[string]any{"down_count": c.count}})
+		if got != c.want {
+			t.Errorf("count=%d: got %q, want %q", c.count, got, c.want)
+		}
+	}
+}
+
+func TestAlertTriggerLine_uptimeRecovered(t *testing.T) {
+	cases := []struct {
+		count int
+		want  string
+	}{
+		{1, "1 uptime monitor has recovered."},
+		{2, "2 uptime monitors have recovered."},
+	}
+	for _, c := range cases {
+		got := alertTriggerLine(AlertPayload{Trigger: "uptime_recovered", Details: map[string]any{"recovered_count": c.count}})
+		if got != c.want {
+			t.Errorf("count=%d: got %q, want %q", c.count, got, c.want)
+		}
+	}
+}
+
+func TestRenderAlertEmail_uptimeDown(t *testing.T) {
+	code := 503
+	errMsg := ""
+	wentDown := time.Now().Add(-47 * time.Minute)
+	payload := AlertPayload{
+		RuleName: "uptime alert",
+		Trigger:  "uptime_down",
+		FiredAt:  time.Now(),
+		Details:  map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{
+			{
+				Name:           "Homepage",
+				URL:            "https://example.com",
+				State:          "down",
+				LastStatusCode: &code,
+				LastError:      &errMsg,
+				WentDownAt:     &wentDown,
+			},
+		},
+	}
+	html, text, err := RenderAlertEmail(payload, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"Homepage", "https://example.com", "HTTP 503", "Down"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML missing %q", want)
+		}
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing %q", want)
+		}
+	}
+	if !strings.Contains(html, "Down since") {
+		t.Error("HTML missing 'Down since'")
+	}
+}
+
+func TestRenderAlertEmail_uptimeDown_networkError(t *testing.T) {
+	errMsg := "timeout"
+	payload := AlertPayload{
+		RuleName: "uptime alert",
+		Trigger:  "uptime_down",
+		FiredAt:  time.Now(),
+		Details:  map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{
+			{
+				Name:      "API",
+				URL:       "https://api.example.com",
+				State:     "down",
+				LastError: &errMsg,
+			},
+		},
+	}
+	html, text, err := RenderAlertEmail(payload, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"API", "https://api.example.com", "timeout"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML missing %q", want)
+		}
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing %q", want)
+		}
+	}
+}
+
+func TestRenderAlertEmail_uptimeRecovered(t *testing.T) {
+	wentDown := time.Now().Add(-2*time.Hour - 15*time.Minute)
+	lastOk := time.Now()
+	payload := AlertPayload{
+		RuleName: "uptime alert",
+		Trigger:  "uptime_recovered",
+		FiredAt:  time.Now(),
+		Details:  map[string]any{"recovered_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{
+			{
+				Name:       "Homepage",
+				URL:        "https://example.com",
+				State:      "up",
+				WentDownAt: &wentDown,
+				LastOkAt:   &lastOk,
+			},
+		},
+	}
+	html, text, err := RenderAlertEmail(payload, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"Homepage", "https://example.com", "Recovered", "Was down for"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML missing %q", want)
+		}
+	}
+	if !strings.Contains(text, "Was down for") {
+		t.Error("text missing 'Was down for'")
+	}
+}
+
+func TestRenderAlertEmail_uptimeDown_viewURL(t *testing.T) {
+	payload := AlertPayload{
+		RuleName: "uptime alert",
+		Trigger:  "uptime_down",
+		FiredAt:  time.Now(),
+		Details:  map[string]any{"down_count": 1},
+	}
+	html, text, err := RenderAlertEmail(payload, "https://tindra.example.com")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "https://tindra.example.com/monitors") {
+		t.Error("HTML missing monitors view URL")
+	}
+	if !strings.Contains(text, "https://tindra.example.com/monitors") {
+		t.Error("text missing monitors view URL")
+	}
+}
+
+func TestFormatDowntime(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{30 * time.Second, "less than a minute"},
+		{5 * time.Minute, "5m"},
+		{90 * time.Minute, "1h 30m"},
+		{2*time.Hour + 3*time.Minute, "2h 3m"},
+		{-time.Minute, "less than a minute"},
+	}
+	for _, c := range cases {
+		got := formatDowntime(c.d)
+		if got != c.want {
+			t.Errorf("formatDowntime(%v) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
 // makeTestIssue returns a *storage.Issue with all alert-enrichment fields populated.
 func makeTestIssue(id, title, level, env string, ts time.Time) *storage.Issue {
 	e := env

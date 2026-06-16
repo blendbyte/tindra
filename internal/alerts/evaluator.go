@@ -800,6 +800,39 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 		})
 	}
 
+	if len(payload.UptimeMonitors) > 0 {
+		var sb strings.Builder
+		for _, m := range payload.UptimeMonitors {
+			line := "• *" + m.Name + "* — " + m.URL
+			if m.LastStatusCode != nil {
+				line += fmt.Sprintf(" (HTTP %d)", *m.LastStatusCode)
+			} else if m.LastError != nil && *m.LastError != "" {
+				line += " (" + *m.LastError + ")"
+			}
+			if payload.Trigger == "uptime_recovered" {
+				if m.WentDownAt != nil && m.LastOkAt != nil {
+					d := m.LastOkAt.Sub(*m.WentDownAt)
+					line += " — down for " + formatSlackDowntime(d)
+				}
+			} else {
+				if m.WentDownAt != nil {
+					line += " — since " + m.WentDownAt.UTC().Format("15:04 UTC")
+				} else if m.LastOkAt != nil {
+					line += " — last OK " + m.LastOkAt.UTC().Format("15:04 UTC")
+				}
+			}
+			sb.WriteString(line + "\n")
+		}
+		label := "*Monitors down:*"
+		if payload.Trigger == "uptime_recovered" {
+			label = "*Recovered:*"
+		}
+		blocks = append(blocks, block{
+			Type: "section",
+			Text: &textObj{Type: "mrkdwn", Text: label + "\n" + strings.TrimRight(sb.String(), "\n")},
+		})
+	}
+
 	blocks = append(blocks, block{
 		Type:     "context",
 		Elements: []textObj{{Type: "mrkdwn", Text: "Tindra · " + payload.FiredAt.UTC().Format("2006-01-02 15:04 UTC")}},
@@ -880,12 +913,43 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 		description = strings.TrimRight(sb.String(), "\n")
 	}
 
+	if len(payload.UptimeMonitors) > 0 {
+		var sb strings.Builder
+		for _, m := range payload.UptimeMonitors {
+			line := "**" + m.Name + "** — " + m.URL
+			if m.LastStatusCode != nil {
+				line += fmt.Sprintf(" (HTTP %d)", *m.LastStatusCode)
+			} else if m.LastError != nil && *m.LastError != "" {
+				line += " (" + *m.LastError + ")"
+			}
+			if payload.Trigger == "uptime_recovered" {
+				if m.WentDownAt != nil && m.LastOkAt != nil {
+					d := m.LastOkAt.Sub(*m.WentDownAt)
+					line += " — down for " + formatSlackDowntime(d)
+				}
+			} else {
+				if m.WentDownAt != nil {
+					line += " — since " + m.WentDownAt.UTC().Format("15:04 UTC")
+				} else if m.LastOkAt != nil {
+					line += " — last OK " + m.LastOkAt.UTC().Format("15:04 UTC")
+				}
+			}
+			sb.WriteString("- " + line + "\n")
+		}
+		description = strings.TrimRight(sb.String(), "\n")
+	}
+
+	embedColor := 15548997 // Discord red (#ED4245)
+	if payload.Trigger == "uptime_recovered" {
+		embedColor = 5763719 // Discord green (#57F287)
+	}
+
 	msg := struct {
 		Embeds []embed `json:"embeds"`
 	}{
 		Embeds: []embed{{
 			Title:       subject,
-			Color:       15548997, // Discord red (#ED4245)
+			Color:       embedColor,
 			Description: description,
 			Fields:      fields,
 			Footer:      embedFooter{Text: "Tindra · " + payload.FiredAt.UTC().Format("2006-01-02 15:04 UTC")},
@@ -1046,6 +1110,21 @@ func payloadProjectName(p AlertPayload) string {
 		}
 	}
 	return p.ProjectID
+}
+
+func formatSlackDowntime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return "<1m"
 }
 
 // singleIssueTitle returns the title of the first issue, truncated to 120

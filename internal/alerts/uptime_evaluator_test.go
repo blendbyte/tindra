@@ -355,3 +355,134 @@ func TestFireDiscord_uptimeTriggerLabels(t *testing.T) {
 		})
 	}
 }
+
+// --- fireSlack: uptime monitor details in payload ---
+
+func TestFireSlack_uptimeDown_monitorDetails(t *testing.T) {
+	code := 503
+	errMsg := ""
+	wentDown := time.Now().Add(-30 * time.Minute)
+	payload := AlertPayload{
+		Trigger: "uptime_down",
+		FiredAt: time.Now(),
+		Details: map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{
+			{Name: "Homepage", URL: "https://example.com", State: "down", LastStatusCode: &code, LastError: &errMsg, WentDownAt: &wentDown},
+		},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireSlack(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireSlack: %v", err)
+	}
+	for _, want := range []string{"Homepage", "https://example.com", "HTTP 503", "Monitors down"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("expected %q in Slack payload, got: %s", want, body)
+		}
+	}
+}
+
+func TestFireSlack_uptimeRecovered_monitorDetails(t *testing.T) {
+	wentDown := time.Now().Add(-47 * time.Minute)
+	lastOk := time.Now()
+	payload := AlertPayload{
+		Trigger: "uptime_recovered",
+		FiredAt: time.Now(),
+		Details: map[string]any{"recovered_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{
+			{Name: "Homepage", URL: "https://example.com", State: "up", WentDownAt: &wentDown, LastOkAt: &lastOk},
+		},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireSlack(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireSlack: %v", err)
+	}
+	for _, want := range []string{"Homepage", "https://example.com", "down for", "Recovered"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("expected %q in Slack payload, got: %s", want, body)
+		}
+	}
+}
+
+// --- fireDiscord: uptime monitor details ---
+
+func TestFireDiscord_uptimeDown_monitorDetails(t *testing.T) {
+	code := 503
+	errMsg := ""
+	payload := AlertPayload{
+		Trigger: "uptime_down",
+		FiredAt: time.Now(),
+		Details: map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{
+			{Name: "Homepage", URL: "https://example.com", State: "down", LastStatusCode: &code, LastError: &errMsg},
+		},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireDiscord(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireDiscord: %v", err)
+	}
+	for _, want := range []string{"Homepage", "https://example.com", "HTTP 503"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("expected %q in Discord payload, got: %s", want, body)
+		}
+	}
+	// red color for down
+	if !strings.Contains(string(body), "15548997") {
+		t.Errorf("expected red color (15548997) in Discord down payload, got: %s", body)
+	}
+}
+
+func TestFireDiscord_uptimeRecovered_greenColor(t *testing.T) {
+	payload := AlertPayload{
+		Trigger: "uptime_recovered",
+		FiredAt: time.Now(),
+		Details: map[string]any{"recovered_count": 1},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireDiscord(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireDiscord: %v", err)
+	}
+	// green color for recovered
+	if !strings.Contains(string(body), "5763719") {
+		t.Errorf("expected green color (5763719) in Discord recovered payload, got: %s", body)
+	}
+}

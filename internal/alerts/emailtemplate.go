@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"strings"
+	"time"
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
@@ -201,16 +202,28 @@ type alertMonitorData struct {
 	LastOkAt   string
 }
 
+type alertUptimeMonitorData struct {
+	Name       string
+	URL        string
+	MonitorURL string
+	State      string
+	StateColor string
+	Reason     string
+	DownSince  string
+	Downtime   string
+}
+
 type alertEmailData struct {
-	RuleName    string
-	FiredAt     string
-	TriggerLine string
-	ViewURL     string
-	ViewLabel   string
-	Issues      []alertIssueData
-	Monitors    []alertMonitorData
-	MoreCount   int
-	MoreLabel   string
+	RuleName       string
+	FiredAt        string
+	TriggerLine    string
+	ViewURL        string
+	ViewLabel      string
+	Issues         []alertIssueData
+	Monitors       []alertMonitorData
+	UptimeMonitors []alertUptimeMonitorData
+	MoreCount      int
+	MoreLabel      string
 }
 
 var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
@@ -249,6 +262,23 @@ var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
       {{if .NextAt}}<p style="margin:0 0 2px;font-size:12px;color:#9ca3af;">Expected at {{.NextAt}}</p>{{end}}
       {{if .LastErrAt}}<p style="margin:0 0 2px;font-size:12px;color:#9ca3af;">Last error at {{.LastErrAt}}</p>{{end}}
       {{if .LastOkAt}}<p style="margin:0;font-size:12px;color:#9ca3af;">Last OK at {{.LastOkAt}}</p>{{end}}
+    </td>
+  </tr>
+</table>
+{{end}}
+{{end}}
+{{if .UptimeMonitors}}
+{{range .UptimeMonitors}}
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
+  <tr>
+    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
+      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
+        <strong style="color:{{.StateColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.State}}</strong>{{if .Reason}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.Reason}}</span>{{end}}
+      </p>
+      {{if .MonitorURL}}<a href="{{.MonitorURL}}" style="font-size:13px;font-weight:600;color:#111827;text-decoration:none;line-height:1.4;">{{.Name}}</a>{{else}}<p style="margin:0;font-size:13px;font-weight:600;color:#111827;line-height:1.4;">{{.Name}}</p>{{end}}
+      <p style="margin:4px 0 0;font-size:11px;font-family:'Courier New',Courier,monospace;color:#6b7280;">{{.URL}}</p>
+      {{if .DownSince}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Down since {{.DownSince}}</p>{{end}}
+      {{if .Downtime}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Was down for {{.Downtime}}</p>{{end}}
     </td>
   </tr>
 </table>
@@ -350,6 +380,18 @@ func alertTriggerLine(p AlertPayload) string {
 			return "1 cron monitor reported an error."
 		}
 		return fmt.Sprintf("%d cron monitors reported errors.", count)
+	case "uptime_down":
+		count, _ := p.Details["down_count"].(int)
+		if count == 1 {
+			return "1 uptime monitor is down."
+		}
+		return fmt.Sprintf("%d uptime monitors are down.", count)
+	case "uptime_recovered":
+		count, _ := p.Details["recovered_count"].(int)
+		if count == 1 {
+			return "1 uptime monitor has recovered."
+		}
+		return fmt.Sprintf("%d uptime monitors have recovered.", count)
 	case "issue_auto_resolved":
 		count, _ := p.Details["resolved_count"].(int)
 		if count == 1 {
@@ -393,9 +435,65 @@ func buildIssueCards(issues []*storage.Issue, projectName string, projectNames m
 	return cards
 }
 
+func formatDowntime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return "less than a minute"
+}
+
+func uptimeMonitorReason(m *storage.UptimeMonitor) string {
+	if m.LastStatusCode != nil {
+		return fmt.Sprintf("HTTP %d", *m.LastStatusCode)
+	}
+	if m.LastError != nil && *m.LastError != "" {
+		return *m.LastError
+	}
+	return ""
+}
+
+func buildUptimeMonitorCards(monitors []*storage.UptimeMonitor, trigger, base string) []alertUptimeMonitorData {
+	cards := make([]alertUptimeMonitorData, 0, len(monitors))
+	for _, m := range monitors {
+		card := alertUptimeMonitorData{
+			Name:   m.Name,
+			URL:    m.URL,
+			Reason: uptimeMonitorReason(m),
+		}
+		if base != "" {
+			card.MonitorURL = base + "/monitors"
+		}
+		if trigger == "uptime_recovered" {
+			card.State = "Recovered"
+			card.StateColor = "#16a34a"
+			if m.WentDownAt != nil && m.LastOkAt != nil {
+				card.Downtime = formatDowntime(m.LastOkAt.Sub(*m.WentDownAt))
+			}
+		} else {
+			card.State = "Down"
+			card.StateColor = "#ef4444"
+			if m.WentDownAt != nil {
+				card.DownSince = m.WentDownAt.UTC().Format("2 Jan 2006 15:04 UTC")
+			} else if m.LastOkAt != nil {
+				card.DownSince = m.LastOkAt.UTC().Format("2 Jan 2006 15:04 UTC") + " (approx)"
+			}
+		}
+		cards = append(cards, card)
+	}
+	return cards
+}
+
 func moreLabel(trigger string, count int) string {
 	switch trigger {
-	case "cron_missed", "cron_error":
+	case "cron_missed", "cron_error", "uptime_down", "uptime_recovered":
 		if count == 1 {
 			return "monitor"
 		}
@@ -419,11 +517,12 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	logoSrc := base + "/assets/email-logo.png"
 
 	isCron := payload.Trigger == "cron_missed" || payload.Trigger == "cron_error"
+	isUptime := payload.Trigger == "uptime_down" || payload.Trigger == "uptime_recovered"
 
 	viewURL := ""
 	viewLabel := "View issues"
 	if base != "" {
-		if isCron {
+		if isCron || isUptime {
 			viewURL = base + "/monitors"
 			viewLabel = "View monitors"
 		} else {
@@ -432,6 +531,7 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	}
 
 	issueCards := buildIssueCards(payload.Issues, payload.ProjectName, payload.ProjectNames, base)
+	uptimeCards := buildUptimeMonitorCards(payload.UptimeMonitors, payload.Trigger, base)
 
 	var monitorCards []alertMonitorData
 	for _, m := range payload.Monitors {
@@ -484,21 +584,30 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 		if n, ok := payload.Details["error_count"].(int); ok {
 			moreCount = n - len(monitorCards)
 		}
+	case "uptime_down":
+		if n, ok := payload.Details["down_count"].(int); ok {
+			moreCount = n - len(uptimeCards)
+		}
+	case "uptime_recovered":
+		if n, ok := payload.Details["recovered_count"].(int); ok {
+			moreCount = n - len(uptimeCards)
+		}
 	}
 	if moreCount < 0 {
 		moreCount = 0
 	}
 
 	data := alertEmailData{
-		RuleName:    payload.RuleName,
-		FiredAt:     payload.FiredAt.UTC().Format("Mon, 2 Jan 2006 at 15:04 UTC"),
-		TriggerLine: alertTriggerLine(payload),
-		ViewURL:     viewURL,
-		ViewLabel:   viewLabel,
-		Issues:      issueCards,
-		Monitors:    monitorCards,
-		MoreCount:   moreCount,
-		MoreLabel:   moreLabel(payload.Trigger, moreCount),
+		RuleName:       payload.RuleName,
+		FiredAt:        payload.FiredAt.UTC().Format("Mon, 2 Jan 2006 at 15:04 UTC"),
+		TriggerLine:    alertTriggerLine(payload),
+		ViewURL:        viewURL,
+		ViewLabel:      viewLabel,
+		Issues:         issueCards,
+		Monitors:       monitorCards,
+		UptimeMonitors: uptimeCards,
+		MoreCount:      moreCount,
+		MoreLabel:      moreLabel(payload.Trigger, moreCount),
 	}
 	var bodyBuf bytes.Buffer
 	if err := alertBodyTmpl.Execute(&bodyBuf, data); err != nil {
@@ -558,6 +667,22 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 		}
 		if m.LastOkAt != "" {
 			fmt.Fprintf(&tb, "Last OK at %s\n", m.LastOkAt)
+		}
+		tb.WriteString("\n")
+	}
+
+	for _, um := range data.UptimeMonitors {
+		tb.WriteString("----------------------------------------\n")
+		line := strings.ToUpper(um.State)
+		if um.Reason != "" {
+			line += "  " + um.Reason
+		}
+		fmt.Fprintf(&tb, "%s\n%s\n%s\n", line, um.Name, um.URL)
+		if um.DownSince != "" {
+			fmt.Fprintf(&tb, "Down since %s\n", um.DownSince)
+		}
+		if um.Downtime != "" {
+			fmt.Fprintf(&tb, "Was down for %s\n", um.Downtime)
 		}
 		tb.WriteString("\n")
 	}

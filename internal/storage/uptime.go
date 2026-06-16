@@ -35,6 +35,8 @@ type UptimeMonitor struct {
 	NextCheckAt         *time.Time       `json:"next_check_at,omitempty"`
 	LastStatusCode      *int             `json:"last_status_code,omitempty"`
 	LastResponseMs      *int             `json:"last_response_ms,omitempty"`
+	LastError           *string          `json:"last_error,omitempty"`
+	WentDownAt          *time.Time       `json:"went_down_at,omitempty"`
 	CreatedAt           time.Time        `json:"created_at"`
 	RecentChecks        []UptimeCheckDot `json:"recent_checks"`
 }
@@ -99,7 +101,8 @@ func ParseExpectedCodes(s string) ([]int, error) {
 
 const uptimeMonitorCols = `id, project_id, name, url, method, interval_secs, timeout_secs,
     expected_codes, body_contains, status, state, consecutive_failures,
-    last_checked_at, last_ok_at, next_check_at, last_status_code, last_response_ms, created_at`
+    last_checked_at, last_ok_at, next_check_at, last_status_code, last_response_ms,
+    last_error, went_down_at, created_at`
 
 func scanUptimeMonitor(scan func(...any) error) (*UptimeMonitor, error) {
 	var m UptimeMonitor
@@ -109,7 +112,8 @@ func scanUptimeMonitor(scan func(...any) error) (*UptimeMonitor, error) {
 		&m.ExpectedCodes, &m.BodyContains,
 		&m.Status, &m.State, &m.ConsecutiveFailures,
 		&m.LastCheckedAt, &m.LastOkAt, &m.NextCheckAt,
-		&m.LastStatusCode, &m.LastResponseMs, &m.CreatedAt,
+		&m.LastStatusCode, &m.LastResponseMs,
+		&m.LastError, &m.WentDownAt, &m.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -131,7 +135,7 @@ func ListUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs []st
         m.interval_secs, m.timeout_secs, m.expected_codes, m.body_contains,
         m.status, m.state, m.consecutive_failures,
         m.last_checked_at, m.last_ok_at, m.next_check_at,
-        m.last_status_code, m.last_response_ms, m.created_at,
+        m.last_status_code, m.last_response_ms, m.last_error, m.went_down_at, m.created_at,
         ` + recentUptimeChecksExpr + ` AS recent_checks
         FROM uptime_monitors m`
 
@@ -161,7 +165,7 @@ func ListUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs []st
 			&m.IntervalSecs, &m.TimeoutSecs, &m.ExpectedCodes, &m.BodyContains,
 			&m.Status, &m.State, &m.ConsecutiveFailures,
 			&m.LastCheckedAt, &m.LastOkAt, &m.NextCheckAt,
-			&m.LastStatusCode, &m.LastResponseMs, &m.CreatedAt,
+			&m.LastStatusCode, &m.LastResponseMs, &m.LastError, &m.WentDownAt, &m.CreatedAt,
 			&recentJSON,
 		)
 		if err != nil {
@@ -299,7 +303,8 @@ func RecordUptimeCheck(ctx context.Context, pool *pgxpool.Pool, monitorID string
                 last_ok_at = $2::timestamptz,
                 next_check_at = $2::timestamptz + make_interval(secs => interval_secs),
                 last_status_code = $3,
-                last_response_ms = $4
+                last_response_ms = $4,
+                last_error = NULL
             WHERE id = $1`,
 			monitorID, created.CheckedAt, check.StatusCode, check.ResponseMs,
 		)
@@ -311,12 +316,17 @@ func RecordUptimeCheck(ctx context.Context, pool *pgxpool.Pool, monitorID string
                     WHEN consecutive_failures + 1 >= $2 THEN 'down'
                     ELSE state
                 END,
+                went_down_at = CASE
+                    WHEN consecutive_failures + 1 >= $2 AND state != 'down' THEN $3::timestamptz
+                    ELSE went_down_at
+                END,
                 last_checked_at = $3::timestamptz,
                 next_check_at = $3::timestamptz + make_interval(secs => interval_secs),
                 last_status_code = $4,
-                last_response_ms = $5
+                last_response_ms = $5,
+                last_error = $6
             WHERE id = $1`,
-			monitorID, failureThreshold, created.CheckedAt, check.StatusCode, check.ResponseMs,
+			monitorID, failureThreshold, created.CheckedAt, check.StatusCode, check.ResponseMs, check.Error,
 		)
 	}
 	if err != nil {
