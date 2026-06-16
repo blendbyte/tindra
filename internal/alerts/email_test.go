@@ -1,20 +1,18 @@
 package alerts
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/blendbyte/tindra/internal/testutil"
 )
 
 // --- httpSender helpers ---
@@ -48,128 +46,16 @@ func mockSender(t *testing.T, statusCode int, s *httpSender) capturedRequest {
 	return captured
 }
 
-// --- fakeSMTPServer ---
+// --- fakeSMTPServer alias (uses shared testutil implementation) ---
 
-type fakeSMTPServer struct {
-	mu            sync.Mutex
-	received      []string
-	ln            net.Listener
-	advertiseAuth bool
-	failCmd       string // if set, reject this SMTP command with "550 rejected"
-}
-
-func newFakeSMTPFailAt(t *testing.T, failCmd string) *fakeSMTPServer {
+func newFakeSMTP(t *testing.T, advertiseAuth bool) *testutil.FakeSMTPServer {
 	t.Helper()
-	s := newFakeSMTP(t, false)
-	s.failCmd = failCmd
-	return s
+	return testutil.NewFakeSMTP(t, advertiseAuth)
 }
 
-func newFakeSMTP(t *testing.T, advertiseAuth bool) *fakeSMTPServer {
+func newFakeSMTPFailAt(t *testing.T, failCmd string) *testutil.FakeSMTPServer {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	s := &fakeSMTPServer{ln: ln, advertiseAuth: advertiseAuth}
-	go s.serve()
-	t.Cleanup(s.Close)
-	return s
-}
-
-func (s *fakeSMTPServer) Close() { s.ln.Close() }
-
-func (s *fakeSMTPServer) Host() string {
-	host, _, _ := net.SplitHostPort(s.ln.Addr().String())
-	return host
-}
-
-func (s *fakeSMTPServer) Port() int {
-	_, p, _ := net.SplitHostPort(s.ln.Addr().String())
-	port, _ := strconv.Atoi(p)
-	return port
-}
-
-func (s *fakeSMTPServer) Received() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := make([]string, len(s.received))
-	copy(cp, s.received)
-	return cp
-}
-
-func (s *fakeSMTPServer) serve() {
-	for {
-		conn, err := s.ln.Accept()
-		if err != nil {
-			return
-		}
-		go s.handleConn(conn)
-	}
-}
-
-func (s *fakeSMTPServer) handleConn(conn net.Conn) {
-	defer conn.Close()
-	bw := bufio.NewWriter(conn)
-	br := bufio.NewReader(conn)
-
-	write := func(line string) {
-		fmt.Fprintf(bw, "%s\r\n", line)
-		bw.Flush()
-	}
-	read := func() string {
-		line, _ := br.ReadString('\n')
-		return strings.TrimRight(line, "\r\n")
-	}
-
-	write("220 localhost ESMTP")
-
-	for {
-		line := read()
-		upper := strings.ToUpper(line)
-
-		switch {
-		case strings.HasPrefix(upper, "EHLO"), strings.HasPrefix(upper, "HELO"):
-			if s.advertiseAuth {
-				fmt.Fprintf(bw, "250-localhost Hello\r\n250-AUTH PLAIN LOGIN\r\n250 OK\r\n")
-			} else {
-				fmt.Fprintf(bw, "250-localhost Hello\r\n250 OK\r\n")
-			}
-			bw.Flush()
-		case strings.HasPrefix(upper, "AUTH"):
-			write("235 Authentication successful")
-		case strings.HasPrefix(upper, "MAIL FROM"):
-			if s.failCmd == "MAIL" {
-				write("550 rejected")
-			} else {
-				write("250 OK")
-			}
-		case strings.HasPrefix(upper, "RCPT TO"):
-			if s.failCmd == "RCPT" {
-				write("550 rejected")
-			} else {
-				write("250 OK")
-			}
-		case upper == "DATA":
-			write("354 Start mail input; end with <CRLF>.<CRLF>")
-			var body strings.Builder
-			for {
-				dl := read()
-				if dl == "." {
-					break
-				}
-				body.WriteString(dl)
-				body.WriteByte('\n')
-			}
-			s.mu.Lock()
-			s.received = append(s.received, body.String())
-			s.mu.Unlock()
-			write("250 OK")
-		case upper == "QUIT":
-			write("221 Bye")
-			return
-		}
-	}
+	return testutil.NewFakeSMTPFailAt(t, failCmd)
 }
 
 // --- HTTP provider tests ---
@@ -746,5 +632,61 @@ func TestSmtpSender_rcptToRejected(t *testing.T) {
 	}}
 	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
 		t.Error("expected error when RCPT TO is rejected")
+	}
+}
+
+func TestSmtpSender_port465DialFailure(t *testing.T) {
+	// Nothing listens on 127.0.0.1:465 in CI; port 465 forces the implicit-TLS
+	// branch so tls.Dialer.DialContext fails, covering the "tls dial: …" return.
+	s := &smtpSender{cfg: smtpConfig{
+		Host: "127.0.0.1",
+		Port: 465,
+		From: "from@example.com",
+	}}
+	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
+		t.Error("expected tls dial error for port 465 with no server")
+	}
+}
+
+func TestSmtpSender_starttlsFailure(t *testing.T) {
+	// FakeSMTP advertises STARTTLS and responds "220 Ready" then closes the
+	// connection, so the client's StartTLS handshake fails — covers "starttls: …".
+	srv := testutil.NewFakeSMTPWithSTARTTLS(t)
+	s := &smtpSender{cfg: smtpConfig{
+		Host: "127.0.0.1",
+		Port: srv.Port(),
+		From: "from@example.com",
+	}}
+	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
+		t.Error("expected starttls error when server drops connection after 220 Ready")
+	}
+}
+
+func TestSmtpSender_dataRejected(t *testing.T) {
+	// FakeSMTP rejects the DATA command with 550, covering the "DATA: …" return.
+	srv := newFakeSMTPFailAt(t, "DATA")
+	s := &smtpSender{cfg: smtpConfig{
+		Host: "127.0.0.1",
+		Port: srv.Port(),
+		From: "from@example.com",
+	}}
+	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
+		t.Error("expected error when DATA command is rejected")
+	}
+}
+
+func TestSmtpSender_authRejected(t *testing.T) {
+	// FakeSMTP advertises AUTH and rejects credentials with 535, covering "auth: …".
+	srv := testutil.NewFakeSMTP(t, true)
+	srv.FailCmd = "AUTH"
+	s := &smtpSender{cfg: smtpConfig{
+		Host:     "127.0.0.1",
+		Port:     srv.Port(),
+		Username: "user@example.com",
+		Password: "wrong",
+		From:     "from@example.com",
+	}}
+	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
+		t.Error("expected error when AUTH credentials are rejected")
 	}
 }

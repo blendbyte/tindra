@@ -190,6 +190,66 @@ func TestWorker_sendSlot_callsDB(t *testing.T) {
 	w.sendSlot(context.Background(), 1)
 }
 
+func TestWorker_sendSlot_nilPool_returnsWithoutPanic(t *testing.T) {
+	w := NewWorker(nil, &mockEmailSender{}, "https://example.com")
+	// nil pool guard at top of sendSlot — must return without panicking.
+	w.sendSlot(context.Background(), 0)
+}
+
+func TestWorker_sendToUsers_noProjects_returnsEarly(t *testing.T) {
+	truncateAll(t) // removes all projects and cascade-clears everything
+
+	ctx := context.Background()
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO users (email, name, password_hash)
+		VALUES ('digest-noprojects@example.com', 'No Projects', 'x')
+		ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+		RETURNING id
+	`).Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
+	})
+
+	sender := &mockEmailSender{}
+	w := NewWorker(testPool, sender, "https://example.com")
+	w.send(ctx, true) // force=true; no projects exist so sendToUsers returns early
+
+	if len(sender.messages) != 0 {
+		t.Errorf("expected 0 emails with no projects, got %d", len(sender.messages))
+	}
+}
+
+func TestWorker_sendToUsers_emailError_doesNotPanic(t *testing.T) {
+	truncateAll(t)
+	p := seedProject(t, "wr-email-err", "Email Error Project")
+	seedEvent(t, p.ID, time.Now().UTC().AddDate(0, 0, -1))
+
+	ctx := context.Background()
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO users (email, name, password_hash)
+		VALUES ('digest-emailerr@example.com', 'Email Err', 'x')
+		ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+		RETURNING id
+	`).Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
+	})
+
+	sender := &mockEmailSender{err: fmt.Errorf("smtp refused")}
+	w := NewWorker(testPool, sender, "https://example.com")
+	w.send(ctx, true) // error from sender.Send should be logged, not panic
+
+	if len(sender.messages) != 1 {
+		t.Errorf("expected 1 send attempt, got %d", len(sender.messages))
+	}
+}
+
 func TestWorker_send_realPool_withUser(t *testing.T) {
 	truncateAll(t)
 	p := seedProject(t, "wr-send-real", "Send Real Project")

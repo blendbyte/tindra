@@ -27,6 +27,9 @@ func TestValidateWebhookURL(t *testing.T) {
 		{"link-local blocked", "http://169.254.169.254/latest/meta-data/", false, true},
 		{"loopback allowed when allowPrivate", "http://127.0.0.1/hook", true, false},
 		{"private allowed when allowPrivate", "http://192.168.1.1/hook", true, false},
+		{"missing host", "http:///path", false, true},
+		{"unspecified 0.0.0.0", "http://0.0.0.0/hook", false, true},
+		{"link-local multicast 224.0.0.1", "http://224.0.0.1/hook", false, true},
 	}
 
 	for _, tt := range tests {

@@ -399,3 +399,40 @@ func TestDeleteSourcemap_unknownProject(t *testing.T) {
 		t.Errorf("expected 404 for unknown project, got %d", rec.Code)
 	}
 }
+
+func TestUploadSourcemap_storeError(t *testing.T) {
+	// Create a store whose data directory is replaced by a file, so MkdirAll
+	// inside Upload fails and the handler returns 500.
+	dir, err := os.MkdirTemp("", "tindra-sm-err-*")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	// Place a file where the "sourcemaps" subdirectory would need to go.
+	blockPath := dir + "/sourcemaps"
+	if err := os.WriteFile(blockPath, []byte("block"), 0o644); err != nil {
+		t.Fatalf("create blocker file: %v", err)
+	}
+
+	store := sourcemaps.NewStore(dir, testPool)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("release", "v1.0.0")
+	mw.WriteField("url", "https://example.com/dist/app.js")
+	fw, _ := mw.CreateFormFile("file", "app.js.map")
+	io.Copy(fw, strings.NewReader(`{"version":3}`))
+	mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/sourcemaps", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 when store.Upload fails, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

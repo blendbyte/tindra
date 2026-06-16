@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -282,5 +283,58 @@ func TestSendPasswordResetCmd_noEmailSender(t *testing.T) {
 	cmd.SetArgs([]string{"reset@example.com"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
+	}
+}
+
+func TestSendPasswordResetCmd_sendsEmail(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	if _, err := storage.CreateUser(context.Background(), testUserPool, "reset-smtp@example.com", "password1234"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	srv := testutil.NewFakeSMTP(t, false)
+	t.Setenv("EMAIL_PROVIDER", "smtp")
+	t.Setenv("EMAIL_FROM", "noreply@example.com")
+	t.Setenv("SMTP_HOST", "127.0.0.1")
+	t.Setenv("SMTP_PORT", strconv.Itoa(srv.Port()))
+	t.Setenv("SMTP_USERNAME", "")
+	t.Setenv("SMTP_PASSWORD", "")
+
+	cmd := usersSendPasswordResetCmd(inviteCfg())
+	cmd.SetArgs([]string{"reset-smtp@example.com"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if msgs := srv.Received(); len(msgs) != 1 {
+		t.Errorf("expected 1 email sent, got %d", len(msgs))
+	}
+}
+
+func TestSendInviteCmd_sendsEmail(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	srv := testutil.NewFakeSMTP(t, false)
+	t.Setenv("EMAIL_PROVIDER", "smtp")
+	t.Setenv("EMAIL_FROM", "noreply@example.com")
+	t.Setenv("SMTP_HOST", "127.0.0.1")
+	t.Setenv("SMTP_PORT", strconv.Itoa(srv.Port()))
+	t.Setenv("SMTP_USERNAME", "")
+	t.Setenv("SMTP_PASSWORD", "")
+
+	cmd := usersSendInviteCmd(inviteCfg())
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--email", "invited-smtp@example.com"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if msgs := srv.Received(); len(msgs) != 1 {
+		t.Errorf("expected 1 invite email sent, got %d", len(msgs))
+	}
+	if !strings.Contains(out.String(), "invited-smtp@example.com") {
+		t.Errorf("expected success output mentioning recipient, got: %q", out.String())
 	}
 }

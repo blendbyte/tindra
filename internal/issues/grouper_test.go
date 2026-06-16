@@ -288,3 +288,57 @@ func TestGrouper_storesImplicitTags(t *testing.T) {
 		}
 	}
 }
+
+func TestGrouper_regressionDetected(t *testing.T) {
+	truncateIssuesAndEvents(t)
+
+	payload := json.RawMessage(`{"level":"error","message":"regression test error","timestamp":"2024-01-01T00:00:00Z"}`)
+	insertRawEvent(t, payload)
+
+	g := issues.NewGrouper(testPool)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go g.Run(ctx)
+
+	// Wait for the initial issue to be created.
+	var issueList []*storage.Issue
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		var err error
+		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		if err != nil {
+			t.Fatalf("list issues: %v", err)
+		}
+		if len(issueList) == 1 {
+			break
+		}
+	}
+	if len(issueList) != 1 {
+		t.Fatalf("expected 1 issue before regression, got %d", len(issueList))
+	}
+
+	// Resolve the issue so that a new event with the same fingerprint triggers a regression.
+	if _, err := storage.UpdateIssueStatus(context.Background(), testPool, testProject.ID, issueList[0].ID, "resolved", nil); err != nil {
+		t.Fatalf("resolve issue: %v", err)
+	}
+
+	// Insert another event with the same payload (same fingerprint).
+	insertRawEvent(t, payload)
+
+	// Wait for the grouper to detect the regression and update the issue.
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		history, err := storage.GetIssueHistory(context.Background(), testPool, issueList[0].ID)
+		if err != nil {
+			t.Fatalf("get issue history: %v", err)
+		}
+		for _, e := range history {
+			if e.EventType == "regressed" {
+				return // regression detected
+			}
+		}
+	}
+	t.Error("timed out waiting for regression to be recorded in issue history")
+}
