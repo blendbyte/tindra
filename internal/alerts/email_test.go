@@ -55,6 +55,14 @@ type fakeSMTPServer struct {
 	received      []string
 	ln            net.Listener
 	advertiseAuth bool
+	failCmd       string // if set, reject this SMTP command with "550 rejected"
+}
+
+func newFakeSMTPFailAt(t *testing.T, failCmd string) *fakeSMTPServer {
+	t.Helper()
+	s := newFakeSMTP(t, false)
+	s.failCmd = failCmd
+	return s
 }
 
 func newFakeSMTP(t *testing.T, advertiseAuth bool) *fakeSMTPServer {
@@ -131,9 +139,17 @@ func (s *fakeSMTPServer) handleConn(conn net.Conn) {
 		case strings.HasPrefix(upper, "AUTH"):
 			write("235 Authentication successful")
 		case strings.HasPrefix(upper, "MAIL FROM"):
-			write("250 OK")
+			if s.failCmd == "MAIL" {
+				write("550 rejected")
+			} else {
+				write("250 OK")
+			}
 		case strings.HasPrefix(upper, "RCPT TO"):
-			write("250 OK")
+			if s.failCmd == "RCPT" {
+				write("550 rejected")
+			} else {
+				write("250 OK")
+			}
 		case upper == "DATA":
 			write("354 Start mail input; end with <CRLF>.<CRLF>")
 			var body strings.Builder
@@ -655,5 +671,80 @@ func TestNewEmailSenderFromEnv_cloudflare(t *testing.T) {
 	}
 	if !strings.Contains(got.endpoint, "acct123") {
 		t.Errorf("expected account ID in endpoint, got %q", got.endpoint)
+	}
+}
+
+// --- sanitizeHeader and qpEncode direct tests ---
+
+func TestSanitizeHeader_removesNewlines(t *testing.T) {
+	got := sanitizeHeader("Subject\r\nX-Injected: evil")
+	if strings.Contains(got, "\r") || strings.Contains(got, "\n") {
+		t.Errorf("CR/LF should be stripped, got: %q", got)
+	}
+	if got != "SubjectX-Injected: evil" {
+		t.Errorf("got %q, want %q", got, "SubjectX-Injected: evil")
+	}
+}
+
+func TestSanitizeHeader_crOnly(t *testing.T) {
+	got := sanitizeHeader("foo\rbar")
+	if got != "foobar" {
+		t.Errorf("CR should be stripped, got %q", got)
+	}
+}
+
+func TestSanitizeHeader_cleanInput(t *testing.T) {
+	got := sanitizeHeader("clean@example.com")
+	if got != "clean@example.com" {
+		t.Errorf("clean input should be unchanged, got %q", got)
+	}
+}
+
+func TestQpEncode_nonASCII(t *testing.T) {
+	input := "héllo wörld"
+	got := qpEncode(input)
+	if got == input {
+		t.Error("non-ASCII input should be encoded, not passed through raw")
+	}
+	if got == "" {
+		t.Error("encoded output should not be empty")
+	}
+}
+
+// --- smtpSender error path tests ---
+
+func TestSmtpSender_dialFailure(t *testing.T) {
+	// Port 1 is reserved and nothing listens on it in test environments.
+	s := &smtpSender{cfg: smtpConfig{
+		Host: "127.0.0.1",
+		Port: 1,
+		From: "from@example.com",
+	}}
+	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
+		t.Error("expected error when SMTP server unreachable")
+	}
+}
+
+func TestSmtpSender_mailFromRejected(t *testing.T) {
+	srv := newFakeSMTPFailAt(t, "MAIL")
+	s := &smtpSender{cfg: smtpConfig{
+		Host: "127.0.0.1",
+		Port: srv.Port(),
+		From: "from@example.com",
+	}}
+	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
+		t.Error("expected error when MAIL FROM is rejected")
+	}
+}
+
+func TestSmtpSender_rcptToRejected(t *testing.T) {
+	srv := newFakeSMTPFailAt(t, "RCPT")
+	s := &smtpSender{cfg: smtpConfig{
+		Host: "127.0.0.1",
+		Port: srv.Port(),
+		From: "from@example.com",
+	}}
+	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
+		t.Error("expected error when RCPT TO is rejected")
 	}
 }
