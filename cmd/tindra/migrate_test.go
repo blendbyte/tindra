@@ -5,6 +5,10 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/golang-migrate/migrate/v4/source/iofs"
+
+	"github.com/blendbyte/tindra/migrations"
 )
 
 func TestNewMigrator_success(t *testing.T) {
@@ -63,6 +67,30 @@ func TestSendDigestCmd_noEmailProvider(t *testing.T) {
 	}
 }
 
+// latestMigrationVersion opens the embedded migration source and walks it to
+// find the highest available version number. This is the version to seed into
+// schema_migrations so that m.Up() sees no pending work and returns ErrNoChange.
+func latestMigrationVersion(t *testing.T) int {
+	t.Helper()
+	src, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		t.Fatalf("open migrations source: %v", err)
+	}
+	defer src.Close()
+	v, err := src.First()
+	if err != nil {
+		t.Fatalf("migrations source has no files: %v", err)
+	}
+	for {
+		next, err := src.Next(v)
+		if err != nil {
+			break
+		}
+		v = next
+	}
+	return int(v)
+}
+
 // setupSchemaMigrations creates the schema_migrations table (if absent) and
 // seeds it with the given version so that m.Up() treats all migrations as
 // already applied and returns migrate.ErrNoChange.
@@ -87,10 +115,10 @@ func setupSchemaMigrations(t *testing.T, version int) {
 }
 
 func TestMigrateCmd_noChange(t *testing.T) {
-	// Pre-seed schema_migrations with a version higher than any known migration
-	// file. m.Up() finds no pending migrations and returns ErrNoChange, which
-	// the command treats as success.
-	setupSchemaMigrations(t, 999999)
+	// Seed schema_migrations with the actual latest migration version so that
+	// m.Up() finds no pending migrations and returns ErrNoChange, which the
+	// command treats as success.
+	setupSchemaMigrations(t, latestMigrationVersion(t))
 	cmd := migrateCmd(inviteCfg())
 	cmd.SetOut(io.Discard)
 	if err := cmd.Execute(); err != nil {
@@ -99,8 +127,10 @@ func TestMigrateCmd_noChange(t *testing.T) {
 }
 
 func TestMigrateForceCmd_success(t *testing.T) {
-	// schema_migrations must exist; ensureVersionTable creates it if absent.
-	// Force(1) sets the recorded version to 1 without running migrations.
+	// Ensure schema_migrations exists with a known version, then force it to 1.
+	// Force() sets the recorded version without running any SQL migrations,
+	// so it works regardless of the DB schema state.
+	setupSchemaMigrations(t, latestMigrationVersion(t))
 	cmd := migrateForceCmd(inviteCfg())
 	cmd.SetOut(io.Discard)
 	cmd.SetArgs([]string{"1"})
