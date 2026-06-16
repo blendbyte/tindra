@@ -140,10 +140,12 @@ func TestListAuditLog_orderNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	// Insert with explicit timestamps to avoid async goroutine ordering races.
 	// auth.login is 1 second older than auth.logout, so auth.logout must appear first.
+	// ip is NOT NULL in the scan destination (AuditRow.IP is string, not *string),
+	// so supply an empty string rather than letting the column default to NULL.
 	if _, err := testPool.Exec(ctx, `
-		INSERT INTO audit_log (event_type, created_at) VALUES
-			($1, NOW() - INTERVAL '1 second'),
-			($2, NOW())
+		INSERT INTO audit_log (event_type, ip, created_at) VALUES
+			($1, '', NOW() - INTERVAL '1 second'),
+			($2, '', NOW())
 	`, "auth.login", "auth.logout"); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
