@@ -17,11 +17,7 @@ import (
 // handleMFASetup generates a new TOTP secret and stores it pending confirmation.
 // Requires session auth. The secret is NOT active until handleMFAConfirm succeeds.
 func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(ctxUserID).(string)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
+	userID := r.Context().Value(ctxUserID).(string)
 
 	user, err := storage.GetUserByID(r.Context(), ro.pool, userID)
 	if err != nil {
@@ -77,11 +73,7 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 
 // handleMFAConfirm activates MFA after the user verifies their first TOTP code.
 func (ro *router) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(ctxUserID).(string)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
+	userID := r.Context().Value(ctxUserID).(string)
 
 	var req struct {
 		Code string `json:"code"`
@@ -118,11 +110,7 @@ func (ro *router) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 
 // handleMFADisable disables MFA after verifying the user's password.
 func (ro *router) handleMFADisable(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(ctxUserID).(string)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
+	userID := r.Context().Value(ctxUserID).(string)
 
 	var req struct {
 		Password string `json:"password"`

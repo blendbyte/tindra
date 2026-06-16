@@ -429,3 +429,102 @@ func TestLoadOAuthProviders_githubAndOIDC(t *testing.T) {
 		t.Errorf("expected github second, got %q", providers[1].Name())
 	}
 }
+
+// mockOIDCServerWithToken returns an httptest.Server like mockOIDCServer but
+// also serves a /token endpoint that responds with tokenResp as JSON. Use this
+// to exercise error paths inside oidcProvider.Exchange.
+func mockOIDCServerWithToken(t *testing.T, tokenResp map[string]any) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		base := "http://" + srv.Listener.Addr().String()
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                                base,
+				"authorization_endpoint":                base + "/auth",
+				"token_endpoint":                        base + "/token",
+				"jwks_uri":                              base + "/jwks",
+				"response_types_supported":              []string{"code"},
+				"subject_types_supported":               []string{"public"},
+				"id_token_signing_alg_values_supported": []string{"RS256"},
+			})
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(tokenResp)
+		case "/jwks":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"keys":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// ---------------------------------------------------------------------------
+// oidcProvider.Exchange — error paths
+// ---------------------------------------------------------------------------
+
+func TestOIDCProvider_Exchange_tokenEndpointError(t *testing.T) {
+	// mockOIDCServer returns 404 for /token, so the oauth2 exchange fails.
+	srv := mockOIDCServer(t)
+	p, err := newOIDCProvider(context.Background(), "test-oidc", srv.URL,
+		"client-id", "client-secret", "https://app.example.com")
+	if err != nil {
+		t.Fatalf("newOIDCProvider: %v", err)
+	}
+	_, _, err = p.Exchange(context.Background(), "bad-code", "verifier")
+	if err == nil {
+		t.Fatal("expected error when token endpoint returns 404")
+	}
+	if !strings.Contains(err.Error(), "exchange:") {
+		t.Errorf("expected 'exchange:' prefix in error, got: %v", err)
+	}
+}
+
+func TestOIDCProvider_Exchange_missingIDToken(t *testing.T) {
+	// Token endpoint returns a valid OAuth2 token but without an id_token field.
+	srv := mockOIDCServerWithToken(t, map[string]any{
+		"access_token": "fake-access-token",
+		"token_type":   "bearer",
+		"expires_in":   3600,
+	})
+	p, err := newOIDCProvider(context.Background(), "test-oidc", srv.URL,
+		"client-id", "client-secret", "https://app.example.com")
+	if err != nil {
+		t.Fatalf("newOIDCProvider: %v", err)
+	}
+	_, _, err = p.Exchange(context.Background(), "any-code", "verifier")
+	if err == nil {
+		t.Fatal("expected error when id_token is absent from token response")
+	}
+	if !strings.Contains(err.Error(), "id_token") {
+		t.Errorf("expected 'id_token' in error, got: %v", err)
+	}
+}
+
+func TestOIDCProvider_Exchange_invalidIDToken(t *testing.T) {
+	// Token endpoint returns an id_token that is not a valid JWT; the OIDC
+	// verifier must reject it before fetching keys.
+	srv := mockOIDCServerWithToken(t, map[string]any{
+		"access_token": "fake-access-token",
+		"id_token":     "not.a.valid.jwt",
+		"token_type":   "bearer",
+		"expires_in":   3600,
+	})
+	p, err := newOIDCProvider(context.Background(), "test-oidc", srv.URL,
+		"client-id", "client-secret", "https://app.example.com")
+	if err != nil {
+		t.Fatalf("newOIDCProvider: %v", err)
+	}
+	_, _, err = p.Exchange(context.Background(), "any-code", "verifier")
+	if err == nil {
+		t.Fatal("expected error when id_token is an invalid JWT")
+	}
+	if !strings.Contains(err.Error(), "verify id_token") {
+		t.Errorf("expected 'verify id_token' in error, got: %v", err)
+	}
+}
