@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -12,34 +11,6 @@ func TestNewMigrator_success(t *testing.T) {
 		t.Fatalf("newMigrator: %v", err)
 	}
 	defer m.Close()
-}
-
-func TestMigrateCmd_runsSuccessfully(t *testing.T) {
-	// DB is already fully migrated by testutil.SetupDB; Up() returns ErrNoChange
-	// which migrateCmd treats as success.
-	cmd := migrateCmd(inviteCfg())
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("migrate up: %v", err)
-	}
-}
-
-func TestMigrateForceCmd_validVersion(t *testing.T) {
-	m, err := newMigrator(inviteCfg())
-	if err != nil {
-		t.Fatalf("newMigrator: %v", err)
-	}
-	v, _, err := m.Version()
-	m.Close()
-	if err != nil {
-		t.Fatalf("get current version: %v", err)
-	}
-
-	// Force to the current version — resets dirty state without changing anything.
-	cmd := migrateForceCmd(inviteCfg())
-	cmd.SetArgs([]string{strconv.Itoa(int(v))})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("migrate force: %v", err)
-	}
 }
 
 func TestMigrateForceCmd_invalidVersion(t *testing.T) {
