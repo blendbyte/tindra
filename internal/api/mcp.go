@@ -360,8 +360,8 @@ func mcpToolList() []map[string]any {
 				"properties": map[string]any{
 					"name":          prop("string", "Rule name."),
 					"trigger":       prop("string", "Trigger: new_issue, regressed, new_or_regressed, event_count, cron_missed, or cron_error."),
-					"channel":       prop("string", "Notification channel: webhook, slack, discord, or email."),
-					"webhook_url":   prop("string", "Webhook/Slack/Discord URL (required for those channels)."),
+					"channel":       prop("string", "Notification channel: webhook, slack, discord, teams, or email."),
+					"webhook_url":   prop("string", "Webhook/Slack/Discord/Teams URL (required for those channels)."),
 					"email_to":      prop("string", "Email address (required for email channel)."),
 					"threshold":     prop("integer", "Event count threshold (required for event_count trigger)."),
 					"window_mins":   prop("integer", "Window in minutes for event_count trigger."),
@@ -1042,7 +1042,7 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 	if msg := validateAlertRule(rule); msg != "" {
 		return "", mcpToolError{msg}
 	}
-	if (channel == "webhook" || channel == "slack" || channel == "discord") && rule.WebhookURL != nil {
+	if (channel == "webhook" || channel == "slack" || channel == "discord" || channel == "teams") && rule.WebhookURL != nil {
 		if err := alerts.ValidateWebhookURL(ctx, *rule.WebhookURL, ro.webhookAllowPrivateIPs); err != nil {
 			return "", mcpToolError{err.Error()}
 		}

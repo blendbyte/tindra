@@ -508,6 +508,97 @@ func TestUpdateAlertRule_switchToDiscord(t *testing.T) {
 	}
 }
 
+func TestCreateAlertRule_teamsChannel(t *testing.T) {
+	truncateAlertRules(t)
+
+	b, _ := json.Marshal(map[string]any{
+		"name":        "teams alert",
+		"trigger":     "new_issue",
+		"channel":     "teams",
+		"webhook_url": "https://203.0.113.1/teams",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for teams channel, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var rule storage.AlertRule
+	if err := json.NewDecoder(rec.Body).Decode(&rule); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if rule.Channel != "teams" {
+		t.Errorf("channel: got %q, want teams", rule.Channel)
+	}
+	if rule.WebhookURL == nil || *rule.WebhookURL == "" {
+		t.Error("webhook_url should be stored for teams channel")
+	}
+}
+
+func TestCreateAlertRule_teamsMissingWebhookURL(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "teams no url", "trigger": "new_or_regressed", "channel": "teams",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for teams without webhook_url, got %d", rec.Code)
+	}
+}
+
+func TestCreateAlertRule_teamsEmptyWebhookURL(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "teams empty url", "trigger": "new_or_regressed", "channel": "teams", "webhook_url": "",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for teams with empty webhook_url, got %d", rec.Code)
+	}
+}
+
+func TestUpdateAlertRule_switchToTeams(t *testing.T) {
+	truncateAlertRules(t)
+
+	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "to-teams", Enabled: true,
+		Trigger: "new_or_regressed", Channel: "email",
+		EmailTo: strPtr("x@example.com"), CooldownMins: 60,
+	})
+
+	b, _ := json.Marshal(map[string]any{
+		"channel":     "teams",
+		"webhook_url": "https://203.0.113.1/teams",
+	})
+	req := httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/alert-rules/%s", created.ID),
+		bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 switching channel to teams, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got storage.AlertRule
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.Channel != "teams" {
+		t.Errorf("channel: got %q, want teams", got.Channel)
+	}
+}
+
 func TestUpdateAlertRule_switchToSlack(t *testing.T) {
 	truncateAlertRules(t)
 

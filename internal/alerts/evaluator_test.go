@@ -636,6 +636,227 @@ func TestEvaluate_firesDiscord(t *testing.T) {
 	}
 }
 
+// --- fireTeams ---
+
+func TestFireTeams_success(t *testing.T) {
+	var body []byte
+	var ct string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		ct = r.Header.Get("Content-Type")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{ID: "r-teams", ProjectIDs: []string{testProject.ID}, WebhookURL: &url}
+	payload := AlertPayload{
+		RuleID: "r-teams", RuleName: "teams test",
+		Trigger: "new_or_regressed", FiredAt: time.Now(), Details: map[string]any{},
+	}
+
+	if _, err := e.fireTeams(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireTeams: %v", err)
+	}
+	if ct != "application/json" {
+		t.Errorf("Content-Type: got %q, want application/json", ct)
+	}
+
+	var msg struct {
+		Type        string `json:"type"`
+		Attachments []struct {
+			ContentType string `json:"contentType"`
+			Content     struct {
+				Type    string `json:"type"`
+				Version string `json:"version"`
+				Body    []struct {
+					Type   string `json:"type"`
+					Text   string `json:"text,omitempty"`
+					Weight string `json:"weight,omitempty"`
+					Facts  []struct {
+						Title string `json:"title"`
+						Value string `json:"value"`
+					} `json:"facts,omitempty"`
+				} `json:"body"`
+			} `json:"content"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal(body, &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if msg.Type != "message" {
+		t.Errorf("type: got %q, want message", msg.Type)
+	}
+	if len(msg.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(msg.Attachments))
+	}
+	att := msg.Attachments[0]
+	if att.ContentType != "application/vnd.microsoft.card.adaptive" {
+		t.Errorf("contentType: got %q", att.ContentType)
+	}
+	if att.Content.Type != "AdaptiveCard" {
+		t.Errorf("card type: got %q, want AdaptiveCard", att.Content.Type)
+	}
+	if att.Content.Version != "1.4" {
+		t.Errorf("card version: got %q, want 1.4", att.Content.Version)
+	}
+	if len(att.Content.Body) < 2 {
+		t.Fatalf("expected at least 2 body elements, got %d", len(att.Content.Body))
+	}
+	title := att.Content.Body[0]
+	if title.Type != "TextBlock" || title.Weight != "Bolder" {
+		t.Errorf("first body element: type=%q weight=%q", title.Type, title.Weight)
+	}
+	if title.Text == "" {
+		t.Error("title text should not be empty")
+	}
+	facts := att.Content.Body[1]
+	if facts.Type != "FactSet" {
+		t.Errorf("second body element type: got %q, want FactSet", facts.Type)
+	}
+	if len(facts.Facts) < 2 {
+		t.Errorf("expected at least 2 facts, got %d", len(facts.Facts))
+	}
+	if facts.Facts[0].Title != "Project" {
+		t.Errorf("first fact title: got %q, want Project", facts.Facts[0].Title)
+	}
+	if facts.Facts[1].Title != "Trigger" {
+		t.Errorf("second fact title: got %q, want Trigger", facts.Facts[1].Title)
+	}
+}
+
+func TestFireTeams_withIssues(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	payload := AlertPayload{
+		RuleName: "issue alert",
+		Trigger:  "new_issue",
+		FiredAt:  time.Now(),
+		Details:  map[string]any{"new_issue_count": 2},
+		Issues: []*storage.Issue{
+			{ID: "i1", Title: "TypeError: cannot read undefined"},
+			{ID: "i2", Title: "ReferenceError: foo is not defined"},
+		},
+	}
+
+	if _, err := e.fireTeams(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireTeams: %v", err)
+	}
+	if !strings.Contains(string(body), "TypeError") {
+		t.Error("expected first issue title in teams payload")
+	}
+	if !strings.Contains(string(body), "ReferenceError") {
+		t.Error("expected second issue title in teams payload")
+	}
+	if !strings.Contains(string(body), "https://tindra.example.com/issues/i1") {
+		t.Error("expected issue link in teams payload")
+	}
+}
+
+func TestFireTeams_nilURL(t *testing.T) {
+	e := testEvaluator(nil)
+	rule := &storage.AlertRule{WebhookURL: nil}
+	if _, err := e.fireTeams(context.Background(), rule, AlertPayload{}); err == nil {
+		t.Error("expected error for nil webhook_url")
+	}
+}
+
+func TestFireTeams_emptyURL(t *testing.T) {
+	e := testEvaluator(nil)
+	empty := ""
+	rule := &storage.AlertRule{WebhookURL: &empty}
+	if _, err := e.fireTeams(context.Background(), rule, AlertPayload{}); err == nil {
+		t.Error("expected error for empty webhook_url")
+	}
+}
+
+func TestFireTeams_non2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.WriteHeader(403)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireTeams(context.Background(), rule, AlertPayload{FiredAt: time.Now()}); err == nil {
+		t.Error("expected error for 403 response")
+	}
+}
+
+func TestFireTeams_triggerLabels(t *testing.T) {
+	tests := []struct {
+		trigger string
+		want    string
+	}{
+		{"new_issue", "New issue"},
+		{"regressed", "Regression"},
+		{"new_or_regressed", "New issue or regression"},
+		{"event_count", "Event count"},
+		{"unknown", "unknown"},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.trigger, func(t *testing.T) {
+			e := &Evaluator{pool: testPool, client: srv.Client()}
+			url := srv.URL
+			rule := &storage.AlertRule{WebhookURL: &url}
+			payload := AlertPayload{Trigger: tt.trigger, FiredAt: time.Now(), Details: map[string]any{}}
+			if _, err := e.fireTeams(context.Background(), rule, payload); err != nil {
+				t.Fatalf("fireTeams: %v", err)
+			}
+			if !strings.Contains(string(body), tt.want) {
+				t.Errorf("expected %q in payload, got: %s", tt.want, body)
+			}
+		})
+	}
+}
+
+func TestEvaluate_firesTeams(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
+
+	fired := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		fired = true
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	url := srv.URL
+	threshold, window := 1, 60
+	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "teams rule", Enabled: true,
+		Trigger: "event_count", Threshold: &threshold, WindowMins: &window,
+		Channel: "teams", WebhookURL: &url, CooldownMins: 60,
+	})
+	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e.evaluate(context.Background())
+
+	if !fired {
+		t.Error("expected Teams webhook to be called during evaluate")
+	}
+}
+
 // --- fireEmail ---
 
 func TestFireEmail_nilSender(t *testing.T) {

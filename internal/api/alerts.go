@@ -21,7 +21,7 @@ var validTriggers = map[string]bool{
 	"uptime_down":      true,
 	"uptime_recovered": true,
 }
-var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "email": true}
+var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "teams": true, "email": true}
 var validLevels = map[string]bool{"fatal": true, "error": true, "warning": true, "info": true, "debug": true}
 
 func validateAlertRule(r *storage.AlertRule) string {
@@ -40,9 +40,9 @@ func validateAlertRule(r *storage.AlertRule) string {
 		}
 	}
 	if !validChannels[r.Channel] {
-		return "channel must be webhook, slack, discord, or email"
+		return "channel must be webhook, slack, discord, teams, or email"
 	}
-	if (r.Channel == "webhook" || r.Channel == "slack" || r.Channel == "discord") && (r.WebhookURL == nil || *r.WebhookURL == "") {
+	if (r.Channel == "webhook" || r.Channel == "slack" || r.Channel == "discord" || r.Channel == "teams") && (r.WebhookURL == nil || *r.WebhookURL == "") {
 		return "webhook_url required for " + r.Channel + " channel"
 	}
 	if r.Channel == "email" && (r.EmailTo == nil || *r.EmailTo == "") {
@@ -72,7 +72,7 @@ func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	if rule.Channel == "webhook" || rule.Channel == "slack" || rule.Channel == "discord" {
+	if rule.Channel == "webhook" || rule.Channel == "slack" || rule.Channel == "discord" || rule.Channel == "teams" {
 		if err := alerts.ValidateWebhookURL(r.Context(), *rule.WebhookURL, ro.webhookAllowPrivateIPs); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -280,7 +280,7 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	if existing.Channel == "webhook" || existing.Channel == "slack" || existing.Channel == "discord" {
+	if existing.Channel == "webhook" || existing.Channel == "slack" || existing.Channel == "discord" || existing.Channel == "teams" {
 		if err := alerts.ValidateWebhookURL(r.Context(), *existing.WebhookURL, ro.webhookAllowPrivateIPs); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

@@ -164,6 +164,12 @@ defineProps<{ name: string; size?: number }>()
       <rect x="9" y="9" width="5" height="5" rx="0.75" />
     </template>
     <path v-else-if="name === 'slack'" d="M5 2v12M11 2v12M2 5h12M2 11h12" />
+    <template v-else-if="name === 'teams'">
+      <rect x="7" y="5" width="6" height="6" rx="1.5" />
+      <path d="M7 8H3.5A1.5 1.5 0 0 0 2 9.5v3A1.5 1.5 0 0 0 3.5 14H7" />
+      <circle cx="10" cy="3" r="1.5" />
+      <circle cx="5" cy="6" r="1.5" />
+    </template>
     <template v-else-if="name === 'discord'">
       <path d="M3 9a5 5 0 0 1 10 0" />
       <path d="M2 8h2v3H2z" />

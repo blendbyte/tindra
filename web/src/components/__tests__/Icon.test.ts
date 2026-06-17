@@ -13,6 +13,7 @@ const knownIcons = [
   'clock', 'database', 'activity', 'download', 'credit-card', 'file-text',
   'alert-triangle', 'chevrons-down', 'chevrons-up', 'circle-dot',
   'git-commit-vertical', 'key', 'loader',
+  'slack', 'discord', 'teams',
 ]
 
 describe('Icon', () => {

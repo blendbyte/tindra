@@ -545,6 +545,8 @@ func (e *Evaluator) deliver(ctx context.Context, rule *storage.AlertRule, payloa
 		return e.fireSlack(ctx, rule, payload)
 	case "discord":
 		return e.fireDiscord(ctx, rule, payload)
+	case "teams":
+		return e.fireTeams(ctx, rule, payload)
 	case "email":
 		return nil, e.fireEmail(ctx, rule, payload)
 	}
@@ -990,6 +992,150 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 	code := resp.StatusCode
 	if code < 200 || code >= 300 {
 		return &code, fmt.Errorf("discord returned %d", code)
+	}
+	return &code, nil
+}
+
+func (e *Evaluator) fireTeams(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) (*int, error) {
+	if rule.WebhookURL == nil || *rule.WebhookURL == "" {
+		return nil, fmt.Errorf("webhook_url is empty")
+	}
+
+	subject := buildAlertSubject(payload)
+	proj := payloadProjectName(payload)
+	trigLabel := alertTriggerLabels[payload.Trigger]
+	if trigLabel == "" {
+		trigLabel = payload.Trigger
+	}
+
+	// Teams Adaptive Card payload
+	type factItem struct {
+		Title string `json:"title"`
+		Value string `json:"value"`
+	}
+	type factSet struct {
+		Type  string     `json:"type"`
+		Facts []factItem `json:"facts"`
+	}
+	type textBlock struct {
+		Type   string `json:"type"`
+		Text   string `json:"text"`
+		Wrap   bool   `json:"wrap"`
+		Weight string `json:"weight,omitempty"`
+		Size   string `json:"size,omitempty"`
+		Color  string `json:"color,omitempty"`
+	}
+	type cardBody = []any
+	type adaptiveCard struct {
+		Type    string   `json:"type"`
+		Version string   `json:"version"`
+		Body    cardBody `json:"body"`
+	}
+	type attachment struct {
+		ContentType string       `json:"contentType"`
+		Content     adaptiveCard `json:"content"`
+	}
+	type teamsMsg struct {
+		Type        string       `json:"type"`
+		Attachments []attachment `json:"attachments"`
+	}
+
+	titleColor := "attention" // red
+	if payload.Trigger == "uptime_recovered" {
+		titleColor = "good" // green
+	}
+
+	body := cardBody{
+		textBlock{Type: "TextBlock", Text: subject, Wrap: true, Weight: "Bolder", Size: "Medium", Color: titleColor},
+		factSet{Type: "FactSet", Facts: []factItem{
+			{Title: "Project", Value: proj},
+			{Title: "Trigger", Value: trigLabel},
+		}},
+	}
+
+	if len(payload.Issues) > 0 {
+		var sb strings.Builder
+		for _, iss := range payload.Issues {
+			if e.publicURL != "" {
+				sb.WriteString("- [" + iss.Title + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
+			} else {
+				sb.WriteString("- " + iss.Title + "\n")
+			}
+		}
+		body = append(body, textBlock{Type: "TextBlock", Text: "**Issues:**\n" + strings.TrimRight(sb.String(), "\n"), Wrap: true})
+	}
+
+	if len(payload.UptimeMonitors) > 0 {
+		label := "**Monitors down:**"
+		if payload.Trigger == "uptime_recovered" {
+			label = "**Recovered:**"
+		}
+		var sb strings.Builder
+		sb.WriteString(label + "\n\n")
+		for _, m := range payload.UptimeMonitors {
+			sb.WriteString("**" + m.Name + "** — " + m.URL + "\n")
+			meta := ""
+			if m.LastStatusCode != nil {
+				meta += fmt.Sprintf("expected %s, got HTTP %d", m.ExpectedCodes, *m.LastStatusCode)
+			} else if m.LastError != nil && *m.LastError != "" {
+				meta += *m.LastError
+			}
+			if m.LastResponseMs != nil {
+				meta += fmt.Sprintf(" · %dms", *m.LastResponseMs)
+			}
+			if payload.Trigger == "uptime_recovered" {
+				if m.WentDownAt != nil && m.LastOkAt != nil {
+					meta += " · down for " + formatSlackDowntime(m.LastOkAt.Sub(*m.WentDownAt))
+				}
+			} else {
+				if m.WentDownAt != nil {
+					meta += " · since " + m.WentDownAt.UTC().Format("15:04 UTC")
+				} else if m.LastOkAt != nil {
+					meta += " · last OK " + m.LastOkAt.UTC().Format("15:04 UTC")
+				}
+			}
+			if meta != "" {
+				sb.WriteString(meta + "\n")
+			}
+			if dots := uptimeHistoryEmoji(m.RecentChecks); dots != "" {
+				sb.WriteString(dots + "\n")
+			}
+			sb.WriteString("\n")
+		}
+		body = append(body, textBlock{Type: "TextBlock", Text: strings.TrimRight(sb.String(), "\n"), Wrap: true})
+	}
+
+	body = append(body, textBlock{Type: "TextBlock", Text: "Tindra · " + payload.FiredAt.UTC().Format("2006-01-02 15:04 UTC"), Wrap: true, Size: "Small", Color: "Default"})
+
+	msg := teamsMsg{
+		Type: "message",
+		Attachments: []attachment{{
+			ContentType: "application/vnd.microsoft.card.adaptive",
+			Content: adaptiveCard{
+				Type:    "AdaptiveCard",
+				Version: "1.4",
+				Body:    body,
+			},
+		}},
+	}
+
+	msgBody, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *rule.WebhookURL, bytes.NewReader(msgBody))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("post: %w", err)
+	}
+	resp.Body.Close()
+	code := resp.StatusCode
+	if code < 200 || code >= 300 {
+		return &code, fmt.Errorf("teams returned %d", code)
 	}
 	return &code, nil
 }

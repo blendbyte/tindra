@@ -319,7 +319,7 @@ export interface CronCheckin {
   finished_at: string | null
   received_at: string
 }
-export type AlertChannel = 'webhook' | 'slack' | 'discord' | 'email'
+export type AlertChannel = 'webhook' | 'slack' | 'discord' | 'teams' | 'email'
 
 export interface AlertRule {
   id: string

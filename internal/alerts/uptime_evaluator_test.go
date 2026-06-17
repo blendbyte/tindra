@@ -570,3 +570,77 @@ func TestFireDiscord_uptimeRecovered_greenColor(t *testing.T) {
 		t.Errorf("expected green color (5763719) in Discord recovered payload, got: %s", body)
 	}
 }
+
+// --- fireTeams ---
+
+func TestFireTeams_uptimeDown_monitorDetails(t *testing.T) {
+	statusCode := 503
+	responseMs := 234
+	lastError := ""
+	payload := AlertPayload{
+		Trigger: "uptime_down",
+		FiredAt: time.Now(),
+		Details: map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{{
+			Name:           "API",
+			URL:            "https://api.example.com",
+			ExpectedCodes:  "200-299",
+			LastStatusCode: &statusCode,
+			LastResponseMs: &responseMs,
+			LastError:      &lastError,
+		}},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireTeams(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireTeams: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "AdaptiveCard") {
+		t.Errorf("expected AdaptiveCard in Teams payload, got: %s", s)
+	}
+	if !strings.Contains(s, "API") {
+		t.Errorf("expected monitor name in Teams payload, got: %s", s)
+	}
+	if !strings.Contains(s, "503") {
+		t.Errorf("expected status code in Teams payload, got: %s", s)
+	}
+	if !strings.Contains(s, "234") {
+		t.Errorf("expected response ms in Teams payload, got: %s", s)
+	}
+}
+
+func TestFireTeams_uptimeRecovered_goodColor(t *testing.T) {
+	payload := AlertPayload{
+		Trigger: "uptime_recovered",
+		FiredAt: time.Now(),
+		Details: map[string]any{"recovered_count": 1},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireTeams(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireTeams: %v", err)
+	}
+	// recovered uses "good" (green) color token
+	if !strings.Contains(string(body), `"good"`) {
+		t.Errorf("expected 'good' color in Teams recovered payload, got: %s", body)
+	}
+}

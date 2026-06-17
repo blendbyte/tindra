@@ -2228,12 +2228,13 @@ function actionKindOf(action: string) {
                 <option value="webhook">Webhook</option>
                 <option value="slack">Slack</option>
                 <option value="discord">Discord</option>
+                <option value="teams">Microsoft Teams</option>
                 <option value="email">Email</option>
               </select>
             </div>
-            <div v-if="newRule.channel === 'webhook' || newRule.channel === 'slack' || newRule.channel === 'discord'" class="field" style="grid-column: 1 / -1">
-              <label class="field__label">{{ newRule.channel === 'discord' ? 'Discord webhook URL' : newRule.channel === 'slack' ? 'Slack webhook URL' : 'Webhook URL' }}</label>
-              <input v-model="newRule.webhook_url" class="field__input" type="url" :placeholder="newRule.channel === 'discord' ? 'https://discord.com/api/webhooks/...' : newRule.channel === 'slack' ? 'https://hooks.slack.com/services/...' : 'https://hooks.example.com/...'" />
+            <div v-if="newRule.channel === 'webhook' || newRule.channel === 'slack' || newRule.channel === 'discord' || newRule.channel === 'teams'" class="field" style="grid-column: 1 / -1">
+              <label class="field__label">{{ newRule.channel === 'discord' ? 'Discord webhook URL' : newRule.channel === 'slack' ? 'Slack webhook URL' : newRule.channel === 'teams' ? 'Teams webhook URL' : 'Webhook URL' }}</label>
+              <input v-model="newRule.webhook_url" class="field__input" type="url" :placeholder="newRule.channel === 'discord' ? 'https://discord.com/api/webhooks/...' : newRule.channel === 'slack' ? 'https://hooks.slack.com/services/...' : newRule.channel === 'teams' ? 'https://outlook.office.com/webhook/...' : 'https://hooks.example.com/...'" />
             </div>
             <div v-else class="field">
               <label class="field__label">Email to</label>
@@ -2296,7 +2297,7 @@ function actionKindOf(action: string) {
             </div>
             <div class="rule__channels">
               <span class="rule__chan" :title="rule.channel === 'email' ? (rule.email_to ?? '') : (rule.webhook_url ?? '')">
-                <Icon :name="rule.channel === 'discord' ? 'discord' : rule.channel === 'slack' ? 'slack' : rule.channel === 'webhook' ? 'send' : 'mail'" :size="11" />
+                <Icon :name="rule.channel === 'discord' ? 'discord' : rule.channel === 'slack' ? 'slack' : rule.channel === 'teams' ? 'teams' : rule.channel === 'webhook' ? 'send' : 'mail'" :size="11" />
               </span>
             </div>
             <div class="rule__stats">
@@ -2352,12 +2353,13 @@ function actionKindOf(action: string) {
                     <option value="webhook">Webhook</option>
                     <option value="slack">Slack</option>
                     <option value="discord">Discord</option>
+                    <option value="teams">Microsoft Teams</option>
                     <option value="email">Email</option>
                   </select>
                 </div>
-                <div v-if="editRule.channel === 'webhook' || editRule.channel === 'slack' || editRule.channel === 'discord'" class="field" style="grid-column: 1 / -1">
-                  <label class="field__label">{{ editRule.channel === 'discord' ? 'Discord webhook URL' : editRule.channel === 'slack' ? 'Slack webhook URL' : 'Webhook URL' }}</label>
-                  <input v-model="editRule.webhook_url" class="field__input" type="url" :placeholder="editRule.channel === 'discord' ? 'https://discord.com/api/webhooks/...' : editRule.channel === 'slack' ? 'https://hooks.slack.com/services/...' : 'https://hooks.example.com/...'" />
+                <div v-if="editRule.channel === 'webhook' || editRule.channel === 'slack' || editRule.channel === 'discord' || editRule.channel === 'teams'" class="field" style="grid-column: 1 / -1">
+                  <label class="field__label">{{ editRule.channel === 'discord' ? 'Discord webhook URL' : editRule.channel === 'slack' ? 'Slack webhook URL' : editRule.channel === 'teams' ? 'Teams webhook URL' : 'Webhook URL' }}</label>
+                  <input v-model="editRule.webhook_url" class="field__input" type="url" :placeholder="editRule.channel === 'discord' ? 'https://discord.com/api/webhooks/...' : editRule.channel === 'slack' ? 'https://hooks.slack.com/services/...' : editRule.channel === 'teams' ? 'https://outlook.office.com/webhook/...' : 'https://hooks.example.com/...'" />
                 </div>
                 <div v-else class="field">
                   <label class="field__label">Email to</label>
@@ -2417,7 +2419,7 @@ function actionKindOf(action: string) {
                 </template>
                 <span class="rule__detail-k">Channel</span>
                 <span class="rule__detail-v">{{ rule.channel }}</span>
-                <template v-if="rule.channel === 'webhook' || rule.channel === 'slack' || rule.channel === 'discord'">
+                <template v-if="rule.channel === 'webhook' || rule.channel === 'slack' || rule.channel === 'discord' || rule.channel === 'teams'">
                   <span class="rule__detail-k">URL</span>
                   <span class="rule__detail-v mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ rule.webhook_url }}</span>
                 </template>

@@ -34,7 +34,7 @@ One Go binary. One Postgres database. Compatible with every Sentry SDK: point yo
 - **Cron monitors** with check-in history, missed/error alerts, and Sentry, Oh Dear, and Spatie SDK compatibility
 - **Uptime monitors** with HTTP/HTTPS probing, configurable intervals and timeouts, expected status codes and body assertions, 24h/7d/30d uptime stats, and down/recovery alerts
 - **Releases** linked to issues and regressions
-- **Alerts** via email, Slack, Discord, and webhooks, with filters, thresholds, and cooldowns
+- **Alerts** via email, Slack, Discord, Microsoft Teams, and webhooks, with filters, thresholds, and cooldowns
 - **Source maps** resolved server-side, no client exposure
 - **SSO** with Google, GitHub, Microsoft, Auth0, Zitadel, and any OIDC provider
 - **Real-time** updates: new issues appear in the UI within a second of receipt
