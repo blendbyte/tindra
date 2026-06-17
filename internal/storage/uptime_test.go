@@ -808,8 +808,13 @@ func TestListRecoveredUptimeMonitors_noProjectFilter(t *testing.T) {
 	p := setupProjectForUptime(t)
 	m := seedUptimeMonitor(t, p.ID, "global-recovered", "https://example.com")
 
-	code := 200
-	storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "up", StatusCode: &code})
+	// Drive the monitor through down state so went_down_at is set
+	downCode := 503
+	for range 2 {
+		storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "down", StatusCode: &downCode})
+	}
+	upCode := 200
+	storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "up", StatusCode: &upCode})
 
 	since := time.Now().UTC().Add(-1 * time.Minute)
 	monitors, err := storage.ListRecoveredUptimeMonitors(context.Background(), testPool, nil, since)
