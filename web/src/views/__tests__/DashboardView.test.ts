@@ -71,6 +71,8 @@ function setupQueries({
   releases = undefined as unknown,
   alertRules = [] as unknown[],
   alertsLoading = false,
+  uptimeMonitors = [] as unknown[],
+  cronMonitors = [] as unknown[],
   projects = [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1' }] as Array<{ id: string; name: string; slug: string; public_key?: string }>,
   projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
   projStatsFetching = false,
@@ -83,6 +85,8 @@ function setupQueries({
     .mockReturnValueOnce({ data: ref(undefined) } as any)
     .mockReturnValueOnce({ data: ref(releases), isFetching: ref(false) } as any)
     .mockReturnValueOnce({ data: ref(alertRules), isLoading: ref(alertsLoading) } as any)
+    .mockReturnValueOnce({ data: ref(uptimeMonitors) } as any)
+    .mockReturnValueOnce({ data: ref(cronMonitors) } as any)
     .mockReturnValueOnce({ data: ref(projectIssueCounts), isFetching: ref(projStatsFetching) } as any)
 }
 
@@ -440,6 +444,8 @@ describe('DashboardView', () => {
         .mockReturnValueOnce({ data: ref({ buckets: [bucket] }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]) } as any) // uptime monitors
+        .mockReturnValueOnce({ data: ref([]) } as any) // cron monitors
         .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
       const wrapper = mount(DashboardView, { global: { stubs } })
       expect(wrapper.text()).toContain('Transaction density')
@@ -763,9 +769,125 @@ describe('DashboardView', () => {
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
+        .mockReturnValueOnce({ data: ref([]) } as any) // uptime monitors
+        .mockReturnValueOnce({ data: ref([]) } as any) // cron monitors
         .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
       const wrapper = mount(DashboardView, { global: { stubs } })
       expect(wrapper.text()).toContain('https://key1@tindra.test/p1')
     })
+  })
+})
+
+describe('DashboardView — monitor summary widget', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  const uptime = (overrides = {}) => ({
+    id: 'u1', project_id: 'p1', name: 'API Service', url: 'https://api.example.com',
+    method: 'GET', interval_secs: 60, timeout_secs: 10, expected_codes: '200-299',
+    body_contains: null, status: 'active', state: 'down', consecutive_failures: 3,
+    last_checked_at: null, last_ok_at: null, next_check_at: null,
+    last_status_code: 503, last_response_ms: 250, last_error: null,
+    went_down_at: new Date(Date.now() - 300_000).toISOString(),
+    recovered_at: null, created_at: '', recent_checks: [],
+    ...overrides,
+  })
+
+  const cron = (overrides = {}) => ({
+    id: 'c1', project_id: 'p1', name: 'Daily ETL', schedule: '0 2 * * *',
+    grace_period_secs: 300, status: 'active', is_running: false,
+    last_ok_at: null, next_expected_at: new Date(Date.now() - 3_600_000).toISOString(),
+    last_checkin_status: null, last_checkin_at: null, created_at: '',
+    state: 'missed', recent_checkins: [],
+    ...overrides,
+  })
+
+  it('hides the widget when there are no monitors', () => {
+    const wrapper = makeWrapper({ uptimeMonitors: [], cronMonitors: [] })
+    expect(wrapper.find('.db-monitors').exists()).toBe(false)
+  })
+
+  it('shows "All monitors healthy" when all monitors are up/ok', () => {
+    const wrapper = makeWrapper({
+      uptimeMonitors: [uptime({ state: 'up' })],
+      cronMonitors: [cron({ state: 'ok' })],
+    })
+    expect(wrapper.find('.db-monitors').exists()).toBe(true)
+    expect(wrapper.text()).toContain('All 2 monitors healthy')
+  })
+
+  it('shows problem monitors when uptime monitor is down', () => {
+    const wrapper = makeWrapper({ uptimeMonitors: [uptime()], cronMonitors: [] })
+    expect(wrapper.find('.db-monitors').exists()).toBe(true)
+    expect(wrapper.text()).toContain('API Service')
+    expect(wrapper.text()).not.toContain('All')
+  })
+
+  it('shows problem monitors when cron monitor is missed', () => {
+    const wrapper = makeWrapper({ uptimeMonitors: [], cronMonitors: [cron()] })
+    expect(wrapper.find('.db-monitors').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Daily ETL')
+  })
+
+  it('shows cron error state', () => {
+    const wrapper = makeWrapper({ uptimeMonitors: [], cronMonitors: [cron({ state: 'error' })] })
+    expect(wrapper.find('.db-monitors').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Daily ETL')
+  })
+
+  it('does not show paused monitors', () => {
+    const wrapper = makeWrapper({
+      uptimeMonitors: [uptime({ status: 'paused' })],
+      cronMonitors: [cron({ status: 'paused' })],
+    })
+    expect(wrapper.find('.db-monitors').exists()).toBe(false)
+  })
+
+  it('shows correct singular count when one monitor is healthy', () => {
+    const wrapper = makeWrapper({
+      uptimeMonitors: [uptime({ state: 'up' })],
+      cronMonitors: [],
+    })
+    expect(wrapper.text()).toContain('All 1 monitor healthy')
+  })
+
+  it('shows overflow button when more than 5 problem monitors', () => {
+    const monitors = Array.from({ length: 6 }, (_, i) =>
+      uptime({ id: `u${i}`, name: `Monitor ${i}` }),
+    )
+    const wrapper = makeWrapper({ uptimeMonitors: monitors, cronMonitors: [] })
+    expect(wrapper.text()).toContain('+1 more')
+    expect(wrapper.find('.db-mon-overflow').element.tagName).toBe('BUTTON')
+  })
+
+  it('expands to show all monitors when overflow button is clicked', async () => {
+    const monitors = Array.from({ length: 6 }, (_, i) =>
+      uptime({ id: `u${i}`, name: `Monitor ${i}` }),
+    )
+    const wrapper = makeWrapper({ uptimeMonitors: monitors, cronMonitors: [] })
+    expect(wrapper.findAll('.db-mon-row')).toHaveLength(5)
+    await wrapper.find('.db-mon-overflow').trigger('click')
+    expect(wrapper.findAll('.db-mon-row')).toHaveLength(6)
+    expect(wrapper.find('.db-mon-overflow').text()).toContain('less')
+  })
+
+  it('collapses back to 5 when overflow button is clicked again', async () => {
+    const monitors = Array.from({ length: 6 }, (_, i) =>
+      uptime({ id: `u${i}`, name: `Monitor ${i}` }),
+    )
+    const wrapper = makeWrapper({ uptimeMonitors: monitors, cronMonitors: [] })
+    await wrapper.find('.db-mon-overflow').trigger('click')
+    await wrapper.find('.db-mon-overflow').trigger('click')
+    expect(wrapper.findAll('.db-mon-row')).toHaveLength(5)
+    expect(wrapper.find('.db-mon-overflow').text()).toContain('+1 more')
+  })
+
+  it('renders type badges for both uptime and cron monitors', () => {
+    const wrapper = makeWrapper({
+      uptimeMonitors: [uptime()],
+      cronMonitors: [cron()],
+    })
+    const text = wrapper.text()
+    expect(text).toContain('uptime')
+    expect(text).toContain('cron')
   })
 })

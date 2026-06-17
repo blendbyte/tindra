@@ -488,14 +488,18 @@ function confirmDeleteUptime(m: UptimeMonitor) {
         <template v-for="m in monitors" :key="m.id">
           <div
             class="monrow"
-            :class="{ 'monrow--active': selectedMonitorId === m.id }"
+            :class="{ 'monrow--active': selectedMonitorId === m.id, 'monrow--paused': m.status === 'paused' }"
             @click="selectMonitor(m.id)"
           >
-            <span class="mon-dot" :style="{ background: stateColor(m.state) }" :title="stateLabel(m.state)" />
+            <span class="mon-dot" :style="{ background: m.status === 'paused' ? 'var(--text-3)' : stateColor(m.state) }" :title="stateLabel(m.state)" />
             <div class="monrow__main">
               <div class="monrow__name">{{ m.name }}</div>
               <div class="monrow__sub">
-                <span :style="{ color: stateColor(m.state) }" class="monrow__state">{{ stateLabel(m.state) }}</span>
+                <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : stateColor(m.state) }" class="monrow__state">{{ stateLabel(m.state) }}</span>
+                <template v-if="m.status === 'paused'">
+                  <span class="monrow__sep">·</span>
+                  <span class="mon-paused-badge">Paused</span>
+                </template>
                 <span class="monrow__sep">·</span>
                 <span class="monrow__sched">{{ humanSchedule(m.schedule) }}</span>
                 <span class="monrow__sep">·</span>
@@ -735,14 +739,18 @@ function confirmDeleteUptime(m: UptimeMonitor) {
         <template v-for="m in uptimeMonitors" :key="m.id">
           <div
             class="monrow uprow"
-            :class="{ 'monrow--active': selectedUptimeId === m.id }"
+            :class="{ 'monrow--active': selectedUptimeId === m.id, 'monrow--paused': m.status === 'paused' }"
             @click="selectUptime(m.id)"
           >
-            <span class="mon-dot" :style="{ background: uptimeStateColor(m.state) }" :title="uptimeStateLabel(m.state)" />
+            <span class="mon-dot" :style="{ background: m.status === 'paused' ? 'var(--text-3)' : uptimeStateColor(m.state) }" :title="uptimeStateLabel(m.state)" />
             <div class="monrow__main">
               <div class="monrow__name">{{ m.name }}</div>
               <div class="monrow__sub">
-                <span :style="{ color: uptimeStateColor(m.state) }" class="monrow__state">{{ uptimeStateLabel(m.state) }}</span>
+                <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : uptimeStateColor(m.state) }" class="monrow__state">{{ uptimeStateLabel(m.state) }}</span>
+                <template v-if="m.status === 'paused'">
+                  <span class="monrow__sep">·</span>
+                  <span class="mon-paused-badge">Paused</span>
+                </template>
                 <span class="monrow__sep">·</span>
                 <span class="monrow__sched mono" style="font-size:10px">{{ m.url }}</span>
                 <span class="monrow__sep">·</span>
@@ -979,6 +987,21 @@ function confirmDeleteUptime(m: UptimeMonitor) {
 
 .monrow--active { background: var(--accent-soft); }
 .monrow--active:hover { background: var(--accent-soft); }
+
+.monrow--paused { opacity: 0.65; }
+.monrow--paused:hover { opacity: 1; }
+
+.mon-paused-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: oklch(from var(--text-3) l c h / 0.12);
+  color: var(--text-3);
+  flex-shrink: 0;
+}
 
 .monrow--header {
   height: 32px;

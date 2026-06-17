@@ -366,6 +366,9 @@ export interface UptimeMonitor {
   next_check_at: string | null
   last_status_code: number | null
   last_response_ms: number | null
+  last_error: string | null
+  went_down_at: string | null
+  recovered_at: string | null
   created_at: string
   recent_checks: UptimeCheckDot[]
 }
