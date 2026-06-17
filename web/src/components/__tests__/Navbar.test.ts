@@ -311,6 +311,166 @@ describe('Navbar', () => {
     })
   })
 
+  describe('desktop nav dropdowns', () => {
+    function mountWithPath(path: string) {
+      routePath.path = path
+      vi.mocked(useUiStore).mockReturnValue({
+        cmdOpen: false, theme: null, resolvedTheme: 'light',
+        toggleTheme: vi.fn(), openCmd: vi.fn(), closeCmd: vi.fn(),
+      } as any)
+      vi.mocked(useProjectsStore).mockReturnValue({
+        projects: [], selectedIds: [], setSelected: vi.fn(), toggleProject: vi.fn(),
+      } as any)
+      return mount(Navbar, { global: globalStubsWithAttrs })
+    }
+
+    describe('Performance dropdown', () => {
+      it('renders a dropdown wrapper for Performance', () => {
+        const wrapper = makeWrapper()
+        const perfWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Performance'))
+        expect(perfWrap).toBeDefined()
+      })
+
+      it('contains all five sub-items', () => {
+        const wrapper = makeWrapper()
+        const perfWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Performance'))!
+        const labels = perfWrap.findAll('.nav__dropdown-item').map(i => i.text())
+        expect(labels).toContain('Transactions')
+        expect(labels).toContain('Queries')
+        expect(labels).toContain('Caches')
+        expect(labels).toContain('Jobs')
+        expect(labels).toContain('Browser')
+      })
+
+      it.each([
+        ['/performance/transactions', 'Transactions'],
+        ['/performance/queries', 'Queries'],
+        ['/performance/caches', 'Caches'],
+        ['/performance/jobs', 'Jobs'],
+        ['/performance/browser', 'Browser'],
+      ])('marks %s item active on route %s', (path, label) => {
+        const wrapper = mountWithPath(path)
+        const perfWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Performance'))!
+        const item = perfWrap.findAll('a').find(a => a.text() === label)!
+        expect(item.classes()).toContain('nav__dropdown-item--active')
+      })
+
+      it('marks Transactions active on /transactions profile route', () => {
+        const wrapper = mountWithPath('/transactions/profile')
+        const perfWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Performance'))!
+        const item = perfWrap.findAll('a').find(a => a.text() === 'Transactions')!
+        expect(item.classes()).toContain('nav__dropdown-item--active')
+      })
+
+      it('does not mark other items active when Transactions is active', () => {
+        const wrapper = mountWithPath('/performance/transactions')
+        const perfWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Performance'))!
+        const inactive = perfWrap.findAll('a').filter(a => a.text() !== 'Transactions')
+        inactive.forEach(a => expect(a.classes()).not.toContain('nav__dropdown-item--active'))
+      })
+    })
+
+    describe('Monitors dropdown', () => {
+      it('renders a dropdown wrapper for Monitors', () => {
+        const wrapper = makeWrapper()
+        const monWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Monitors'))
+        expect(monWrap).toBeDefined()
+      })
+
+      it('contains Cron and Uptime sub-items', () => {
+        const wrapper = makeWrapper()
+        const monWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Monitors'))!
+        const labels = monWrap.findAll('.nav__dropdown-item').map(i => i.text())
+        expect(labels).toContain('Cron')
+        expect(labels).toContain('Uptime')
+      })
+
+      it.each([
+        ['/monitors/cron', 'Cron'],
+        ['/monitors/uptime', 'Uptime'],
+      ])('marks %s item active on route %s', (path, label) => {
+        const wrapper = mountWithPath(path)
+        const monWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Monitors'))!
+        const item = monWrap.findAll('a').find(a => a.text() === label)!
+        expect(item.classes()).toContain('nav__dropdown-item--active')
+      })
+
+      it('does not mark Uptime active when on Cron route', () => {
+        const wrapper = mountWithPath('/monitors/cron')
+        const monWrap = wrapper.findAll('.nav__dropdown-wrap').find(w => w.text().includes('Monitors'))!
+        const uptime = monWrap.findAll('a').find(a => a.text() === 'Uptime')!
+        expect(uptime.classes()).not.toContain('nav__dropdown-item--active')
+      })
+    })
+
+    describe('Settings dropdown', () => {
+      it('renders a dropdown wrapper for Settings', () => {
+        const wrapper = makeWrapper()
+        const settingsWrap = wrapper.findAll('.nav__dropdown-wrap').find(w =>
+          w.findAll('.nav__dropdown-item').some(i => i.text() === 'Overview')
+        )
+        expect(settingsWrap).toBeDefined()
+      })
+
+      it('contains all settings sub-items', () => {
+        const wrapper = makeWrapper()
+        const settingsWrap = wrapper.findAll('.nav__dropdown-wrap').find(w =>
+          w.findAll('.nav__dropdown-item').some(i => i.text() === 'Overview')
+        )!
+        const labels = settingsWrap.findAll('.nav__dropdown-item').map(i => i.text())
+        expect(labels).toContain('Overview')
+        expect(labels).toContain('Projects')
+        expect(labels).toContain('Alerts')
+        expect(labels).toContain('Users')
+        expect(labels).toContain('Audit')
+        expect(labels).toContain('Tokens')
+        expect(labels).toContain('Profile')
+      })
+
+      it.each([
+        ['/settings/projects', 'Projects'],
+        ['/settings/alerts', 'Alerts'],
+        ['/settings/users', 'Users'],
+        ['/settings/audit', 'Audit'],
+        ['/settings/tokens', 'Tokens'],
+        ['/settings/profile', 'Profile'],
+      ])('marks %s item active on route %s', (path, label) => {
+        const wrapper = mountWithPath(path)
+        const settingsWrap = wrapper.findAll('.nav__dropdown-wrap').find(w =>
+          w.findAll('.nav__dropdown-item').some(i => i.text() === 'Overview')
+        )!
+        const item = settingsWrap.findAll('a').find(a => a.text() === label)!
+        expect(item.classes()).toContain('nav__dropdown-item--active')
+      })
+
+      it('marks Overview active on /settings/overview', () => {
+        const wrapper = mountWithPath('/settings/overview')
+        const settingsWrap = wrapper.findAll('.nav__dropdown-wrap').find(w =>
+          w.findAll('.nav__dropdown-item').some(i => i.text() === 'Overview')
+        )!
+        const item = settingsWrap.findAll('a').find(a => a.text() === 'Overview')!
+        expect(item.classes()).toContain('nav__dropdown-item--active')
+      })
+
+      it('marks Overview active on bare /settings route', () => {
+        const wrapper = mountWithPath('/settings')
+        const settingsWrap = wrapper.findAll('.nav__dropdown-wrap').find(w =>
+          w.findAll('.nav__dropdown-item').some(i => i.text() === 'Overview')
+        )!
+        const item = settingsWrap.findAll('a').find(a => a.text() === 'Overview')!
+        expect(item.classes()).toContain('nav__dropdown-item--active')
+      })
+
+      it('has a divider separating Profile from the rest', () => {
+        const wrapper = makeWrapper()
+        const settingsWrap = wrapper.findAll('.nav__dropdown-wrap').find(w =>
+          w.findAll('.nav__dropdown-item').some(i => i.text() === 'Overview')
+        )!
+        expect(settingsWrap.find('.nav__dropdown-divider').exists()).toBe(true)
+      })
+    })
+  })
+
   describe('dashboard nav link', () => {
     it('renders a Dashboard link in the nav', () => {
       const wrapper = makeWrapper()

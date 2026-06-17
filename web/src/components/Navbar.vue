@@ -89,14 +89,44 @@ async function logout() {
         <Icon name="alert-circle" :size="15" />
         <span class="nav__link-text">Issues</span>
       </RouterLink>
-      <RouterLink
-        to="/performance"
-        class="nav__link"
-        :aria-current="route.path.startsWith('/performance') || route.path.startsWith('/transactions') ? 'page' : undefined"
-      >
-        <Icon name="activity" :size="15" />
-        <span class="nav__link-text">Performance</span>
-      </RouterLink>
+      <div class="nav__dropdown-wrap">
+        <RouterLink
+          to="/performance"
+          class="nav__link"
+          :aria-current="route.path.startsWith('/performance') || route.path.startsWith('/transactions') ? 'page' : undefined"
+        >
+          <Icon name="activity" :size="15" />
+          <span class="nav__link-text">Performance</span>
+          <Icon name="chevron-down" :size="10" class="nav__link-caret" />
+        </RouterLink>
+        <div class="nav__dropdown">
+          <RouterLink
+            to="/performance/transactions"
+            class="nav__dropdown-item"
+            :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/transactions') || route.path.startsWith('/transactions') }"
+          >Transactions</RouterLink>
+          <RouterLink
+            to="/performance/queries"
+            class="nav__dropdown-item"
+            :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/queries') }"
+          >Queries</RouterLink>
+          <RouterLink
+            to="/performance/caches"
+            class="nav__dropdown-item"
+            :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/caches') }"
+          >Caches</RouterLink>
+          <RouterLink
+            to="/performance/jobs"
+            class="nav__dropdown-item"
+            :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/jobs') }"
+          >Jobs</RouterLink>
+          <RouterLink
+            to="/performance/browser"
+            class="nav__dropdown-item"
+            :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/browser') }"
+          >Browser</RouterLink>
+        </div>
+      </div>
       <RouterLink
         to="/logs"
         class="nav__link"
@@ -105,14 +135,29 @@ async function logout() {
         <Icon name="file-text" :size="13" />
         Logs
       </RouterLink>
-      <RouterLink
-        to="/monitors"
-        class="nav__link"
-        :aria-current="route.path.startsWith('/monitors') ? 'page' : undefined"
-      >
-        <Icon name="clock" :size="15" />
-        <span class="nav__link-text">Monitors</span>
-      </RouterLink>
+      <div class="nav__dropdown-wrap">
+        <RouterLink
+          to="/monitors"
+          class="nav__link"
+          :aria-current="route.path.startsWith('/monitors') ? 'page' : undefined"
+        >
+          <Icon name="clock" :size="15" />
+          <span class="nav__link-text">Monitors</span>
+          <Icon name="chevron-down" :size="10" class="nav__link-caret" />
+        </RouterLink>
+        <div class="nav__dropdown">
+          <RouterLink
+            to="/monitors/cron"
+            class="nav__dropdown-item"
+            :class="{ 'nav__dropdown-item--active': route.path.startsWith('/monitors/cron') }"
+          >Cron</RouterLink>
+          <RouterLink
+            to="/monitors/uptime"
+            class="nav__dropdown-item"
+            :class="{ 'nav__dropdown-item--active': route.path.startsWith('/monitors/uptime') }"
+          >Uptime</RouterLink>
+        </div>
+      </div>
       <RouterLink
         to="/releases"
         class="nav__link"
@@ -214,14 +259,26 @@ async function logout() {
       </button>
 
       <!-- Settings -->
-      <button
-        class="nav__icon-btn"
-        :aria-current="route.path.startsWith('/settings') ? 'page' : undefined"
-        title="Settings"
-        @click="router.push('/settings')"
-      >
-        <Icon name="cog" :size="14" />
-      </button>
+      <div class="nav__dropdown-wrap">
+        <button
+          class="nav__icon-btn"
+          :aria-current="route.path.startsWith('/settings') ? 'page' : undefined"
+          title="Settings"
+          @click="router.push('/settings')"
+        >
+          <Icon name="cog" :size="14" />
+        </button>
+        <div class="nav__dropdown nav__dropdown--right">
+          <RouterLink to="/settings/overview" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/overview' || route.path === '/settings' }">Overview</RouterLink>
+          <RouterLink to="/settings/projects" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/projects' }">Projects</RouterLink>
+          <RouterLink to="/settings/alerts" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/alerts' }">Alerts</RouterLink>
+          <RouterLink to="/settings/users" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/users' }">Users</RouterLink>
+          <RouterLink to="/settings/audit" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/audit' }">Audit</RouterLink>
+          <RouterLink to="/settings/tokens" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/tokens' }">Tokens</RouterLink>
+          <div class="nav__dropdown-divider"></div>
+          <RouterLink to="/settings/profile" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/profile' }">Profile</RouterLink>
+        </div>
+      </div>
 
       <!-- Logout -->
       <button
