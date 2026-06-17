@@ -437,7 +437,7 @@ func ListRecoveredUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projec
 	)
 	args = append(args, since)
 	base := `SELECT ` + uptimeMonitorCols + ` FROM uptime_monitors
-        WHERE status='active' AND state='up' AND last_ok_at > $1`
+        WHERE status='active' AND state='up' AND went_down_at IS NOT NULL AND last_ok_at > $1`
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
 		query = base + fmt.Sprintf(` AND project_id = ANY($%d::uuid[]) ORDER BY last_ok_at DESC`, len(args))

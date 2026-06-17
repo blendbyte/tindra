@@ -322,7 +322,7 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			args = append(args, rule.ProjectIDs)
 			clauses = append(clauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(args)))
 		}
-		clauses = append(clauses, "status = 'active'", "state = 'up'")
+		clauses = append(clauses, "status = 'active'", "state = 'up'", "went_down_at IS NOT NULL")
 		args = append(args, since)
 		clauses = append(clauses, fmt.Sprintf("last_ok_at > $%d", len(args)))
 		where := strings.Join(clauses, " AND ")
