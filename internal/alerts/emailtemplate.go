@@ -208,9 +208,12 @@ type alertUptimeMonitorData struct {
 	MonitorURL string
 	State      string
 	StateColor string
-	Reason     string
+	Expected   string
+	Received   string
+	ResponseMs string
 	DownSince  string
 	Downtime   string
+	History    []string // "up" or "down", oldest first
 }
 
 type alertEmailData struct {
@@ -273,12 +276,13 @@ var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
   <tr>
     <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
       <p style="margin:0 0 5px;font-size:11px;line-height:1;">
-        <strong style="color:{{.StateColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.State}}</strong>{{if .Reason}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.Reason}}</span>{{end}}
+        <strong style="color:{{.StateColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.State}}</strong>{{if .Received}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">expected {{.Expected}}, got {{.Received}}</span>{{end}}{{if .ResponseMs}}&nbsp;&bull;&nbsp;<span style="color:#9ca3af;">{{.ResponseMs}}</span>{{end}}
       </p>
       {{if .MonitorURL}}<a href="{{.MonitorURL}}" style="font-size:13px;font-weight:600;color:#111827;text-decoration:none;line-height:1.4;">{{.Name}}</a>{{else}}<p style="margin:0;font-size:13px;font-weight:600;color:#111827;line-height:1.4;">{{.Name}}</p>{{end}}
       <p style="margin:4px 0 0;font-size:11px;font-family:'Courier New',Courier,monospace;color:#6b7280;">{{.URL}}</p>
       {{if .DownSince}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Down since {{.DownSince}}</p>{{end}}
       {{if .Downtime}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Was down for {{.Downtime}}</p>{{end}}
+      {{if .History}}<p style="margin:7px 0 0;line-height:1;font-size:0;">{{range .History}}<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 1px;background:{{if eq . "up"}}#22c55e{{else}}#ef4444{{end}};"></span>{{end}}</p>{{end}}
     </td>
   </tr>
 </table>
@@ -450,26 +454,27 @@ func formatDowntime(d time.Duration) string {
 	return "less than a minute"
 }
 
-func uptimeMonitorReason(m *storage.UptimeMonitor) string {
-	if m.LastStatusCode != nil {
-		return fmt.Sprintf("HTTP %d", *m.LastStatusCode)
-	}
-	if m.LastError != nil && *m.LastError != "" {
-		return *m.LastError
-	}
-	return ""
-}
-
 func buildUptimeMonitorCards(monitors []*storage.UptimeMonitor, trigger, base string) []alertUptimeMonitorData {
 	cards := make([]alertUptimeMonitorData, 0, len(monitors))
 	for _, m := range monitors {
 		card := alertUptimeMonitorData{
-			Name:   m.Name,
-			URL:    m.URL,
-			Reason: uptimeMonitorReason(m),
+			Name:     m.Name,
+			URL:      m.URL,
+			Expected: m.ExpectedCodes,
 		}
 		if base != "" {
 			card.MonitorURL = base + "/monitors"
+		}
+		if m.LastStatusCode != nil {
+			card.Received = fmt.Sprintf("HTTP %d", *m.LastStatusCode)
+		} else if m.LastError != nil && *m.LastError != "" {
+			card.Received = *m.LastError
+		}
+		if m.LastResponseMs != nil {
+			card.ResponseMs = fmt.Sprintf("%dms", *m.LastResponseMs)
+		}
+		for _, c := range m.RecentChecks {
+			card.History = append(card.History, c.Status)
 		}
 		if trigger == "uptime_recovered" {
 			card.State = "Recovered"
@@ -673,16 +678,29 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 
 	for _, um := range data.UptimeMonitors {
 		tb.WriteString("----------------------------------------\n")
-		line := strings.ToUpper(um.State)
-		if um.Reason != "" {
-			line += "  " + um.Reason
+		fmt.Fprintf(&tb, "%s\n%s\n%s\n", strings.ToUpper(um.State), um.Name, um.URL)
+		if um.Received != "" {
+			fmt.Fprintf(&tb, "Expected: %s  Got: %s\n", um.Expected, um.Received)
 		}
-		fmt.Fprintf(&tb, "%s\n%s\n%s\n", line, um.Name, um.URL)
+		if um.ResponseMs != "" {
+			fmt.Fprintf(&tb, "Response: %s\n", um.ResponseMs)
+		}
 		if um.DownSince != "" {
 			fmt.Fprintf(&tb, "Down since %s\n", um.DownSince)
 		}
 		if um.Downtime != "" {
 			fmt.Fprintf(&tb, "Was down for %s\n", um.Downtime)
+		}
+		if len(um.History) > 0 {
+			var dots strings.Builder
+			for _, s := range um.History {
+				if s == "up" {
+					dots.WriteByte('+')
+				} else {
+					dots.WriteByte('-')
+				}
+			}
+			fmt.Fprintf(&tb, "History (oldest→newest): %s\n", dots.String())
 		}
 		tb.WriteString("\n")
 	}

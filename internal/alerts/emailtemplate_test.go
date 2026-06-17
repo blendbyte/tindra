@@ -469,6 +469,60 @@ func TestRenderAlertEmail_uptimeDown_viewURL(t *testing.T) {
 	}
 }
 
+func TestRenderAlertEmail_uptimeDown_historyAndDetails(t *testing.T) {
+	code := 503
+	ms := 234
+	history := []storage.UptimeCheckDot{
+		{Status: "up"}, {Status: "up"}, {Status: "down"}, {Status: "down"},
+	}
+	payload := AlertPayload{
+		RuleName: "uptime alert",
+		Trigger:  "uptime_down",
+		FiredAt:  time.Now(),
+		Details:  map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{{
+			Name:           "API",
+			URL:            "https://api.example.com",
+			State:          "down",
+			ExpectedCodes:  "200-299",
+			LastStatusCode: &code,
+			LastResponseMs: &ms,
+			RecentChecks:   history,
+		}},
+	}
+	html, text, err := RenderAlertEmail(payload, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	// expected/received detail
+	if !strings.Contains(html, "expected 200-299") {
+		t.Error("HTML missing expected codes")
+	}
+	if !strings.Contains(html, "got HTTP 503") {
+		t.Error("HTML missing received status")
+	}
+	if !strings.Contains(html, "234ms") {
+		t.Error("HTML missing response time")
+	}
+	// history dots rendered as colored spans
+	if !strings.Contains(html, "#22c55e") {
+		t.Error("HTML missing green dot color")
+	}
+	if !strings.Contains(html, "#ef4444") {
+		t.Error("HTML missing red dot color")
+	}
+	// plain text history
+	if !strings.Contains(text, "++--") {
+		t.Errorf("text missing history string, got snippet: %q", text[max(0, strings.Index(text, "History")-5):])
+	}
+	if !strings.Contains(text, "Expected: 200-299") {
+		t.Error("text missing expected codes")
+	}
+	if !strings.Contains(text, "Got: HTTP 503") {
+		t.Error("text missing received status")
+	}
+}
+
 func TestFormatDowntime(t *testing.T) {
 	cases := []struct {
 		d    time.Duration

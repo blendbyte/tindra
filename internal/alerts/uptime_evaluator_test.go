@@ -269,7 +269,19 @@ func TestEnrichPayload_uptimeRecovered(t *testing.T) {
 
 // --- buildAlertSubject: uptime_down / uptime_recovered ---
 
-func TestEmailSubject_uptimeDown_single(t *testing.T) {
+func TestEmailSubject_uptimeDown_single_withName(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:        "uptime_down",
+		ProjectName:    "acme",
+		Details:        map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{{Name: "Homepage"}},
+	})
+	if got != "[Tindra] acme - Homepage is down" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestEmailSubject_uptimeDown_single_fallback(t *testing.T) {
 	got := buildAlertSubject(AlertPayload{
 		Trigger:     "uptime_down",
 		ProjectName: "acme",
@@ -291,7 +303,19 @@ func TestEmailSubject_uptimeDown_multiple(t *testing.T) {
 	}
 }
 
-func TestEmailSubject_uptimeRecovered_single(t *testing.T) {
+func TestEmailSubject_uptimeRecovered_single_withName(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger:        "uptime_recovered",
+		ProjectName:    "acme",
+		Details:        map[string]any{"recovered_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{{Name: "Homepage"}},
+	})
+	if got != "[Tindra] acme - Homepage recovered" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestEmailSubject_uptimeRecovered_single_fallback(t *testing.T) {
 	got := buildAlertSubject(AlertPayload{
 		Trigger:     "uptime_recovered",
 		ProjectName: "acme",
@@ -442,6 +466,41 @@ func TestFireSlack_uptimeRecovered_monitorDetails(t *testing.T) {
 		t.Fatalf("fireSlack: %v", err)
 	}
 	for _, want := range []string{"Homepage", "https://example.com", "down for", "Recovered"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("expected %q in Slack payload, got: %s", want, body)
+		}
+	}
+}
+
+func TestFireSlack_uptimeDown_historyEmoji(t *testing.T) {
+	code := 503
+	ms := 150
+	history := []storage.UptimeCheckDot{{Status: "up"}, {Status: "down"}, {Status: "down"}}
+	payload := AlertPayload{
+		Trigger: "uptime_down",
+		FiredAt: time.Now(),
+		Details: map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{{
+			Name: "API", URL: "https://api.example.com", State: "down",
+			ExpectedCodes: "200-299", LastStatusCode: &code, LastResponseMs: &ms,
+			RecentChecks: history,
+		}},
+	}
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	e := &Evaluator{pool: testPool, client: srv.Client()}
+	url := srv.URL
+	rule := &storage.AlertRule{WebhookURL: &url}
+	if _, err := e.fireSlack(context.Background(), rule, payload); err != nil {
+		t.Fatalf("fireSlack: %v", err)
+	}
+	for _, want := range []string{"expected 200-299", "HTTP 503", "150ms", "🟢", "🔴"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("expected %q in Slack payload, got: %s", want, body)
 		}

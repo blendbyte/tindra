@@ -399,17 +399,23 @@ func GetUptimeStats(ctx context.Context, pool *pgxpool.Pool, monitorID string) (
 // ListDownUptimeMonitors returns active monitors currently in the "down" state.
 // Used by the alert evaluator for uptime_down rules.
 func ListDownUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs []string) ([]*UptimeMonitor, error) {
+	base := `SELECT m.id, m.project_id, m.name, m.url, m.method,
+        m.interval_secs, m.timeout_secs, m.expected_codes, m.body_contains,
+        m.status, m.state, m.consecutive_failures,
+        m.last_checked_at, m.last_ok_at, m.next_check_at,
+        m.last_status_code, m.last_response_ms, m.last_error, m.went_down_at, m.created_at,
+        ` + recentUptimeChecksExpr + ` AS recent_checks
+        FROM uptime_monitors m
+        WHERE m.status='active' AND m.state='down'`
 	var (
 		query string
 		args  []any
 	)
-	base := `SELECT ` + uptimeMonitorCols + ` FROM uptime_monitors
-        WHERE status='active' AND state='down'`
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
-		query = base + ` AND project_id = ANY($1::uuid[]) ORDER BY last_checked_at DESC`
+		query = base + ` AND m.project_id = ANY($1::uuid[]) ORDER BY m.last_checked_at DESC`
 	} else {
-		query = base + ` ORDER BY last_checked_at DESC`
+		query = base + ` ORDER BY m.last_checked_at DESC`
 	}
 	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
@@ -418,12 +424,25 @@ func ListDownUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs 
 	defer rows.Close()
 	var out []*UptimeMonitor
 	for rows.Next() {
-		m, err := scanUptimeMonitor(rows.Scan)
-		if err != nil {
+		var m UptimeMonitor
+		var recentJSON []byte
+		if err := rows.Scan(
+			&m.ID, &m.ProjectID, &m.Name, &m.URL, &m.Method,
+			&m.IntervalSecs, &m.TimeoutSecs, &m.ExpectedCodes, &m.BodyContains,
+			&m.Status, &m.State, &m.ConsecutiveFailures,
+			&m.LastCheckedAt, &m.LastOkAt, &m.NextCheckAt,
+			&m.LastStatusCode, &m.LastResponseMs, &m.LastError, &m.WentDownAt, &m.CreatedAt,
+			&recentJSON,
+		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		m.RecentChecks = []UptimeCheckDot{}
-		out = append(out, m)
+		if len(recentJSON) > 0 {
+			_ = json.Unmarshal(recentJSON, &m.RecentChecks)
+		}
+		if m.RecentChecks == nil {
+			m.RecentChecks = []UptimeCheckDot{}
+		}
+		out = append(out, &m)
 	}
 	return out, rows.Err()
 }
@@ -431,18 +450,24 @@ func ListDownUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs 
 // ListRecoveredUptimeMonitors returns active monitors that transitioned back to
 // "up" after the given time. Used by the alert evaluator for uptime_recovered rules.
 func ListRecoveredUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, since time.Time) ([]*UptimeMonitor, error) {
+	base := `SELECT m.id, m.project_id, m.name, m.url, m.method,
+        m.interval_secs, m.timeout_secs, m.expected_codes, m.body_contains,
+        m.status, m.state, m.consecutive_failures,
+        m.last_checked_at, m.last_ok_at, m.next_check_at,
+        m.last_status_code, m.last_response_ms, m.last_error, m.went_down_at, m.created_at,
+        ` + recentUptimeChecksExpr + ` AS recent_checks
+        FROM uptime_monitors m
+        WHERE m.status='active' AND m.state='up' AND m.went_down_at IS NOT NULL AND m.last_ok_at > $1`
 	var (
 		query string
 		args  []any
 	)
 	args = append(args, since)
-	base := `SELECT ` + uptimeMonitorCols + ` FROM uptime_monitors
-        WHERE status='active' AND state='up' AND went_down_at IS NOT NULL AND last_ok_at > $1`
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
-		query = base + fmt.Sprintf(` AND project_id = ANY($%d::uuid[]) ORDER BY last_ok_at DESC`, len(args))
+		query = base + fmt.Sprintf(` AND m.project_id = ANY($%d::uuid[]) ORDER BY m.last_ok_at DESC`, len(args))
 	} else {
-		query = base + ` ORDER BY last_ok_at DESC`
+		query = base + ` ORDER BY m.last_ok_at DESC`
 	}
 	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
@@ -451,12 +476,25 @@ func ListRecoveredUptimeMonitors(ctx context.Context, pool *pgxpool.Pool, projec
 	defer rows.Close()
 	var out []*UptimeMonitor
 	for rows.Next() {
-		m, err := scanUptimeMonitor(rows.Scan)
-		if err != nil {
+		var m UptimeMonitor
+		var recentJSON []byte
+		if err := rows.Scan(
+			&m.ID, &m.ProjectID, &m.Name, &m.URL, &m.Method,
+			&m.IntervalSecs, &m.TimeoutSecs, &m.ExpectedCodes, &m.BodyContains,
+			&m.Status, &m.State, &m.ConsecutiveFailures,
+			&m.LastCheckedAt, &m.LastOkAt, &m.NextCheckAt,
+			&m.LastStatusCode, &m.LastResponseMs, &m.LastError, &m.WentDownAt, &m.CreatedAt,
+			&recentJSON,
+		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		m.RecentChecks = []UptimeCheckDot{}
-		out = append(out, m)
+		if len(recentJSON) > 0 {
+			_ = json.Unmarshal(recentJSON, &m.RecentChecks)
+		}
+		if m.RecentChecks == nil {
+			m.RecentChecks = []UptimeCheckDot{}
+		}
+		out = append(out, &m)
 	}
 	return out, rows.Err()
 }

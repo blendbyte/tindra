@@ -803,25 +803,33 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 	if len(payload.UptimeMonitors) > 0 {
 		var sb strings.Builder
 		for _, m := range payload.UptimeMonitors {
-			line := "• *" + m.Name + "* — " + m.URL
+			sb.WriteString("• *" + m.Name + "* — `" + m.URL + "`\n")
+			meta := "  "
 			if m.LastStatusCode != nil {
-				line += fmt.Sprintf(" (HTTP %d)", *m.LastStatusCode)
+				meta += fmt.Sprintf("expected %s, got HTTP %d", m.ExpectedCodes, *m.LastStatusCode)
 			} else if m.LastError != nil && *m.LastError != "" {
-				line += " (" + *m.LastError + ")"
+				meta += *m.LastError
+			}
+			if m.LastResponseMs != nil {
+				meta += fmt.Sprintf(" · %dms", *m.LastResponseMs)
 			}
 			if payload.Trigger == "uptime_recovered" {
 				if m.WentDownAt != nil && m.LastOkAt != nil {
-					d := m.LastOkAt.Sub(*m.WentDownAt)
-					line += " — down for " + formatSlackDowntime(d)
+					meta += " · down for " + formatSlackDowntime(m.LastOkAt.Sub(*m.WentDownAt))
 				}
 			} else {
 				if m.WentDownAt != nil {
-					line += " — since " + m.WentDownAt.UTC().Format("15:04 UTC")
+					meta += " · since " + m.WentDownAt.UTC().Format("15:04 UTC")
 				} else if m.LastOkAt != nil {
-					line += " — last OK " + m.LastOkAt.UTC().Format("15:04 UTC")
+					meta += " · last OK " + m.LastOkAt.UTC().Format("15:04 UTC")
 				}
 			}
-			sb.WriteString(line + "\n")
+			if meta != "  " {
+				sb.WriteString(meta + "\n")
+			}
+			if dots := uptimeHistoryEmoji(m.RecentChecks); dots != "" {
+				sb.WriteString("  " + dots + "\n")
+			}
 		}
 		label := "*Monitors down:*"
 		if payload.Trigger == "uptime_recovered" {
@@ -916,25 +924,34 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 	if len(payload.UptimeMonitors) > 0 {
 		var sb strings.Builder
 		for _, m := range payload.UptimeMonitors {
-			line := "**" + m.Name + "** — " + m.URL
+			sb.WriteString("**" + m.Name + "** — `" + m.URL + "`\n")
+			meta := ""
 			if m.LastStatusCode != nil {
-				line += fmt.Sprintf(" (HTTP %d)", *m.LastStatusCode)
+				meta += fmt.Sprintf("expected %s, got HTTP %d", m.ExpectedCodes, *m.LastStatusCode)
 			} else if m.LastError != nil && *m.LastError != "" {
-				line += " (" + *m.LastError + ")"
+				meta += *m.LastError
+			}
+			if m.LastResponseMs != nil {
+				meta += fmt.Sprintf(" · %dms", *m.LastResponseMs)
 			}
 			if payload.Trigger == "uptime_recovered" {
 				if m.WentDownAt != nil && m.LastOkAt != nil {
-					d := m.LastOkAt.Sub(*m.WentDownAt)
-					line += " — down for " + formatSlackDowntime(d)
+					meta += " · down for " + formatSlackDowntime(m.LastOkAt.Sub(*m.WentDownAt))
 				}
 			} else {
 				if m.WentDownAt != nil {
-					line += " — since " + m.WentDownAt.UTC().Format("15:04 UTC")
+					meta += " · since " + m.WentDownAt.UTC().Format("15:04 UTC")
 				} else if m.LastOkAt != nil {
-					line += " — last OK " + m.LastOkAt.UTC().Format("15:04 UTC")
+					meta += " · last OK " + m.LastOkAt.UTC().Format("15:04 UTC")
 				}
 			}
-			sb.WriteString("- " + line + "\n")
+			if meta != "" {
+				sb.WriteString(meta + "\n")
+			}
+			if dots := uptimeHistoryEmoji(m.RecentChecks); dots != "" {
+				sb.WriteString(dots + "\n")
+			}
+			sb.WriteString("\n")
 		}
 		description = strings.TrimRight(sb.String(), "\n")
 	}
@@ -1068,12 +1085,18 @@ func buildAlertSubject(p AlertPayload) string {
 	case "uptime_down":
 		count, _ := p.Details["down_count"].(int)
 		if count == 1 {
+			if len(p.UptimeMonitors) > 0 {
+				return "[Tindra] " + prefix + p.UptimeMonitors[0].Name + " is down"
+			}
 			return "[Tindra] " + prefix + "1 uptime monitor down"
 		}
 		return fmt.Sprintf("[Tindra] %s%d uptime monitors down", prefix, count)
 	case "uptime_recovered":
 		count, _ := p.Details["recovered_count"].(int)
 		if count == 1 {
+			if len(p.UptimeMonitors) > 0 {
+				return "[Tindra] " + prefix + p.UptimeMonitors[0].Name + " recovered"
+			}
 			return "[Tindra] " + prefix + "1 uptime monitor recovered"
 		}
 		return fmt.Sprintf("[Tindra] %s%d uptime monitors recovered", prefix, count)
@@ -1110,6 +1133,18 @@ func payloadProjectName(p AlertPayload) string {
 		}
 	}
 	return p.ProjectID
+}
+
+func uptimeHistoryEmoji(checks []storage.UptimeCheckDot) string {
+	var sb strings.Builder
+	for _, c := range checks {
+		if c.Status == "up" {
+			sb.WriteString("🟢")
+		} else {
+			sb.WriteString("🔴")
+		}
+	}
+	return sb.String()
 }
 
 func formatSlackDowntime(d time.Duration) string {
