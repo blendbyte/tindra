@@ -194,6 +194,7 @@ const activeCron = computed(() =>
   (cronMonitors.value ?? []).filter(m => m.status === 'active'),
 )
 const totalActiveMonitors = computed(() => activeUptime.value.length + activeCron.value.length)
+const totalAllMonitors = computed(() => (uptimeMonitors.value?.length ?? 0) + (cronMonitors.value?.length ?? 0))
 
 const downUptime = computed(() => activeUptime.value.filter(m => m.state === 'down'))
 const badCron = computed(() => activeCron.value.filter(m => m.state === 'missed' || m.state === 'error'))
@@ -606,97 +607,6 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
       </div>
     </div>
 
-    <!-- Monitor summary ────────────────────────────────────────────────────── -->
-    <div v-if="totalActiveMonitors > 0" class="db-monitors">
-      <div class="db-sec__head">
-        <span class="db-sec__title">Monitors</span>
-        <RouterLink to="/monitors" class="db-sec__link">view all →</RouterLink>
-      </div>
-
-      <!-- All healthy -->
-      <div v-if="allMonitorsHealthy" class="db-mon-healthy">
-        <Icon name="check-circle" :size="13" />
-        All {{ totalActiveMonitors }} monitor{{ totalActiveMonitors === 1 ? '' : 's' }} healthy
-      </div>
-
-      <!-- Problems -->
-      <template v-else>
-        <RouterLink
-          v-for="{ kind, m } in problemMonitors"
-          :key="m.id"
-          to="/monitors"
-          class="db-mon-row"
-        >
-          <!-- Status dot -->
-          <span
-            class="db-mon-row__dot"
-            :style="{ background: monStateColor(kind, m.state) }"
-          />
-
-          <!-- Name + meta -->
-          <div class="db-mon-row__main">
-            <span class="db-mon-row__name">{{ m.name }}</span>
-            <div class="db-mon-row__meta">
-              <span class="db-mon-badge" :class="`db-mon-badge--${kind}`">{{ kind }}</span>
-              <span v-if="kind === 'cron' && (m as CronMonitor).state === 'missed'">missed check-in</span>
-              <span v-else-if="kind === 'cron' && (m as CronMonitor).state === 'error'">check-in error</span>
-              <span v-else-if="kind === 'uptime' && (m as UptimeMonitor).last_status_code">
-                got HTTP {{ (m as UptimeMonitor).last_status_code }}
-              </span>
-              <span v-else-if="kind === 'uptime' && (m as UptimeMonitor).last_error">
-                {{ (m as UptimeMonitor).last_error }}
-              </span>
-            </div>
-          </div>
-
-          <!-- Mini timeline (last 10 checks, oldest→newest) -->
-          <div class="db-mon-row__timeline">
-            <template v-if="kind === 'uptime'">
-              <template v-for="(_, i) in 10" :key="i">
-                <span
-                  class="db-mon-tldot"
-                  :style="{
-                    background: (m as UptimeMonitor).recent_checks[i]
-                      ? uptimeDotColor((m as UptimeMonitor).recent_checks[i].status)
-                      : 'var(--surface-2)',
-                    opacity: (m as UptimeMonitor).recent_checks[i] ? 1 : 0.4,
-                  }"
-                />
-              </template>
-            </template>
-            <template v-else>
-              <template v-for="(_, i) in 10" :key="i">
-                <span
-                  class="db-mon-tldot"
-                  :style="{
-                    background: (m as CronMonitor).recent_checkins[i]
-                      ? cronDotColor((m as CronMonitor).recent_checkins[i].status)
-                      : 'var(--surface-2)',
-                    opacity: (m as CronMonitor).recent_checkins[i] ? 1 : 0.4,
-                  }"
-                />
-              </template>
-            </template>
-          </div>
-
-          <!-- Duration -->
-          <span class="db-mon-row__since" :style="{ color: monStateColor(kind, m.state) }">
-            {{ formatMonSince(monitorSinceMs(kind, m)) }}
-          </span>
-        </RouterLink>
-
-        <!-- Overflow -->
-        <button
-          v-if="overflowMonitorCount > 0 || monitorsExpanded"
-          class="db-mon-overflow"
-          @click="monitorsExpanded = !monitorsExpanded"
-        >
-          <template v-if="monitorsExpanded">Show less</template>
-          <template v-else>+{{ overflowMonitorCount }} more</template>
-        </button>
-      </template>
-    </div>
-
     <!-- Project overview (only when 2+ projects) ──────────────────────────── -->
     <div v-if="projects.projects.length >= 2" class="db-projects">
       <div class="db-sec__head">
@@ -804,6 +714,64 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
               <span class="db-heatmap__leg-lbl">high</span>
             </div>
           </div>
+        </div>
+
+        <!-- Monitor summary -->
+        <div v-if="totalAllMonitors > 0" class="db-sec db-monitors">
+          <div class="db-sec__head">
+            <span class="db-sec__title">Monitors</span>
+            <RouterLink to="/monitors" class="db-sec__link">view all →</RouterLink>
+          </div>
+
+          <!-- All paused -->
+          <div v-if="totalActiveMonitors === 0" class="db-empty">
+            <Icon name="pause-circle" :size="18" style="color: var(--text-3)" />
+            <div>All {{ totalAllMonitors }} monitor{{ totalAllMonitors === 1 ? '' : 's' }} paused</div>
+          </div>
+
+          <!-- All healthy -->
+          <div v-else-if="allMonitorsHealthy" class="db-empty">
+            <Icon name="check-circle" :size="18" style="color: var(--success)" />
+            <div>All {{ totalActiveMonitors }} monitor{{ totalActiveMonitors === 1 ? '' : 's' }} healthy</div>
+          </div>
+
+          <!-- Problems -->
+          <template v-else>
+            <RouterLink
+              v-for="{ kind, m } in problemMonitors"
+              :key="m.id"
+              to="/monitors"
+              class="db-mon-row"
+            >
+              <span class="db-mon-row__dot" :style="{ background: monStateColor(kind, m.state) }" />
+              <div class="db-mon-row__main">
+                <span class="db-mon-row__name">{{ m.name }}</span>
+                <div class="db-mon-row__meta">
+                  <span class="db-mon-badge" :class="`db-mon-badge--${kind}`">{{ kind }}</span>
+                  <span v-if="kind === 'cron' && (m as CronMonitor).state === 'missed'">missed</span>
+                  <span v-else-if="kind === 'cron' && (m as CronMonitor).state === 'error'">error</span>
+                  <span v-else-if="kind === 'uptime' && (m as UptimeMonitor).last_status_code">
+                    HTTP {{ (m as UptimeMonitor).last_status_code }}
+                  </span>
+                  <span v-else-if="kind === 'uptime' && (m as UptimeMonitor).last_error">
+                    {{ (m as UptimeMonitor).last_error }}
+                  </span>
+                </div>
+              </div>
+              <span class="db-mon-row__since" :style="{ color: monStateColor(kind, m.state) }">
+                {{ formatMonSince(monitorSinceMs(kind, m)) }}
+              </span>
+            </RouterLink>
+
+            <button
+              v-if="overflowMonitorCount > 0 || monitorsExpanded"
+              class="db-mon-overflow"
+              @click="monitorsExpanded = !monitorsExpanded"
+            >
+              <template v-if="monitorsExpanded">Show less</template>
+              <template v-else>+{{ overflowMonitorCount }} more</template>
+            </button>
+          </template>
         </div>
 
         <!-- Hottest issues -->
@@ -1579,29 +1547,14 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 
 .db-tx-row__pct--warn { color: var(--danger); }
 
-/* ── Monitor summary ────────────────────────────────────────────────────────── */
-
-.db-monitors {
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.db-mon-healthy {
-  padding: 9px 16px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: var(--text-xs);
-  color: var(--success);
-  font-weight: 500;
-}
+/* ── Monitor summary (in aside) ─────────────────────────────────────────────── */
 
 .db-mon-row {
   display: grid;
-  grid-template-columns: 8px 1fr auto auto;
+  grid-template-columns: 8px 1fr auto;
   align-items: center;
-  gap: 14px;
-  padding: 9px 16px;
+  gap: 12px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   text-decoration: none;
   color: inherit;
@@ -1638,7 +1591,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 .db-mon-row__meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-size: var(--text-xs);
   color: var(--text-3);
   white-space: nowrap;
@@ -1666,27 +1619,12 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
   color: var(--text-2);
 }
 
-.db-mon-row__timeline {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.db-mon-tldot {
-  width: 6px;
-  height: 6px;
-  border-radius: 1px;
-  flex-shrink: 0;
-}
-
 .db-mon-row__since {
   font-size: var(--text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
-  min-width: 36px;
   text-align: right;
 }
 
@@ -1704,13 +1642,6 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 }
 
 .db-mon-overflow:hover { text-decoration: underline; text-underline-offset: 2px; }
-
-@media (max-width: 768px) {
-  .db-mon-row {
-    grid-template-columns: 8px 1fr auto;
-  }
-  .db-mon-row__timeline { display: none; }
-}
 
 /* ── First-run snippet ──────────────────────────────────────────────────────── */
 

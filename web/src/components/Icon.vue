@@ -63,6 +63,10 @@ defineProps<{ name: string; size?: number }>()
     </template>
     <path v-else-if="name === 'external'" d="M10 2h4v4M14 2l-7 7M6 4H4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2" />
     <path v-else-if="name === 'pause'" d="M5 3h2v10H5zM9 3h2v10H9z" />
+    <template v-else-if="name === 'pause-circle'">
+      <circle cx="8" cy="8" r="7" />
+      <path d="M6 5.5v5M10 5.5v5" />
+    </template>
     <path v-else-if="name === 'play'" d="M5 3l9 5-9 5V3z" />
     <template v-else-if="name === 'users'">
       <circle cx="5" cy="5.5" r="2.5" />

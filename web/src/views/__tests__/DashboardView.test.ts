@@ -806,6 +806,16 @@ describe('DashboardView — monitor summary widget', () => {
     expect(wrapper.find('.db-monitors').exists()).toBe(false)
   })
 
+  it('shows "All monitors paused" when all monitors are paused', () => {
+    const wrapper = makeWrapper({
+      uptimeMonitors: [uptime({ status: 'paused', state: 'down' })],
+      cronMonitors: [cron({ status: 'paused', state: 'missed' })],
+    })
+    expect(wrapper.find('.db-monitors').exists()).toBe(true)
+    expect(wrapper.text()).toContain('All 2 monitors paused')
+    expect(wrapper.find('.db-empty').exists()).toBe(true)
+  })
+
   it('shows "All monitors healthy" when all monitors are up/ok', () => {
     const wrapper = makeWrapper({
       uptimeMonitors: [uptime({ state: 'up' })],
@@ -813,6 +823,7 @@ describe('DashboardView — monitor summary widget', () => {
     })
     expect(wrapper.find('.db-monitors').exists()).toBe(true)
     expect(wrapper.text()).toContain('All 2 monitors healthy')
+    expect(wrapper.find('.db-empty').exists()).toBe(true)
   })
 
   it('shows problem monitors when uptime monitor is down', () => {
@@ -834,12 +845,15 @@ describe('DashboardView — monitor summary widget', () => {
     expect(wrapper.text()).toContain('Daily ETL')
   })
 
-  it('does not show paused monitors', () => {
+  it('does not show paused monitors as problem rows', () => {
     const wrapper = makeWrapper({
       uptimeMonitors: [uptime({ status: 'paused' })],
       cronMonitors: [cron({ status: 'paused' })],
     })
-    expect(wrapper.find('.db-monitors').exists()).toBe(false)
+    expect(wrapper.find('.db-mon-row').exists()).toBe(false)
+    expect(wrapper.find('.db-monitors').exists()).toBe(true)
+    expect(wrapper.find('.db-empty').exists()).toBe(true)
+    expect(wrapper.text()).toContain('paused')
   })
 
   it('shows correct singular count when one monitor is healthy', () => {
