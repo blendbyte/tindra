@@ -324,7 +324,7 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 		}
 		clauses = append(clauses, "status = 'active'", "state = 'up'", "went_down_at IS NOT NULL")
 		args = append(args, since)
-		clauses = append(clauses, fmt.Sprintf("last_ok_at > $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("recovered_at > $%d", len(args)))
 		where := strings.Join(clauses, " AND ")
 		var count int
 		if err := e.pool.QueryRow(ctx,

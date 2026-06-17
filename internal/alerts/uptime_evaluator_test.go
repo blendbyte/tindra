@@ -137,8 +137,8 @@ func TestConditionMet_uptimeRecovered_hasRecovered(t *testing.T) {
 
 	testPool.Exec(context.Background(), `
 		INSERT INTO uptime_monitors
-			(project_id, name, url, method, interval_secs, timeout_secs, expected_codes, status, state, last_ok_at, went_down_at)
-		VALUES ($1, 'recovered-monitor', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'up', NOW(), NOW() - INTERVAL '1 hour')
+			(project_id, name, url, method, interval_secs, timeout_secs, expected_codes, status, state, last_ok_at, went_down_at, recovered_at)
+		VALUES ($1, 'recovered-monitor', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'up', NOW(), NOW() - INTERVAL '1 hour', NOW())
 	`, testProject.ID)
 
 	rule := &storage.AlertRule{
@@ -190,8 +190,8 @@ func TestConditionMet_uptimeRecovered_usesLastFiredAt(t *testing.T) {
 	// Monitor recovered 30 minutes ago (went down an hour ago)
 	testPool.Exec(context.Background(), `
 		INSERT INTO uptime_monitors
-			(project_id, name, url, method, interval_secs, timeout_secs, expected_codes, status, state, last_ok_at, went_down_at)
-		VALUES ($1, 'old-recovery', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'up', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '1 hour')
+			(project_id, name, url, method, interval_secs, timeout_secs, expected_codes, status, state, last_ok_at, went_down_at, recovered_at)
+		VALUES ($1, 'old-recovery', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'up', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '30 minutes')
 	`, testProject.ID)
 
 	// LastFiredAt = 10 minutes ago — so the recovery happened BEFORE last firing
@@ -246,8 +246,8 @@ func TestEnrichPayload_uptimeRecovered(t *testing.T) {
 
 	testPool.Exec(context.Background(), `
 		INSERT INTO uptime_monitors
-			(project_id, name, url, method, interval_secs, timeout_secs, expected_codes, status, state, last_ok_at, went_down_at)
-		VALUES ($1, 'enrich-recovered', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'up', NOW(), NOW() - INTERVAL '1 hour')
+			(project_id, name, url, method, interval_secs, timeout_secs, expected_codes, status, state, last_ok_at, went_down_at, recovered_at)
+		VALUES ($1, 'enrich-recovered', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'up', NOW(), NOW() - INTERVAL '1 hour', NOW())
 	`, testProject.ID)
 
 	rule := &storage.AlertRule{
