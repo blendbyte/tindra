@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -63,6 +64,32 @@ func (ro *router) securityHeaders(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// slogRequestLogger logs each HTTP request at DEBUG level via slog,
+// so LOG_LEVEL=warn or higher suppresses request logs entirely.
+func slogRequestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(ww, r)
+		slog.Debug("http",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", ww.status,
+			"ms", time.Since(start).Milliseconds(),
+		)
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
 }
 
 func corsMiddleware(origin string) func(http.Handler) http.Handler {

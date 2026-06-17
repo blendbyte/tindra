@@ -118,7 +118,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	r.Use(realIPFromTrustedProxy(ro.trustedProxies))
 	r.Use(corsMiddleware(ro.corsOrigin))
 	r.Use(ro.securityHeaders)
-	r.Use(middleware.Logger)
+	r.Use(slogRequestLogger)
 	r.Use(middleware.Recoverer)
 
 	r.Get("/healthz", ro.healthz)
