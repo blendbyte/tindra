@@ -23,7 +23,10 @@
 ---
 
 <p align="center">
-  <img src="dashboard-split.png" alt="Tindra dashboard — light and dark mode">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="dashboard-dark.png">
+    <img src="dashboard-light.png" alt="Tindra dashboard">
+  </picture>
 </p>
 
 One Go binary. One Postgres database. Compatible with every Sentry SDK: point your DSN at Tindra and nothing else changes.
