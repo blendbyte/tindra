@@ -656,8 +656,8 @@ func TestGetSpansGlobal_returnsStartTimestampAndData(t *testing.T) {
 	start := tx.StartTimestamp.Add(5 * time.Millisecond)
 	end := start.Add(20 * time.Millisecond)
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, data)
-		VALUES ($1, 'sp-fields', 'db.query', $2, $3, 20, 'ok', '{"db.system":"postgres"}')
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, data, project_id)
+		SELECT $1, 'sp-fields', 'db.query', $2, $3, 20, 'ok', '{"db.system":"postgres"}', project_id FROM transactions WHERE id = $1
 	`, tx.ID, start, end); err != nil {
 		t.Fatalf("insert span: %v", err)
 	}
@@ -702,8 +702,8 @@ func TestGetSpansGlobal_nullDataReturnsEmptyObject(t *testing.T) {
 	start := tx.StartTimestamp.Add(2 * time.Millisecond)
 	end := start.Add(5 * time.Millisecond)
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status)
-		VALUES ($1, 'sp-null', 'http.client', $2, $3, 5, 'ok')
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, project_id)
+		SELECT $1, 'sp-null', 'http.client', $2, $3, 5, 'ok', project_id FROM transactions WHERE id = $1
 	`, tx.ID, start, end); err != nil {
 		t.Fatalf("insert span: %v", err)
 	}

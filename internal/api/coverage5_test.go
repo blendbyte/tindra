@@ -449,15 +449,15 @@ func TestGetSpansGlobal_criticalPath(t *testing.T) {
 
 	// Insert a parent span.
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO spans (transaction_id, span_id, parent_span_id, op, start_timestamp, timestamp, duration_ms, status)
-		VALUES ($1, 'parent-sp-cov5', '', 'http.client', $2, $3, 50, 'ok')
+		INSERT INTO spans (transaction_id, span_id, parent_span_id, op, start_timestamp, timestamp, duration_ms, status, project_id)
+		SELECT $1, 'parent-sp-cov5', '', 'http.client', $2, $3, 50, 'ok', project_id FROM transactions WHERE id = $1
 	`, tx.ID, start, end1); err != nil {
 		t.Fatalf("insert parent span: %v", err)
 	}
 	// Insert a child span with a parent reference.
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO spans (transaction_id, span_id, parent_span_id, op, start_timestamp, timestamp, duration_ms, status)
-		VALUES ($1, 'child-sp-cov5', 'parent-sp-cov5', 'db.query', $2, $3, 100, 'ok')
+		INSERT INTO spans (transaction_id, span_id, parent_span_id, op, start_timestamp, timestamp, duration_ms, status, project_id)
+		SELECT $1, 'child-sp-cov5', 'parent-sp-cov5', 'db.query', $2, $3, 100, 'ok', project_id FROM transactions WHERE id = $1
 	`, tx.ID, start, end2); err != nil {
 		t.Fatalf("insert child span: %v", err)
 	}
