@@ -527,7 +527,6 @@ export interface SpanSummary {
 export interface SpanBucket {
   time: string
   count: number
-  p50: number
 }
 
 export interface SpanTimeseries {

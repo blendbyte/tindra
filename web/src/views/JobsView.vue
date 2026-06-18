@@ -40,15 +40,6 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
           :bucket-size="timeseries.bucket_size"
         />
       </div>
-      <div class="txchart-panel">
-        <div class="txchart-panel__label">P50 duration</div>
-        <TimeseriesChart
-          :times="timeseries.buckets.map(b => b.time)"
-          :series="[{ id: 'p50', label: 'P50', type: 'line', values: timeseries.buckets.map(b => b.p50) }]"
-          :bucket-size="timeseries.bucket_size"
-          :format-value="v => formatDuration(v)"
-        />
-      </div>
     </div>
 
     <div v-if="noData" class="empty-state">

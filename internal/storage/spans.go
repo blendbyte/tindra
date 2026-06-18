@@ -24,7 +24,6 @@ type SpanSummary struct {
 type SpanBucket struct {
 	Time  time.Time `json:"time"`
 	Count int64     `json:"count"`
-	P50   float64   `json:"p50"`
 }
 
 type SpanTimeseries struct {
@@ -170,8 +169,7 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 	q := fmt.Sprintf(`
 		SELECT
 			%s AS bucket,
-			COUNT(*) AS count,
-			COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.duration_ms), 0) AS p50
+			COUNT(*) AS count
 		FROM spans s
 		%s
 		GROUP BY bucket
@@ -187,7 +185,7 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 	ts := &SpanTimeseries{BucketSize: bucketSize, Buckets: []SpanBucket{}}
 	for rows.Next() {
 		var b SpanBucket
-		if err := rows.Scan(&b.Time, &b.Count, &b.P50); err != nil {
+		if err := rows.Scan(&b.Time, &b.Count); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		ts.Buckets = append(ts.Buckets, b)
