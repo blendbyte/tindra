@@ -60,6 +60,66 @@ func TestListProjects_includesStatsFields(t *testing.T) {
 	}
 }
 
+func TestListProjects_includesLogAndTxCounts(t *testing.T) {
+	ctx := context.Background()
+
+	// Seed some logs and transactions into the shared test project.
+	testPool.Exec(ctx, `DELETE FROM logs WHERE project_id = $1`, testProject.ID)
+	testPool.Exec(ctx, `DELETE FROM transactions WHERE project_id = $1`, testProject.ID)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM logs WHERE project_id = $1`, testProject.ID)
+		testPool.Exec(context.Background(), `DELETE FROM transactions WHERE project_id = $1`, testProject.ID)
+	})
+
+	for range 3 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'info', 'api-test log')
+		`, testProject.ID)
+	}
+	for range 2 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/api-test', 'http.server', 'ok', 10, NOW(), NOW())
+		`, testProject.ID)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var projects []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&projects); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var found map[string]any
+	for _, p := range projects {
+		if p["id"] == testProject.ID {
+			found = p
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("test project not found in response")
+	}
+	for _, key := range []string{"log_count", "tx_count"} {
+		if _, ok := found[key]; !ok {
+			t.Errorf("expected key %q in project response", key)
+		}
+	}
+	if got := found["log_count"].(float64); got != 3 {
+		t.Errorf("log_count: got %v, want 3", got)
+	}
+	if got := found["tx_count"].(float64); got != 2 {
+		t.Errorf("tx_count: got %v, want 2", got)
+	}
+}
+
 func TestListProjects_sortedAlphabetically(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
 	req.AddCookie(authCookie())
@@ -248,6 +308,57 @@ func TestGetSettings_updateAvailable(t *testing.T) {
 	}
 	if resp.ReleaseURL == "" {
 		t.Error("expected non-empty release_url")
+	}
+}
+
+func TestGetSettings_rowLimitsReturned(t *testing.T) {
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h.SetRowLimits(5_000_000, 10_000_000)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		LogRowLimit int `json:"log_row_limit"`
+		TxRowLimit  int `json:"tx_row_limit"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.LogRowLimit != 5_000_000 {
+		t.Errorf("log_row_limit: got %d, want 5000000", resp.LogRowLimit)
+	}
+	if resp.TxRowLimit != 10_000_000 {
+		t.Errorf("tx_row_limit: got %d, want 10000000", resp.TxRowLimit)
+	}
+}
+
+func TestGetSettings_rowLimitsDefaultZero(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		LogRowLimit int `json:"log_row_limit"`
+		TxRowLimit  int `json:"tx_row_limit"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.LogRowLimit != 0 {
+		t.Errorf("log_row_limit: got %d, want 0 (default)", resp.LogRowLimit)
+	}
+	if resp.TxRowLimit != 0 {
+		t.Errorf("tx_row_limit: got %d, want 0 (default)", resp.TxRowLimit)
 	}
 }
 

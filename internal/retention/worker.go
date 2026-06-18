@@ -189,8 +189,8 @@ func (w *Worker) purgeAlertFirings(ctx context.Context) int64 {
 	return tag.RowsAffected()
 }
 
-// purgeLogsRowCap keeps only the logRowLimit most recent log rows per project.
-// Rows are ranked by timestamp DESC; older rows beyond the cap are deleted.
+// purgeLogsRowCap enforces an instance-wide row cap on the logs table.
+// The globally oldest rows are deleted first until the total is at or below logRowLimit.
 func (w *Worker) purgeLogsRowCap(ctx context.Context) int64 {
 	if w.logRowLimit <= 0 {
 		return 0
@@ -198,11 +198,9 @@ func (w *Worker) purgeLogsRowCap(ctx context.Context) int64 {
 	tag, err := w.pool.Exec(ctx, `
 		DELETE FROM logs
 		WHERE id IN (
-			SELECT id FROM (
-				SELECT id, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY timestamp DESC) AS rn
-				FROM logs
-			) ranked
-			WHERE rn > $1
+			SELECT id FROM logs
+			ORDER BY timestamp ASC
+			LIMIT GREATEST(0, (SELECT COUNT(*) FROM logs) - $1)
 		)`, w.logRowLimit)
 	if err != nil {
 		slog.Error("retention: purge logs row cap", "err", err)
@@ -211,8 +209,8 @@ func (w *Worker) purgeLogsRowCap(ctx context.Context) int64 {
 	return tag.RowsAffected()
 }
 
-// purgeTransactionsRowCap keeps only the txRowLimit most recent transaction rows per project.
-// Deleting a transaction cascades to its spans via the foreign key.
+// purgeTransactionsRowCap enforces an instance-wide row cap on the transactions table.
+// The globally oldest rows are deleted first; deletion cascades to child spans via FK.
 func (w *Worker) purgeTransactionsRowCap(ctx context.Context) int64 {
 	if w.txRowLimit <= 0 {
 		return 0
@@ -220,11 +218,9 @@ func (w *Worker) purgeTransactionsRowCap(ctx context.Context) int64 {
 	tag, err := w.pool.Exec(ctx, `
 		DELETE FROM transactions
 		WHERE id IN (
-			SELECT id FROM (
-				SELECT id, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY start_timestamp DESC) AS rn
-				FROM transactions
-			) ranked
-			WHERE rn > $1
+			SELECT id FROM transactions
+			ORDER BY start_timestamp ASC
+			LIMIT GREATEST(0, (SELECT COUNT(*) FROM transactions) - $1)
 		)`, w.txRowLimit)
 	if err != nil {
 		slog.Error("retention: purge transactions row cap", "err", err)

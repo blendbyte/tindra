@@ -261,11 +261,10 @@ func TestWorker_purgesTransactionsRowCap(t *testing.T) {
 	}
 }
 
-func TestWorker_txRowCapIsolatesProjects(t *testing.T) {
+func TestWorker_txRowCapIsGlobal(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
-	// Create a second project.
 	otherProject, err := storage.CreateProject(ctx, testPool, "ret-other", "Retention Other")
 	if err != nil {
 		t.Fatalf("create other project: %v", err)
@@ -274,32 +273,27 @@ func TestWorker_txRowCapIsolatesProjects(t *testing.T) {
 		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", otherProject.ID)
 	})
 
-	// 12 transactions in testProject, 8 in otherProject.
+	// 12 transactions in testProject, 8 in otherProject = 20 total.
 	for i := range 12 {
 		testPool.Exec(ctx, `
 			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
-			VALUES ($1, '/tx-cap-isolation', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 second'), NOW())
+			VALUES ($1, '/tx-global', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 second'), NOW())
 		`, testProject.ID, i)
 	}
 	for i := range 8 {
 		testPool.Exec(ctx, `
 			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
-			VALUES ($1, '/tx-cap-isolation', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 second'), NOW())
+			VALUES ($1, '/tx-global', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 second'), NOW())
 		`, otherProject.ID, i)
 	}
 
-	// Cap at 10 per project: testProject goes from 12→10, otherProject stays at 8.
-	retention.NewWorker(testPool, 90).WithRowLimits(0, 10).RunOnce(ctx)
+	// Global cap of 15: 20 total → 5 oldest deleted, 15 remain across both projects.
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 15).RunOnce(ctx)
 
-	var countA, countB int
-	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&countA)
-	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", otherProject.ID).Scan(&countB)
-
-	if countA != 10 {
-		t.Errorf("testProject: expected 10 transactions after cap, got %d", countA)
-	}
-	if countB != 8 {
-		t.Errorf("otherProject: expected 8 transactions (under cap, no deletions), got %d", countB)
+	var total int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions").Scan(&total)
+	if total != 15 {
+		t.Errorf("expected 15 transactions total after global cap, got %d", total)
 	}
 }
 
@@ -347,7 +341,7 @@ func TestWorker_logsRowCapKeepsNewest(t *testing.T) {
 	}
 }
 
-func TestWorker_logsRowCapIsolatesProjects(t *testing.T) {
+func TestWorker_logsRowCapIsGlobal(t *testing.T) {
 	ctx := context.Background()
 
 	testPool.Exec(ctx, "DELETE FROM logs")
@@ -361,32 +355,27 @@ func TestWorker_logsRowCapIsolatesProjects(t *testing.T) {
 		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", otherProject.ID)
 	})
 
-	// 12 logs in testProject, 8 in otherProject.
+	// 12 logs in testProject, 8 in otherProject = 20 total.
 	for i := range 12 {
 		testPool.Exec(ctx, `
 			INSERT INTO logs (project_id, timestamp, received_at, level, body)
-			VALUES ($1, NOW() - ($2 * INTERVAL '1 second'), NOW(), 'info', 'log-isolation')
+			VALUES ($1, NOW() - ($2 * INTERVAL '1 second'), NOW(), 'info', 'log-global')
 		`, testProject.ID, i)
 	}
 	for i := range 8 {
 		testPool.Exec(ctx, `
 			INSERT INTO logs (project_id, timestamp, received_at, level, body)
-			VALUES ($1, NOW() - ($2 * INTERVAL '1 second'), NOW(), 'info', 'log-isolation')
+			VALUES ($1, NOW() - ($2 * INTERVAL '1 second'), NOW(), 'info', 'log-global')
 		`, otherProject.ID, i)
 	}
 
-	// Cap at 10 per project: testProject 12→10, otherProject stays at 8.
-	retention.NewWorker(testPool, 90).WithRowLimits(10, 0).RunOnce(ctx)
+	// Global cap of 15: 20 total → 5 oldest deleted, 15 remain across both projects.
+	retention.NewWorker(testPool, 90).WithRowLimits(15, 0).RunOnce(ctx)
 
-	var countA, countB int
-	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&countA)
-	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", otherProject.ID).Scan(&countB)
-
-	if countA != 10 {
-		t.Errorf("testProject: expected 10 logs after cap, got %d", countA)
-	}
-	if countB != 8 {
-		t.Errorf("otherProject: expected 8 logs (under cap, no deletions), got %d", countB)
+	var total int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs").Scan(&total)
+	if total != 15 {
+		t.Errorf("expected 15 logs total after global cap, got %d", total)
 	}
 }
 

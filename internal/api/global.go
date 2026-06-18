@@ -125,6 +125,8 @@ func (ro *router) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		ProjectLimit    int    `json:"project_limit"`
 		EventLimit      int    `json:"event_limit"`
 		UserLimit       int    `json:"user_limit"`
+		LogRowLimit     int    `json:"log_row_limit"`
+		TxRowLimit      int    `json:"tx_row_limit"`
 		Version         string `json:"version"`
 		Commit          string `json:"commit"`
 		BillingURL      string `json:"billing_url,omitempty"`
@@ -135,6 +137,8 @@ func (ro *router) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		ProjectLimit:    int(ro.projectLimit.Load()),
 		EventLimit:      int(ro.eventLimit.Load()),
 		UserLimit:       int(ro.userLimit.Load()),
+		LogRowLimit:     ro.logRowLimit,
+		TxRowLimit:      ro.txRowLimit,
 		Version:         AppVersion,
 		Commit:          AppCommit,
 		BillingURL:      ro.billingURL,

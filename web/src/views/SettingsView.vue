@@ -1272,6 +1272,44 @@ function actionKindOf(action: string) {
                 />
               </div>
             </div>
+            <div class="overview-usage-row">
+              <div class="overview-usage-row__meta">
+                <span class="overview-usage-row__name">Logs stored</span>
+                <span class="overview-usage-row__count mono">
+                  {{ healthData ? formatNum(healthData.logs_total) : '–' }}
+                  <span class="overview-limit__sep">/</span>
+                  <span v-if="settings.log_row_limit > 0">{{ formatNum(settings.log_row_limit) }}</span>
+                  <span v-else class="overview-limit__unlimited">∞</span>
+                </span>
+              </div>
+              <div class="overview-bar" :class="settings.log_row_limit === 0 ? 'overview-bar--unlimited' : ''">
+                <div
+                  v-if="settings.log_row_limit > 0 && healthData"
+                  class="overview-bar__fill"
+                  :class="healthData.logs_total / settings.log_row_limit >= 1 ? 'overview-bar__fill--danger' : healthData.logs_total / settings.log_row_limit >= 0.8 ? 'overview-bar__fill--warn' : ''"
+                  :style="{ width: `${Math.min(100, Math.round(healthData.logs_total / settings.log_row_limit * 100))}%` }"
+                />
+              </div>
+            </div>
+            <div class="overview-usage-row">
+              <div class="overview-usage-row__meta">
+                <span class="overview-usage-row__name">Transactions stored</span>
+                <span class="overview-usage-row__count mono">
+                  {{ healthData ? formatNum(healthData.tx_total) : '–' }}
+                  <span class="overview-limit__sep">/</span>
+                  <span v-if="settings.tx_row_limit > 0">{{ formatNum(settings.tx_row_limit) }}</span>
+                  <span v-else class="overview-limit__unlimited">∞</span>
+                </span>
+              </div>
+              <div class="overview-bar" :class="settings.tx_row_limit === 0 ? 'overview-bar--unlimited' : ''">
+                <div
+                  v-if="settings.tx_row_limit > 0 && healthData"
+                  class="overview-bar__fill"
+                  :class="healthData.tx_total / settings.tx_row_limit >= 1 ? 'overview-bar__fill--danger' : healthData.tx_total / settings.tx_row_limit >= 0.8 ? 'overview-bar__fill--warn' : ''"
+                  :style="{ width: `${Math.min(100, Math.round(healthData.tx_total / settings.tx_row_limit * 100))}%` }"
+                />
+              </div>
+            </div>
           </div>
         </template>
       </template>
@@ -1763,6 +1801,18 @@ function actionKindOf(action: string) {
                     <div v-if="quotaData?.daily_volume?.length" class="proj-sparkline-row">
                       <Sparkline :data="quotaData.daily_volume.map(Number)" :width="120" :height="20" class="proj-sparkline-row__chart" />
                       <span class="proj-sparkline-row__label">30-day trend</span>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="field__label">Logs stored</label>
+                    <div class="proj-usage">
+                      <span class="proj-usage__count">{{ (p.log_count ?? 0).toLocaleString() }}</span>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="field__label">Transactions stored</label>
+                    <div class="proj-usage">
+                      <span class="proj-usage__count">{{ (p.tx_count ?? 0).toLocaleString() }}</span>
                     </div>
                   </div>
                   <div v-if="quotaData && quotaData.rate_limit_per_min > 0" class="field" style="grid-column: 1 / -1">

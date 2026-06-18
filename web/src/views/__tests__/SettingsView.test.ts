@@ -5440,6 +5440,228 @@ describe('SettingsView', () => {
     })
   })
 
+  describe('overview tab - logs and transactions usage rows', () => {
+    function setupOverviewWithData(settings: unknown, health: unknown = undefined) {
+      currentTab = 'overview'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 1. tokens
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 2. projects
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 3. users
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 4. auditLogData
+        .mockReturnValueOnce({ data: ref(adminUser) } as any)    // 5. me
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 6. invites
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 7. alertRules
+        .mockReturnValueOnce({ data: ref(settings) } as any)     // 8. settings
+        .mockReturnValueOnce({ data: ref(health) } as any)       // 9. health
+        .mockReturnValueOnce({ data: ref(undefined) } as any)    // 10. quota
+        .mockReturnValue({ data: ref(undefined) } as any)
+    }
+
+    const baseSettings = {
+      event_limit: 0, project_limit: 0, user_limit: 0, billing_url: null,
+      update_available: false, version: 'v1.0.0', commit: 'abc',
+      log_row_limit: 0, tx_row_limit: 0,
+    }
+
+    const baseHealth = {
+      events_total: 1_000, events_24h: 10,
+      tx_total: 500, tx_24h: 5,
+      logs_total: 2_000, logs_24h: 20,
+      oldest_event_at: null, oldest_tx_at: null, oldest_log_at: null,
+      retention_days: 90, db_size_bytes: 1024,
+    }
+
+    it('renders "Logs stored" label in overview', () => {
+      setupOverviewWithData(baseSettings)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Logs stored')
+    })
+
+    it('renders "Transactions stored" label in overview', () => {
+      setupOverviewWithData(baseSettings)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Transactions stored')
+    })
+
+    it('shows ∞ for logs when log_row_limit is 0', () => {
+      setupOverviewWithData({ ...baseSettings, log_row_limit: 0 })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const logRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Logs stored'))
+      expect(logRow?.find('.overview-limit__unlimited').exists()).toBe(true)
+    })
+
+    it('shows ∞ for transactions when tx_row_limit is 0', () => {
+      setupOverviewWithData({ ...baseSettings, tx_row_limit: 0 })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const txRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Transactions stored'))
+      expect(txRow?.find('.overview-limit__unlimited').exists()).toBe(true)
+    })
+
+    it('adds overview-bar--unlimited class to log bar when log_row_limit is 0', () => {
+      setupOverviewWithData({ ...baseSettings, log_row_limit: 0 })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const logRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Logs stored'))
+      expect(logRow?.find('.overview-bar').classes()).toContain('overview-bar--unlimited')
+    })
+
+    it('adds overview-bar--unlimited class to tx bar when tx_row_limit is 0', () => {
+      setupOverviewWithData({ ...baseSettings, tx_row_limit: 0 })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const txRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Transactions stored'))
+      expect(txRow?.find('.overview-bar').classes()).toContain('overview-bar--unlimited')
+    })
+
+    it('shows log count from health data in logs row', () => {
+      setupOverviewWithData(baseSettings, { ...baseHealth, logs_total: 3_000_000 })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('3.0M')
+    })
+
+    it('shows fill bar for logs when log_row_limit > 0 and health data present', () => {
+      setupOverviewWithData(
+        { ...baseSettings, log_row_limit: 5_000_000 },
+        { ...baseHealth, logs_total: 2_500_000 },
+      )
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const logRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Logs stored'))
+      expect(logRow?.find('.overview-bar__fill').exists()).toBe(true)
+    })
+
+    it('does not show fill bar for logs when log_row_limit is 0', () => {
+      setupOverviewWithData({ ...baseSettings, log_row_limit: 0 }, baseHealth)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const logRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Logs stored'))
+      expect(logRow?.find('.overview-bar__fill').exists()).toBe(false)
+    })
+
+    it('adds warn class to log bar when usage >= 80%', () => {
+      setupOverviewWithData(
+        { ...baseSettings, log_row_limit: 5_000_000 },
+        { ...baseHealth, logs_total: 4_500_000 },
+      )
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const logRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Logs stored'))
+      expect(logRow?.find('.overview-bar__fill').classes()).toContain('overview-bar__fill--warn')
+    })
+
+    it('adds danger class to log bar when usage >= 100%', () => {
+      setupOverviewWithData(
+        { ...baseSettings, log_row_limit: 5_000_000 },
+        { ...baseHealth, logs_total: 5_000_000 },
+      )
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const logRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Logs stored'))
+      expect(logRow?.find('.overview-bar__fill').classes()).toContain('overview-bar__fill--danger')
+    })
+
+    it('shows fill bar for transactions when tx_row_limit > 0 and health data present', () => {
+      setupOverviewWithData(
+        { ...baseSettings, tx_row_limit: 10_000_000 },
+        { ...baseHealth, tx_total: 5_000_000 },
+      )
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const txRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Transactions stored'))
+      expect(txRow?.find('.overview-bar__fill').exists()).toBe(true)
+    })
+
+    it('does not show fill bar for transactions when tx_row_limit is 0', () => {
+      setupOverviewWithData({ ...baseSettings, tx_row_limit: 0 }, baseHealth)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const txRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Transactions stored'))
+      expect(txRow?.find('.overview-bar__fill').exists()).toBe(false)
+    })
+
+    it('adds danger class to tx bar when usage >= 100%', () => {
+      setupOverviewWithData(
+        { ...baseSettings, tx_row_limit: 10_000_000 },
+        { ...baseHealth, tx_total: 10_000_000 },
+      )
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const txRow = wrapper.findAll('.overview-usage-row').find(r => r.text().includes('Transactions stored'))
+      expect(txRow?.find('.overview-bar__fill').classes()).toContain('overview-bar__fill--danger')
+    })
+  })
+
+  describe('projects tab - log and transaction counts', () => {
+    const proj = {
+      id: 'p1',
+      name: 'My App',
+      slug: 'my-app',
+      public_key: 'abc123',
+      event_count: 0,
+      events_24h: 0,
+      storage_bytes: 0,
+      passthrough_dsn: null,
+      scrub_fields: [],
+      scrub_patterns: [],
+      log_count: 1234,
+      tx_count: 567,
+    }
+
+    function setupProjectsWithCounts(projects: unknown[]) {
+      currentTab = 'projects'
+      vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+      vi.mocked(useQuery)
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 1. tokens
+        .mockReturnValueOnce({ data: ref(projects) } as any)     // 2. projects
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 3. users
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 4. auditLogData
+        .mockReturnValueOnce({ data: ref(adminUser) } as any)    // 5. me
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 6. invites
+        .mockReturnValueOnce({ data: ref([]) } as any)           // 7. alertRules
+        .mockReturnValueOnce({ data: ref(undefined) } as any)    // 8. settings
+        .mockReturnValueOnce({ data: ref(undefined) } as any)    // 9. health
+        .mockReturnValueOnce({ data: ref(undefined) } as any)    // 10. quota
+        .mockReturnValue({ data: ref(undefined) } as any)
+    }
+
+    it('shows log_count in expanded project card body', async () => {
+      setupProjectsWithCounts([proj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.proj-card__head').trigger('click')
+      expect(wrapper.find('.proj-card__body').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Logs stored')
+      expect(wrapper.text()).toContain('1,234')
+    })
+
+    it('shows tx_count in expanded project card body', async () => {
+      setupProjectsWithCounts([proj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.proj-card__head').trigger('click')
+      expect(wrapper.find('.proj-card__body').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Transactions stored')
+      expect(wrapper.text()).toContain('567')
+    })
+
+    it('does not show a quota bar for logs in expanded card', async () => {
+      setupProjectsWithCounts([proj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.proj-card__head').trigger('click')
+      const body = wrapper.find('.proj-card__body')
+      const logField = body.findAll('.field').find(f => f.text().includes('Logs stored'))
+      expect(logField?.find('.proj-quota-bar').exists()).toBe(false)
+    })
+
+    it('does not show a quota bar for transactions in expanded card', async () => {
+      setupProjectsWithCounts([proj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.proj-card__head').trigger('click')
+      const body = wrapper.find('.proj-card__body')
+      const txField = body.findAll('.field').find(f => f.text().includes('Transactions stored'))
+      expect(txField?.find('.proj-quota-bar').exists()).toBe(false)
+    })
+
+    it('shows zero log_count correctly in expanded card', async () => {
+      setupProjectsWithCounts([{ ...proj, log_count: 0 }])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.proj-card__head').trigger('click')
+      const body = wrapper.find('.proj-card__body')
+      const logField = body.findAll('.field').find(f => f.text().includes('Logs stored'))
+      expect(logField?.find('.proj-usage__count').text()).toBe('0')
+    })
+  })
+
   describe('tokens tab - updateToken mutation (position 3)', () => {
     const tokenRow = {
       id: 'tok-1', name: 'My Token', project_id: 'proj-1', writable: false,

@@ -25,6 +25,8 @@ type Project struct {
 	EventCount     int64           `json:"event_count"`
 	Events24h      int64           `json:"events_24h"`
 	StorageBytes   int64           `json:"storage_bytes"`
+	LogCount       int64           `json:"log_count"`
+	TxCount        int64           `json:"tx_count"`
 }
 
 func CreateProject(ctx context.Context, pool *pgxpool.Pool, slug, name string) (*Project, error) {
@@ -90,7 +92,9 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 		    COALESCE(ev.total, 0)::float8 / s.total_ev  * s.ev_bytes  +
 		    COALESCE(tx.total, 0)::float8 / s.total_tx  * s.tx_bytes  +
 		    COALESCE(lg.total, 0)::float8 / s.total_log * s.log_bytes
-		  )::int8 AS storage_bytes
+		  )::int8 AS storage_bytes,
+		  COALESCE(lg.total, 0) AS log_count,
+		  COALESCE(tx.total, 0) AS tx_count
 		FROM projects p
 		CROSS JOIN sizes s
 		LEFT JOIN ev  ON ev.project_id  = p.id
@@ -106,7 +110,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 	var projects []*Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt, &p.EventCount, &p.Events24h, &p.StorageBytes); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt, &p.EventCount, &p.Events24h, &p.StorageBytes, &p.LogCount, &p.TxCount); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		projects = append(projects, &p)

@@ -36,6 +36,8 @@ export interface Project {
   event_count: number
   events_24h: number
   storage_bytes: number
+  log_count: number
+  tx_count: number
 }
 
 export interface ProjectQuota {
@@ -57,6 +59,10 @@ export interface ServerSettings {
   /** Monthly per-project event limit (errors + transactions). 0 = unlimited. */
   event_limit: number
   user_limit: number
+  /** Instance-wide row cap for stored logs. 0 = no cap. */
+  log_row_limit: number
+  /** Instance-wide row cap for stored transactions. 0 = no cap. */
+  tx_row_limit: number
   version: string
   commit: string
   billing_url?: string

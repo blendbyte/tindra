@@ -393,6 +393,7 @@ func serveCmd(cfg config) *cobra.Command {
 			)
 
 			handler := api.NewRouter(pool, buf, txBuf, logBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.requireMFA, cfg.trustedProxies)
+			handler.SetRowLimits(cfg.logRowLimit, cfg.txRowLimit)
 			if !cfg.disableVersionCheck {
 				handler.StartVersionChecker(ctx)
 			}

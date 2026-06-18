@@ -54,6 +54,8 @@ type router struct {
 	projectLimit           atomic.Int32
 	eventLimit             atomic.Int32
 	userLimit              atomic.Int32
+	logRowLimit            int
+	txRowLimit             int
 	evaluator              *alerts.Evaluator
 	passthroughClient      *http.Client
 	retentionDays          int
@@ -82,6 +84,13 @@ func (h *Handle) SetLimits(projectLimit, eventLimit, userLimit int) {
 	h.ro.projectLimit.Store(int32(projectLimit))
 	h.ro.eventLimit.Store(int32(eventLimit))
 	h.ro.userLimit.Store(int32(userLimit))
+}
+
+// SetRowLimits stores the per-project row caps for logs and transactions.
+// These are read-only after startup so a plain int is sufficient.
+func (h *Handle) SetRowLimits(logRowLimit, txRowLimit int) {
+	h.ro.logRowLimit = logRowLimit
+	h.ro.txRowLimit = txRowLimit
 }
 
 func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.TransactionBuffer, logBuf *ingest.LogBuffer, smStore *sourcemaps.Store, oauthProviders []oauthProvider, cookieSecure bool, corsOrigin string, publicURL string, statsAPIKey string, billingURL string, retentionDays int, projectLimit int, eventLimit int, userLimit int, rateLimitLogin int, rateLimitEnvelope int, evaluator *alerts.Evaluator, webhookAllowPrivateIPs bool, requireMFA bool, trustedProxies []*net.IPNet) *Handle {

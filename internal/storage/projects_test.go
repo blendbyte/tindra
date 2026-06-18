@@ -263,6 +263,100 @@ func TestListProjects_alphabeticalOrder(t *testing.T) {
 	}
 }
 
+func TestListProjects_logCount(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+
+	p, err := storage.CreateProject(ctx, testPool, "log-count", "Log Count")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	for range 4 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'info', 'test log')
+		`, p.ID)
+	}
+
+	projects, err := storage.ListProjects(ctx, testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found *storage.Project
+	for _, pr := range projects {
+		if pr.ID == p.ID {
+			found = pr
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("project not found in list")
+	}
+	if found.LogCount != 4 {
+		t.Errorf("LogCount: got %d, want 4", found.LogCount)
+	}
+}
+
+func TestListProjects_txCount(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+
+	p, err := storage.CreateProject(ctx, testPool, "tx-count", "Tx Count")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	for range 3 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/tx', 'http.server', 'ok', 10, NOW(), NOW())
+		`, p.ID)
+	}
+
+	projects, err := storage.ListProjects(ctx, testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found *storage.Project
+	for _, pr := range projects {
+		if pr.ID == p.ID {
+			found = pr
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("project not found in list")
+	}
+	if found.TxCount != 3 {
+		t.Errorf("TxCount: got %d, want 3", found.TxCount)
+	}
+}
+
+func TestListProjects_logAndTxCountZeroWhenEmpty(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+
+	if _, err := storage.CreateProject(ctx, testPool, "empty-counts", "Empty Counts"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	projects, err := storage.ListProjects(ctx, testPool)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(projects) == 0 {
+		t.Fatal("expected project in list")
+	}
+	p := projects[0]
+	if p.LogCount != 0 {
+		t.Errorf("LogCount: got %d, want 0", p.LogCount)
+	}
+	if p.TxCount != 0 {
+		t.Errorf("TxCount: got %d, want 0", p.TxCount)
+	}
+}
+
 func TestDeleteProject(t *testing.T) {
 	truncateProjects(t)
 
