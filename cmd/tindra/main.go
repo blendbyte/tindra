@@ -56,6 +56,8 @@ type config struct {
 	userLimit              int
 	rateLimitLogin         int // max login attempts per 15 min per IP; 0 = disabled
 	rateLimitEnvelope      int // max envelope requests per minute per project; 0 = disabled
+	logRowLimit            int // max log rows per project (0 = no cap)
+	txRowLimit             int // max transaction rows per project (0 = no cap)
 	webhookAllowPrivateIPs bool
 	requireMFA             bool
 	trustedProxies         []*net.IPNet
@@ -139,6 +141,18 @@ func loadConfig() config {
 			userLimit = n
 		}
 	}
+	logRowLimit := 0
+	if s := strings.TrimSpace(os.Getenv("LOG_ROW_LIMIT")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			logRowLimit = n
+		}
+	}
+	txRowLimit := 0
+	if s := strings.TrimSpace(os.Getenv("TX_ROW_LIMIT")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			txRowLimit = n
+		}
+	}
 	rateLimitLogin := 10
 	if s := strings.TrimSpace(os.Getenv("RATE_LIMIT_LOGIN")); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
@@ -187,6 +201,8 @@ func loadConfig() config {
 		projectLimit:           projectLimit,
 		eventLimit:             eventLimit,
 		userLimit:              userLimit,
+		logRowLimit:            logRowLimit,
+		txRowLimit:             txRowLimit,
 		rateLimitLogin:         rateLimitLogin,
 		rateLimitEnvelope:      rateLimitEnvelope,
 		webhookAllowPrivateIPs: os.Getenv("WEBHOOK_ALLOW_PRIVATE_IPS") == "true",
@@ -321,7 +337,7 @@ func serveCmd(cfg config) *cobra.Command {
 			smStore := sourcemaps.NewStore(cfg.dataDir, pool)
 			oauthProviders := api.LoadOAuthProviders(ctx)
 
-			go retention.NewWorker(pool, cfg.retentionDays).Run(ctx)
+			go retention.NewWorker(pool, cfg.retentionDays).WithRowLimits(cfg.logRowLimit, cfg.txRowLimit).Run(ctx)
 			go digest.NewWorker(pool, emailSender, cfg.publicURL).Run(ctx)
 			go uptime.NewWorker(pool).Run(ctx)
 
@@ -369,6 +385,8 @@ func serveCmd(cfg config) *cobra.Command {
 				"project_limit", cfg.projectLimit,
 				"event_limit", cfg.eventLimit,
 				"user_limit", cfg.userLimit,
+				"log_row_limit", cfg.logRowLimit,
+				"tx_row_limit", cfg.txRowLimit,
 				"public_url", cfg.publicURL,
 				"rate_limit_login", cfg.rateLimitLogin,
 				"rate_limit_envelope", cfg.rateLimitEnvelope,

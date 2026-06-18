@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -155,6 +156,360 @@ func TestWorker_deletesOldLogs(t *testing.T) {
 	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&count)
 	if count != 1 {
 		t.Errorf("expected 1 log (fresh only), got %d", count)
+	}
+}
+
+func TestWorker_purgesLogsRowCap(t *testing.T) {
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "DELETE FROM logs")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM logs") })
+
+	// Insert 15 logs for the test project.
+	for i := range 15 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW() - ($2 * INTERVAL '1 second'), NOW(), 'info', 'row-cap-test')
+		`, testProject.ID, i)
+	}
+
+	var before int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&before)
+	if before != 15 {
+		t.Fatalf("expected 15 logs before purge, got %d", before)
+	}
+
+	// Cap at 10; expect 5 oldest to be removed.
+	retention.NewWorker(testPool, 90).WithRowLimits(10, 0).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&after)
+	if after != 10 {
+		t.Errorf("expected 10 logs after row cap purge, got %d", after)
+	}
+}
+
+func TestWorker_logsRowCapDoesNotPurgeWhenUnderLimit(t *testing.T) {
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "DELETE FROM logs")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM logs") })
+
+	for range 5 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'info', 'under-cap')
+		`, testProject.ID)
+	}
+
+	retention.NewWorker(testPool, 90).WithRowLimits(10, 0).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&after)
+	if after != 5 {
+		t.Errorf("expected all 5 logs to survive when under cap, got %d", after)
+	}
+}
+
+func TestWorker_logsRowCapZeroMeansNoCap(t *testing.T) {
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "DELETE FROM logs")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM logs") })
+
+	for range 20 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'info', 'no-cap')
+		`, testProject.ID)
+	}
+
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 0).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&after)
+	if after != 20 {
+		t.Errorf("expected 20 logs to survive when cap=0, got %d", after)
+	}
+}
+
+func TestWorker_purgesTransactionsRowCap(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	// Insert 15 transactions.
+	for i := range 15 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/tx-cap', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 second'), NOW())
+		`, testProject.ID, i)
+	}
+
+	var before int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&before)
+	if before != 15 {
+		t.Fatalf("expected 15 transactions before purge, got %d", before)
+	}
+
+	// Cap at 10; expect 5 to be removed.
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 10).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&after)
+	if after != 10 {
+		t.Errorf("expected 10 transactions after row cap purge, got %d", after)
+	}
+}
+
+func TestWorker_txRowCapIsolatesProjects(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	// Create a second project.
+	otherProject, err := storage.CreateProject(ctx, testPool, "ret-other", "Retention Other")
+	if err != nil {
+		t.Fatalf("create other project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", otherProject.ID)
+	})
+
+	// 12 transactions in testProject, 8 in otherProject.
+	for i := range 12 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/tx-cap-isolation', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 second'), NOW())
+		`, testProject.ID, i)
+	}
+	for i := range 8 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/tx-cap-isolation', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 second'), NOW())
+		`, otherProject.ID, i)
+	}
+
+	// Cap at 10 per project: testProject goes from 12→10, otherProject stays at 8.
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 10).RunOnce(ctx)
+
+	var countA, countB int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&countA)
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", otherProject.ID).Scan(&countB)
+
+	if countA != 10 {
+		t.Errorf("testProject: expected 10 transactions after cap, got %d", countA)
+	}
+	if countB != 8 {
+		t.Errorf("otherProject: expected 8 transactions (under cap, no deletions), got %d", countB)
+	}
+}
+
+func TestWorker_logsRowCapKeepsNewest(t *testing.T) {
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "DELETE FROM logs")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM logs") })
+
+	// Insert 5 logs spaced 1 hour apart, oldest first. Body encodes age so we
+	// can assert which rows survive.
+	for i := range 5 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW() - ($2 * INTERVAL '1 hour'), NOW(), 'info', $3)
+		`, testProject.ID, 4-i, fmt.Sprintf("log-%d-hours-old", 4-i))
+	}
+
+	// Cap at 3: only the 3 newest (0h, 1h, 2h old) should survive.
+	retention.NewWorker(testPool, 90).WithRowLimits(3, 0).RunOnce(ctx)
+
+	rows, err := testPool.Query(ctx, `
+		SELECT body FROM logs WHERE project_id = $1 ORDER BY timestamp DESC
+	`, testProject.ID)
+	if err != nil {
+		t.Fatalf("query logs: %v", err)
+	}
+	defer rows.Close()
+
+	var bodies []string
+	for rows.Next() {
+		var body string
+		rows.Scan(&body)
+		bodies = append(bodies, body)
+	}
+
+	if len(bodies) != 3 {
+		t.Fatalf("expected 3 logs after cap, got %d: %v", len(bodies), bodies)
+	}
+	want := []string{"log-0-hours-old", "log-1-hours-old", "log-2-hours-old"}
+	for i, w := range want {
+		if bodies[i] != w {
+			t.Errorf("row %d: got %q, want %q", i, bodies[i], w)
+		}
+	}
+}
+
+func TestWorker_logsRowCapIsolatesProjects(t *testing.T) {
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "DELETE FROM logs")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM logs") })
+
+	otherProject, err := storage.CreateProject(ctx, testPool, "ret-log-other", "Retention Log Other")
+	if err != nil {
+		t.Fatalf("create other project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", otherProject.ID)
+	})
+
+	// 12 logs in testProject, 8 in otherProject.
+	for i := range 12 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW() - ($2 * INTERVAL '1 second'), NOW(), 'info', 'log-isolation')
+		`, testProject.ID, i)
+	}
+	for i := range 8 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW() - ($2 * INTERVAL '1 second'), NOW(), 'info', 'log-isolation')
+		`, otherProject.ID, i)
+	}
+
+	// Cap at 10 per project: testProject 12→10, otherProject stays at 8.
+	retention.NewWorker(testPool, 90).WithRowLimits(10, 0).RunOnce(ctx)
+
+	var countA, countB int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&countA)
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", otherProject.ID).Scan(&countB)
+
+	if countA != 10 {
+		t.Errorf("testProject: expected 10 logs after cap, got %d", countA)
+	}
+	if countB != 8 {
+		t.Errorf("otherProject: expected 8 logs (under cap, no deletions), got %d", countB)
+	}
+}
+
+func TestWorker_txRowCapDoesNotPurgeWhenUnderLimit(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	for range 5 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/tx-under-cap', 'http.server', 'ok', 10, NOW(), NOW())
+		`, testProject.ID)
+	}
+
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 10).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&after)
+	if after != 5 {
+		t.Errorf("expected all 5 transactions to survive when under cap, got %d", after)
+	}
+}
+
+func TestWorker_txRowCapZeroMeansNoCap(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	for range 20 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/tx-no-cap', 'http.server', 'ok', 10, NOW(), NOW())
+		`, testProject.ID)
+	}
+
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 0).RunOnce(ctx)
+
+	var after int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&after)
+	if after != 20 {
+		t.Errorf("expected 20 transactions to survive when cap=0, got %d", after)
+	}
+}
+
+func TestWorker_txRowCapKeepsNewest(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	// Insert 5 transactions spaced 1 hour apart. Transaction name encodes age.
+	for i := range 5 {
+		testPool.Exec(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, $2, 'http.server', 'ok', 10, NOW() - ($3 * INTERVAL '1 hour'), NOW())
+		`, testProject.ID, fmt.Sprintf("/tx-%d-hours-old", 4-i), 4-i)
+	}
+
+	// Cap at 3: only the 3 newest (0h, 1h, 2h old) should survive.
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 3).RunOnce(ctx)
+
+	rows, err := testPool.Query(ctx, `
+		SELECT transaction FROM transactions WHERE project_id = $1 ORDER BY start_timestamp DESC
+	`, testProject.ID)
+	if err != nil {
+		t.Fatalf("query transactions: %v", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		rows.Scan(&name)
+		names = append(names, name)
+	}
+
+	if len(names) != 3 {
+		t.Fatalf("expected 3 transactions after cap, got %d: %v", len(names), names)
+	}
+	want := []string{"/tx-0-hours-old", "/tx-1-hours-old", "/tx-2-hours-old"}
+	for i, w := range want {
+		if names[i] != w {
+			t.Errorf("row %d: got %q, want %q", i, names[i], w)
+		}
+	}
+}
+
+func TestWorker_txRowCapCascadesToSpans(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	// Insert 5 transactions each with one span. The oldest 2 should be purged by the cap.
+	var txIDs [5]string
+	for i := range 5 {
+		err := testPool.QueryRow(ctx, `
+			INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, '/tx-cascade', 'http.server', 'ok', 10, NOW() - ($2 * INTERVAL '1 hour'), NOW())
+			RETURNING id
+		`, testProject.ID, 4-i).Scan(&txIDs[i])
+		if err != nil {
+			t.Fatalf("insert transaction %d: %v", i, err)
+		}
+		testPool.Exec(ctx, `
+			INSERT INTO spans (transaction_id, span_id, op, description, start_timestamp, timestamp, duration_ms, status, project_id)
+			VALUES ($1, $2, 'db.query', 'SELECT 1', NOW(), NOW(), 5, 'ok', $3)
+		`, txIDs[i], fmt.Sprintf("span-%d", i), testProject.ID)
+	}
+
+	var spansBefore int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM spans WHERE project_id = $1", testProject.ID).Scan(&spansBefore)
+	if spansBefore != 5 {
+		t.Fatalf("expected 5 spans before purge, got %d", spansBefore)
+	}
+
+	// Cap at 3: 2 oldest transactions (and their spans) should be removed.
+	retention.NewWorker(testPool, 90).WithRowLimits(0, 3).RunOnce(ctx)
+
+	var txAfter, spansAfter int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM transactions WHERE project_id = $1", testProject.ID).Scan(&txAfter)
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM spans WHERE project_id = $1", testProject.ID).Scan(&spansAfter)
+
+	if txAfter != 3 {
+		t.Errorf("expected 3 transactions after cap, got %d", txAfter)
+	}
+	if spansAfter != 3 {
+		t.Errorf("expected 3 spans after cascade delete, got %d", spansAfter)
 	}
 }
 

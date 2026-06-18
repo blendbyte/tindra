@@ -13,10 +13,20 @@ import (
 type Worker struct {
 	pool          *pgxpool.Pool
 	retentionDays int
+	logRowLimit   int
+	txRowLimit    int
 }
 
 func NewWorker(pool *pgxpool.Pool, retentionDays int) *Worker {
 	return &Worker{pool: pool, retentionDays: retentionDays}
+}
+
+// WithRowLimits sets per-project row caps for logs and transactions.
+// Zero means no cap. Returns the worker for chaining.
+func (w *Worker) WithRowLimits(logRowLimit, txRowLimit int) *Worker {
+	w.logRowLimit = logRowLimit
+	w.txRowLimit = txRowLimit
+	return w
 }
 
 // RunOnce runs a single purge cycle and returns. Useful for testing.
@@ -60,6 +70,9 @@ func (w *Worker) purge(ctx context.Context) {
 	firingsDeleted := w.purgeAlertFirings(ctx)
 	w.purgeExpiredAuthTokens(ctx)
 
+	logsCapDeleted := w.purgeLogsRowCap(ctx)
+	txCapDeleted := w.purgeTransactionsRowCap(ctx)
+
 	slog.Info("retention: done",
 		"events", eventsDeleted,
 		"issues_removed", issuesDeleted,
@@ -67,6 +80,8 @@ func (w *Worker) purge(ctx context.Context) {
 		"logs", logsDeleted,
 		"uptime_checks", uptimeChecksDeleted,
 		"alert_firings", firingsDeleted,
+		"logs_row_cap", logsCapDeleted,
+		"tx_row_cap", txCapDeleted,
 	)
 }
 
@@ -169,6 +184,50 @@ func (w *Worker) purgeAlertFirings(ctx context.Context) int64 {
 		)`)
 	if err != nil {
 		slog.Error("retention: purge alert firings", "err", err)
+		return 0
+	}
+	return tag.RowsAffected()
+}
+
+// purgeLogsRowCap keeps only the logRowLimit most recent log rows per project.
+// Rows are ranked by timestamp DESC; older rows beyond the cap are deleted.
+func (w *Worker) purgeLogsRowCap(ctx context.Context) int64 {
+	if w.logRowLimit <= 0 {
+		return 0
+	}
+	tag, err := w.pool.Exec(ctx, `
+		DELETE FROM logs
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY timestamp DESC) AS rn
+				FROM logs
+			) ranked
+			WHERE rn > $1
+		)`, w.logRowLimit)
+	if err != nil {
+		slog.Error("retention: purge logs row cap", "err", err)
+		return 0
+	}
+	return tag.RowsAffected()
+}
+
+// purgeTransactionsRowCap keeps only the txRowLimit most recent transaction rows per project.
+// Deleting a transaction cascades to its spans via the foreign key.
+func (w *Worker) purgeTransactionsRowCap(ctx context.Context) int64 {
+	if w.txRowLimit <= 0 {
+		return 0
+	}
+	tag, err := w.pool.Exec(ctx, `
+		DELETE FROM transactions
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY start_timestamp DESC) AS rn
+				FROM transactions
+			) ranked
+			WHERE rn > $1
+		)`, w.txRowLimit)
+	if err != nil {
+		slog.Error("retention: purge transactions row cap", "err", err)
 		return 0
 	}
 	return tag.RowsAffected()
