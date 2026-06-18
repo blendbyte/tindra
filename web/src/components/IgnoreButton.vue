@@ -135,7 +135,8 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
   right: 0;
   left: auto;
   min-width: 220px;
-  top: calc(100% + 4px);
+  bottom: calc(100% + 4px);
+  top: auto;
 }
 
 .popover__group-label {
