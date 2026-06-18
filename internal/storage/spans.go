@@ -56,16 +56,16 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 	where := fmt.Sprintf(`
 		WHERE %s
 		  AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')
-		  AND (CARDINALITY($2::uuid[]) = 0 OR t.project_id = ANY($2::uuid[]))`,
+		  AND (CARDINALITY($2::uuid[]) = 0 OR s.project_id = ANY($2::uuid[]))`,
 		spanOpFilter(category))
 
 	if env != "" {
 		args = append(args, env)
-		where += fmt.Sprintf(" AND t.environment = $%d", len(args))
+		where += fmt.Sprintf(" AND s.environment = $%d", len(args))
 	}
 	if release != "" {
 		args = append(args, release)
-		where += fmt.Sprintf(" AND t.release = $%d", len(args))
+		where += fmt.Sprintf(" AND s.release = $%d", len(args))
 	}
 
 	missRateExpr := `NULL`
@@ -101,7 +101,6 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 			) AS error_rate,
 			%s AS miss_rate
 		FROM spans s
-		JOIN transactions t ON t.id = s.transaction_id
 		%s
 		GROUP BY s.op, s.description
 		ORDER BY total_ms DESC
@@ -156,16 +155,16 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 	where := fmt.Sprintf(`
 		WHERE %s
 		  AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')
-		  AND (CARDINALITY($2::uuid[]) = 0 OR t.project_id = ANY($2::uuid[]))`,
+		  AND (CARDINALITY($2::uuid[]) = 0 OR s.project_id = ANY($2::uuid[]))`,
 		spanOpFilter(category))
 
 	if env != "" {
 		args = append(args, env)
-		where += fmt.Sprintf(" AND t.environment = $%d", len(args))
+		where += fmt.Sprintf(" AND s.environment = $%d", len(args))
 	}
 	if release != "" {
 		args = append(args, release)
-		where += fmt.Sprintf(" AND t.release = $%d", len(args))
+		where += fmt.Sprintf(" AND s.release = $%d", len(args))
 	}
 
 	q := fmt.Sprintf(`
@@ -174,7 +173,6 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 			COUNT(*) AS count,
 			COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.duration_ms), 0) AS p50
 		FROM spans s
-		JOIN transactions t ON t.id = s.transaction_id
 		%s
 		GROUP BY bucket
 		ORDER BY bucket ASC
@@ -222,15 +220,15 @@ func GetSpanSamples(ctx context.Context, pool *pgxpool.Pool, op, description str
 		WHERE s.op = $3
 		  AND COALESCE(s.description, '') = $4
 		  AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')
-		  AND (CARDINALITY($2::uuid[]) = 0 OR t.project_id = ANY($2::uuid[]))`
+		  AND (CARDINALITY($2::uuid[]) = 0 OR s.project_id = ANY($2::uuid[]))`
 
 	if env != "" {
 		args = append(args, env)
-		where += fmt.Sprintf(" AND t.environment = $%d", len(args))
+		where += fmt.Sprintf(" AND s.environment = $%d", len(args))
 	}
 	if release != "" {
 		args = append(args, release)
-		where += fmt.Sprintf(" AND t.release = $%d", len(args))
+		where += fmt.Sprintf(" AND s.release = $%d", len(args))
 	}
 
 	rows, err := pool.Query(ctx, `

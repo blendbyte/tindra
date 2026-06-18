@@ -141,8 +141,8 @@ func TestGetSpansForTransaction(t *testing.T) {
 		start := tx.StartTimestamp.Add(time.Duration(i*10) * time.Millisecond)
 		end := start.Add(10 * time.Millisecond)
 		if _, err := testPool.Exec(context.Background(), `
-			INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status)
-			VALUES ($1, $2, 'db.query', $3, $4, 10, 'ok')
+			INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, project_id)
+			SELECT $1, $2, 'db.query', $3, $4, 10, 'ok', project_id FROM transactions WHERE id = $1
 		`, tx.ID, spanID, start, end); err != nil {
 			t.Fatalf("insert span: %v", err)
 		}
@@ -181,16 +181,17 @@ func TestGetSpansForTransaction_dataField(t *testing.T) {
 
 	// Span with JSONB data
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, data)
-		VALUES ($1, 'with-data', 'db.query', $2, $3, 10, 'ok', '{"db.system":"postgresql","rows":42}')
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, data, project_id)
+		SELECT $1, 'with-data', 'db.query', $2, $3, 10, 'ok', '{"db.system":"postgresql","rows":42}', project_id
+		FROM transactions WHERE id = $1
 	`, tx.ID, start, end); err != nil {
 		t.Fatalf("insert span with data: %v", err)
 	}
 
 	// Span with NULL data — COALESCE should return '{}'
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status)
-		VALUES ($1, 'null-data', 'http.client', $2, $3, 10, 'ok')
+		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, project_id)
+		SELECT $1, 'null-data', 'http.client', $2, $3, 10, 'ok', project_id FROM transactions WHERE id = $1
 	`, tx.ID, start, end); err != nil {
 		t.Fatalf("insert span without data: %v", err)
 	}

@@ -131,8 +131,11 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 
 	// Phase 2: insert spans referencing the transaction IDs
 	type indexedSpan struct {
-		txID string
-		sp   BufferedSpan
+		txID        string
+		projectID   string
+		environment string
+		release     string
+		sp          BufferedSpan
 	}
 	var toInsert []indexedSpan
 	for i, tx := range batch {
@@ -140,7 +143,7 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 			continue
 		}
 		for _, sp := range tx.Spans {
-			toInsert = append(toInsert, indexedSpan{txIDs[i], sp})
+			toInsert = append(toInsert, indexedSpan{txIDs[i], tx.ProjectID, tx.Environment, tx.Release, sp})
 		}
 	}
 	if len(toInsert) == 0 {
@@ -152,11 +155,13 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 		spanBatch.Queue(`
 			INSERT INTO spans
 				(transaction_id, span_id, parent_span_id, op, description,
-				 start_timestamp, timestamp, duration_ms, status, data)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+				 start_timestamp, timestamp, duration_ms, status, data,
+				 project_id, environment, release)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		`,
 			s.txID, s.sp.SpanID, nilStr(s.sp.ParentSpanID), s.sp.Op, nilStr(s.sp.Description),
 			s.sp.StartTimestamp, s.sp.Timestamp, s.sp.DurationMs, s.sp.Status, nilJSON(s.sp.Data),
+			s.projectID, nilStr(s.environment), nilStr(s.release),
 		)
 	}
 	spanResults := pool.SendBatch(ctx, spanBatch)

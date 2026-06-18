@@ -21,12 +21,17 @@ func setupProjectForSpans(t *testing.T) *storage.Project {
 }
 
 // seedSpan inserts a span attached to the given transaction.
+// project_id, environment, and release are pulled from the parent transaction row.
 func seedSpan(t *testing.T, txnID, spanID, op, description string, durationMs int, start time.Time) {
 	t.Helper()
 	end := start.Add(time.Duration(durationMs) * time.Millisecond)
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO spans (transaction_id, span_id, op, description, start_timestamp, timestamp, duration_ms, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'ok')
+		INSERT INTO spans
+			(transaction_id, span_id, op, description, start_timestamp, timestamp, duration_ms, status,
+			 project_id, environment, release)
+		SELECT $1, $2, $3, $4, $5, $6, $7, 'ok',
+		       project_id, environment, release
+		FROM transactions WHERE id = $1
 	`, txnID, spanID, op, nullableString(description), start, end, durationMs); err != nil {
 		t.Fatalf("seed span: %v", err)
 	}
@@ -370,30 +375,176 @@ func TestGetSpanTimeseries_5minBuckets(t *testing.T) {
 	}
 }
 
-// TestGetSpanTimeseries_withEnvFilter verifies the environment filter is applied to span timeseries.
-func TestGetSpanTimeseries_withEnvFilter(t *testing.T) {
-	setupProjectForSpans(t)
+// TestGetSpanTimeseries_envFilter verifies that timeseries excludes spans from a non-matching environment.
+func TestGetSpanTimeseries_envFilter(t *testing.T) {
+	p := setupProjectForSpans(t)
+	now := time.Now().UTC()
 
-	// Just verify the query runs without error when env is set
-	ts, err := storage.GetSpanTimeseries(context.Background(), testPool, "db", nil, 24, "production", "")
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, environment)
+		VALUES ($1, '/prod-txn', 'http.server', 'ok', 100, $2, $3, 'production')
+	`, p.ID, now.Add(-time.Hour), now.Add(-time.Hour+100*time.Millisecond))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("insert transaction: %v", err)
 	}
-	if ts == nil {
-		t.Fatal("expected non-nil timeseries")
+	var txID string
+	testPool.QueryRow(context.Background(), `SELECT id FROM transactions WHERE transaction = '/prod-txn' AND project_id = $1`, p.ID).Scan(&txID)
+	seedSpan(t, txID, "ts-env-sp", "db.query", "prod-only", 15, now.Add(-time.Hour))
+
+	// Should appear with matching env filter.
+	ts, err := storage.GetSpanTimeseries(context.Background(), testPool, "db", []string{p.ID}, 24, "production", "")
+	if err != nil {
+		t.Fatalf("production filter: %v", err)
+	}
+	if len(ts.Buckets) == 0 {
+		t.Error("expected at least one bucket for production env")
+	}
+
+	// Should be empty with non-matching env filter.
+	ts2, err := storage.GetSpanTimeseries(context.Background(), testPool, "db", []string{p.ID}, 24, "staging", "")
+	if err != nil {
+		t.Fatalf("staging filter: %v", err)
+	}
+	if len(ts2.Buckets) != 0 {
+		t.Errorf("expected no buckets for staging env, got %d", len(ts2.Buckets))
 	}
 }
 
-// TestGetSpanSamples_withEnvAndReleaseFilter verifies both env and release filters in GetSpanSamples.
-func TestGetSpanSamples_withEnvAndReleaseFilter(t *testing.T) {
-	setupProjectForSpans(t)
+// TestGetSpanTimeseries_projectFilter verifies timeseries is scoped to the requested project.
+func TestGetSpanTimeseries_projectFilter(t *testing.T) {
+	truncateProjects(t)
+	now := time.Now().UTC()
 
-	// Just verify the query runs with env/release set (no data expected)
-	samples, err := storage.GetSpanSamples(context.Background(), testPool, "db.query", "SELECT 1", nil, 24, "production", "v1.0.0")
+	p1, _ := storage.CreateProject(context.Background(), testPool, "ts-p1", "P1")
+	p2, _ := storage.CreateProject(context.Background(), testPool, "ts-p2", "P2")
+
+	tx1 := seedTransaction(t, p1.ID, "/p1", 50, now.Add(-time.Hour))
+	tx2 := seedTransaction(t, p2.ID, "/p2", 50, now.Add(-time.Hour))
+
+	seedSpan(t, tx1.ID, "ts-proj-sp1", "db.query", "from-p1", 10, now.Add(-time.Hour))
+	seedSpan(t, tx2.ID, "ts-proj-sp2", "db.query", "from-p2", 10, now.Add(-time.Hour))
+
+	ts, err := storage.GetSpanTimeseries(context.Background(), testPool, "db", []string{p1.ID}, 24, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if samples == nil {
-		t.Error("expected non-nil (empty) slice")
+	// p1 has one span so there should be exactly one non-empty bucket.
+	total := int64(0)
+	for _, b := range ts.Buckets {
+		total += b.Count
+	}
+	if total != 1 {
+		t.Errorf("expected total count=1 (only p1 spans), got %d", total)
+	}
+}
+
+// TestGetSpanSummaries_releaseFilter verifies that the release filter is applied to summaries.
+func TestGetSpanSummaries_releaseFilter(t *testing.T) {
+	p := setupProjectForSpans(t)
+	now := time.Now().UTC()
+
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, release)
+		VALUES ($1, '/rel-txn', 'http.server', 'ok', 100, $2, $3, 'v2.0.0')
+	`, p.ID, now, now.Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+	var txID string
+	testPool.QueryRow(context.Background(), `SELECT id FROM transactions WHERE transaction = '/rel-txn' AND project_id = $1`, p.ID).Scan(&txID)
+	seedSpan(t, txID, "rel-sp", "db.query", "SELECT release", 10, now)
+
+	// Matching release — span should appear.
+	got, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "", "v2.0.0")
+	if err != nil {
+		t.Fatalf("release filter: %v", err)
+	}
+	var found bool
+	for _, s := range got {
+		if s.Description == "SELECT release" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected span visible when release matches")
+	}
+
+	// Non-matching release — span should not appear.
+	none, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "", "v1.0.0")
+	if err != nil {
+		t.Fatalf("v1 release filter: %v", err)
+	}
+	for _, s := range none {
+		if s.Description == "SELECT release" {
+			t.Error("span from v2.0.0 should not appear when filtering by v1.0.0")
+		}
+	}
+}
+
+// TestGetSpanSamples_envFilter verifies that samples are scoped to the requested environment.
+func TestGetSpanSamples_envFilter(t *testing.T) {
+	p := setupProjectForSpans(t)
+	now := time.Now().UTC()
+
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, environment)
+		VALUES ($1, '/samp-env-txn', 'http.server', 'ok', 100, $2, $3, 'production')
+	`, p.ID, now, now.Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+	var txID string
+	testPool.QueryRow(context.Background(), `SELECT id FROM transactions WHERE transaction = '/samp-env-txn' AND project_id = $1`, p.ID).Scan(&txID)
+	seedSpan(t, txID, "samp-env-sp", "cache.get", "user:env", 5, now)
+
+	// Matching env.
+	got, err := storage.GetSpanSamples(context.Background(), testPool, "cache.get", "user:env", []string{p.ID}, 24, "production", "")
+	if err != nil {
+		t.Fatalf("production filter: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("expected 1 sample for production env, got %d", len(got))
+	}
+
+	// Non-matching env.
+	none, err := storage.GetSpanSamples(context.Background(), testPool, "cache.get", "user:env", []string{p.ID}, 24, "staging", "")
+	if err != nil {
+		t.Fatalf("staging filter: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("expected 0 samples for staging env, got %d", len(none))
+	}
+}
+
+// TestGetSpanSamples_releaseFilter verifies that samples are scoped to the requested release.
+func TestGetSpanSamples_releaseFilter(t *testing.T) {
+	p := setupProjectForSpans(t)
+	now := time.Now().UTC()
+
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, release)
+		VALUES ($1, '/samp-rel-txn', 'http.server', 'ok', 100, $2, $3, 'v3.0.0')
+	`, p.ID, now, now.Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+	var txID string
+	testPool.QueryRow(context.Background(), `SELECT id FROM transactions WHERE transaction = '/samp-rel-txn' AND project_id = $1`, p.ID).Scan(&txID)
+	seedSpan(t, txID, "samp-rel-sp", "cache.get", "user:rel", 5, now)
+
+	got, err := storage.GetSpanSamples(context.Background(), testPool, "cache.get", "user:rel", []string{p.ID}, 24, "", "v3.0.0")
+	if err != nil {
+		t.Fatalf("release filter: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("expected 1 sample for v3.0.0, got %d", len(got))
+	}
+
+	none, err := storage.GetSpanSamples(context.Background(), testPool, "cache.get", "user:rel", []string{p.ID}, 24, "", "v1.0.0")
+	if err != nil {
+		t.Fatalf("v1 release filter: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("expected 0 samples for v1.0.0, got %d", len(none))
 	}
 }
