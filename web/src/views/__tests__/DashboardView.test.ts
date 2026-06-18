@@ -73,7 +73,7 @@ function setupQueries({
   alertsLoading = false,
   uptimeMonitors = [] as unknown[],
   cronMonitors = [] as unknown[],
-  projects = [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1' }] as Array<{ id: string; name: string; slug: string; public_key?: string }>,
+  projects = [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 1 }] as Array<{ id: string; name: string; slug: string; public_key?: string; event_count?: number }>,
   projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
   projStatsFetching = false,
 } = {}) {
@@ -436,7 +436,7 @@ describe('DashboardView', () => {
         time: new Date(now.getTime() - 3_600_000).toISOString(),
         count: 1200,
       }
-      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'App', slug: 'app' }] } as any)
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'App', slug: 'app', event_count: 1 }] } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
@@ -457,8 +457,8 @@ describe('DashboardView', () => {
     const stubsWithCapture = { ...stubs, RouterLink: RouterLinkCapture }
 
     const twoProjects = [
-      { id: 'p1', name: 'Frontend', slug: 'frontend' },
-      { id: 'p2', name: 'Backend', slug: 'backend' },
+      { id: 'p1', name: 'Frontend', slug: 'frontend', event_count: 1 },
+      { id: 'p2', name: 'Backend', slug: 'backend', event_count: 1 },
     ]
 
     it('is hidden when there is only one project', () => {
@@ -636,12 +636,12 @@ describe('DashboardView', () => {
 
     describe('expand/collapse', () => {
       const sixProjects = [
-        { id: 'p1', name: 'Alpha', slug: 'alpha' },
-        { id: 'p2', name: 'Beta', slug: 'beta' },
-        { id: 'p3', name: 'Gamma', slug: 'gamma' },
-        { id: 'p4', name: 'Delta', slug: 'delta' },
-        { id: 'p5', name: 'Epsilon', slug: 'epsilon' },
-        { id: 'p6', name: 'Zeta', slug: 'zeta' },
+        { id: 'p1', name: 'Alpha', slug: 'alpha', event_count: 1 },
+        { id: 'p2', name: 'Beta', slug: 'beta', event_count: 1 },
+        { id: 'p3', name: 'Gamma', slug: 'gamma', event_count: 1 },
+        { id: 'p4', name: 'Delta', slug: 'delta', event_count: 1 },
+        { id: 'p5', name: 'Epsilon', slug: 'epsilon', event_count: 1 },
+        { id: 'p6', name: 'Zeta', slug: 'zeta', event_count: 1 },
       ]
 
       it('shows at most 5 rows when there are more than 5 projects', () => {
@@ -707,11 +707,9 @@ describe('DashboardView', () => {
       expect(pushMock).toHaveBeenCalledWith('/settings/projects?new=1')
     })
 
-    it('shows waiting-for-event card when projects exist but no tx or releases', () => {
+    it('shows waiting-for-event card when project has zero event_count', () => {
       const wrapper = makeWrapper({
-        issues: { issues: [], total: 0, has_more: false },
-        txSummaries: [],
-        releases: { releases: [], total: 0, has_more: false },
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
       })
       expect(wrapper.text()).toContain('Waiting for your first event')
       expect(wrapper.find('.db-kpis').exists()).toBe(false)
@@ -719,9 +717,7 @@ describe('DashboardView', () => {
 
     it('shows the DSN in the waiting card', () => {
       const wrapper = makeWrapper({
-        issues: { issues: [], total: 0, has_more: false },
-        txSummaries: [],
-        releases: { releases: [], total: 0, has_more: false },
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
       })
       expect(wrapper.text()).toContain('https://key1@tindra.test/p1')
     })
@@ -737,11 +733,36 @@ describe('DashboardView', () => {
       expect(wrapper.text()).not.toContain('Waiting for your first event')
     })
 
-    it('does not show empty state when transactions exist', () => {
+    it('does not show empty state when project has event_count > 0', () => {
       const wrapper = makeWrapper({
-        txSummaries: [{ transaction: '/api/health', op: 'http.server', p50: 10, p95: 30, failure_rate: 0, sample_count: 1, project_id: 'p1' }],
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 50_000 }],
+        txSummaries: [],
         releases: { releases: [], total: 0, has_more: false },
       })
+      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('Waiting for your first event')
+    })
+
+    it('does not show empty state when project has events even with no recent tx, issues, or releases', () => {
+      // Covers the rate-limit / locked-instance case: events exist historically but nothing recent
+      const wrapper = makeWrapper({
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 50_000 }],
+        issues: { issues: [], total: 0, has_more: false },
+        txSummaries: [],
+        releases: { releases: [], total: 0, has_more: false },
+      })
+      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('Waiting for your first event')
+    })
+
+    it('shows empty state when selected project has no events even if other projects do', () => {
+      const wrapper = makeWrapper({
+        projects: [
+          { id: 'p1', name: 'Empty', slug: 'empty', public_key: 'key1', event_count: 0 },
+          { id: 'p2', name: 'Active', slug: 'active', public_key: 'key2', event_count: 999 },
+        ],
+      })
+      // selectedIds is [] so all projects are visible — p2 has events, so not first-run
       expect(wrapper.find('.db-kpis').exists()).toBe(true)
     })
 
@@ -749,6 +770,7 @@ describe('DashboardView', () => {
       const writeText = vi.fn().mockResolvedValue(undefined)
       Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
       const wrapper = makeWrapper({
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
         issues: { issues: [], total: 0, has_more: false },
         txSummaries: [],
         releases: { releases: [], total: 0, has_more: false },
@@ -760,7 +782,7 @@ describe('DashboardView', () => {
     it('picks the selected project DSN when selectedIds is non-empty', () => {
       vi.mocked(useProjectsStore).mockReturnValue({
         selectedIds: ['p1'],
-        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1' }],
+        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
       } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)

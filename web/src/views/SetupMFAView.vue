@@ -172,17 +172,6 @@ function copySecret() {
         </div>
       </template>
 
-      <div class="login__hint">
-        <a href="https://tindra.sh" target="_blank" rel="noopener" class="login__hint-link">
-          <Icon name="globe" :size="11" />
-          tindra.sh
-        </a>
-        <span aria-hidden="true">·</span>
-        <a href="https://github.com/blendbyte/tindra" target="_blank" rel="noopener" class="login__hint-link">
-          <Icon name="github" :size="11" />
-          GitHub
-        </a>
-      </div>
     </div>
   </div>
 </template>

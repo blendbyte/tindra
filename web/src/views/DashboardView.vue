@@ -439,11 +439,16 @@ const firstDsn = computed(() => {
   return dsnFor(p.public_key, p.id)
 })
 
+const visibleProjects = computed(() =>
+  projects.selectedIds.length > 0
+    ? projects.projects.filter(p => projects.selectedIds.includes(p.id))
+    : projects.projects,
+)
+
 const isFirstRun = computed(() => {
   if (loading.value) return false
   if (noProjects.value) return true
-  if (issuesPage.value === undefined || txSummaries.value === undefined) return false
-  return (txSummaries.value?.length ?? 0) === 0 && (releasesPage.value?.releases?.length ?? 0) === 0
+  return visibleProjects.value.every(p => (p.event_count ?? 0) === 0)
 })
 
 function copyDsn() {
