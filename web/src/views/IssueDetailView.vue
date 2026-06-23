@@ -746,6 +746,7 @@ onUnmounted(() => {
 
         <IgnoreButton
           v-if="issue?.status !== 'ignored'"
+          direction="down"
           :disabled="updatingStatus"
           @ignore="handleIgnore"
         />

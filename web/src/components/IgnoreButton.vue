@@ -10,6 +10,7 @@ export interface IgnorePayload {
 
 const props = defineProps<{
   disabled?: boolean
+  direction?: 'up' | 'down'
 }>()
 
 const emit = defineEmits<{
@@ -83,7 +84,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
       <Icon name="chevron-down" :size="11" />
     </button>
 
-    <div v-if="open" class="popover ignore-btn__popover">
+    <div v-if="open" class="popover ignore-btn__popover" :class="{ 'ignore-btn__popover--down': props.direction === 'down' }">
       <div class="popover__list">
         <div class="popover__group-label">Time limit</div>
         <div
@@ -137,6 +138,11 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
   min-width: 220px;
   bottom: calc(100% + 4px);
   top: auto;
+}
+
+.ignore-btn__popover--down {
+  bottom: auto;
+  top: calc(100% + 4px);
 }
 
 .popover__group-label {
