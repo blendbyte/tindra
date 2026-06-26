@@ -390,7 +390,7 @@ func TestDoPasswordReset_passwordTooShort(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleDoPasswordReset — MFA enabled path (lines 163-174)
+// handleDoPasswordReset — MFA enabled path: MFA is cleared, session issued
 // ---------------------------------------------------------------------------
 
 func TestDoPasswordReset_withMFAEnabled(t *testing.T) {
@@ -410,14 +410,20 @@ func TestDoPasswordReset_withMFAEnabled(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for MFA user password reset, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var result map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+	var cookieFound bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "tindra_session" && c.Value != "" {
+			cookieFound = true
+		}
+	}
+	if !cookieFound {
+		t.Error("expected tindra_session cookie after password reset with MFA cleared")
+	}
+	var u storage.User
+	if err := json.NewDecoder(rec.Body).Decode(&u); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if v, _ := result["mfa_required"].(bool); !v {
-		t.Errorf("expected mfa_required:true, got %v", result)
-	}
-	if _, ok := result["mfa_token"]; !ok {
-		t.Error("expected mfa_token in response")
+	if u.MFAEnabled {
+		t.Error("expected MFA to be disabled after password reset")
 	}
 }

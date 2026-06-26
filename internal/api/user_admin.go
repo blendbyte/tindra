@@ -165,19 +165,14 @@ func (ro *router) handleDoPasswordReset(w http.ResponseWriter, r *http.Request) 
 		IP:        r.RemoteAddr,
 	})
 
-	// MFA step: issue a short-lived challenge instead of a full session.
+	// Admin-initiated resets clear MFA so the user re-enrolls on next login.
 	if u.MFAEnabled {
-		mfaToken, err := storage.CreateMFAChallenge(r.Context(), ro.pool, u.ID)
-		if err != nil {
-			slog.Error("create mfa challenge after password reset", "err", err)
+		if err := storage.DisableMFA(r.Context(), ro.pool, u.ID); err != nil {
+			slog.Error("disable mfa after password reset", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, map[string]any{
-			"mfa_required": true,
-			"mfa_token":    mfaToken,
-		})
-		return
+		u.MFAEnabled = false
 	}
 
 	session, err := storage.CreateSession(r.Context(), ro.pool, u.ID)
