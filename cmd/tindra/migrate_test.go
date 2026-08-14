@@ -48,8 +48,24 @@ func TestUsersCmd_hasSubcommands(t *testing.T) {
 	if cmd.Use != "users" {
 		t.Errorf("Use: got %q, want %q", cmd.Use, "users")
 	}
-	if len(cmd.Commands()) != 4 {
-		t.Errorf("subcommands: got %d, want 4", len(cmd.Commands()))
+	want := map[string]bool{
+		"create":              false,
+		"list":                false,
+		"send-password-reset": false,
+		"send-invite":         false,
+		"disable-mfa":         false,
+	}
+	for _, sub := range cmd.Commands() {
+		if _, ok := want[sub.Name()]; !ok {
+			t.Errorf("unexpected subcommand %q", sub.Name())
+			continue
+		}
+		want[sub.Name()] = true
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("missing subcommand %q", name)
+		}
 	}
 }
 

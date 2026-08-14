@@ -21,6 +21,14 @@ linters:
           - bodyclose
           - noctx
           - errcheck
+      # On Go 1.26.4+ staticcheck stops recognising t.Fatal as terminating, so
+      # every "if x == nil { t.Fatal(...) }" guard is followed by what it reads
+      # as a nil dereference. The guards are correct and CI's Go 1.26.3 reports
+      # none of this, so keep the rule off test files rather than rewriting them.
+      - path: _test\.go
+        text: "SA5011"
+        linters:
+          - staticcheck
       - linters:
           - errcheck
         text: "Error return value of `\\(\\*encoding/json\\.Encoder\\)\\.Encode` is not checked"
