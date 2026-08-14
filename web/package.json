@@ -12,26 +12,26 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tanstack/vue-query": "^5.101.0",
-    "@tanstack/vue-virtual": "^3.13.28",
-    "cronstrue": "^3.14.0",
+    "@tanstack/vue-query": "^5.101.4",
+    "@tanstack/vue-virtual": "^3.13.35",
+    "cronstrue": "^3.24.0",
     "pinia": "^3.0.4",
-    "shiki": "^4.2.0",
-    "vue": "^3.5.38",
-    "vue-router": "^5.1.0"
+    "shiki": "^4.4.3",
+    "vue": "^3.5.41",
+    "vue-router": "^5.2.0"
   },
   "devDependencies": {
     "@pinia/testing": "^1.0.3",
-    "@playwright/test": "^1.60.0",
-    "@tailwindcss/vite": "^4.3.0",
-    "@vitejs/plugin-vue": "^6.0.7",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitest/coverage-v8": "^4.1.10",
     "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.10.2",
-    "tailwindcss": "^4.3.0",
+    "happy-dom": "^20.11.2",
+    "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16",
-    "vitest": "^4.1.8",
-    "vue-tsc": "^3.3.4"
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.3.9"
   }
 }
