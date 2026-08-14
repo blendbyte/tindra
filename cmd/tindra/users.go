@@ -18,7 +18,7 @@ func usersCmd(cfg config) *cobra.Command {
 		Use:   "users",
 		Short: "Manage users",
 	}
-	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg), usersSendPasswordResetCmd(cfg), usersSendInviteCmd(cfg))
+	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg), usersSendPasswordResetCmd(cfg), usersSendInviteCmd(cfg), usersDisableMFACmd(cfg))
 	return cmd
 }
 
@@ -113,6 +113,45 @@ func usersSendPasswordResetCmd(cfg config) *cobra.Command {
 			}
 
 			fmt.Printf("Password reset email sent to %s\n", u.Email)
+			return nil
+		},
+	}
+}
+
+func usersDisableMFACmd(cfg config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "disable-mfa <email>",
+		Short: "Clear a user's authenticator so they can log in with their password alone",
+		Long: "Clear a user's authenticator so they can log in with their password alone.\n\n" +
+			"Recovers an account locked out by a lost or misconfigured authenticator. The user\n" +
+			"keeps their password and can enrol a new authenticator from Settings afterwards.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			pool, err := storage.Connect(ctx, cfg.databaseURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			email := strings.ToLower(strings.TrimSpace(args[0]))
+			u, err := storage.GetUserByEmail(ctx, pool, email)
+			if err != nil {
+				return fmt.Errorf("look up user: %w", err)
+			}
+			if u == nil {
+				return fmt.Errorf("no user found with email %q", email)
+			}
+			if !u.MFAEnabled {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s does not have an authenticator enabled\n", u.Email)
+				return nil
+			}
+
+			if err := storage.DisableMFA(ctx, pool, u.ID); err != nil {
+				return fmt.Errorf("disable mfa: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Authenticator cleared for %s. They can log in with their password and re-enrol from Settings.\n", u.Email)
 			return nil
 		},
 	}

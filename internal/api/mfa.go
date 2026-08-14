@@ -7,12 +7,48 @@ import (
 	"image/png"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
+
+// totpIssuer derives an issuer label from PUBLIC_URL.
+//
+// The otpauth label is "issuer:account", so a colon or slash in the issuer
+// produces a URI that authenticator apps either mis-split or reject outright.
+// Feeding PUBLIC_URL in raw yielded "otpauth://totp/https://host:user@example.com".
+// Use the bare hostname, and fall back to "Tindra" if nothing usable is left.
+func totpIssuer(publicURL string) string {
+	const fallback = "Tindra"
+
+	raw := strings.TrimSpace(publicURL)
+	if raw == "" {
+		return fallback
+	}
+
+	// A scheme-less PUBLIC_URL ("tindra.example.com:8443/app") parses as a path
+	// rather than an authority. Prefixing "//" makes url.Parse read it as a host.
+	if !strings.Contains(raw, "//") {
+		raw = "//" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fallback
+	}
+
+	// Hostname drops the port, userinfo, and IPv6 brackets.
+	host := u.Hostname()
+	// An unbracketed IPv6 literal would reintroduce the label delimiter, and an
+	// IP address makes a poor issuer label anyway.
+	if host == "" || strings.Contains(host, ":") {
+		return fallback
+	}
+	return host
+}
 
 // handleMFASetup generates a new TOTP secret and stores it pending confirmation.
 // Requires session auth. The secret is NOT active until handleMFAConfirm succeeds.
@@ -30,12 +66,8 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issuer := "Tindra"
-	if ro.publicURL != "" {
-		issuer = ro.publicURL
-	}
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      issuer,
+		Issuer:      totpIssuer(ro.publicURL),
 		AccountName: user.Email,
 	})
 	if err != nil {

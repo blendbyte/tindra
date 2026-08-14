@@ -338,3 +338,122 @@ func TestSendInviteCmd_sendsEmail(t *testing.T) {
 		t.Errorf("expected success output mentioning recipient, got: %q", out.String())
 	}
 }
+
+// --- disable-mfa ---
+
+func TestDisableMFACmd_missingArg(t *testing.T) {
+	cmd := usersDisableMFACmd(inviteCfg())
+	cmd.SetArgs([]string{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("expected error when email argument is missing")
+	}
+}
+
+func TestDisableMFACmd_userNotFound(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	cmd := usersDisableMFACmd(inviteCfg())
+	cmd.SetArgs([]string{"nobody@example.com"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for unknown email")
+	}
+	if !strings.Contains(err.Error(), "no user found") {
+		t.Errorf("expected 'no user found' error, got: %v", err)
+	}
+}
+
+func TestDisableMFACmd_clearsSecretAndFlag(t *testing.T) {
+	truncateUsersAndInvites(t)
+	ctx := context.Background()
+
+	u, err := storage.CreateUser(ctx, testUserPool, "locked-out@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := storage.StoreMFASecret(ctx, testUserPool, u.ID, "JBSWY3DPEHPK3PXP"); err != nil {
+		t.Fatalf("store mfa secret: %v", err)
+	}
+	if err := storage.EnableMFA(ctx, testUserPool, u.ID); err != nil {
+		t.Fatalf("enable mfa: %v", err)
+	}
+
+	cmd := usersDisableMFACmd(inviteCfg())
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"locked-out@example.com"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "locked-out@example.com") {
+		t.Errorf("expected output naming the user, got: %q", out.String())
+	}
+
+	after, err := storage.GetUserByEmail(ctx, testUserPool, "locked-out@example.com")
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if after.MFAEnabled {
+		t.Error("expected mfa_enabled to be false after disable-mfa")
+	}
+	secret, err := storage.GetMFASecret(ctx, testUserPool, u.ID)
+	if err != nil {
+		t.Fatalf("get mfa secret: %v", err)
+	}
+	if secret != nil {
+		t.Errorf("expected mfa_secret to be cleared, got %q", *secret)
+	}
+}
+
+// The email is uppercased here to confirm the lookup lowercases it the same way
+// send-password-reset does.
+func TestDisableMFACmd_mixedCaseEmail(t *testing.T) {
+	truncateUsersAndInvites(t)
+	ctx := context.Background()
+
+	u, err := storage.CreateUser(ctx, testUserPool, "mixed-case@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := storage.StoreMFASecret(ctx, testUserPool, u.ID, "JBSWY3DPEHPK3PXP"); err != nil {
+		t.Fatalf("store mfa secret: %v", err)
+	}
+	if err := storage.EnableMFA(ctx, testUserPool, u.ID); err != nil {
+		t.Fatalf("enable mfa: %v", err)
+	}
+
+	cmd := usersDisableMFACmd(inviteCfg())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"  Mixed-Case@Example.COM  "})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	after, err := storage.GetUserByEmail(ctx, testUserPool, "mixed-case@example.com")
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if after.MFAEnabled {
+		t.Error("expected mfa_enabled to be false after disable-mfa")
+	}
+}
+
+func TestDisableMFACmd_mfaNotEnabled(t *testing.T) {
+	truncateUsersAndInvites(t)
+	ctx := context.Background()
+
+	if _, err := storage.CreateUser(ctx, testUserPool, "no-mfa@example.com", "password1234"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	cmd := usersDisableMFACmd(inviteCfg())
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"no-mfa@example.com"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected no error when mfa is already off, got: %v", err)
+	}
+	if !strings.Contains(out.String(), "does not have an authenticator enabled") {
+		t.Errorf("expected a no-op message, got: %q", out.String())
+	}
+}

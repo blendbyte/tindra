@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -37,7 +38,23 @@ func TestMFASetup_withPublicURL(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if !strings.Contains(resp.URI, "app.example.com") {
-		t.Errorf("expected publicURL as issuer in TOTP URI, got %q", resp.URI)
+		t.Errorf("expected publicURL host as issuer in TOTP URI, got %q", resp.URI)
+	}
+	// The issuer is the bare host, so the label stays a single "issuer:account"
+	// pair. See discussion #12: the scheme used to leak in and break parsing.
+	if strings.Contains(resp.URI, "totp/https") {
+		t.Errorf("scheme leaked into the otpauth label: %q", resp.URI)
+	}
+	u, err := url.Parse(resp.URI)
+	if err != nil {
+		t.Fatalf("parse otpauth URI %q: %v", resp.URI, err)
+	}
+	label := strings.TrimPrefix(u.Path, "/")
+	if strings.Contains(label, "/") {
+		t.Errorf("otpauth label %q contains a slash: %q", label, resp.URI)
+	}
+	if strings.Count(label, ":") != 1 {
+		t.Errorf("expected exactly one issuer:account delimiter in label %q", label)
 	}
 }
 
