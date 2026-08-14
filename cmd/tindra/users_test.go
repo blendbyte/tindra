@@ -457,3 +457,88 @@ func TestDisableMFACmd_mfaNotEnabled(t *testing.T) {
 		t.Errorf("expected a no-op message, got: %q", out.String())
 	}
 }
+
+func TestDisableMFACmd_connectError(t *testing.T) {
+	cfg := inviteCfg()
+	cfg.databaseURL = ""
+
+	cmd := usersDisableMFACmd(cfg)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"someone@example.com"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when DATABASE_URL is unset")
+	}
+	if !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Errorf("expected a DATABASE_URL error, got: %v", err)
+	}
+}
+
+// Renaming the table away makes the lookup query fail while the connection
+// itself still succeeds, which is the only way to reach the lookup error branch.
+func TestDisableMFACmd_lookupError(t *testing.T) {
+	truncateUsersAndInvites(t)
+	ctx := context.Background()
+
+	if _, err := testUserPool.Exec(ctx, "ALTER TABLE users RENAME TO users_hidden"); err != nil {
+		t.Fatalf("rename users: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := testUserPool.Exec(ctx, "ALTER TABLE users_hidden RENAME TO users"); err != nil {
+			t.Fatalf("restore users table: %v", err)
+		}
+	})
+
+	cmd := usersDisableMFACmd(inviteCfg())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"someone@example.com"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when the lookup query fails")
+	}
+	if !strings.Contains(err.Error(), "look up user") {
+		t.Errorf("expected a 'look up user' error, got: %v", err)
+	}
+}
+
+// A NOT VALID check constraint leaves existing rows alone but rejects the
+// UPDATE that clears mfa_enabled, exercising the disable error branch.
+func TestDisableMFACmd_disableError(t *testing.T) {
+	truncateUsersAndInvites(t)
+	ctx := context.Background()
+
+	u, err := storage.CreateUser(ctx, testUserPool, "disable-fails@example.com", "password1234")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := storage.StoreMFASecret(ctx, testUserPool, u.ID, "JBSWY3DPEHPK3PXP"); err != nil {
+		t.Fatalf("store mfa secret: %v", err)
+	}
+	if err := storage.EnableMFA(ctx, testUserPool, u.ID); err != nil {
+		t.Fatalf("enable mfa: %v", err)
+	}
+
+	if _, err := testUserPool.Exec(ctx,
+		"ALTER TABLE users ADD CONSTRAINT tmp_block_mfa_disable CHECK (mfa_enabled) NOT VALID",
+	); err != nil {
+		t.Fatalf("add constraint: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := testUserPool.Exec(ctx,
+			"ALTER TABLE users DROP CONSTRAINT tmp_block_mfa_disable",
+		); err != nil {
+			t.Fatalf("drop constraint: %v", err)
+		}
+	})
+
+	cmd := usersDisableMFACmd(inviteCfg())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"disable-fails@example.com"})
+	err = cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when the update fails")
+	}
+	if !strings.Contains(err.Error(), "disable mfa") {
+		t.Errorf("expected a 'disable mfa' error, got: %v", err)
+	}
+}

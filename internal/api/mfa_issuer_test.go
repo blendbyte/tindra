@@ -32,6 +32,10 @@ func TestTOTPIssuer(t *testing.T) {
 		{"localhost with port", "http://localhost:8080", "localhost"},
 		{"query string", "https://tindra.example.com?a=b", "tindra.example.com"},
 		{"scheme only falls back", "https://", "Tindra"},
+		{"space in host falls back", "https://exa mple.com", "Tindra"},
+		{"unclosed ipv6 bracket falls back", "https://[::1", "Tindra"},
+		{"invalid percent escape falls back", "https://%zz", "Tindra"},
+		{"control character falls back", "https://exa\x7fmple.com", "Tindra"},
 	}
 
 	for _, tt := range tests {
