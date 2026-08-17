@@ -299,7 +299,25 @@ func logEnvelope(payload string) string {
 	return header + "\n" + itemHeader + "\n" + payload + "\n"
 }
 
-func TestHandleEnvelope_logItem(t *testing.T) {
+// sdkLogEnvelope mirrors what current SDKs put on the wire: item_count and
+// content_type headers, no length, payload on a single line.
+func sdkLogEnvelope(payload string, count int) string {
+	header := `{"event_id":"log-test-event-id-0002"}`
+	itemHeader := fmt.Sprintf(
+		`{"type":"log","item_count":%d,"content_type":"application/vnd.sentry.items.log+json"}`, count)
+	return header + "\n" + itemHeader + "\n" + payload + "\n"
+}
+
+// postLogEnvelope sends an envelope through a router wired to a running log
+// buffer and returns the response recorder.
+func postLogEnvelope(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return postLogEnvelopeAs(t, testProject.ID, testProject.PublicKey, body)
+}
+
+func postLogEnvelopeAs(t *testing.T, projectID, publicKey, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
 	logBuf := ingest.NewLogBuffer(100)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -307,40 +325,182 @@ func TestHandleEnvelope_logItem(t *testing.T) {
 
 	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
-	payload := `[{"timestamp":1700000000.0,"level":"info","body":"hello from log","trace_id":"abc123","span_id":"def456","attributes":{"sentry.environment":"test"}}]`
-	body := logEnvelope(payload)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+	req := httptest.NewRequest(http.MethodPost, "/api/"+projectID+"/envelope/",
 		bytes.NewBufferString(body))
-	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(publicKey))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
+	return rec
+}
 
+// waitForLog polls for a log row with the given body. The buffer flushes on a
+// 200ms ticker, so a short poll beats a fixed sleep.
+func waitForLog(t *testing.T, body string) *storage.Log {
+	t.Helper()
+	return waitForProjectLog(t, testProject.ID, body)
+}
+
+func waitForProjectLog(t *testing.T, projectID, body string) *storage.Log {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+			ProjectIDs: []string{projectID},
+			Search:     body,
+		})
+		if err != nil {
+			t.Fatalf("list logs: %v", err)
+		}
+		for _, l := range logs {
+			if l.Body == body {
+				return l
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("log with body %q never landed in the database", body)
+	return nil
+}
+
+func TestHandleEnvelope_logItem_itemsWrapper(t *testing.T) {
+	// The payload shape every current SDK sends: an object wrapping the batch
+	// under "items", with typed attribute values.
+	payload := `{"version":2,"ingest_settings":{"infer_ip":"auto"},"items":[` +
+		`{"timestamp":1700000002.0,"trace_id":"5b8efff798038103d269b633813fc60c",` +
+		`"span_id":"b0e6f15b45c36b12","level":"warn","body":"items wrapper log",` +
+		`"severity_number":13,"attributes":{` +
+		`"sentry.environment":{"value":"production","type":"string"},` +
+		`"sentry.release":{"value":"4.5.6","type":"string"},` +
+		`"user.id":{"value":42,"type":"integer"}}}]}`
+
+	rec := postLogEnvelope(t, sdkLogEnvelope(payload, 1))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	l := waitForLog(t, "items wrapper log")
+
+	if l.Level != "warning" {
+		t.Errorf("level: expected warn to be stored as warning, got %q", l.Level)
+	}
+	if l.TraceID == nil || *l.TraceID != "5b8efff798038103d269b633813fc60c" {
+		t.Errorf("trace id: got %v", l.TraceID)
+	}
+	if l.SpanID == nil || *l.SpanID != "b0e6f15b45c36b12" {
+		t.Errorf("span id: got %v", l.SpanID)
+	}
+	if l.Environment == nil || *l.Environment != "production" {
+		t.Errorf("environment: expected it to come from the typed attribute, got %v", l.Environment)
+	}
+	if l.Release == nil || *l.Release != "4.5.6" {
+		t.Errorf("release: expected it to come from the typed attribute, got %v", l.Release)
+	}
+	if !l.Timestamp.Equal(time.Unix(1700000002, 0).UTC()) {
+		t.Errorf("timestamp: got %v", l.Timestamp)
+	}
+
+	var attrs map[string]any
+	if err := json.Unmarshal(l.Attributes, &attrs); err != nil {
+		t.Fatalf("unmarshal attributes: %v", err)
+	}
+	if attrs["sentry.environment"] != "production" {
+		t.Errorf("attributes: expected flattened value, got %#v", attrs["sentry.environment"])
+	}
+	if attrs["user.id"] != float64(42) {
+		t.Errorf("attributes: expected flattened number, got %#v", attrs["user.id"])
+	}
+}
+
+func TestHandleEnvelope_logItem_itemsWrapperBatch(t *testing.T) {
+	payload := `{"version":2,"items":[` +
+		`{"timestamp":1700000003.0,"level":"info","body":"batched log one"},` +
+		`{"timestamp":1700000004.0,"level":"error","body":"batched log two"}]}`
+
+	rec := postLogEnvelope(t, sdkLogEnvelope(payload, 2))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if l := waitForLog(t, "batched log one"); l.Level != "info" {
+		t.Errorf("level: got %q", l.Level)
+	}
+	if l := waitForLog(t, "batched log two"); l.Level != "error" {
+		t.Errorf("level: got %q", l.Level)
+	}
+}
+
+// TestHandleEnvelope_logItem_scrubbed verifies that a project's scrub settings
+// reach log bodies and attributes, the way they already reach events.
+func TestHandleEnvelope_logItem_scrubbed(t *testing.T) {
+	ctx := context.Background()
+
+	p, err := storage.CreateProject(ctx, testPool, "log-scrub-proj", "Log Scrub Project")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	patterns := json.RawMessage(`[{"name":"email","builtin":true,"enabled":true}]`)
+	if _, err := storage.UpdateProjectScrubbing(ctx, testPool, p.ID,
+		[]string{"user.password"}, patterns); err != nil {
+		t.Fatalf("update scrubbing: %v", err)
+	}
+
+	payload := `{"version":2,"items":[{"timestamp":1700000005.0,"level":"info",` +
+		`"body":"password reset for alice@example.com","attributes":{` +
+		`"user.password":{"value":"hunter2","type":"string"},` +
+		`"sentry.message.parameter.0":{"value":"alice@example.com","type":"string"},` +
+		`"user.id":{"value":"u-1","type":"string"}}}]}`
+
+	rec := postLogEnvelopeAs(t, p.ID, p.PublicKey, sdkLogEnvelope(payload, 1))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	l := waitForProjectLog(t, p.ID, "password reset for [Filtered]")
+
+	var attrs map[string]any
+	if err := json.Unmarshal(l.Attributes, &attrs); err != nil {
+		t.Fatalf("unmarshal attributes: %v", err)
+	}
+	if attrs["user.password"] != "[Filtered]" {
+		t.Errorf("expected blocked attribute redacted, got %#v", attrs["user.password"])
+	}
+	if attrs["sentry.message.parameter.0"] != "[Filtered]" {
+		t.Errorf("expected email attribute redacted, got %#v", attrs["sentry.message.parameter.0"])
+	}
+	if attrs["user.id"] != "u-1" {
+		t.Errorf("expected unrelated attribute untouched, got %#v", attrs["user.id"])
+	}
+}
+
+func TestHandleEnvelope_logItem(t *testing.T) {
+	payload := `[{"timestamp":1700000000.0,"level":"info","body":"hello from log","trace_id":"abc123","span_id":"def456","attributes":{"sentry.environment":"test"}}]`
+
+	rec := postLogEnvelope(t, logEnvelope(payload))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	l := waitForLog(t, "hello from log")
+	if l.Level != "info" {
+		t.Errorf("level: got %q", l.Level)
+	}
+	if l.Environment == nil || *l.Environment != "test" {
+		t.Errorf("environment: got %v", l.Environment)
 	}
 }
 
 func TestHandleEnvelope_logItem_singleObject(t *testing.T) {
-	logBuf := ingest.NewLogBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go logBuf.Run(ctx, testPool)
-
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
-
 	// Single object (not array) format.
 	payload := `{"timestamp":1700000001.0,"level":"warn","body":"single log object"}`
-	body := logEnvelope(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
-		bytes.NewBufferString(body))
-	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
+	rec := postLogEnvelope(t, logEnvelope(payload))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if l := waitForLog(t, "single log object"); l.Level != "warning" {
+		t.Errorf("level: expected warn to be stored as warning, got %q", l.Level)
 	}
 }
 

@@ -109,6 +109,36 @@ func TestListLogs_levelFilter(t *testing.T) {
 	}
 }
 
+// TestListLogs_warnLevelFilter verifies that a "warning" filter also matches
+// rows stored with the log protocol's "warn" spelling, and vice versa.
+func TestListLogs_warnLevelFilter(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+
+	seedLog(t, p.ID, "warn", "legacy warn row", now, "")
+	seedLog(t, p.ID, "warning", "normalized warning row", now.Add(time.Second), "")
+	seedLog(t, p.ID, "info", "info msg", now.Add(2*time.Second), "")
+
+	for _, level := range []string{"warning", "warn"} {
+		logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+			ProjectIDs: []string{p.ID},
+			Level:      level,
+			Limit:      50,
+		})
+		if err != nil {
+			t.Fatalf("level %q: unexpected error: %v", level, err)
+		}
+		if len(logs) != 2 {
+			t.Fatalf("level %q: expected both warn spellings, got %d", level, len(logs))
+		}
+		for _, l := range logs {
+			if l.Level != "warn" && l.Level != "warning" {
+				t.Errorf("level %q: unexpected row level %q", level, l.Level)
+			}
+		}
+	}
+}
+
 // TestListLogs_environmentFilter verifies environment scoping.
 func TestListLogs_environmentFilter(t *testing.T) {
 	p := setupProjectForLogs(t)
