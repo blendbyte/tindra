@@ -106,6 +106,28 @@ func ScrubTransaction(tx *BufferedTransaction, cfg ScrubConfig) {
 	}
 }
 
+// ScrubLog applies PII scrubbing to a log record: pattern scrubbing on the
+// body, and both pattern scrubbing and field-path blocking on attributes.
+// Attribute paths are relative to the attributes object, so an attribute named
+// "user.email" is blocked by configuring "user.email". This mirrors how span
+// Data blobs are scrubbed on transactions. The log is modified in place.
+//
+// Level, trace and span IDs are left alone, as is the environment and release
+// pair lifted out of attributes during parsing: none of them carry free text.
+func ScrubLog(l *BufferedLog, cfg ScrubConfig) {
+	if len(cfg.Fields) == 0 && len(cfg.Patterns) == 0 {
+		return
+	}
+	fields, regexps := buildScrubber(cfg)
+	if len(fields) == 0 && len(regexps) == 0 {
+		return
+	}
+	l.Body = scrubString(l.Body, regexps)
+	if len(l.Attributes) > 0 {
+		l.Attributes = ScrubEvent(l.Attributes, cfg)
+	}
+}
+
 func buildScrubber(cfg ScrubConfig) (fields map[string]struct{}, regexps []*regexp.Regexp) {
 	fields = make(map[string]struct{}, len(cfg.Fields))
 	for _, f := range cfg.Fields {

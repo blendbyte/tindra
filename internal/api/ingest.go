@@ -143,6 +143,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			parseLogs(project.ID, item.Payload, func(l ingest.BufferedLog) {
+				ingest.ScrubLog(&l, scrubCfg)
 				ro.logBuf.Push(l) // best-effort; drop silently if full
 			})
 
@@ -225,29 +226,95 @@ func projectScrubConfig(p *storage.Project) ingest.ScrubConfig {
 	return cfg
 }
 
-// parseLogs parses a Sentry log envelope item payload (a JSON array of log
-// records) and calls yield for each valid entry. Capped at 500 per item to
-// prevent a single noisy service from filling the buffer.
-func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog)) {
-	type rawLog struct {
-		Timestamp  json.RawMessage        `json:"timestamp"`
-		Level      string                 `json:"level"`
-		Body       string                 `json:"body"`
-		TraceID    string                 `json:"trace_id"`
-		SpanID     string                 `json:"span_id"`
-		Attributes map[string]interface{} `json:"attributes"`
+// rawLog is a single log record as it appears on the wire.
+type rawLog struct {
+	Timestamp  json.RawMessage            `json:"timestamp"`
+	Level      string                     `json:"level"`
+	Body       string                     `json:"body"`
+	TraceID    string                     `json:"trace_id"`
+	SpanID     string                     `json:"span_id"`
+	Attributes map[string]json.RawMessage `json:"attributes"`
+}
+
+// decodeLogRecords unpacks a log envelope item payload. Three shapes are
+// accepted, in order of precedence:
+//
+//	{"version":2,"items":[...]}  current protocol, sent by every modern SDK
+//	[{...},{...}]                bare array
+//	{...}                        single record, as the obsolete otel_log draft sent
+func decodeLogRecords(payload []byte) []rawLog {
+	payload = bytes.TrimSpace(payload)
+	if len(payload) == 0 {
+		return nil
 	}
 
-	var records []rawLog
-	// Payload is either a JSON array or a single object.
-	if len(payload) > 0 && payload[0] == '[' {
+	if payload[0] == '[' {
+		var records []rawLog
 		json.Unmarshal(payload, &records) //nolint:errcheck
-	} else {
-		var single rawLog
-		if json.Unmarshal(payload, &single) == nil {
-			records = []rawLog{single}
+		return records
+	}
+
+	// A pointer distinguishes an absent "items" key from an empty batch, so a
+	// legitimately empty batch does not fall through to the single-record path.
+	var wrapper struct {
+		Items *[]rawLog `json:"items"`
+	}
+	if json.Unmarshal(payload, &wrapper) == nil && wrapper.Items != nil {
+		return *wrapper.Items
+	}
+
+	var single rawLog
+	if json.Unmarshal(payload, &single) == nil {
+		return []rawLog{single}
+	}
+	return nil
+}
+
+// flattenLogAttributes unwraps Sentry's typed attribute values
+// ({"value":"prod","type":"string"}) into plain JSON scalars, so that stored
+// attributes stay queryable and render as values rather than as JSON blobs.
+// Values not in the typed form are kept as they arrived.
+func flattenLogAttributes(raw map[string]json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(raw))
+	for k, v := range raw {
+		var typed struct {
+			Value *json.RawMessage `json:"value"`
+			Type  string           `json:"type"`
+		}
+		// Both keys are required by the spec; demanding both avoids unwrapping
+		// an untyped attribute that merely happens to have a "value" key.
+		if json.Unmarshal(v, &typed) == nil && typed.Value != nil && typed.Type != "" {
+			v = *typed.Value
+		}
+		var val any
+		if json.Unmarshal(v, &val) == nil {
+			out[k] = val
 		}
 	}
+	return out
+}
+
+// normalizeLogLevel maps the log protocol's "warn" onto the "warning" spelling
+// used everywhere else in the app (event levels, UI filters, level styling).
+func normalizeLogLevel(level string) string {
+	level = strings.ToLower(strings.TrimSpace(level))
+	switch level {
+	case "":
+		return "info"
+	case "warn":
+		return "warning"
+	}
+	return level
+}
+
+// parseLogs parses a Sentry log envelope item payload and calls yield for each
+// valid entry. Capped at 500 per item to prevent a single noisy service from
+// filling the buffer.
+func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog)) {
+	records := decodeLogRecords(payload)
 
 	const cap = 500
 	if len(records) > cap {
@@ -262,19 +329,18 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 		if ts.IsZero() {
 			ts = time.Now().UTC()
 		}
-		level := rec.Level
-		if level == "" {
-			level = "info"
-		}
+		level := normalizeLogLevel(rec.Level)
+
+		attrMap := flattenLogAttributes(rec.Attributes)
 
 		var attrs json.RawMessage
-		if len(rec.Attributes) > 0 {
-			attrs, _ = json.Marshal(rec.Attributes)
+		if len(attrMap) > 0 {
+			attrs, _ = json.Marshal(attrMap)
 		}
 
 		// Extract environment and release from attributes if present.
-		env, _ := rec.Attributes["sentry.environment"].(string)
-		rel, _ := rec.Attributes["sentry.release"].(string)
+		env, _ := attrMap["sentry.environment"].(string)
+		rel, _ := attrMap["sentry.release"].(string)
 
 		yield(ingest.BufferedLog{
 			ProjectID:   projectID,

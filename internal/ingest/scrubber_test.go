@@ -249,3 +249,106 @@ func TestScrubEvent_UnknownBuiltin_ignored(t *testing.T) {
 		t.Errorf("unknown builtin should be skipped, got %q", result["message"])
 	}
 }
+
+func TestScrubLog_NoConfig(t *testing.T) {
+	l := BufferedLog{
+		Body:       "login from alice@example.com",
+		Attributes: json.RawMessage(`{"user.email":"alice@example.com"}`),
+	}
+	ScrubLog(&l, ScrubConfig{})
+
+	if l.Body != "login from alice@example.com" {
+		t.Errorf("expected body unchanged, got %q", l.Body)
+	}
+	if string(l.Attributes) != `{"user.email":"alice@example.com"}` {
+		t.Errorf("expected attributes unchanged, got %s", l.Attributes)
+	}
+}
+
+func TestScrubLog_PatternsOnBodyAndAttributes(t *testing.T) {
+	l := BufferedLog{
+		Body: "login from alice@example.com at 192.168.1.20",
+		Attributes: json.RawMessage(
+			`{"sentry.message.parameter.0":"bob@example.com","client.address":"10.0.0.4","user.id":42}`),
+	}
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{
+			{Name: "email", Builtin: true, Enabled: true},
+			{Name: "ip", Builtin: true, Enabled: true},
+		},
+	}
+	ScrubLog(&l, cfg)
+
+	if strings.Contains(l.Body, "alice@example.com") {
+		t.Errorf("expected email redacted in body, got %q", l.Body)
+	}
+	if strings.Contains(l.Body, "192.168.1.20") {
+		t.Errorf("expected ip redacted in body, got %q", l.Body)
+	}
+
+	var attrs map[string]any
+	if err := json.Unmarshal(l.Attributes, &attrs); err != nil {
+		t.Fatal(err)
+	}
+	if attrs["sentry.message.parameter.0"] != "[Filtered]" {
+		t.Errorf("expected interpolated parameter redacted, got %q", attrs["sentry.message.parameter.0"])
+	}
+	if attrs["client.address"] != "[Filtered]" {
+		t.Errorf("expected ip attribute redacted, got %q", attrs["client.address"])
+	}
+	if attrs["user.id"] != float64(42) {
+		t.Errorf("expected non-matching attribute untouched, got %#v", attrs["user.id"])
+	}
+}
+
+func TestScrubLog_FieldBlockingOnAttributeNames(t *testing.T) {
+	l := BufferedLog{
+		Body:       "password reset requested",
+		Attributes: json.RawMessage(`{"user.password":"hunter2","user.id":"u-1"}`),
+	}
+	// Attribute paths are relative to the attributes object, so the bare
+	// attribute name is what gets configured.
+	cfg := ScrubConfig{Fields: []string{"user.password"}}
+	ScrubLog(&l, cfg)
+
+	var attrs map[string]any
+	if err := json.Unmarshal(l.Attributes, &attrs); err != nil {
+		t.Fatal(err)
+	}
+	if attrs["user.password"] != "[Filtered]" {
+		t.Errorf("expected blocked attribute redacted, got %q", attrs["user.password"])
+	}
+	if attrs["user.id"] != "u-1" {
+		t.Errorf("expected other attribute untouched, got %q", attrs["user.id"])
+	}
+	if l.Body != "password reset requested" {
+		t.Errorf("field blocking must not touch the body, got %q", l.Body)
+	}
+}
+
+func TestScrubLog_NilAttributes(t *testing.T) {
+	l := BufferedLog{Body: "reach me at alice@example.com"}
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}},
+	}
+	ScrubLog(&l, cfg)
+
+	if strings.Contains(l.Body, "alice@example.com") {
+		t.Errorf("expected email redacted, got %q", l.Body)
+	}
+	if l.Attributes != nil {
+		t.Errorf("expected nil attributes to stay nil, got %s", l.Attributes)
+	}
+}
+
+func TestScrubLog_DisabledPatternIgnored(t *testing.T) {
+	l := BufferedLog{Body: "reach me at alice@example.com"}
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: false}},
+	}
+	ScrubLog(&l, cfg)
+
+	if l.Body != "reach me at alice@example.com" {
+		t.Errorf("disabled pattern must not scrub, got %q", l.Body)
+	}
+}

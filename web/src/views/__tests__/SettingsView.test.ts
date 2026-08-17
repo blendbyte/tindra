@@ -1323,6 +1323,19 @@ describe('SettingsView', () => {
       }
     })
 
+    it('states that scrubbing covers logs as well as events', async () => {
+      setupProjectsTab()
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.proj-card__head').trigger('click')
+      const privacyBtn = wrapper.findAll('.btn').find(b => b.text().includes('Data privacy'))
+      expect(privacyBtn).toBeDefined()
+      await privacyBtn!.trigger('click')
+
+      const text = wrapper.find('.privacy-panel').text()
+      expect(text).toContain('log message')
+      expect(text).toContain('attribute names')
+    })
+
     it('copies DSN when Copy button is clicked in expanded project', async () => {
       const writeText = vi.fn().mockResolvedValue(undefined)
       Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })

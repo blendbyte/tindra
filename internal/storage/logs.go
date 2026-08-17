@@ -48,8 +48,15 @@ func ListLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) ([]*Log
 		where += fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", len(args))
 	}
 	if filter.Level != "" {
-		args = append(args, filter.Level)
-		where += fmt.Sprintf(" AND level = $%d", len(args))
+		// The log protocol spells this level "warn" while the rest of the app
+		// uses "warning". Ingest normalizes to "warning", so match both to keep
+		// rows stored before that normalization reachable.
+		if filter.Level == "warn" || filter.Level == "warning" {
+			where += " AND level IN ('warn', 'warning')"
+		} else {
+			args = append(args, filter.Level)
+			where += fmt.Sprintf(" AND level = $%d", len(args))
+		}
 	}
 	if filter.Environment != "" {
 		args = append(args, filter.Environment)

@@ -101,6 +101,14 @@ describe('LogsView', () => {
       expect(wrapper.text()).toContain('Database connection failed')
     })
 
+    // Ingest normalizes the log protocol's "warn" to "warning", which is the
+    // spelling the level filter sends and the only one with a styled dot.
+    it('styles the level dot for normalized warning logs', () => {
+      setupMocks([makeLog('l1', 'warning', 'disk space low')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.leveldot--warning').exists()).toBe(true)
+    })
+
     it('displays log level', () => {
       setupMocks([makeLog('l1', 'error', 'test')])
       const wrapper = mount(LogsView, { global: { stubs } })
@@ -272,6 +280,24 @@ describe('LogsView', () => {
       const wrapper = mount(LogsView, { global: { stubs } })
       await wrapper.find('.perf-table__row--clickable').trigger('click')
       expect(wrapper.text()).toContain('{"key":"val"}')
+    })
+
+    // Ingest flattens Sentry's typed attributes ({"value":x,"type":"string"})
+    // before storing them, so the expanded row shows values, not wrappers.
+    it('renders flattened sentry attributes as plain values', async () => {
+      const log = {
+        ...makeLog('l1', 'info', 'test'),
+        attributes: { 'sentry.environment': 'production', 'user.id': 42 },
+      }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+
+      const text = wrapper.find('.log-expanded').text()
+      expect(text).toContain('sentry.environment')
+      expect(text).toContain('production')
+      expect(text).toContain('42')
+      expect(text).not.toContain('"type"')
     })
   })
 

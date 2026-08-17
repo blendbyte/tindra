@@ -1873,7 +1873,7 @@ function actionKindOf(action: string) {
                         <span>IP addresses</span>
                       </label>
                     </div>
-                    <div class="field__hint">Matching values in any event field are replaced with [Filtered] before storage.</div>
+                    <div class="field__hint">Matching values in any event field, log message or log attribute are replaced with [Filtered] before storage.</div>
                   </div>
                   <div class="privacy-panel__section">
                     <div class="field__label">Block specific field paths</div>
@@ -1894,7 +1894,7 @@ function actionKindOf(action: string) {
                         </button>
                       </div>
                     </div>
-                    <div class="field__hint">Use dot notation, e.g. <code class="mono">request.headers.Cookie</code> or <code class="mono">user.email</code>. The entire value at that path is replaced with [Filtered].</div>
+                    <div class="field__hint">Use dot notation, e.g. <code class="mono">request.headers.Cookie</code> or <code class="mono">user.email</code>. The entire value at that path is replaced with [Filtered]. On logs, paths are matched against attribute names.</div>
                   </div>
                   <div v-if="privacyError" class="proj-form-error">{{ privacyError }}</div>
                   <div style="display: flex; gap: 8px; margin-top: 14px">
