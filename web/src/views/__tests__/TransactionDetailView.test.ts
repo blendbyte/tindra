@@ -301,6 +301,23 @@ describe('TransactionDetailView', () => {
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('Flame graph')
     })
+
+    // The heading carries the summary, the way Errors and Logs carry a count.
+    it('summarises the profile in the heading', () => {
+      setupMocks(baseTx, [], false, false, undefined, [], graph)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('42 samples')
+      expect(wrapper.text()).toContain('MainThread')
+    })
+
+    // Without a measured interval there is no honest duration to show, so the
+    // heading has to omit it rather than derive one from a guessed rate.
+    it('omits the duration when the interval could not be measured', () => {
+      setupMocks(baseTx, [], false, false, undefined, [], { ...graph, sample_interval_ns: 0 })
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('42 samples')
+      expect(wrapper.text()).not.toContain('over ')
+    })
   })
 
   describe('spans error state', () => {

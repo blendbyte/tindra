@@ -256,20 +256,16 @@ watch(() => props.graph, resetZoom)
       />
       <span v-if="query.trim()" class="flame__count">{{ matchCount }} matched</span>
 
-      <div class="flame__meta">
-        <span class="flame__stat">{{ graph.sample_count.toLocaleString() }} samples</span>
-        <span v-if="graph.thread_name" class="flame__stat">{{ graph.thread_name }}</span>
-        <span
-          v-if="graph.idle_samples"
-          class="flame__stat"
-          v-tooltip="'Samples where the thread had an empty stack'"
-        >{{ graph.idle_samples.toLocaleString() }} idle</span>
-        <span
-          v-if="!graph.sample_interval_ns"
-          class="flame__stat flame__stat--warn"
-          v-tooltip="'Too few samples to measure the sampling period, so durations are not shown'"
-        >no timings</span>
-      </div>
+      <span
+        v-if="graph.idle_samples"
+        class="flame__stat"
+        v-tooltip="'Samples where the thread had an empty stack, so no work was attributed'"
+      >{{ graph.idle_samples.toLocaleString() }} idle</span>
+      <span
+        v-if="!graph.sample_interval_ns"
+        class="flame__stat flame__stat--warn"
+        v-tooltip="'Too few samples to measure the sampling period, so durations are not shown'"
+      >no timings</span>
 
       <span class="flame__legend">
         <span class="flame__swatch flame__swatch--app" />app
@@ -369,8 +365,8 @@ watch(() => props.graph, resetZoom)
 .flame__bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: 6px 6px 0 0;
   border-bottom-color: var(--border-soft);
@@ -401,15 +397,6 @@ watch(() => props.graph, resetZoom)
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.flame__meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-left: 12px;
-  border-left: 1px solid var(--border);
-  flex-shrink: 0;
 }
 
 .flame__stat {
@@ -473,7 +460,7 @@ watch(() => props.graph, resetZoom)
 .flame__crumb-sep { color: var(--text-3); flex-shrink: 0; }
 
 .flame__plot {
-  padding: 8px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-top: none;
   border-radius: 0 0 6px 6px;

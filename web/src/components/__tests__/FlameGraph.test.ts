@@ -45,10 +45,13 @@ function graph(over: Partial<FlameGraphData> = {}): FlameGraphData {
 const stubs = { Icon: true }
 
 describe('FlameGraph', () => {
-  it('renders the sample count and thread', () => {
+  // Sample count and thread live in the section heading beside "Flame graph",
+  // matching the Errors and Logs panels. Repeating them in the toolbar crowded
+  // out the search box.
+  it('leaves the summary counts to the section heading', () => {
     const w = mount(FlameGraph, { props: { graph: graph() }, global: { stubs } })
-    expect(w.text()).toContain('120 samples')
-    expect(w.text()).toContain('MainThread')
+    expect(w.text()).not.toContain('120 samples')
+    expect(w.text()).not.toContain('MainThread')
   })
 
   it('renders a canvas', () => {
@@ -120,7 +123,7 @@ describe('FlameGraph', () => {
       root: { function: '', total_samples: 0, self_samples: 0, children: [] },
     })
     const w = mount(FlameGraph, { props: { graph: empty }, global: { stubs } })
-    expect(w.text()).toContain('0 samples')
     expect(w.find('canvas').exists()).toBe(true)
+    expect(w.find('.flame__input').exists()).toBe(true)
   })
 })

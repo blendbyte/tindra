@@ -230,3 +230,29 @@ func TestProfileSections_registered(t *testing.T) {
 		t.Error("profiles should be included in all")
 	}
 }
+
+// A profiled transaction with no spans leaves the detail page dominated by an
+// empty waterfall and pushes the flame graph off the bottom of the screen.
+func TestSeededProfiledTransactionsHaveSpans(t *testing.T) {
+	t.Run("v1", func(t *testing.T) {
+		for _, tmpl := range laravelProfiles {
+			tx, _ := buildV1Profile(tmpl, time.Now().UTC(), testReleases, testEnvs)
+			spans, ok := tx["spans"].([]map[string]any)
+			if !ok || len(spans) == 0 {
+				t.Errorf("%s produced no spans", tmpl.txName)
+			}
+		}
+	})
+
+	t.Run("v2", func(t *testing.T) {
+		for _, tmpl := range pythonProfiles {
+			_, txs := buildV2Session(tmpl, time.Now().UTC().Add(-time.Hour), 3, testReleases, testEnvs)
+			for i, tx := range txs {
+				spans, ok := tx["spans"].([]map[string]any)
+				if !ok || len(spans) == 0 {
+					t.Errorf("%s tx %d produced no spans", tmpl.txName, i)
+				}
+			}
+		}
+	})
+}

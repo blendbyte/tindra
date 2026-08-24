@@ -3445,6 +3445,11 @@ type profileTemplate struct {
 	durationMs [2]int
 	root       []profileFrame
 	leaves     []profileLeaf
+	// spans keep the waterfall above the flame graph from being empty. A
+	// profiled transaction with no spans leaves the detail page dominated by
+	// "No spans recorded" and pushes the graph off the bottom of the screen.
+	// They mirror the profile's own branches so both tell the same story.
+	spans []spanNode
 }
 
 // sampleIntervalNs is the default sampling period in both the PHP and Python
@@ -3484,6 +3489,11 @@ var laravelProfiles = []profileTemplate{
 			// No leaf at all: the controller itself was on CPU.
 			{weight: 6},
 		},
+		spans: []spanNode{
+			{op: "db.query", description: "SELECT * FROM `orders` WHERE `status` = ? ORDER BY `created_at` DESC LIMIT 50", durationMs: [2]int{90, 240}},
+			{op: "cache.get", description: "orders:index:page:1", durationMs: [2]int{2, 9}},
+			{op: "template.render", description: "resources/views/orders/index.blade.php", durationMs: [2]int{18, 60}},
+		},
 	},
 	{
 		txName:     "POST /api/checkout",
@@ -3509,6 +3519,11 @@ var laravelProfiles = []profileTemplate{
 				{function: `Illuminate\Validation\Validator::passes`, module: `Illuminate\Validation\Validator`, filename: "vendor/laravel/framework/src/Illuminate/Validation/Validator.php", absPath: "/var/www/app/vendor/laravel/framework/src/Illuminate/Validation/Validator.php", lineno: 476},
 			}},
 			{weight: 10},
+		},
+		spans: []spanNode{
+			{op: "http.client", description: "POST https://api.stripe.com/v1/payment_intents", durationMs: [2]int{180, 520}},
+			{op: "db.query", description: "UPDATE `inventory` SET `reserved` = `reserved` + ? WHERE `sku` = ?", durationMs: [2]int{40, 130}},
+			{op: "db.query", description: "INSERT INTO `orders` (`user_id`, `total`, `status`) VALUES (?, ?, ?)", durationMs: [2]int{8, 26}},
 		},
 	},
 }
@@ -3538,6 +3553,10 @@ var pythonProfiles = []profileTemplate{
 			}},
 			{weight: 10},
 		},
+		spans: []spanNode{
+			{op: "db.query", description: "SELECT date_trunc('day', created_at), SUM(amount) FROM ledger GROUP BY 1", durationMs: [2]int{120, 380}},
+			{op: "http.client", description: "GET https://charts.internal/render", durationMs: [2]int{40, 140}},
+		},
 	},
 	{
 		txName:     "celery.process_export",
@@ -3560,6 +3579,11 @@ var pythonProfiles = []profileTemplate{
 			{weight: 20, frames: []profileFrame{
 				{function: "upload_fileobj", module: "boto3.s3.inject", filename: "boto3/s3/inject.py", absPath: "/usr/lib/python3.12/site-packages/boto3/s3/inject.py", lineno: 610},
 			}},
+		},
+		spans: []spanNode{
+			{op: "db.query", description: "SELECT * FROM exports WHERE state = 'pending' FOR UPDATE SKIP LOCKED", durationMs: [2]int{60, 190}},
+			{op: "file.write", description: "/tmp/export-batch.csv", durationMs: [2]int{300, 900}},
+			{op: "http.client", description: "PUT s3://exports/2026/report.csv", durationMs: [2]int{120, 460}},
 		},
 	},
 }
@@ -3688,7 +3712,7 @@ func buildV1Profile(tmpl profileTemplate, ts time.Time, releases, envs []string)
 				"status":   "ok",
 			},
 		},
-		"spans": []any{},
+		"spans": buildSpanNodes(tmpl.spans, spanID, ts),
 	}
 
 	profile = map[string]any{
@@ -3793,7 +3817,7 @@ func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases
 				// And this is the only link from a transaction to its chunks.
 				"profile": map[string]any{"profiler_id": profilerID},
 			},
-			"spans": []any{},
+			"spans": buildSpanNodes(tmpl.spans, newEventID()[:16], txStart),
 		})
 	}
 	return chunk, txs
