@@ -961,3 +961,61 @@ func TestHandleGetTransactionFlameGraph(t *testing.T) {
 		}
 	})
 }
+
+// The endpoint must distinguish "no profile", which is ordinary, from a real
+// failure. Both used to be untested, and they differ by status code alone.
+func TestHandleGetTransactionFlameGraph_errorPaths(t *testing.T) {
+	ctx := context.Background()
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	get := func(t *testing.T, id string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+id+"/flamegraph", nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	t.Run("malformed id is a server error, not a panic", func(t *testing.T) {
+		if code := get(t, "not-a-uuid"); code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", code)
+		}
+	})
+
+	t.Run("unknown transaction is a 404", func(t *testing.T) {
+		if code := get(t, "00000000-0000-0000-0000-000000000000"); code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", code)
+		}
+	})
+
+	// A blob that will not decode is a fault on our side, so it must not be
+	// dressed up as a missing profile.
+	t.Run("corrupt stored blob is a server error", func(t *testing.T) {
+		var txID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO transactions
+				(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, event_id)
+			VALUES ($1, 'GET /corrupt', 'http.server', 'ok', 10, NOW(), NOW(), 'corrupt-api-event')
+			RETURNING id`, testProject.ID).Scan(&txID); err != nil {
+			t.Fatalf("insert transaction: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO profile_chunks
+				(project_id, format, transaction_event_id, start_ts, end_ts,
+				 sample_count, size_bytes, encoding, data)
+			VALUES ($1, 1, 'corrupt-api-event', NOW(), NOW(), 10, 8, 1, $2)`,
+			testProject.ID, []byte("not zstd")); err != nil {
+			t.Fatalf("insert corrupt profile: %v", err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(),
+				"DELETE FROM profile_chunks WHERE transaction_event_id = 'corrupt-api-event'")
+		})
+
+		if code := get(t, txID); code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for a corrupt blob, got %d", code)
+		}
+	})
+}

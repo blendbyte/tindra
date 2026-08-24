@@ -254,3 +254,38 @@ func TestProfileBuffer_flushesOnShutdown(t *testing.T) {
 		t.Errorf("stored %d profiles, want 1 flushed on shutdown", count)
 	}
 }
+
+// A row the database rejects must not take the writer goroutine down with it.
+// The batch is best effort: one bad profile should not stop the ones behind it.
+func TestProfileBuffer_survivesAFailedInsert(t *testing.T) {
+	truncateProfiles(t)
+
+	buf := ingest.NewProfileBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go buf.Run(ctx, testPool)
+
+	// No such project, so the foreign key rejects it.
+	bad := stubProfile(t, "v1_php_laravel.json", "profile")
+	bad.ProjectID = "00000000-0000-0000-0000-000000000000"
+	if !buf.Push(bad) {
+		t.Fatal("push failed")
+	}
+	time.Sleep(400 * time.Millisecond)
+
+	// The writer is still running and still accepting work.
+	if !buf.Push(stubProfile(t, "v1_python.json", "profile")) {
+		t.Fatal("push after a failed insert failed")
+	}
+	time.Sleep(400 * time.Millisecond)
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("stored %d profiles, want the good one written after the bad one failed", count)
+	}
+}

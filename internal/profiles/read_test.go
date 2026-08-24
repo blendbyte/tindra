@@ -327,3 +327,63 @@ func TestFlameGraphForTransaction_fallsBackToChunksWhenV1Missing(t *testing.T) {
 		t.Errorf("sample count = %d, want the chunk used as a fallback", g.SampleCount)
 	}
 }
+
+// A stored blob that will not decode has to surface as an error. Treating it as
+// "no profile" would quietly show an empty graph for data that is actually
+// corrupt, and nobody would ever find out.
+func TestFlameGraphForTransaction_corruptBlob(t *testing.T) {
+	reset(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	txID := insertTransaction(t, "corrupt-event-id", "", "", now.Add(-time.Second), now)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO profile_chunks
+			(project_id, format, transaction_event_id, start_ts, end_ts,
+			 sample_count, size_bytes, encoding, data)
+		VALUES ($1, 1, 'corrupt-event-id', $2, $3, 10, 8, 1, $4)`,
+		testProject.ID, now.Add(-time.Second), now, []byte("not zstd")); err != nil {
+		t.Fatalf("insert corrupt profile: %v", err)
+	}
+
+	_, err := profiles.FlameGraphForTransaction(ctx, testPool, txID)
+	if err == nil {
+		t.Fatal("expected an error for a blob that cannot be decoded")
+	}
+	if errors.Is(err, profiles.ErrNoProfile) {
+		t.Error("a corrupt blob must not be reported as a missing profile")
+	}
+}
+
+// A malformed id reaches the database as a bad UUID. It has to come back as an
+// error rather than a panic, since it is one hand-edited URL away.
+func TestFlameGraphForTransaction_malformedID(t *testing.T) {
+	reset(t)
+	_, err := profiles.FlameGraphForTransaction(context.Background(), testPool, "not-a-uuid")
+	if err == nil {
+		t.Fatal("expected an error for a malformed transaction id")
+	}
+}
+
+// The v1 profile names the thread the transaction ran on. When that thread has
+// no samples, folding it would produce an empty graph, so the read path falls
+// back to every thread instead.
+func TestFlameGraphForTransaction_v1FallsBackWhenActiveThreadIsAbsent(t *testing.T) {
+	reset(t)
+	ctx := context.Background()
+
+	p := fixture(t, "v1_php_laravel.json", "profile")
+	// The SDK claimed a thread that never appears in the samples.
+	p.ActiveThreadID = "no-such-thread"
+	insertProfile(t, p)
+	txID := insertTransaction(t, p.TransactionID, "", "", p.Start(), p.End())
+
+	g, err := profiles.FlameGraphForTransaction(ctx, testPool, txID)
+	if err != nil {
+		t.Fatalf("flame graph: %v", err)
+	}
+	if g.SampleCount != len(p.Samples) {
+		t.Errorf("sample count = %d, want all %d samples folded rather than none",
+			g.SampleCount, len(p.Samples))
+	}
+}

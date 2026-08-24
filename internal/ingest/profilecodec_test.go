@@ -5,8 +5,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/blendbyte/tindra/internal/ingest"
 )
+
+// compressForTest mirrors what the codec stores, so a test can build a blob
+// that is valid zstd but invalid content.
+func compressForTest(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatalf("zstd writer: %v", err)
+	}
+	defer enc.Close()
+	return enc.EncodeAll(raw, nil)
+}
 
 // Storage is lossy if the round trip is: everything the read path and the UI
 // need has to survive compression, including BaseNs, which is what makes a
@@ -191,5 +205,26 @@ func TestScrubProfile_noPatternsIsANoop(t *testing.T) {
 	if p.Frames[0].AbsPath != before {
 		t.Errorf("abs_path = %q, want unchanged %q: field blocking does not apply to frames",
 			p.Frames[0].AbsPath, before)
+	}
+}
+
+// A blob that decompresses but is not a profile has to fail loudly. zstd will
+// happily round-trip any bytes, so the JSON step is the only thing standing
+// between a corrupt row and a nonsense graph.
+func TestDecodeProfile_validZstdButNotAProfile(t *testing.T) {
+	junk, _, err := ingest.EncodeProfile(nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	// EncodeProfile(nil) produces the JSON literal "null", which decodes to an
+	// empty profile rather than failing, so check that explicitly.
+	if p, err := ingest.DecodeProfile(ingest.ProfileEncodingZstdJSON, junk); err != nil || p == nil {
+		t.Errorf("null profile: got %v, %v", p, err)
+	}
+
+	// Now something that really is not JSON at all.
+	garbage := compressForTest(t, []byte("{definitely not json"))
+	if _, err := ingest.DecodeProfile(ingest.ProfileEncodingZstdJSON, garbage); err == nil {
+		t.Error("expected an error decoding valid zstd holding invalid JSON")
 	}
 }
