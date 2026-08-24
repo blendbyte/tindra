@@ -256,3 +256,26 @@ func TestSeededProfiledTransactionsHaveSpans(t *testing.T) {
 		}
 	})
 }
+
+// Profiled transactions have to be findable. When a profiled template shares a
+// name with an ordinary one, clicking that name in the UI usually lands on a
+// transaction with no profile and the panel simply is not there.
+func TestProfiledTransactionNamesAreUnique(t *testing.T) {
+	ordinary := map[string]bool{}
+	for _, def := range projectRegistry {
+		for _, tmpl := range def.txs {
+			ordinary[tmpl.name] = true
+		}
+	}
+
+	seen := map[string]bool{}
+	for _, tmpl := range append(append([]profileTemplate{}, laravelProfiles...), pythonProfiles...) {
+		if ordinary[tmpl.txName] {
+			t.Errorf("%q is also an ordinary transaction template, so most of them have no profile", tmpl.txName)
+		}
+		if seen[tmpl.txName] {
+			t.Errorf("%q is used by two profile templates", tmpl.txName)
+		}
+		seen[tmpl.txName] = true
+	}
+}

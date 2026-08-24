@@ -2822,6 +2822,10 @@ func main() {
 
 	// deliverItems sends several items in one envelope, which is what an SDK
 	// does when a profile accompanies its transaction.
+	// Filled in by the profiles section so the summary can point at the
+	// transactions that actually have a flame graph.
+	var profiledNames []string
+
 	deliverItems := func(label string, items []envelopeItem) {
 		sema <- struct{}{}
 		deliverWg.Add(1)
@@ -2983,6 +2987,16 @@ func main() {
 				}
 			}
 		}
+
+		// These names exist nowhere else in the seed data, so anything on this
+		// list is guaranteed to have a flame graph when you open it.
+		profiledNames = nil
+		for _, tmpl := range laravelProfiles {
+			profiledNames = append(profiledNames, tmpl.txName+"  (v1, transaction-based)")
+		}
+		for _, tmpl := range pythonProfiles {
+			profiledNames = append(profiledNames, tmpl.txName+"  (v2, continuous)")
+		}
 	}
 
 	if seed["logs"] {
@@ -3030,6 +3044,13 @@ func main() {
 	}
 
 	fmt.Printf("\nDone. %d sent, %d failed.\n", sent, failed)
+
+	if len(profiledNames) > 0 {
+		fmt.Println("\nTransactions with a flame graph (Performance → Transactions):")
+		for _, n := range profiledNames {
+			fmt.Printf("  %s\n", n)
+		}
+	}
 	if failed > 0 {
 		os.Exit(1)
 	}
@@ -3459,7 +3480,7 @@ const sampleIntervalNs = int64(9_900_990)
 
 var laravelProfiles = []profileTemplate{
 	{
-		txName:     "GET /api/orders",
+		txName:     "GET /api/orders/export",
 		op:         "http.server",
 		platform:   "php",
 		durationMs: [2]int{280, 620},
@@ -3467,7 +3488,7 @@ var laravelProfiles = []profileTemplate{
 			{function: "/var/www/app/public/index.php", filename: "public/index.php", absPath: "/var/www/app/public/index.php", lineno: 17},
 			{function: `Illuminate\Foundation\Http\Kernel::handle`, module: `Illuminate\Foundation\Http\Kernel`, filename: "vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php", absPath: "/var/www/app/vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php", lineno: 141},
 			{function: `Illuminate\Routing\Router::dispatch`, module: `Illuminate\Routing\Router`, filename: "vendor/laravel/framework/src/Illuminate/Routing/Router.php", absPath: "/var/www/app/vendor/laravel/framework/src/Illuminate/Routing/Router.php", lineno: 714},
-			{function: `App\Http\Controllers\OrderController::index`, module: `App\Http\Controllers\OrderController`, filename: "app/Http/Controllers/OrderController.php", absPath: "/var/www/app/app/Http/Controllers/OrderController.php", lineno: 42},
+			{function: `App\Http\Controllers\OrderController::export`, module: `App\Http\Controllers\OrderController`, filename: "app/Http/Controllers/OrderController.php", absPath: "/var/www/app/app/Http/Controllers/OrderController.php", lineno: 42},
 		},
 		leaves: []profileLeaf{
 			{weight: 46, frames: []profileFrame{
@@ -3496,14 +3517,14 @@ var laravelProfiles = []profileTemplate{
 		},
 	},
 	{
-		txName:     "POST /api/checkout",
+		txName:     "POST /api/checkout/confirm",
 		op:         "http.server",
 		platform:   "php",
 		durationMs: [2]int{420, 980},
 		root: []profileFrame{
 			{function: "/var/www/app/public/index.php", filename: "public/index.php", absPath: "/var/www/app/public/index.php", lineno: 17},
 			{function: `Illuminate\Foundation\Http\Kernel::handle`, module: `Illuminate\Foundation\Http\Kernel`, filename: "vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php", absPath: "/var/www/app/vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php", lineno: 141},
-			{function: `App\Http\Controllers\CheckoutController::store`, module: `App\Http\Controllers\CheckoutController`, filename: "app/Http/Controllers/CheckoutController.php", absPath: "/var/www/app/app/Http/Controllers/CheckoutController.php", lineno: 71},
+			{function: `App\Http\Controllers\CheckoutController::confirm`, module: `App\Http\Controllers\CheckoutController`, filename: "app/Http/Controllers/CheckoutController.php", absPath: "/var/www/app/app/Http/Controllers/CheckoutController.php", lineno: 71},
 		},
 		leaves: []profileLeaf{
 			{weight: 52, frames: []profileFrame{
@@ -3530,14 +3551,14 @@ var laravelProfiles = []profileTemplate{
 
 var pythonProfiles = []profileTemplate{
 	{
-		txName:     "GET /api/reports",
+		txName:     "GET /api/reports/revenue",
 		op:         "http.server",
 		platform:   "python",
 		durationMs: [2]int{350, 900},
 		root: []profileFrame{
 			{function: "run", module: "gunicorn.workers.sync", filename: "gunicorn/workers/sync.py", absPath: "/usr/lib/python3.12/site-packages/gunicorn/workers/sync.py", lineno: 128},
 			{function: "__call__", module: "django.core.handlers.wsgi", filename: "django/core/handlers/wsgi.py", absPath: "/usr/lib/python3.12/site-packages/django/core/handlers/wsgi.py", lineno: 124},
-			{function: "report_list", module: "reports.views", filename: "reports/views.py", absPath: "/srv/app/reports/views.py", lineno: 57, inApp: true},
+			{function: "revenue_report", module: "reports.views", filename: "reports/views.py", absPath: "/srv/app/reports/views.py", lineno: 57, inApp: true},
 		},
 		leaves: []profileLeaf{
 			{weight: 44, frames: []profileFrame{
@@ -3559,7 +3580,7 @@ var pythonProfiles = []profileTemplate{
 		},
 	},
 	{
-		txName:     "celery.process_export",
+		txName:     "celery: app.tasks.process_export",
 		op:         "queue.task",
 		platform:   "python",
 		durationMs: [2]int{900, 2400},
