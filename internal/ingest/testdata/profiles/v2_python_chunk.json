@@ -1,0 +1,97 @@
+{
+  "chunk_id": "7f8e9d0c1b2a3948576655443322110f",
+  "client_sdk": {
+    "name": "sentry.python.django",
+    "version": "2.41.0"
+  },
+  "platform": "python",
+  "profiler_id": "4d229f1d3807421ba62a5f8bc295d836",
+  "version": "2",
+  "release": "orders@2.1.0",
+  "environment": "production",
+  "profile": {
+    "frames": [
+      {
+        "abs_path": "/srv/app/manage.py",
+        "filename": "manage.py",
+        "module": "__main__",
+        "function": "<module>",
+        "lineno": 22,
+        "in_app": true
+      },
+      {
+        "abs_path": "/srv/app/orders/views.py",
+        "filename": "orders/views.py",
+        "module": "orders.views",
+        "function": "order_list",
+        "lineno": 57,
+        "in_app": true
+      },
+      {
+        "abs_path": "/srv/app/orders/serializers.py",
+        "filename": "orders/serializers.py",
+        "module": "orders.serializers",
+        "function": "serialize_order",
+        "lineno": 31,
+        "in_app": true
+      },
+      {
+        "abs_path": "/usr/lib/python3.12/json/encoder.py",
+        "filename": "json/encoder.py",
+        "module": "json.encoder",
+        "function": "iterencode",
+        "lineno": 257,
+        "in_app": false
+      }
+    ],
+    "stacks": [
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        1,
+        0
+      ],
+      [
+        3,
+        2,
+        1,
+        0
+      ]
+    ],
+    "samples": [
+      {
+        "timestamp": 1787911732.101,
+        "thread_id": "8412331008",
+        "stack_id": 0
+      },
+      {
+        "timestamp": 1787911732.111,
+        "thread_id": "8412331008",
+        "stack_id": 1
+      },
+      {
+        "timestamp": 1787911732.121,
+        "thread_id": "8412331008",
+        "stack_id": 2
+      },
+      {
+        "timestamp": 1787911732.131,
+        "thread_id": "8412331008",
+        "stack_id": 1
+      },
+      {
+        "timestamp": 1787911732.141,
+        "thread_id": "8412331008",
+        "stack_id": 0
+      }
+    ],
+    "thread_metadata": {
+      "8412331008": {
+        "name": "MainThread"
+      }
+    }
+  }
+}

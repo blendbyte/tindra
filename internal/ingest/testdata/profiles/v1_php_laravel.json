@@ -1,0 +1,112 @@
+{
+  "device": {
+    "architecture": "x86_64"
+  },
+  "event_id": "8f7e6d5c4b3a29180f1e2d3c4b5a6978",
+  "os": {
+    "name": "Linux",
+    "version": "6.8.0-45-generic",
+    "build_number": ""
+  },
+  "platform": "php",
+  "release": "1.4.2",
+  "environment": "production",
+  "runtime": {
+    "name": "php",
+    "sapi": "fpm-fcgi",
+    "version": "8.3.12"
+  },
+  "timestamp": "2026-08-24T10:15:32.123+00:00",
+  "transaction": {
+    "id": "3c2b1a09f8e7d6c5b4a39281706f5e4d",
+    "name": "GET /api/orders",
+    "trace_id": "9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d",
+    "active_thread_id": "0"
+  },
+  "version": "1",
+  "profile": {
+    "frames": [
+      {
+        "filename": "public/index.php",
+        "abs_path": "/var/www/app/public/index.php",
+        "module": null,
+        "function": "/var/www/app/public/index.php",
+        "lineno": 17
+      },
+      {
+        "filename": "vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php",
+        "abs_path": "/var/www/app/vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php",
+        "module": "Illuminate\\Foundation\\Http\\Kernel",
+        "function": "Illuminate\\Foundation\\Http\\Kernel::handle",
+        "lineno": 141
+      },
+      {
+        "filename": "app/Http/Controllers/OrderController.php",
+        "abs_path": "/var/www/app/app/Http/Controllers/OrderController.php",
+        "module": "App\\Http\\Controllers\\OrderController",
+        "function": "App\\Http\\Controllers\\OrderController::index",
+        "lineno": 42
+      },
+      {
+        "filename": "vendor/laravel/framework/src/Illuminate/Database/Query/Builder.php",
+        "abs_path": "/var/www/app/vendor/laravel/framework/src/Illuminate/Database/Query/Builder.php",
+        "module": "Illuminate\\Database\\Query\\Builder",
+        "function": "Illuminate\\Database\\Query\\Builder::get",
+        "lineno": 2723
+      },
+      {
+        "filename": "app/Support/Money.php",
+        "abs_path": "/var/www/app/app/Support/Money.php",
+        "module": "App\\Support\\Money",
+        "function": "App\\Support\\Money::format",
+        "lineno": 88
+      }
+    ],
+    "stacks": [
+      [
+        2,
+        1,
+        0
+      ],
+      [
+        3,
+        2,
+        1,
+        0
+      ],
+      [
+        4,
+        2,
+        1,
+        0
+      ]
+    ],
+    "samples": [
+      {
+        "stack_id": 0,
+        "thread_id": "0",
+        "elapsed_since_start_ns": 9900990
+      },
+      {
+        "stack_id": 1,
+        "thread_id": "0",
+        "elapsed_since_start_ns": 19801980
+      },
+      {
+        "stack_id": 1,
+        "thread_id": "0",
+        "elapsed_since_start_ns": 29702970
+      },
+      {
+        "stack_id": 2,
+        "thread_id": "0",
+        "elapsed_since_start_ns": 39603960
+      },
+      {
+        "stack_id": 0,
+        "thread_id": "0",
+        "elapsed_since_start_ns": 49504950
+      }
+    ]
+  }
+}

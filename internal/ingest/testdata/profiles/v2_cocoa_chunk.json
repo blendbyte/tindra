@@ -1,0 +1,59 @@
+{
+  "version": "2",
+  "chunk_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "profiler_id": "60718293a4b5c6d7e8f901234b3d4e5f",
+  "timestamp": 1787911732.101,
+  "release": "2.4.0 (312)",
+  "environment": "production",
+  "platform": "cocoa",
+  "client_sdk": {
+    "name": "sentry.cocoa",
+    "version": "8.44.0"
+  },
+  "profile": {
+    "frames": [
+      {
+        "instruction_addr": "0x0000000104a1c2f0"
+      },
+      {
+        "instruction_addr": "0x0000000104a2d418"
+      }
+    ],
+    "stacks": [
+      [
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "samples": [
+      {
+        "stack_id": 0,
+        "thread_id": "0x000000016b2f4300",
+        "timestamp": 1787911732.101
+      },
+      {
+        "stack_id": 1,
+        "thread_id": "0x000000016b2f4300",
+        "timestamp": 1787911732.111
+      },
+      {
+        "stack_id": 0,
+        "thread_id": "0x000000016b2f4300",
+        "timestamp": 1787911732.121
+      },
+      {
+        "stack_id": 1,
+        "thread_id": "0x000000016b2f4300",
+        "timestamp": 1787911732.131
+      }
+    ],
+    "thread_metadata": {
+      "0x000000016b2f4300": {
+        "name": "com.apple.main-thread"
+      }
+    }
+  }
+}

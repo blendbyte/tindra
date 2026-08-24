@@ -1,0 +1,114 @@
+{
+  "environment": "production",
+  "event_id": "1a2b3c4d5e6f70819a2b3c4d5e6f7081",
+  "platform": "python",
+  "release": "orders@2.1.0",
+  "timestamp": "2026-08-24T10:15:32.123456Z",
+  "version": "1",
+  "device": {
+    "architecture": "aarch64"
+  },
+  "os": {
+    "name": "Linux",
+    "version": "6.8.0-45-generic"
+  },
+  "runtime": {
+    "name": "CPython",
+    "version": "3.12.4"
+  },
+  "transactions": [
+    {
+      "id": "5e6f70819a2b3c4d5e6f70819a2b3c4d",
+      "name": "GET /api/orders",
+      "relative_start_ns": "0",
+      "relative_end_ns": "49504950",
+      "trace_id": "c4d5e6f70819a2b3c4d5e6f70819a2b3",
+      "active_thread_id": "8412331008"
+    }
+  ],
+  "profile": {
+    "frames": [
+      {
+        "abs_path": "/srv/app/manage.py",
+        "filename": "manage.py",
+        "module": "__main__",
+        "function": "<module>",
+        "lineno": 22,
+        "in_app": true
+      },
+      {
+        "abs_path": "/srv/app/orders/views.py",
+        "filename": "orders/views.py",
+        "module": "orders.views",
+        "function": "order_list",
+        "lineno": 57,
+        "in_app": true
+      },
+      {
+        "abs_path": "/srv/app/orders/serializers.py",
+        "filename": "orders/serializers.py",
+        "module": "orders.serializers",
+        "function": "serialize_order",
+        "lineno": 31,
+        "in_app": true
+      },
+      {
+        "abs_path": "/usr/lib/python3.12/json/encoder.py",
+        "filename": "json/encoder.py",
+        "module": "json.encoder",
+        "function": "iterencode",
+        "lineno": 257,
+        "in_app": false
+      }
+    ],
+    "stacks": [
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        1,
+        0
+      ],
+      [
+        3,
+        2,
+        1,
+        0
+      ]
+    ],
+    "samples": [
+      {
+        "elapsed_since_start_ns": "9900990",
+        "thread_id": "8412331008",
+        "stack_id": 0
+      },
+      {
+        "elapsed_since_start_ns": "19801980",
+        "thread_id": "8412331008",
+        "stack_id": 1
+      },
+      {
+        "elapsed_since_start_ns": "29702970",
+        "thread_id": "8412331008",
+        "stack_id": 2
+      },
+      {
+        "elapsed_since_start_ns": "39603960",
+        "thread_id": "8412331008",
+        "stack_id": 1
+      },
+      {
+        "elapsed_since_start_ns": "49504950",
+        "thread_id": "8412331008",
+        "stack_id": 0
+      }
+    ],
+    "thread_metadata": {
+      "8412331008": {
+        "name": "MainThread"
+      }
+    }
+  }
+}
