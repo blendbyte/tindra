@@ -18,12 +18,51 @@ import (
 )
 
 const (
-	maxBodyBytes     = 20 * 1024 * 1024 // 20 MB - raw/uncompressed
-	maxGzipBodyBytes = 1 * 1024 * 1024  // 1 MB - decompressed; real SDK payloads are well under this
+	maxBodyBytes = 20 * 1024 * 1024 // 20 MB - raw/uncompressed
+
+	// maxGzipBodyBytes caps the decompressed size, matching the raw cap.
+	// Error events are tiny, but SDK profiling items are not: a single profile
+	// is hundreds of KB to megabytes before compression, and SDKs ship it in
+	// the same envelope as its transaction. The previous 1 MB cap truncated
+	// such a body mid-item, failing the parse for the whole envelope and
+	// discarding the transaction along with the profile.
+	maxGzipBodyBytes = 20 * 1024 * 1024
 	maxFieldLen      = 512
 	maxDescLen       = 2048
 	maxSpans         = 500
 )
+
+// limitedReader reads at most a fixed number of bytes and records whether that
+// cap was reached. io.LimitReader truncates silently, which downgrades "the
+// body was too big" into an opaque parse failure further down the stack.
+type limitedReader struct {
+	r    io.Reader
+	left int64 // one past the cap, so reaching zero means the cap was exceeded
+	over bool
+}
+
+func newLimitedReader(r io.Reader, limit int64) *limitedReader {
+	return &limitedReader{r: r, left: limit + 1}
+}
+
+func (l *limitedReader) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		l.over = true
+		return 0, io.EOF
+	}
+	if int64(len(p)) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.r.Read(p)
+	l.left -= int64(n)
+	if l.left <= 0 {
+		l.over = true
+	}
+	return n, err
+}
+
+// exceeded reports whether more bytes were available than the cap allowed.
+func (l *limitedReader) exceeded() bool { return l.over }
 
 func trunc(s string, n int) string {
 	if len(s) <= n {
@@ -78,7 +117,9 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body := io.LimitReader(r.Body, maxBodyBytes)
+	rawLimit := newLimitedReader(r.Body, maxBodyBytes)
+	var body io.Reader = rawLimit
+	sizeLimit := rawLimit
 	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
 		gz, err := gzip.NewReader(body)
 		if err != nil {
@@ -86,11 +127,19 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer gz.Close()
-		body = io.LimitReader(gz, maxGzipBodyBytes)
+		sizeLimit = newLimitedReader(gz, maxGzipBodyBytes)
+		body = sizeLimit
 	}
 
 	var rawBuf bytes.Buffer
 	header, items, err := ingest.Parse(io.TeeReader(body, &rawBuf))
+	// Test the size caps before the parse error. An over-sized body is cut off
+	// mid-item, so it always surfaces as a parse failure; reporting that as a
+	// malformed envelope sends the operator hunting for a bug in their SDK.
+	if rawLimit.exceeded() || sizeLimit.exceeded() {
+		http.Error(w, "envelope too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 	if err != nil {
 		http.Error(w, "bad envelope", http.StatusBadRequest)
 		return

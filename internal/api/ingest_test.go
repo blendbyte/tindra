@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -560,5 +561,79 @@ func TestHandleEnvelope_checkin_unknownMonitor(t *testing.T) {
 	// Unknown monitor is silently ignored; the envelope still returns 200.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A profile item rides in the same envelope as its transaction and dwarfs an
+// error event. Before the decompressed cap was raised, gzipped envelopes like
+// this were truncated mid-item and rejected as malformed, silently taking the
+// transaction down with the profile.
+func TestHandleEnvelope_gzipLargeProfileItem(t *testing.T) {
+	buf := ingest.NewBuffer(100)
+	txBuf := ingest.NewTransactionBuffer(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	const txName = "/profiling/large-envelope"
+	txPayload := fmt.Sprintf(`{"transaction":%q,"start_timestamp":"2024-01-01T00:00:00Z","timestamp":"2024-01-01T00:00:01Z","contexts":{"trace":{"trace_id":"aa","span_id":"bb"}}}`, txName)
+
+	// ~4 MB, comfortably past the old 1 MB decompressed cap.
+	profilePayload := fmt.Sprintf(`{"version":"1","platform":"php","padding":%q}`,
+		strings.Repeat("frame", 800_000))
+
+	body := `{"event_id":"770e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(txPayload)) + "\n" +
+		txPayload + "\n" +
+		fmt.Sprintf(`{"type":"profile","length":%d}`, len(profilePayload)) + "\n" +
+		profilePayload + "\n"
+
+	var gz bytes.Buffer
+	w := gzip.NewWriter(&gz)
+	_, _ = w.Write([]byte(body))
+	w.Close()
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(350 * time.Millisecond)
+
+	// The profile itself is still discarded, but the transaction must survive.
+	var count int
+	testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM transactions WHERE project_id = $1 AND transaction = $2",
+		testProject.ID, txName,
+	).Scan(&count)
+	if count < 1 {
+		t.Errorf("expected transaction to be stored alongside the oversized profile item, got %d", count)
+	}
+}
+
+func TestHandleEnvelope_tooLarge(t *testing.T) {
+	buf := ingest.NewBuffer(100)
+
+	var gz bytes.Buffer
+	w := gzip.NewWriter(&gz)
+	// Highly compressible, so the raw body stays small while the decompressed
+	// stream runs past maxGzipBodyBytes.
+	_, _ = w.Write(bytes.Repeat([]byte("a"), 21*1024*1024))
+	w.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	newHandler(buf).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 413 for oversized envelope, got %d", rec.Code)
 	}
 }
