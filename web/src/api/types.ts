@@ -424,6 +424,8 @@ export interface Log {
   environment?: string | null
   release?: string | null
   attributes: Record<string, unknown>
+  /** Transaction sharing this log's trace_id, when one exists. */
+  transaction_id?: string | null
 }
 
 export interface LogListPage {

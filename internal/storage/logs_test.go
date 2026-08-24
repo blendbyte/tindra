@@ -340,3 +340,182 @@ func TestDeleteLogsOlderThan_nothingToDelete(t *testing.T) {
 		t.Errorf("expected 0 deleted rows, got %d", deleted)
 	}
 }
+
+// seedTracedLog inserts a log carrying a trace_id and returns its ID.
+func seedTracedLog(t *testing.T, projectID, body, traceID string, ts time.Time) string {
+	t.Helper()
+	var id string
+	err := testPool.QueryRow(context.Background(), `
+		INSERT INTO logs (project_id, timestamp, received_at, level, body, trace_id)
+		VALUES ($1, $2, $2, 'info', $3, $4)
+		RETURNING id
+	`, projectID, ts, body, traceID).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed traced log: %v", err)
+	}
+	return id
+}
+
+// seedTxForTrace inserts a transaction on the given trace and returns its ID.
+func seedTxForTrace(t *testing.T, projectID, traceID string, receivedAt time.Time) string {
+	t.Helper()
+	var id string
+	err := testPool.QueryRow(context.Background(), `
+		INSERT INTO transactions
+			(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, received_at, trace_id)
+		VALUES ($1, '/api/traced', 'http.server', 'ok', 200, $2, $2, $2, $3)
+		RETURNING id
+	`, projectID, receivedAt, traceID).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+	return id
+}
+
+// TestListLogs_resolvesTransactionID verifies a log is joined to the transaction
+// sharing its trace_id so the UI can deep-link the row to its trace.
+func TestListLogs_resolvesTransactionID(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+
+	txID := seedTxForTrace(t, p.ID, "trace-join-1", now)
+	seedTracedLog(t, p.ID, "traced log", "trace-join-1", now)
+
+	logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if logs[0].TransactionID == nil {
+		t.Fatal("expected TransactionID to be resolved, got nil")
+	}
+	if *logs[0].TransactionID != txID {
+		t.Errorf("TransactionID: got %q, want %q", *logs[0].TransactionID, txID)
+	}
+}
+
+// TestListLogs_transactionIDNilWithoutTrace verifies logs without a trace_id, and
+// traced logs whose transaction was never ingested, both come back unlinked
+// rather than joining to an arbitrary row.
+func TestListLogs_transactionIDNilWithoutTrace(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+
+	// A transaction exists, but on an unrelated trace.
+	seedTxForTrace(t, p.ID, "trace-other", now)
+	seedLog(t, p.ID, "info", "untraced log", now, "")
+	seedTracedLog(t, p.ID, "orphan traced log", "trace-missing", now.Add(time.Second))
+
+	logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(logs))
+	}
+	for _, l := range logs {
+		if l.TransactionID != nil {
+			t.Errorf("log %q: expected nil TransactionID, got %q", l.Body, *l.TransactionID)
+		}
+	}
+}
+
+// TestListLogs_resolvesMostRecentTransaction verifies that when a trace has more
+// than one transaction the newest one wins, matching GetTransactionByTraceID.
+func TestListLogs_resolvesMostRecentTransaction(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+
+	seedTxForTrace(t, p.ID, "trace-dup", now.Add(-time.Hour))
+	newest := seedTxForTrace(t, p.ID, "trace-dup", now)
+	seedTracedLog(t, p.ID, "dup traced log", "trace-dup", now)
+
+	logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if logs[0].TransactionID == nil || *logs[0].TransactionID != newest {
+		t.Errorf("TransactionID: got %v, want %q", logs[0].TransactionID, newest)
+	}
+}
+
+// TestListLogs_filtersStillApplyWithJoin guards the column qualification added
+// alongside the transaction join: an unqualified filter column would make the
+// query ambiguous and fail outright.
+func TestListLogs_filtersStillApplyWithJoin(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+
+	seedTxForTrace(t, p.ID, "trace-filter", now)
+	seedTracedLog(t, p.ID, "keep me", "trace-filter", now)
+	seedLog(t, p.ID, "error", "drop me", now.Add(-time.Minute), "staging")
+
+	logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Level:      "info",
+		Search:     "keep",
+		TraceID:    "trace-filter",
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if logs[0].Body != "keep me" {
+		t.Errorf("Body: got %q, want %q", logs[0].Body, "keep me")
+	}
+}
+
+// TestListLogs_cursorPaginationWithJoin exercises the qualified cursor predicate
+// so keyset pagination keeps working now that logs join to transactions.
+func TestListLogs_cursorPaginationWithJoin(t *testing.T) {
+	p := setupProjectForLogs(t)
+	base := time.Now().UTC().Truncate(time.Millisecond)
+
+	seedLog(t, p.ID, "info", "older", base.Add(-2*time.Minute), "")
+	seedLog(t, p.ID, "info", "newer", base, "")
+
+	first, hasMore, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Limit:      1,
+	})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if !hasMore {
+		t.Fatal("expected hasMore=true on the first page")
+	}
+	if len(first) != 1 || first[0].Body != "newer" {
+		t.Fatalf("first page: got %+v, want [newer]", first)
+	}
+
+	cursorTime := first[0].Timestamp
+	second, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		CursorTime: &cursorTime,
+		CursorID:   &first[0].ID,
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(second) != 1 || second[0].Body != "older" {
+		t.Errorf("second page: got %+v, want [older]", second)
+	}
+}

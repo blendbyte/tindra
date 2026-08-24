@@ -225,3 +225,63 @@ func TestListLogs_cursorTimeWithoutCursorID(t *testing.T) {
 		t.Errorf("expected 200 for cursor_time without cursor_id, got %d", rec.Code)
 	}
 }
+
+// TestListLogs_transactionIDSerialized verifies the log list exposes the
+// transaction sharing a log's trace_id, which the UI uses to link a log row to
+// its trace, and omits the field entirely when there is no such transaction.
+func TestListLogs_transactionIDSerialized(t *testing.T) {
+	truncateLogs(t)
+	if _, err := testPool.Exec(context.Background(), "TRUNCATE transactions CASCADE"); err != nil {
+		t.Fatalf("truncate transactions: %v", err)
+	}
+
+	now := time.Now().UTC()
+	var txID string
+	err := testPool.QueryRow(context.Background(), `
+		INSERT INTO transactions
+			(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, received_at, trace_id)
+		VALUES ($1, '/api/traced', 'http.server', 'ok', 200, $2, $2, $2, 'trace-api-1')
+		RETURNING id
+	`, testProject.ID, now).Scan(&txID)
+	if err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO logs (project_id, timestamp, received_at, level, body, trace_id, attributes)
+		VALUES ($1, $2, $2, 'info', 'traced log', 'trace-api-1', '{}'),
+		       ($1, $3, $3, 'info', 'plain log', NULL, '{}')
+	`, testProject.ID, now, now.Add(-time.Minute)); err != nil {
+		t.Fatalf("seed logs: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?project_id="+testProject.ID, nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Logs []map[string]any `json:"logs"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Logs) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(resp.Logs))
+	}
+
+	traced, plain := resp.Logs[0], resp.Logs[1]
+	if traced["body"] != "traced log" {
+		t.Fatalf("expected newest log first, got %v", traced["body"])
+	}
+	if traced["transaction_id"] != txID {
+		t.Errorf("transaction_id: got %v, want %q", traced["transaction_id"], txID)
+	}
+	if _, ok := plain["transaction_id"]; ok {
+		t.Errorf("expected transaction_id omitted for untraced log, got %v", plain["transaction_id"])
+	}
+}
