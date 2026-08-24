@@ -410,7 +410,7 @@ func TestMFAVerify_badRequestBody(t *testing.T) {
 		bytes.NewBufferString("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for bad body, got %d", rec.Code)
@@ -613,7 +613,7 @@ func TestHandleEnvelope_transactionEmptyName(t *testing.T) {
 		`{"type":"transaction"}` + "\n" +
 		`{"start_timestamp":"2024-01-01T00:00:00Z","timestamp":"2024-01-01T00:00:01Z"}` + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
 		bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
@@ -640,7 +640,7 @@ func TestHandleEnvelope_transactionEmptyStatus(t *testing.T) {
 		`{"type":"transaction"}` + "\n" +
 		payload + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
 		bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
@@ -667,7 +667,7 @@ func TestHandleEnvelope_transactionNegativeDuration(t *testing.T) {
 		`{"type":"transaction"}` + "\n" +
 		payload + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
 		bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))

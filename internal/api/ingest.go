@@ -196,6 +196,32 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 				ro.logBuf.Push(l) // best-effort; drop silently if full
 			})
 
+		case "profile", "profile_chunk":
+			if ro.profBuf == nil || !project.ProfilingEnabled {
+				continue
+			}
+			prof, err := ingest.ParseProfileItem(item.Header.Type, item.Payload)
+			if err != nil {
+				// A malformed or over-long profile is dropped on its own. The
+				// transaction it travels with is still good data.
+				slog.Debug("discarding profile", "project", project.Slug,
+					"type", item.Header.Type, "err", err)
+				continue
+			}
+			ingest.ScrubProfile(prof, scrubCfg)
+			// Compressed here rather than in the writer so the buffer holds
+			// bounded memory even when profiles arrive faster than they drain.
+			buffered, err := ingest.NewBufferedProfile(project.ID, prof)
+			if err != nil {
+				slog.Error("encode profile", "project", project.Slug, "err", err)
+				continue
+			}
+			if !ro.profBuf.Push(buffered) {
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "buffer full", http.StatusTooManyRequests)
+				return
+			}
+
 		case "check_in":
 			if ro.pool == nil {
 				continue
@@ -407,6 +433,7 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 
 func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransaction {
 	var p struct {
+		EventID        string          `json:"event_id"`
 		Transaction    string          `json:"transaction"`
 		StartTimestamp json.RawMessage `json:"start_timestamp"`
 		Timestamp      json.RawMessage `json:"timestamp"`
@@ -416,7 +443,13 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 				SpanID  string `json:"span_id"`
 				Op      string `json:"op"`
 				Status  string `json:"status"`
+				// Continuous profiling puts the sampled thread here, which is
+				// what selects one thread's samples out of a chunk.
+				Data map[string]string `json:"data"`
 			} `json:"trace"`
+			Profile struct {
+				ProfilerID string `json:"profiler_id"`
+			} `json:"profile"`
 		} `json:"contexts"`
 		Spans []struct {
 			SpanID         string          `json:"span_id"`
@@ -476,6 +509,9 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 
 	return &ingest.BufferedTransaction{
 		ProjectID:      projectID,
+		EventID:        trunc(p.EventID, maxFieldLen),
+		ProfilerID:     trunc(p.Contexts.Profile.ProfilerID, maxFieldLen),
+		ThreadID:       trunc(p.Contexts.Trace.Data["thread.id"], maxFieldLen),
 		TraceID:        trunc(p.Contexts.Trace.TraceID, maxFieldLen),
 		SpanID:         trunc(p.Contexts.Trace.SpanID, maxFieldLen),
 		Transaction:    trunc(p.Transaction, maxFieldLen),

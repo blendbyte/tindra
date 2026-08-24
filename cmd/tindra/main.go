@@ -39,14 +39,17 @@ var Commit = "unknown"
 var startupLog = slog.Default()
 
 type config struct {
-	databaseURL            string
-	bindAddr               string
-	publicURL              string
-	statsAPIKey            string
-	billingURL             string
-	logLevel               string
-	logFormat              string
-	ingestBufferSize       int
+	databaseURL      string
+	bindAddr         string
+	publicURL        string
+	statsAPIKey      string
+	billingURL       string
+	logLevel         string
+	logFormat        string
+	ingestBufferSize int
+	// profileBufferSize is sized independently of ingestBufferSize: a profile
+	// is orders of magnitude larger than an event, so the queue is far shorter.
+	profileBufferSize      int
 	dataDir                string
 	retentionDays          int
 	cookieSecure           bool
@@ -103,6 +106,12 @@ func loadConfig() config {
 	if s := strings.TrimSpace(os.Getenv("INGEST_BUFFER_SIZE")); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			bufSize = n
+		}
+	}
+	profileBufSize := 500
+	if s := strings.TrimSpace(os.Getenv("PROFILE_BUFFER_SIZE")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			profileBufSize = n
 		}
 	}
 	bindAddr := os.Getenv("BIND_ADDR")
@@ -191,6 +200,7 @@ func loadConfig() config {
 		logLevel:               logLevel,
 		logFormat:              os.Getenv("LOG_FORMAT"),
 		ingestBufferSize:       bufSize,
+		profileBufferSize:      profileBufSize,
 		dataDir:                dataDir,
 		retentionDays:          retentionDays,
 		cookieSecure:           os.Getenv("COOKIE_SECURE") == "true",
@@ -322,6 +332,13 @@ func serveCmd(cfg config) *cobra.Command {
 				logBuf.Run(ctx, pool)
 			}()
 
+			profBuf := ingest.NewProfileBuffer(cfg.profileBufferSize)
+			profBufDone := make(chan struct{})
+			go func() {
+				defer close(profBufDone)
+				profBuf.Run(ctx, pool)
+			}()
+
 			grouper := issues.NewGrouper(pool)
 			go grouper.Run(ctx)
 
@@ -392,7 +409,7 @@ func serveCmd(cfg config) *cobra.Command {
 				"rate_limit_envelope", cfg.rateLimitEnvelope,
 			)
 
-			handler := api.NewRouter(pool, buf, txBuf, logBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.requireMFA, cfg.trustedProxies)
+			handler := api.NewRouter(pool, buf, txBuf, logBuf, profBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.requireMFA, cfg.trustedProxies)
 			handler.SetRowLimits(cfg.logRowLimit, cfg.txRowLimit)
 			if !cfg.disableVersionCheck {
 				handler.StartVersionChecker(ctx)
@@ -444,6 +461,7 @@ func serveCmd(cfg config) *cobra.Command {
 			<-bufDone
 			<-txBufDone
 			<-logBufDone
+			<-profBufDone
 			return nil
 		},
 	}

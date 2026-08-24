@@ -50,7 +50,7 @@ func oauthDB(t *testing.T) *pgxpool.Pool {
 // or more mock OAuth providers configured. This lets us exercise the full
 // redirect / callback flow including state storage.
 func routerWithSSOAndPool(pool *pgxpool.Pool, providers ...oauthProvider) http.Handler {
-	return NewRouter(pool, ingest.NewBuffer(1), nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return NewRouter(pool, ingest.NewBuffer(1), nil, nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 // ---------------------------------------------------------------------------

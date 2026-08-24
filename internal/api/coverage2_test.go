@@ -965,7 +965,7 @@ func TestUpdateAlertRule_updateProjectIDs(t *testing.T) {
 
 func TestGetInstanceHealth_noStatsKey(t *testing.T) {
 	// Handler created without a stats key returns 503 for /api/health.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

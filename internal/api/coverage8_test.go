@@ -194,7 +194,7 @@ func TestAdminSendPasswordReset_withEmailSender_urlFormat(t *testing.T) {
 	fake := &fakeEmailSender{}
 	setAppEmailSender(t, fake)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "https://tindra.example.com", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "https://tindra.example.com", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodPost,
 		fmt.Sprintf("/api/users/%s/password-reset", target.ID), nil)

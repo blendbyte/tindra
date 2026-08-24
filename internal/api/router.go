@@ -44,6 +44,7 @@ type router struct {
 	buf                    *ingest.Buffer
 	txBuf                  *ingest.TransactionBuffer
 	logBuf                 *ingest.LogBuffer
+	profBuf                *ingest.ProfileBuffer
 	smStore                *sourcemaps.Store
 	oauthProviders         []oauthProvider
 	cookieSecure           bool
@@ -93,7 +94,7 @@ func (h *Handle) SetRowLimits(logRowLimit, txRowLimit int) {
 	h.ro.txRowLimit = txRowLimit
 }
 
-func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.TransactionBuffer, logBuf *ingest.LogBuffer, smStore *sourcemaps.Store, oauthProviders []oauthProvider, cookieSecure bool, corsOrigin string, publicURL string, statsAPIKey string, billingURL string, retentionDays int, projectLimit int, eventLimit int, userLimit int, rateLimitLogin int, rateLimitEnvelope int, evaluator *alerts.Evaluator, webhookAllowPrivateIPs bool, requireMFA bool, trustedProxies []*net.IPNet) *Handle {
+func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.TransactionBuffer, logBuf *ingest.LogBuffer, profBuf *ingest.ProfileBuffer, smStore *sourcemaps.Store, oauthProviders []oauthProvider, cookieSecure bool, corsOrigin string, publicURL string, statsAPIKey string, billingURL string, retentionDays int, projectLimit int, eventLimit int, userLimit int, rateLimitLogin int, rateLimitEnvelope int, evaluator *alerts.Evaluator, webhookAllowPrivateIPs bool, requireMFA bool, trustedProxies []*net.IPNet) *Handle {
 	ro := &router{
 		pool:                   pool,
 		buf:                    buf,
@@ -104,6 +105,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		cookieSecure:           cookieSecure,
 		corsOrigin:             corsOrigin,
 		publicURL:              publicURL,
+		profBuf:                profBuf,
 		statsAPIKey:            statsAPIKey,
 		billingURL:             billingURL,
 		retentionDays:          retentionDays,

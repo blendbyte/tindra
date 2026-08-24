@@ -19,7 +19,7 @@ import (
 )
 
 func newHandlerAllowPrivate(buf *ingest.Buffer) http.Handler {
-	return api.NewRouter(testPool, buf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, true, true, nil)
+	return api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, true, true, nil)
 }
 
 // apiPassthroughDSN builds a DSN that the forwarder will translate into

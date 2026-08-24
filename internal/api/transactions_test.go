@@ -15,7 +15,7 @@ import (
 )
 
 func txHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 func truncateTransactions(t *testing.T) {
@@ -286,7 +286,7 @@ func TestHandleEnvelope_transactionItem(t *testing.T) {
 		`{"type":"transaction"}` + "\n" +
 		payload + "\n"
 
-	handler := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	handler := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
 		bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", "Sentry sentry_version=7, sentry_key="+testProject.PublicKey)
