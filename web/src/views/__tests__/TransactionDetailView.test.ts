@@ -54,12 +54,15 @@ function setupMocks(
   isLoading = false,
   traceLogs: unknown = undefined,
   traceErrors: unknown[] = [],
+  flameGraph: unknown = null,
 ) {
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref(tx), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(spans), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(traceLogs) } as any)
     .mockReturnValueOnce({ data: ref(traceErrors.length ? traceErrors : undefined) } as any)
+    // Null is the common case: most transactions were never profiled.
+    .mockReturnValueOnce({ data: ref(flameGraph) } as any)
 }
 
 beforeEach(() => {
@@ -270,6 +273,36 @@ describe('TransactionDetailView', () => {
     })
   })
 
+  describe('flame graph', () => {
+    const graph = {
+      sample_count: 42,
+      idle_samples: 0,
+      sample_interval_ns: 10_000_000,
+      duration_ns: 420_000_000,
+      thread_name: 'MainThread',
+      root: {
+        function: '',
+        total_samples: 42,
+        self_samples: 0,
+        children: [{ function: 'main', total_samples: 42, self_samples: 42 }],
+      },
+    }
+
+    // Most transactions were never profiled, so the panel has to stay out of
+    // the way rather than showing an empty box on every page.
+    it('is absent when the transaction has no profile', () => {
+      setupMocks(baseTx, [], false, false, undefined, [], null)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).not.toContain('Flame graph')
+    })
+
+    it('renders when a profile exists', () => {
+      setupMocks(baseTx, [], false, false, undefined, [], graph)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Flame graph')
+    })
+  })
+
   describe('spans error state', () => {
     it('shows spans error message when spans fail to load', () => {
       vi.mocked(useQuery)
@@ -277,6 +310,7 @@ describe('TransactionDetailView', () => {
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(true), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('Failed to load spans')
     })
@@ -567,6 +601,7 @@ describe('TransactionDetailView', () => {
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(true), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       // Skeleton rows appear inside waterfall-left during spans loading
       expect(wrapper.find('.waterfall-left .skel').exists()).toBe(true)
