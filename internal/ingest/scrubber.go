@@ -188,3 +188,25 @@ func scrubString(s string, regexps []*regexp.Regexp) string {
 	}
 	return s
 }
+
+// ScrubProfile applies pattern scrubbing to the free-text metadata on profile
+// frames. Absolute paths routinely carry a developer's home directory or a
+// deploy path, and function and module names can carry customer identifiers in
+// generated code, so all four are run through the configured patterns.
+//
+// The stacks and samples arrays are pure integers and need nothing. Field-path
+// blocking does not apply, matching how the decomposed transaction struct is
+// handled. The profile is modified in place.
+func ScrubProfile(p *Profile, cfg ScrubConfig) {
+	_, regexps := buildScrubber(cfg)
+	if len(regexps) == 0 {
+		return
+	}
+	for i := range p.Frames {
+		f := &p.Frames[i]
+		f.AbsPath = scrubString(f.AbsPath, regexps)
+		f.Filename = scrubString(f.Filename, regexps)
+		f.Function = scrubString(f.Function, regexps)
+		f.Module = scrubString(f.Module, regexps)
+	}
+}

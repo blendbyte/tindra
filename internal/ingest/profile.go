@@ -107,11 +107,12 @@ type Profile struct {
 	StartNs int64 `json:"start_ns"`
 	EndNs   int64 `json:"end_ns"`
 
-	// baseNs is the profile's own origin: the declared start for v1, the first
+	// BaseNs is the profile's own origin: the declared start for v1, the first
 	// sample for v2. Duration is measured from here so that the v1 check
 	// matches Relay, which measures elapsed time from the profile start rather
-	// than from whenever the first sample happened to land.
-	baseNs int64
+	// than from whenever the first sample happened to land. Carried through
+	// storage so that a decoded profile reports the same duration as a fresh one.
+	BaseNs int64 `json:"base_ns"`
 }
 
 // Start returns the timestamp of the first sample.
@@ -121,7 +122,7 @@ func (p *Profile) Start() time.Time { return time.Unix(0, p.StartNs).UTC() }
 func (p *Profile) End() time.Time { return time.Unix(0, p.EndNs).UTC() }
 
 // Duration is the profile's span measured from its origin.
-func (p *Profile) Duration() time.Duration { return time.Duration(p.EndNs - p.baseNs) }
+func (p *Profile) Duration() time.Duration { return time.Duration(p.EndNs - p.BaseNs) }
 
 // ParseProfileItem normalizes a "profile" or "profile_chunk" envelope item.
 func ParseProfileItem(itemType string, payload []byte) (*Profile, error) {
@@ -155,7 +156,7 @@ func ParseProfile(payload []byte) (*Profile, error) {
 		Platform:    raw.Platform,
 		Release:     raw.Release,
 		Environment: raw.Environment,
-		baseNs:      baseNs,
+		BaseNs:      baseNs,
 	}
 
 	// PHP sends `transaction`, Python sends a one-element `transactions`.
@@ -279,8 +280,8 @@ func (p *Profile) normalize(maxDuration time.Duration) error {
 	p.StartNs = p.Samples[0].TimestampNs
 	p.EndNs = p.Samples[len(p.Samples)-1].TimestampNs
 	// v2 has no declared origin, so the first sample is it.
-	if p.baseNs == 0 {
-		p.baseNs = p.StartNs
+	if p.BaseNs == 0 {
+		p.BaseNs = p.StartNs
 	}
 
 	if p.Duration() > maxDuration {
