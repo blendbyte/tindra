@@ -11,6 +11,7 @@
 //
 //	issues        error events
 //	transactions  transactions + spans (also feeds queries/caches/jobs/browser views)
+//	profiles      profiled transactions with flame graphs, both wire formats
 //	logs          structured log records
 //	monitors      cron monitors (requires --db)
 //
@@ -2658,7 +2659,7 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
 	}
 }
 
-var canonicalSections = []string{"issues", "transactions", "logs", "monitors", "alerts"}
+var canonicalSections = []string{"issues", "transactions", "profiles", "logs", "monitors", "alerts"}
 
 // sectionAliases maps performance sub-view names to their canonical section.
 var sectionAliases = map[string]string{
@@ -2667,6 +2668,10 @@ var sectionAliases = map[string]string{
 	"jobs":    "transactions",
 	"browser": "transactions",
 }
+
+// profiles is deliberately not an alias for transactions: it emits its own
+// profiled transactions so a profile always has something to hang off, and so
+// --seed=transactions alone stays as cheap as it was.
 
 func parseSeedSections(s string) (map[string]bool, error) {
 	out := make(map[string]bool)
@@ -2739,7 +2744,7 @@ func main() {
 	projectType := flag.String("type", "mixed", "project type to seed")
 	listTypes := flag.Bool("list", false, "list available project types and exit")
 	dbURL := flag.String("db", "", "postgres connection URL for monitors (default: DATABASE_URL from .env)")
-	seedSections := flag.String("seed", "all", `comma-separated sections: issues, transactions, logs, monitors, alerts (or "all")`)
+	seedSections := flag.String("seed", "all", `comma-separated sections: issues, transactions, profiles, logs, monitors, alerts (or "all")`)
 	flag.Parse()
 
 	if *listTypes {
@@ -2814,6 +2819,46 @@ func main() {
 	var deliverWg sync.WaitGroup
 	var mu sync.Mutex
 	var ratePauseUntil time.Time
+
+	// deliverItems sends several items in one envelope, which is what an SDK
+	// does when a profile accompanies its transaction.
+	deliverItems := func(label string, items []envelopeItem) {
+		sema <- struct{}{}
+		deliverWg.Add(1)
+		go func() {
+			defer deliverWg.Done()
+			defer func() { <-sema }()
+			envelope := buildEnvelope(items)
+			for {
+				mu.Lock()
+				pause := time.Until(ratePauseUntil)
+				mu.Unlock()
+				if pause > 0 {
+					time.Sleep(pause)
+					continue
+				}
+				retryWait, err := send(target, envelope)
+				mu.Lock()
+				if retryWait > 0 {
+					if until := time.Now().Add(retryWait); until.After(ratePauseUntil) {
+						fmt.Printf("  WAIT  rate limited - sleeping %s before retry…\n", retryWait.Round(time.Second))
+						ratePauseUntil = until
+					}
+					mu.Unlock()
+					continue
+				}
+				if err != nil {
+					fmt.Printf("  FAIL  %s: %v\n", label, err)
+					failed++
+				} else {
+					fmt.Printf("  OK    %s\n", label)
+					sent++
+				}
+				mu.Unlock()
+				return
+			}
+		}()
+	}
 
 	deliver := func(label string, payload any, typ string) {
 		sema <- struct{}{} // blocks when all 20 slots are busy
@@ -2905,6 +2950,38 @@ func main() {
 			tx := buildTransaction(tmpl, ts, def.releases, def.environments)
 			label := fmt.Sprintf("[fresh] [%s] %s", tmpl.platform, tmpl.name)
 			deliver(label, tx, "transaction")
+		}
+	}
+
+	if seed["profiles"] {
+		fmt.Println("\n=== Profiled transactions (v1, PHP style) ===")
+		for _, tmpl := range laravelProfiles {
+			for i := 0; i < 6; i++ {
+				ts := time.Now().UTC().Add(-profileAge())
+				tx, profile := buildV1Profile(tmpl, ts, def.releases, def.environments)
+				// One envelope carrying both, exactly as the SDK sends it.
+				label := fmt.Sprintf("[profile v1] [php] %s", tmpl.txName)
+				deliverItems(label, []envelopeItem{
+					{typ: "transaction", payload: tx},
+					{typ: "profile", payload: profile},
+				})
+			}
+		}
+
+		fmt.Println("\n=== Profiled transactions (v2, continuous) ===")
+		for _, tmpl := range pythonProfiles {
+			for i := 0; i < 3; i++ {
+				start := time.Now().UTC().Add(-profileAge())
+				chunk, txs := buildV2Session(tmpl, start, 3, def.releases, def.environments)
+				// The chunk flushes on the profiler's own schedule, separately
+				// from the transactions it happens to cover.
+				deliverItems(fmt.Sprintf("[profile v2] [python] chunk for %s", tmpl.txName),
+					[]envelopeItem{{typ: "profile_chunk", payload: chunk}})
+				for _, tx := range txs {
+					deliverItems(fmt.Sprintf("[profile v2] [python] %s", tmpl.txName),
+						[]envelopeItem{{typ: "transaction", payload: tx}})
+				}
+			}
 		}
 	}
 
