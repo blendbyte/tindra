@@ -1133,8 +1133,8 @@ onUnmounted(() => {
           <h2 class="section__title">Trace Preview</h2>
           <a
             class="section__link"
-            :href="`/performance/transactions/${linkedTransaction.id}`"
-            @click.stop="router.push(`/performance/transactions/${linkedTransaction.id}`)"
+            :href="`/transactions/${linkedTransaction.id}`"
+            @click.stop="router.push(`/transactions/${linkedTransaction.id}`)"
           >View Full Trace <Icon name="external" :size="10" /></a>
         </div>
         <div v-if="!collapsed.trace" class="trace-preview">

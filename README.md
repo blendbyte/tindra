@@ -53,14 +53,6 @@ The installer creates a `docker-compose.yml` with a random database password, pu
 
 Full setup guide, environment variable reference, and backup docs at [tindra.sh/docs](https://tindra.sh/docs).
 
-### Locked out by your authenticator
-
-Clear the authenticator from the host, then log in with your password and re-enrol from Settings:
-
-```bash
-docker compose exec tindra /tindra users disable-mfa you@example.com
-```
-
 ## License
 
 [Elastic License 2.0](LICENSE)

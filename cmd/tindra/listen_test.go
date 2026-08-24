@@ -126,7 +126,8 @@ func TestListen_unix_serves_http(t *testing.T) {
 
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", path)
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", path)
 		},
 	}
 	client := &http.Client{Transport: transport}

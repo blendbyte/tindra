@@ -17,6 +17,16 @@ const searchQuery = ref('')
 
 const selectedProjectIds = computed(() => projects.selectedIds)
 
+// The project column only earns its space when the filter leaves more than one
+// project in play — with exactly one selected every row would repeat its name.
+const showProject = computed(() => selectedProjectIds.value.length !== 1)
+const colCount = computed(() => (showProject.value ? 5 : 4))
+
+const projectName = computed(() => {
+  const map = new Map((projects.projects ?? []).map((p) => [p.id, p.name]))
+  return (id: string) => map.get(id) ?? id
+})
+
 const queryParams = computed(() => {
   const p = new URLSearchParams()
   for (const id of selectedProjectIds.value) p.append('project_id', id)
@@ -106,6 +116,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
             <th style="width: 110px"><div class="col-sort">Time</div></th>
             <th style="width: 80px"><div class="col-sort">Level</div></th>
             <th><div class="col-sort">Message</div></th>
+            <th v-if="showProject" class="perf-table__num log-proj-col" style="width: 130px"><div class="col-sort">Project</div></th>
             <th class="perf-table__num log-env-col" style="width: 120px"><div class="col-sort">Environment</div></th>
           </tr>
         </thead>
@@ -114,6 +125,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
             <td><span class="skel" style="width: 80px; height: 10px; display: block" /></td>
             <td><span class="skel" style="width: 44px; height: 18px; display: block; border-radius: 3px" /></td>
             <td><span class="skel" :style="{ width: `${40 + (i % 5) * 10}%` }" style="height: 10px; display: block" /></td>
+            <td v-if="showProject"><span class="skel" style="width: 70px; height: 10px; display: block; margin-left: auto" /></td>
             <td><span class="skel" style="width: 60px; height: 10px; display: block; margin-left: auto" /></td>
           </tr>
         </tbody>
@@ -143,6 +155,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
             <th style="width: 110px"><div class="col-sort">Time</div></th>
             <th style="width: 80px"><div class="col-sort">Level</div></th>
             <th><div class="col-sort">Message</div></th>
+            <th v-if="showProject" class="perf-table__num log-proj-col" style="width: 130px"><div class="col-sort">Project</div></th>
             <th class="perf-table__num log-env-col" style="width: 120px"><div class="col-sort">Environment</div></th>
           </tr>
         </thead>
@@ -161,7 +174,22 @@ onUnmounted(() => clearTimeout(debounceTimer))
                 </span>
               </td>
               <td>
-                <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-1)">{{ log.body }}</div>
+                <div class="log-msg">
+                  <span class="log-msg__body">{{ log.body }}</span>
+                  <RouterLink
+                    v-if="log.transaction_id"
+                    class="log-trace-link"
+                    :to="`/transactions/${log.transaction_id}`"
+                    v-tooltip="'View trace'"
+                    @click.stop
+                  >
+                    <Icon name="activity" :size="10" />
+                    Trace
+                  </RouterLink>
+                </div>
+              </td>
+              <td v-if="showProject" class="perf-table__num log-proj-col">
+                <span class="projtag">{{ projectName(log.project_id) }}</span>
               </td>
               <td class="perf-table__num log-env-col">
                 <span v-if="log.environment" class="envbadge" :class="envBadgeClass(log.environment)">{{ log.environment }}</span>
@@ -170,13 +198,21 @@ onUnmounted(() => clearTimeout(debounceTimer))
 
             <!-- Expanded attributes -->
             <tr v-if="expandedId === log.id">
-              <td colspan="4" style="padding: 0; border-bottom: 1px solid var(--border)">
+              <td :colspan="colCount" style="padding: 0; border-bottom: 1px solid var(--border)">
                 <div class="log-expanded">
                   <div class="log-expanded__meta">
                     <span class="mono" style="font-size: var(--text-xs); color: var(--text-3)">
                       {{ new Date(log.timestamp).toISOString() }}
                     </span>
-                    <span v-if="log.trace_id" class="mono" style="font-size: var(--text-xs); color: var(--text-3)">
+                    <RouterLink
+                      v-if="log.trace_id && log.transaction_id"
+                      class="mono link"
+                      style="font-size: var(--text-xs)"
+                      :to="`/transactions/${log.transaction_id}`"
+                    >
+                      trace: {{ log.trace_id }}
+                    </RouterLink>
+                    <span v-else-if="log.trace_id" class="mono" style="font-size: var(--text-xs); color: var(--text-3)">
                       trace: {{ log.trace_id }}
                     </span>
                     <span v-if="log.release" class="tag" style="font-size: 10px">{{ log.release }}</span>
@@ -196,7 +232,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
           </template>
 
           <tr v-if="data?.has_more">
-            <td colspan="4" class="muted" style="text-align: center; font-size: var(--text-xs)">
+            <td :colspan="colCount" class="muted" style="text-align: center; font-size: var(--text-xs)">
               Showing the first 100 entries. Refine your filters to see more.
             </td>
           </tr>
