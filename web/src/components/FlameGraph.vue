@@ -366,10 +366,9 @@ watch(() => props.graph, resetZoom)
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px 6px 0 0;
-  border-bottom-color: var(--border-soft);
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
 
@@ -434,9 +433,7 @@ watch(() => props.graph, resetZoom)
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 5px 12px;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
+  padding: 5px 16px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--surface);
   font-size: var(--text-xs);
@@ -460,11 +457,7 @@ watch(() => props.graph, resetZoom)
 .flame__crumb-sep { color: var(--text-3); flex-shrink: 0; }
 
 .flame__plot {
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 6px 6px;
-  background: var(--surface);
+  padding: 10px 16px 4px;
   overflow: hidden;
 }
 

@@ -7045,5 +7045,5 @@ select.field__input {
    below it rather than ending flush against the viewport edge. */
 .trace-logs--flame {
   margin-top: 28px;
-  margin-bottom: 32px;
+  margin-bottom: 28px;
 }

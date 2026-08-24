@@ -569,9 +569,6 @@ const flameSummary = computed(() => {
   const g = flameGraph.value
   if (!g) return ''
   const parts = [`${g.sample_count.toLocaleString()} samples`]
-  if (g.sample_interval_ns) {
-    parts.push(`over ${formatDuration((g.sample_count * g.sample_interval_ns) / 1e6)}`)
-  }
   if (g.thread_name) parts.push(g.thread_name)
   return parts.join(' · ')
 })
