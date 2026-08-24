@@ -799,7 +799,7 @@ describe('SettingsView', () => {
       expect(wrapper.text()).toContain('1.5M')
     })
 
-    it('renders expires label from health data', () => {
+    it('renders data volume rows without an expires column', () => {
       currentTab = 'overview'
       vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
@@ -815,8 +815,12 @@ describe('SettingsView', () => {
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValue({ data: ref(undefined) } as any)
       const wrapper = mount(SettingsView, { global: { stubs } })
-      // expiresLabel / dataAgeDays functions run; just verify it renders
       expect(wrapper.find('.overview-vol-row').exists()).toBe(true)
+      expect(wrapper.find('.overview-vol-row__expires').exists()).toBe(false)
+      expect(wrapper.find('.overview-vol-row--head').text()).not.toContain('Expires')
+      // head row and each data row carry five cells
+      expect(wrapper.find('.overview-vol-row--head').findAll('span')).toHaveLength(5)
+      expect(wrapper.findAll('.overview-vol-row')[1].findAll('span')).toHaveLength(5)
     })
 
     it('renders usage section with settings data', () => {
