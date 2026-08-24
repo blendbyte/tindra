@@ -310,15 +310,6 @@ describe('TransactionDetailView', () => {
       expect(wrapper.text()).toContain('MainThread')
     })
 
-    // v1 profiles carry no thread name, so the summary has to read sensibly
-    // without one rather than trailing a separator.
-    it('summarises without a thread name', () => {
-      const noThread = { ...graph, thread_name: undefined }
-      setupMocks(baseTx, [], false, false, undefined, [], noThread)
-      const wrapper = mount(TransactionDetailView, { global: { stubs } })
-      expect(wrapper.text()).toContain('42 samples')
-      expect(wrapper.text()).not.toContain('42 samples ·')
-    })
   })
 
   describe('spans error state', () => {

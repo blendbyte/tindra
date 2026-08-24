@@ -563,16 +563,6 @@ const { data: traceErrorsData } = useQuery({
 })
 const traceErrorList = computed(() => traceErrorsData.value ?? [])
 
-// Sits in the section heading beside "Flame graph", matching how the Errors
-// and Logs panels summarise themselves there.
-const flameSummary = computed(() => {
-  const g = flameGraph.value
-  if (!g) return ''
-  const parts = [`${g.sample_count.toLocaleString()} samples`]
-  if (g.thread_name) parts.push(g.thread_name)
-  return parts.join(' · ')
-})
-
 // Most transactions carry no profile: the SDK samples them out, or profiling
 // is off. The endpoint answers 404 for that, so it is treated as "nothing to
 // show" rather than retried as a failure.
@@ -1083,12 +1073,7 @@ function traceErrorOffset(e: TraceError): string {
 
     <!-- Flame graph. Named for what it is: TransactionProfileView is the
          aggregate view for a transaction name and means something else. -->
-    <div v-if="flameGraph" class="trace-logs trace-logs--flame">
-      <div class="trace-logs__head">
-        <Icon name="activity" :size="11" />
-        Flame graph
-        <span style="color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0">{{ flameSummary }}</span>
-      </div>
+    <div v-if="flameGraph" class="trace-logs--flame">
       <FlameGraphView :graph="flameGraph" />
     </div>
 

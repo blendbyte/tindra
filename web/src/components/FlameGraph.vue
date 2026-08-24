@@ -55,6 +55,14 @@ function msLabel(samples: number): string {
   return `${(ms * 1000).toFixed(0)}µs`
 }
 
+// Shown in the toolbar beside the label: the two facts the transaction hero
+// above does not already give you.
+const summary = computed(() => {
+  const parts = [`${props.graph.sample_count.toLocaleString()} samples`]
+  if (props.graph.thread_name) parts.push(props.graph.thread_name)
+  return parts.join(' · ')
+})
+
 function pctOf(samples: number): string {
   const total = props.graph.sample_count || 1
   return `${((samples / total) * 100).toFixed(1)}%`
@@ -246,6 +254,12 @@ watch(() => props.graph, resetZoom)
 <template>
   <div class="flame">
     <div class="flame__bar">
+      <span class="flame__label">
+        <Icon name="activity" :size="11" />
+        Flame graph
+      </span>
+      <span class="flame__summary">{{ summary }}</span>
+
       <Icon name="search" :size="12" class="flame__bar-icon" />
       <input
         v-model="query"
@@ -370,6 +384,29 @@ watch(() => props.graph, resetZoom)
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--bg);
+}
+
+.flame__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.flame__summary {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .flame__bar-icon {

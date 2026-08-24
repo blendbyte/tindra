@@ -45,13 +45,23 @@ function graph(over: Partial<FlameGraphData> = {}): FlameGraphData {
 const stubs = { Icon: true }
 
 describe('FlameGraph', () => {
-  // Sample count and thread live in the section heading beside "Flame graph",
-  // matching the Errors and Logs panels. Repeating them in the toolbar crowded
-  // out the search box.
-  it('leaves the summary counts to the section heading', () => {
+  // The panel labels and summarises itself in its toolbar. A floating caption
+  // above it was the only one of its kind on the page and read as stray.
+  it('labels and summarises itself in the toolbar', () => {
     const w = mount(FlameGraph, { props: { graph: graph() }, global: { stubs } })
-    expect(w.text()).not.toContain('120 samples')
-    expect(w.text()).not.toContain('MainThread')
+    const bar = w.find('.flame__bar')
+    expect(bar.text()).toContain('Flame graph')
+    expect(bar.text()).toContain('120 samples')
+    expect(bar.text()).toContain('MainThread')
+  })
+
+  // v1 profiles carry no thread name, so the summary must not trail a separator.
+  it('summarises without a thread name', () => {
+    const w = mount(FlameGraph, {
+      props: { graph: graph({ thread_name: undefined }) },
+      global: { stubs },
+    })
+    expect(w.find('.flame__summary').text()).toBe('120 samples')
   })
 
   it('renders a canvas', () => {
