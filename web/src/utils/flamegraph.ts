@@ -75,23 +75,44 @@ export function samplesToMs(samples: number, sampleIntervalNs: number): number |
 }
 
 /**
- * Picks a fill for a frame.
- *
- * Application frames get a warm hue keyed off the name so sibling calls stay
- * distinguishable; library frames are muted so the eye lands on your own code.
- *
- * Only an explicit `in_app: false` mutes a frame. Some SDKs, the PHP one among
- * them, never send the field at all, and treating absent as false would grey
- * out the entire graph.
+ * Hues taken from the same vocabulary the span waterfall uses, so a flame graph
+ * and a waterfall on the same page read as one system.
  */
-export function frameColor(fn: string, inApp: boolean | undefined, dimmed = false): string {
-  if (inApp === false) {
-    return dimmed ? 'hsl(220 12% 62% / 0.25)' : 'hsl(220 12% 62% / 0.55)'
-  }
+export const FRAME_HUES = [285, 230, 155, 60, 340, 195, 255, 48]
+
+/**
+ * Picks a hue for a frame.
+ *
+ * Keyed on module rather than function name so related frames share a colour,
+ * which is what makes a deep graph scannable. Falls back through filename to
+ * function so unsymbolicated frames stay distinguishable.
+ */
+export function frameHue(node: FlameNode): number {
+  const key = node.module || node.filename || node.function
   let hash = 0
-  for (let i = 0; i < fn.length; i++) hash = (hash * 31 + fn.charCodeAt(i)) | 0
-  const hue = Math.abs(hash) % 45 // red through amber
-  return dimmed ? `hsl(${hue} 70% 55% / 0.2)` : `hsl(${hue} 78% 55% / 0.85)`
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0
+  return FRAME_HUES[Math.abs(hash) % FRAME_HUES.length]
+}
+
+/**
+ * Reports whether a frame should be muted as library code.
+ *
+ * Only an explicit false counts. Some SDKs, the PHP one among them, never send
+ * the field at all, and treating absent as false would grey out a whole graph.
+ */
+export function isLibraryFrame(node: FlameNode): boolean {
+  return node.in_app === false
+}
+
+/**
+ * Trims a fully qualified name down to its identifying tail. PHP and Python
+ * both produce names far too long for a box, and the head is the disposable
+ * part.
+ */
+export function shortName(fn: string): string {
+  const parts = fn.split(/\\|::|\//)
+  if (parts.length <= 2) return fn
+  return parts.slice(-2).join(fn.includes('::') ? '::' : '\\')
 }
 
 /** Case-insensitive match across the identifiers shown on a box. */
@@ -103,4 +124,30 @@ export function frameMatches(node: FlameNode, query: string): boolean {
     (node.module ?? '').toLowerCase().includes(q) ||
     (node.filename ?? '').toLowerCase().includes(q)
   )
+}
+
+/**
+ * Places the hover tooltip in viewport coordinates.
+ *
+ * The tooltip is fixed and teleported to the body precisely so no scroll
+ * container can clip it or be stretched by it, which is what happens when a
+ * tooltip lives inside the plot and the cursor nears an edge. That only works
+ * if the coordinates are clamped to the viewport here.
+ */
+export function clampTooltip(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  viewportW: number,
+  viewportH: number,
+  pad = 12,
+  edge = 8,
+): { left: number; top: number } {
+  let left = x + pad
+  let top = y + pad
+  // Flip to the other side of the cursor rather than letting it run off.
+  if (left + w > viewportW - edge) left = x - w - pad
+  if (top + h > viewportH - edge) top = y - h - pad
+  return { left: Math.max(edge, left), top: Math.max(edge, top) }
 }

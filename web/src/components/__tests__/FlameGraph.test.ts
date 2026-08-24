@@ -74,20 +74,44 @@ describe('FlameGraph', () => {
       props: { graph: graph({ sample_interval_ns: 0 }) },
       global: { stubs },
     })
-    expect(w.text()).toContain('timings unavailable')
+    expect(w.text()).toContain('no timings')
   })
 
-  it('hides the zoom controls until something is zoomed', () => {
+  it('hides the breadcrumb until something is zoomed', () => {
     const w = mount(FlameGraph, { props: { graph: graph() }, global: { stubs } })
-    expect(w.text()).not.toContain('Reset zoom')
     expect(w.find('.flame__crumbs').exists()).toBe(false)
+  })
+
+  // Inside the plot the tooltip stretched the panel and raised scrollbars
+  // whenever the cursor neared an edge, so it has to live outside it.
+  it('keeps the tooltip out of the scrolling plot area', () => {
+    const w = mount(FlameGraph, { props: { graph: graph() }, global: { stubs } })
+    expect(w.find('.flame__plot .flame-tip').exists()).toBe(false)
   })
 
   it('has a search box', () => {
     const w = mount(FlameGraph, { props: { graph: graph() }, global: { stubs } })
-    const input = w.find('.flame__search')
+    const input = w.find('.flame__input')
     expect(input.exists()).toBe(true)
-    expect(input.attributes('aria-label')).toBe('Find function')
+    expect(input.attributes('aria-label')).toBe('Find a frame')
+  })
+
+  it('reports how many frames a search matched', async () => {
+    const w = mount(FlameGraph, { props: { graph: graph() }, global: { stubs } })
+    expect(w.text()).not.toContain('matched')
+
+    await w.find('.flame__input').setValue('query')
+    expect(w.text()).toContain('1 matched')
+
+    await w.find('.flame__input').setValue('nothing-here')
+    expect(w.text()).toContain('0 matched')
+  })
+
+  // The legend is the only thing telling you why some frames are grey.
+  it('explains the muted colour', () => {
+    const w = mount(FlameGraph, { props: { graph: graph() }, global: { stubs } })
+    expect(w.find('.flame__legend').exists()).toBe(true)
+    expect(w.text()).toContain('library')
   })
 
   it('copes with an empty graph', () => {

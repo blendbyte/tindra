@@ -3,8 +3,12 @@ import {
   layoutFlame,
   maxDepth,
   samplesToMs,
-  frameColor,
+  frameHue,
+  isLibraryFrame,
+  shortName,
   frameMatches,
+  clampTooltip,
+  FRAME_HUES,
 } from '../flamegraph'
 import type { FlameNode } from '@/api/types'
 
@@ -120,30 +124,75 @@ describe('samplesToMs', () => {
   })
 })
 
-describe('frameColor', () => {
-  it('mutes frames explicitly outside the application', () => {
-    const lib = frameColor('json.dumps', false)
-    const app = frameColor('json.dumps', true)
-    expect(lib).not.toBe(app)
-    expect(lib).toContain('220') // the grey hue
+describe('frameHue', () => {
+  const node = (over: Partial<FlameNode>): FlameNode =>
+    ({ function: 'f', total_samples: 1, self_samples: 1, ...over })
+
+  it('only ever returns a hue from the app palette', () => {
+    for (const name of ['alpha', 'beta', 'OrderController', 'json.encoder', '']) {
+      expect(FRAME_HUES).toContain(frameHue(node({ function: name })))
+    }
+  })
+
+  it('is stable for a given frame', () => {
+    const n = node({ module: 'app.views' })
+    expect(frameHue(n)).toBe(frameHue(n))
+  })
+
+  // Colouring by module is what makes a deep graph scannable: frames from the
+  // same package group visually instead of speckling.
+  it('groups frames from the same module', () => {
+    const a = node({ function: 'index', module: 'app.views' })
+    const b = node({ function: 'show', module: 'app.views' })
+    expect(frameHue(a)).toBe(frameHue(b))
+  })
+
+  it('separates different modules', () => {
+    const hues = new Set(
+      ['app.views', 'json.encoder', 'django.db', 'celery.worker'].map(m => frameHue(node({ module: m })))
+    )
+    expect(hues.size).toBeGreaterThan(1)
+  })
+
+  it('falls back to filename then function when there is no module', () => {
+    expect(frameHue(node({ filename: 'a.php' }))).toBe(frameHue(node({ filename: 'a.php', function: 'other' })))
+    expect(FRAME_HUES).toContain(frameHue(node({ function: 'bare' })))
+  })
+})
+
+describe('isLibraryFrame', () => {
+  const node = (inApp: boolean | undefined): FlameNode =>
+    ({ function: 'f', in_app: inApp, total_samples: 1, self_samples: 1 })
+
+  it('mutes only an explicit false', () => {
+    expect(isLibraryFrame(node(false))).toBe(true)
+    expect(isLibraryFrame(node(true))).toBe(false)
   })
 
   // The PHP SDK never sends in_app. Treating absent as false would grey out
   // every frame in a Laravel profile.
-  it('treats an absent in_app as application code', () => {
-    expect(frameColor('handler', undefined)).toBe(frameColor('handler', true))
+  it('treats an absent flag as application code', () => {
+    expect(isLibraryFrame(node(undefined))).toBe(false)
+  })
+})
+
+describe('shortName', () => {
+  it('keeps short names intact', () => {
+    expect(shortName('main')).toBe('main')
+    expect(shortName('app::run')).toBe('app::run')
   })
 
-  it('is stable for a given name', () => {
-    expect(frameColor('OrderController::index', true)).toBe(frameColor('OrderController::index', true))
+  it('trims a PHP namespace to its tail', () => {
+    expect(shortName('Illuminate\\Database\\Eloquent\\Builder::get'))
+      .toBe('Builder::get')
   })
 
-  it('distinguishes different names', () => {
-    expect(frameColor('alpha', true)).not.toBe(frameColor('zulu', true))
+  it('trims a path to its tail', () => {
+    expect(shortName('/var/www/app/public/index.php')).toBe('public\\index.php')
   })
 
-  it('dims when asked', () => {
-    expect(frameColor('handler', true, true)).not.toBe(frameColor('handler', true, false))
+  it('leaves a dotted python name alone', () => {
+    expect(shortName('reports.services.aggregate')).toBe('reports.services.aggregate')
   })
 })
 
@@ -177,5 +226,42 @@ describe('frameMatches', () => {
     const bare: FlameNode = { function: 'main', total_samples: 1, self_samples: 1 }
     expect(frameMatches(bare, 'main')).toBe(true)
     expect(frameMatches(bare, 'nope')).toBe(false)
+  })
+})
+
+describe('clampTooltip', () => {
+  const W = 280
+  const H = 108
+
+  it('sits below and right of the cursor when there is room', () => {
+    expect(clampTooltip(100, 100, W, H, 1280, 800)).toEqual({ left: 112, top: 112 })
+  })
+
+  // Running off the right edge is what stretched the page and raised a
+  // horizontal scrollbar, so it flips to the other side of the cursor instead.
+  it('flips left near the right edge', () => {
+    const { left } = clampTooltip(1270, 100, W, H, 1280, 800)
+    expect(left).toBe(1270 - W - 12)
+    expect(left + W).toBeLessThanOrEqual(1280)
+  })
+
+  it('flips up near the bottom edge', () => {
+    const { top } = clampTooltip(100, 780, W, H, 1280, 800)
+    expect(top).toBe(780 - H - 12)
+    expect(top + H).toBeLessThanOrEqual(800)
+  })
+
+  it('flips both ways in the bottom right corner', () => {
+    const { left, top } = clampTooltip(1275, 795, W, H, 1280, 800)
+    expect(left + W).toBeLessThanOrEqual(1280)
+    expect(top + H).toBeLessThanOrEqual(800)
+  })
+
+  // A viewport too small to flip into must still not produce negative
+  // coordinates, which would push the document out on the other side.
+  it('never returns a position off the top or left', () => {
+    const { left, top } = clampTooltip(4, 4, W, H, 200, 120)
+    expect(left).toBeGreaterThanOrEqual(8)
+    expect(top).toBeGreaterThanOrEqual(8)
   })
 })
