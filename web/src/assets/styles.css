@@ -6411,8 +6411,9 @@ select.field__input {
   .overview-chips { width: 100%; justify-content: flex-start; margin-top: 4px; }
   .pane-head { flex-wrap: wrap; }
 
-  /* Log table: hide Environment column (message column gets the space) */
+  /* Log table: hide Environment and Project columns (message gets the space) */
   .log-env-col { display: none; }
+  .log-proj-col { display: none; }
 
   /* Settings: token + users tables — horizontal scroll */
   .token-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -6903,6 +6904,43 @@ select.field__input {
 .log-level--info    { background: oklch(0.22 0.04 240); color: oklch(0.68 0.12 240); border: 1px solid oklch(0.35 0.08 240); }
 .log-level--debug   { background: var(--surface-2);     color: var(--text-3);         border: 1px solid var(--border); }
 .log-level--trace   { background: var(--surface-2);     color: var(--text-3);         border: 1px solid var(--border); }
+
+/* Message cell: body ellipsizes, the trace link keeps its full width */
+.log-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.log-msg__body {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
+}
+
+.log-trace-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+
+.log-trace-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 
 /* Expanded log row */
 .log-expanded {

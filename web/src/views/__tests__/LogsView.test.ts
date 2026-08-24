@@ -30,21 +30,29 @@ import { useAuthStore } from '@/stores/auth'
 const stubs = {
   Icon: { template: '<span />' },
   FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
+  RouterLink: { name: 'RouterLink', props: ['to'], template: '<a :href="to"><slot /></a>' },
 }
 
 const makeLog = (id: string, level: string, body: string) => ({
   id,
+  project_id: 'p1',
   level,
   body,
   timestamp: '2024-01-01T00:00:00Z',
   environment: 'production',
   trace_id: null,
+  transaction_id: null,
   release: null,
   attributes: {},
 })
 
-function setupMocks(logs: unknown[] = [], isLoading = false) {
-  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
+const PROJECTS = [
+  { id: 'p1', name: 'Checkout API' },
+  { id: 'p2', name: 'Web Frontend' },
+]
+
+function setupMocks(logs: unknown[] = [], isLoading = false, selectedIds: string[] = []) {
+  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds, projects: PROJECTS } as any)
   vi.mocked(useQuery).mockReturnValue({
     data: ref(logs.length > 0 ? { logs, has_more: false } : (isLoading ? undefined : { logs: [], has_more: false })),
     isLoading: ref(isLoading),
@@ -312,6 +320,91 @@ describe('LogsView', () => {
       } as any)
       const wrapper = mount(LogsView, { global: { stubs } })
       expect(wrapper.text()).toContain('Showing the first 100 entries')
+    })
+  })
+
+  describe('trace link', () => {
+    it('links a log with a resolved transaction to its trace page', () => {
+      const log = { ...makeLog('l1', 'error', 'boom'), trace_id: 't-1', transaction_id: 'tx-9' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const link = wrapper.find('.log-trace-link')
+      expect(link.exists()).toBe(true)
+      expect(link.attributes('href')).toBe('/transactions/tx-9')
+    })
+
+    // A log can carry a trace_id whose transaction was never ingested (or was
+    // already pruned). There is nothing to open, so no link is offered.
+    it('omits the trace link when the trace has no transaction', () => {
+      const log = { ...makeLog('l1', 'error', 'boom'), trace_id: 't-1', transaction_id: null }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.log-trace-link').exists()).toBe(false)
+    })
+
+    it('does not toggle the row when the trace link is clicked', async () => {
+      const log = { ...makeLog('l1', 'error', 'boom'), trace_id: 't-1', transaction_id: 'tx-9' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.log-trace-link').trigger('click')
+      expect(wrapper.find('.log-expanded').exists()).toBe(false)
+    })
+
+    it('links the trace id in the expanded row when a transaction exists', async () => {
+      const log = { ...makeLog('l1', 'info', 'traced'), trace_id: 't-abc', transaction_id: 'tx-9' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      const link = wrapper.find('.log-expanded a')
+      expect(link.attributes('href')).toBe('/transactions/tx-9')
+      expect(link.text()).toContain('t-abc')
+    })
+
+    it('renders the expanded trace id as plain text without a transaction', async () => {
+      const log = { ...makeLog('l1', 'info', 'traced'), trace_id: 't-abc', transaction_id: null }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      expect(wrapper.find('.log-expanded').text()).toContain('t-abc')
+      expect(wrapper.find('.log-expanded a').exists()).toBe(false)
+    })
+  })
+
+  describe('project column', () => {
+    it('shows the project column when no project is selected', () => {
+      setupMocks([makeLog('l1', 'info', 'test')], false, [])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.log-proj-col').exists()).toBe(true)
+      expect(wrapper.find('.projtag').text()).toBe('Checkout API')
+    })
+
+    it('shows the project column when several projects are selected', () => {
+      setupMocks([makeLog('l1', 'info', 'test')], false, ['p1', 'p2'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.log-proj-col').exists()).toBe(true)
+    })
+
+    // With a single project selected every row would repeat the same name.
+    it('hides the project column when exactly one project is selected', () => {
+      setupMocks([makeLog('l1', 'info', 'test')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.log-proj-col').exists()).toBe(false)
+      expect(wrapper.find('.projtag').exists()).toBe(false)
+    })
+
+    it('falls back to the project id when the project is unknown', () => {
+      const log = { ...makeLog('l1', 'info', 'test'), project_id: 'gone' }
+      setupMocks([log])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('.projtag').text()).toBe('gone')
+    })
+
+    it('spans the project column in the expanded row', async () => {
+      setupMocks([makeLog('l1', 'info', 'test')], false, [])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      const cell = wrapper.find('.log-expanded').element.closest('td')
+      expect(cell?.getAttribute('colspan')).toBe('5')
     })
   })
 
