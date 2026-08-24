@@ -830,25 +830,6 @@ function dataAgeDays(iso: string | null | undefined): string {
   return days === 0 ? 'today' : `${days}d ago`
 }
 
-function expiresLabel(oldest: string | null | undefined, retentionDays: number): string {
-  if (retentionDays === 0) return 'Forever'
-  if (!oldest) return '–'
-  const expiresAt = new Date(oldest)
-  expiresAt.setDate(expiresAt.getDate() + retentionDays)
-  const days = Math.ceil((expiresAt.getTime() - Date.now()) / 86_400_000)
-  return days <= 0 ? 'Expired' : `${days}d`
-}
-
-function expiresColor(oldest: string | null | undefined, retentionDays: number): string {
-  if (!oldest || retentionDays === 0) return 'var(--text-3)'
-  const expiresAt = new Date(oldest)
-  expiresAt.setDate(expiresAt.getDate() + retentionDays)
-  const days = Math.ceil((expiresAt.getTime() - Date.now()) / 86_400_000)
-  if (days < 10) return 'var(--danger)'
-  if (days < 30) return 'var(--warning)'
-  return 'var(--success)'
-}
-
 const projectLimitReached = computed(() => {
   const limit = settings.value?.project_limit ?? 0
   return limit > 0 && projects.value.length >= limit
@@ -1170,7 +1151,6 @@ function actionKindOf(action: string) {
             <span>Total</span>
             <span>Last 24h</span>
             <span>Oldest</span>
-            <span>Expires in</span>
             <span>Storage</span>
           </div>
           <div class="overview-vol-row">
@@ -1178,10 +1158,6 @@ function actionKindOf(action: string) {
             <span class="mono">{{ healthData ? formatNum(healthData.events_total) : '–' }}</span>
             <span class="mono overview-vol-row__rate">+{{ healthData ? formatNum(healthData.events_24h) : '–' }}</span>
             <span class="overview-vol-row__age">{{ dataAgeDays(healthData?.oldest_event_at) }}</span>
-            <span
-              class="overview-vol-row__expires mono"
-              :style="healthData ? { color: expiresColor(healthData.oldest_event_at, healthData.retention_days) } : {}"
-            >{{ healthData ? expiresLabel(healthData.oldest_event_at, healthData.retention_days) : '–' }}</span>
             <span class="mono overview-vol-row__size">{{ healthData ? formatBytes(healthData.events_size_bytes) : '–' }}</span>
           </div>
           <div class="overview-vol-row">
@@ -1189,10 +1165,6 @@ function actionKindOf(action: string) {
             <span class="mono">{{ healthData ? formatNum(healthData.tx_total) : '–' }}</span>
             <span class="mono overview-vol-row__rate">+{{ healthData ? formatNum(healthData.tx_24h) : '–' }}</span>
             <span class="overview-vol-row__age">{{ dataAgeDays(healthData?.oldest_tx_at) }}</span>
-            <span
-              class="overview-vol-row__expires mono"
-              :style="healthData ? { color: expiresColor(healthData.oldest_tx_at, healthData.retention_days) } : {}"
-            >{{ healthData ? expiresLabel(healthData.oldest_tx_at, healthData.retention_days) : '–' }}</span>
             <span class="mono overview-vol-row__size">{{ healthData ? formatBytes(healthData.tx_size_bytes) : '–' }}</span>
           </div>
           <div class="overview-vol-row">
@@ -1200,10 +1172,6 @@ function actionKindOf(action: string) {
             <span class="mono">{{ healthData ? formatNum(healthData.logs_total) : '–' }}</span>
             <span class="mono overview-vol-row__rate">+{{ healthData ? formatNum(healthData.logs_24h) : '–' }}</span>
             <span class="overview-vol-row__age">{{ dataAgeDays(healthData?.oldest_log_at) }}</span>
-            <span
-              class="overview-vol-row__expires mono"
-              :style="healthData ? { color: expiresColor(healthData.oldest_log_at, healthData.retention_days) } : {}"
-            >{{ healthData ? expiresLabel(healthData.oldest_log_at, healthData.retention_days) : '–' }}</span>
             <span class="mono overview-vol-row__size">{{ healthData ? formatBytes(healthData.logs_size_bytes) : '–' }}</span>
           </div>
         </div>
