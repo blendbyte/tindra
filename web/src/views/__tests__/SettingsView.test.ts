@@ -5772,3 +5772,56 @@ describe('SettingsView', () => {
     })
   })
 })
+
+describe('SettingsView project profiling toggle', () => {
+  const baseProject = {
+    id: 'p1',
+    name: 'My App',
+    slug: 'my-app',
+    public_key: 'abc123',
+    event_count: 0,
+    events_24h: 0,
+    storage_bytes: 0,
+    event_limit: 0,
+    scrub_fields: [],
+    scrub_patterns: [],
+    passthrough_dsn: null,
+  }
+
+  // Opens the project card and its edit form, which is where the controls live.
+  async function openEditForm(project: Record<string, unknown>) {
+    currentTab = 'projects'
+    vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as never)
+    vi.mocked(useQuery)
+      .mockReturnValueOnce({ data: ref([]) } as never)
+      .mockReturnValueOnce({ data: ref([project]) } as never)
+      .mockReturnValueOnce({ data: ref([]) } as never)
+      .mockReturnValueOnce({ data: ref([]) } as never)
+      .mockReturnValueOnce({ data: ref(adminUser) } as never)
+      .mockReturnValue({ data: ref(undefined) } as never)
+
+    const wrapper = mount(SettingsView, { global: { stubs } })
+    await wrapper.find('.proj-card__head').trigger('click')
+    const editBtn = wrapper.findAll('button').find(b => b.text().includes('Edit'))
+    expect(editBtn, 'no Edit button on the expanded project card').toBeTruthy()
+    await editBtn!.trigger('click')
+    return wrapper
+  }
+
+  // The storage budget is shared across projects and purges oldest first, so
+  // this switch is the only way to stop one busy service evicting the rest.
+  it('offers the toggle when editing a project', async () => {
+    const wrapper = await openEditForm({ ...baseProject, profiling_enabled: true })
+
+    expect(wrapper.text()).toContain('Accept profiles from this project')
+    const box = wrapper.findAll('input[type="checkbox"]').at(-1)
+    expect((box?.element as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('reflects a project that already has profiling off', async () => {
+    const wrapper = await openEditForm({ ...baseProject, profiling_enabled: false })
+
+    const box = wrapper.findAll('input[type="checkbox"]').at(-1)
+    expect((box?.element as HTMLInputElement).checked).toBe(false)
+  })
+})

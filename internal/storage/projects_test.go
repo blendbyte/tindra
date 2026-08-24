@@ -495,7 +495,7 @@ func TestUpdateProject_passthroughDSN(t *testing.T) {
 	}
 
 	dsn := "https://abc123@sentry.io/456"
-	updated, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn)
+	updated, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn, nil)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -523,12 +523,12 @@ func TestUpdateProject_clearPassthroughDSN(t *testing.T) {
 	}
 
 	dsn := "https://abc123@sentry.io/456"
-	p, err = storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn)
+	p, err = storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn, nil)
 	if err != nil {
 		t.Fatalf("set dsn: %v", err)
 	}
 
-	cleared, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, nil)
+	cleared, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, nil, nil)
 	if err != nil {
 		t.Fatalf("clear: %v", err)
 	}

@@ -129,13 +129,20 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 	return projects, rows.Err()
 }
 
-func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id, name, slug string, passthroughDSN *string) (*Project, error) {
+// UpdateProject renames a project and updates its passthrough DSN.
+//
+// profilingEnabled is a pointer so that a caller which does not mention it
+// leaves the current value alone. An API client that only knows about the
+// older fields would otherwise silently turn profiling off for the project.
+func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id, name, slug string, passthroughDSN *string, profilingEnabled *bool) (*Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx, `
-		UPDATE projects SET name = $2, slug = $3, passthrough_dsn = $4
+		UPDATE projects
+		SET name = $2, slug = $3, passthrough_dsn = $4,
+		    profiling_enabled = COALESCE($5, profiling_enabled)
 		WHERE id = $1
 		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
-	`, id, name, slug, passthroughDSN).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
+	`, id, name, slug, passthroughDSN, profilingEnabled).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

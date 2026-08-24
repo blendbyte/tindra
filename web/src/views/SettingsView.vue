@@ -892,6 +892,7 @@ const editName = ref('')
 const editSlug = ref('')
 const editPassthroughDsn = ref('')
 const editSlugTouched = ref(false)
+const editProfilingEnabled = ref(true)
 const editError = ref<string | null>(null)
 const confirmingDelete = ref<string | null>(null)
 const deleteConfirmText = ref('')
@@ -963,10 +964,21 @@ const { mutate: createProject, isPending: creatingProject } = useMutation({
 })
 
 const { mutate: updateProject, isPending: updatingProject } = useMutation({
-  mutationFn: ({ id, name, slug, passthroughDsn }: { id: string; name: string; slug: string; passthroughDsn: string }) =>
+  mutationFn: ({ id, name, slug, passthroughDsn, profilingEnabled }: {
+    id: string
+    name: string
+    slug: string
+    passthroughDsn: string
+    profilingEnabled: boolean
+  }) =>
     apiFetch<Project>(`/api/projects/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ name, slug, passthrough_dsn: passthroughDsn || null }),
+      body: JSON.stringify({
+        name,
+        slug,
+        passthrough_dsn: passthroughDsn || null,
+        profiling_enabled: profilingEnabled,
+      }),
     }),
   onSuccess: () => {
     editingProject.value = null
@@ -1035,6 +1047,7 @@ function startEdit(p: Project) {
   editName.value = p.name
   editSlug.value = p.slug
   editPassthroughDsn.value = p.passthrough_dsn ?? ''
+  editProfilingEnabled.value = p.profiling_enabled
   editSlugTouched.value = true
   editError.value = null
 }
@@ -1045,7 +1058,13 @@ function submitEdit(e: Event, id: string) {
   const name = editName.value.trim()
   const slug = editSlug.value.trim()
   if (!name || !slug) return
-  updateProject({ id, name, slug, passthroughDsn: editPassthroughDsn.value.trim() })
+  updateProject({
+    id,
+    name,
+    slug,
+    passthroughDsn: editPassthroughDsn.value.trim(),
+    profilingEnabled: editProfilingEnabled.value,
+  })
 }
 
 function startDelete(p: Project) {
@@ -1691,6 +1710,18 @@ function actionKindOf(action: string) {
                       spellcheck="false"
                     />
                     <span class="field__hint">Incoming events are forwarded here in the background. Leave blank to disable.</span>
+                  </div>
+                  <div class="field" style="grid-column: 1 / -1">
+                    <label class="field__label">Profiling</label>
+                    <label class="checkbox-label">
+                      <input type="checkbox" v-model="editProfilingEnabled" />
+                      Accept profiles from this project
+                    </label>
+                    <span class="field__hint">
+                      The storage budget is shared across every project, so one busy service can
+                      crowd out the rest. Turn this off to stop accepting its profiles without
+                      touching its SDK config.
+                    </span>
                   </div>
                 </div>
                 <div v-if="editError" class="proj-form-error">{{ editError }}</div>

@@ -31,6 +31,7 @@ export interface Project {
   public_key: string
   passthrough_dsn: string | null
   scrub_fields: string[]
+  profiling_enabled: boolean
   scrub_patterns: ScrubPattern[]
   created_at: string
   event_count: number

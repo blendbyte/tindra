@@ -32,7 +32,7 @@ func apiPassthroughDSN(srv *httptest.Server, publicKey, projectID string) string
 func setPassthroughDSN(t *testing.T, dsn *string) {
 	t.Helper()
 	_, err := storage.UpdateProject(context.Background(), testPool,
-		testProject.ID, testProject.Name, testProject.Slug, dsn)
+		testProject.ID, testProject.Name, testProject.Slug, dsn, nil)
 	if err != nil {
 		t.Fatalf("set passthrough DSN: %v", err)
 	}
