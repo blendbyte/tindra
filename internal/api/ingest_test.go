@@ -846,3 +846,118 @@ func TestHandleEnvelope_transactionCarriesProfileLink(t *testing.T) {
 		t.Errorf(`thread_id = %q, want the value from contexts.trace.data["thread.id"]`, threadID)
 	}
 }
+
+// --- flame graph endpoint ---
+
+// The endpoint has to fold a stored profile into a tree the UI can draw, and
+// distinguish "no profile" from a failure: most transactions have no profile,
+// either sampled out by the SDK or turned off for the project.
+func TestHandleGetTransactionFlameGraph(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, "TRUNCATE profile_chunks CASCADE"); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	profBuf := ingest.NewProfileBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	bufCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go profBuf.Run(bufCtx, testPool)
+	go txBuf.Run(bufCtx, testPool)
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	// Ingest the profile and a transaction naming it, exactly as an SDK would.
+	rec := postEnvelope(t, h, profileEnvelope(t, "profile", "v1_php_laravel.json"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("profile ingest: %d %s", rec.Code, rec.Body.String())
+	}
+
+	txPayload := `{"event_id":"3c2b1a09f8e7d6c5b4a39281706f5e4d","transaction":"GET /api/orders",` +
+		`"start_timestamp":"2026-08-24T10:15:32.123Z","timestamp":"2026-08-24T10:15:32.223Z",` +
+		`"contexts":{"trace":{"trace_id":"9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d","span_id":"aabbccdd",` +
+		`"op":"http.server","status":"ok"}}}`
+	body := `{"event_id":"cc0e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(txPayload)) + "\n" + txPayload + "\n"
+	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("transaction ingest: %d %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	var txID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id FROM transactions
+		WHERE project_id = $1 AND event_id = '3c2b1a09f8e7d6c5b4a39281706f5e4d'
+		ORDER BY received_at DESC LIMIT 1`, testProject.ID).Scan(&txID); err != nil {
+		t.Fatalf("find transaction: %v", err)
+	}
+
+	t.Run("returns the folded tree", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var got struct {
+			SampleCount      int   `json:"sample_count"`
+			SampleIntervalNs int64 `json:"sample_interval_ns"`
+			Root             struct {
+				Children []struct {
+					Function     string `json:"function"`
+					TotalSamples int    `json:"total_samples"`
+				} `json:"children"`
+			} `json:"root"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.SampleCount != 5 {
+			t.Errorf("sample_count = %d, want 5", got.SampleCount)
+		}
+		if got.SampleIntervalNs == 0 {
+			t.Error("sample_interval_ns should be measured from the samples")
+		}
+		if len(got.Root.Children) != 1 {
+			t.Fatalf("root has %d children, want 1", len(got.Root.Children))
+		}
+		if got.Root.Children[0].Function != "/var/www/app/public/index.php" {
+			t.Errorf("entry point = %q", got.Root.Children[0].Function)
+		}
+	})
+
+	t.Run("404 for a transaction with no profile", func(t *testing.T) {
+		var bareID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO transactions
+				(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, 'GET /bare', 'http.server', 'ok', 10, NOW(), NOW())
+			RETURNING id`, testProject.ID).Scan(&bareID); err != nil {
+			t.Fatalf("insert bare transaction: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+bareID+"/flamegraph", nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("requires authentication", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401 without a session, got %d", rec.Code)
+		}
+	})
+}

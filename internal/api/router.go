@@ -197,6 +197,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/transactions/{txID}", ro.handleGetTransactionGlobal)
 		r.Get("/api/transactions/{txID}/spans", ro.handleGetSpansGlobal)
 		r.Get("/api/transactions/{txID}/errors", ro.handleGetTransactionErrors)
+		r.Get("/api/transactions/{txID}/flamegraph", ro.handleGetTransactionFlameGraph)
 		r.Get("/api/spans/db", ro.handleSpanSummaries("db"))
 		r.Get("/api/spans/db/timeseries", ro.handleSpanTimeseries("db"))
 		r.Get("/api/spans/cache", ro.handleSpanSummaries("cache"))
