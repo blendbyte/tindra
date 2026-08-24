@@ -15,7 +15,16 @@ type Worker struct {
 	retentionDays int
 	logRowLimit   int
 	txRowLimit    int
+
+	profileRetentionDays  int
+	profileStorageLimitMB int
 }
+
+// profilePurgeBatch caps how many profile rows one DELETE removes. Profiles
+// are the only TOASTed payload in the schema, so purging a day of them in a
+// single statement means a long lock and a large WAL burst. Looping in batches
+// keeps both bounded.
+const profilePurgeBatch = 5000
 
 func NewWorker(pool *pgxpool.Pool, retentionDays int) *Worker {
 	return &Worker{pool: pool, retentionDays: retentionDays}
@@ -29,9 +38,29 @@ func (w *Worker) WithRowLimits(logRowLimit, txRowLimit int) *Worker {
 	return w
 }
 
+// WithProfileLimits sets the profile-specific retention window and the
+// instance-wide storage budget in megabytes. Zero disables either.
+//
+// Profiles get their own knobs rather than following RetentionDays because
+// they are orders of magnitude larger per unit of time than anything else
+// stored: a handful of processes profiling continuously would run to tens of
+// gigabytes at the default 90-day window. Returns the worker for chaining.
+func (w *Worker) WithProfileLimits(retentionDays, storageLimitMB int) *Worker {
+	w.profileRetentionDays = retentionDays
+	w.profileStorageLimitMB = storageLimitMB
+	return w
+}
+
+// enabled reports whether any purge is configured. The profile limits stand on
+// their own: an instance that keeps everything forever still needs a ceiling on
+// profile storage, or a single misconfigured SDK fills the disk.
+func (w *Worker) enabled() bool {
+	return w.retentionDays > 0 || w.profileRetentionDays > 0 || w.profileStorageLimitMB > 0
+}
+
 // RunOnce runs a single purge cycle and returns. Useful for testing.
 func (w *Worker) RunOnce(ctx context.Context) {
-	if w.retentionDays <= 0 {
+	if !w.enabled() {
 		return
 	}
 	w.purge(ctx)
@@ -40,7 +69,7 @@ func (w *Worker) RunOnce(ctx context.Context) {
 // Run starts the retention loop. Call in a dedicated goroutine.
 // Runs one purge immediately on startup, then every hour.
 func (w *Worker) Run(ctx context.Context) {
-	if w.retentionDays <= 0 {
+	if !w.enabled() {
 		slog.Info("retention: disabled (RETENTION_DAYS=0)")
 		return
 	}
@@ -60,18 +89,36 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) purge(ctx context.Context) {
-	cutoff := time.Now().AddDate(0, 0, -w.retentionDays)
-	slog.Info("retention: purging", "cutoff", cutoff.Format(time.DateOnly))
+	var (
+		eventsDeleted, issuesDeleted        int64
+		txDeleted, logsDeleted              int64
+		uptimeChecksDeleted, firingsDeleted int64
+		logsCapDeleted, txCapDeleted        int64
+		profilesDeleted, profilesCapDeleted int64
+	)
 
-	eventsDeleted, issuesDeleted := w.purgeEvents(ctx, cutoff)
-	txDeleted := w.purgeTransactions(ctx, cutoff)
-	logsDeleted := w.purgeLogs(ctx, cutoff)
-	uptimeChecksDeleted := w.purgeUptimeChecks(ctx, cutoff)
-	firingsDeleted := w.purgeAlertFirings(ctx)
-	w.purgeExpiredAuthTokens(ctx)
+	// The general retention window drives everything except the profile
+	// purges, which are configured independently below.
+	if w.retentionDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -w.retentionDays)
+		slog.Info("retention: purging", "cutoff", cutoff.Format(time.DateOnly))
 
-	logsCapDeleted := w.purgeLogsRowCap(ctx)
-	txCapDeleted := w.purgeTransactionsRowCap(ctx)
+		eventsDeleted, issuesDeleted = w.purgeEvents(ctx, cutoff)
+		txDeleted = w.purgeTransactions(ctx, cutoff)
+		logsDeleted = w.purgeLogs(ctx, cutoff)
+		uptimeChecksDeleted = w.purgeUptimeChecks(ctx, cutoff)
+		firingsDeleted = w.purgeAlertFirings(ctx)
+		w.purgeExpiredAuthTokens(ctx)
+
+		logsCapDeleted = w.purgeLogsRowCap(ctx)
+		txCapDeleted = w.purgeTransactionsRowCap(ctx)
+	}
+
+	if w.profileRetentionDays > 0 {
+		profileCutoff := time.Now().AddDate(0, 0, -w.profileRetentionDays)
+		profilesDeleted = w.purgeProfiles(ctx, profileCutoff)
+	}
+	profilesCapDeleted = w.purgeProfilesStorageCap(ctx)
 
 	slog.Info("retention: done",
 		"events", eventsDeleted,
@@ -82,7 +129,74 @@ func (w *Worker) purge(ctx context.Context) {
 		"alert_firings", firingsDeleted,
 		"logs_row_cap", logsCapDeleted,
 		"tx_row_cap", txCapDeleted,
+		"profiles", profilesDeleted,
+		"profiles_storage_cap", profilesCapDeleted,
 	)
+}
+
+// purgeProfiles deletes profiles past the profile-specific retention window,
+// in batches so a large backlog does not lock the table or spike WAL.
+func (w *Worker) purgeProfiles(ctx context.Context, cutoff time.Time) int64 {
+	var total int64
+	for {
+		tag, err := w.pool.Exec(ctx, `
+			DELETE FROM profile_chunks
+			WHERE id IN (
+				SELECT id FROM profile_chunks
+				WHERE received_at < $1
+				ORDER BY received_at ASC
+				LIMIT $2
+			)`, cutoff, profilePurgeBatch)
+		if err != nil {
+			slog.Error("retention: delete profiles", "err", err)
+			return total
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < profilePurgeBatch {
+			return total
+		}
+	}
+}
+
+// purgeProfilesStorageCap enforces the instance-wide profile storage budget,
+// deleting oldest first until the total compressed size fits.
+//
+// Profiles need a byte budget rather than the row cap used for logs and
+// transactions: those rows are uniformly small, while a profile ranges over
+// orders of magnitude depending on sample rate, thread count and stack depth,
+// so a row count says nothing about disk. size_bytes is denormalized onto the
+// row precisely so this can be a plain sum.
+func (w *Worker) purgeProfilesStorageCap(ctx context.Context) int64 {
+	if w.profileStorageLimitMB <= 0 {
+		return 0
+	}
+	limitBytes := int64(w.profileStorageLimitMB) * 1024 * 1024
+
+	var total int64
+	for {
+		// The running total is taken newest-first, so every row past the
+		// budget is one we want gone. Deleting the largest running totals
+		// first means an interrupted run has still removed the oldest data.
+		tag, err := w.pool.Exec(ctx, `
+			DELETE FROM profile_chunks
+			WHERE id IN (
+				SELECT id FROM (
+					SELECT id, SUM(size_bytes) OVER (ORDER BY start_ts DESC, id DESC) AS running
+					FROM profile_chunks
+				) ranked
+				WHERE running > $1
+				ORDER BY running DESC
+				LIMIT $2
+			)`, limitBytes, profilePurgeBatch)
+		if err != nil {
+			slog.Error("retention: purge profile storage cap", "err", err)
+			return total
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < profilePurgeBatch {
+			return total
+		}
+	}
 }
 
 func (w *Worker) purgeEvents(ctx context.Context, cutoff time.Time) (eventsDeleted, issuesDeleted int64) {
