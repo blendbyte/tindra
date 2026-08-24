@@ -67,7 +67,7 @@ type FoldOptions struct {
 // so each profile is walked against its own tables and accumulated into the
 // shared tree.
 func Fold(profs []*ingest.Profile, opt FoldOptions) *FlameGraph {
-	g := &FlameGraph{Root: &FlameNode{}}
+	g := &FlameGraph{Root: &FlameNode{}, ThreadID: opt.ThreadID}
 	// Children are keyed for merging while building, then dropped: the wire
 	// form is a plain tree.
 	index := map[*FlameNode]map[string]*FlameNode{}
@@ -91,7 +91,7 @@ func Fold(profs []*ingest.Profile, opt FoldOptions) *FlameGraph {
 			if opt.EndNs != 0 && s.TimestampNs > opt.EndNs {
 				continue
 			}
-			if int(s.StackID) >= len(p.Stacks) {
+			if s.StackID < 0 || int(s.StackID) >= len(p.Stacks) {
 				continue
 			}
 			stack := p.Stacks[s.StackID]
@@ -108,7 +108,7 @@ func Fold(profs []*ingest.Profile, opt FoldOptions) *FlameGraph {
 			// entry point toward the running function.
 			for i := len(stack) - 1; i >= 0; i-- {
 				frameID := stack[i]
-				if int(frameID) >= len(p.Frames) {
+				if frameID < 0 || int(frameID) >= len(p.Frames) {
 					break
 				}
 				node = childFor(index, node, p.Frames[frameID])

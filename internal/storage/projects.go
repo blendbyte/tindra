@@ -86,6 +86,12 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 		  ),
 		  lg AS (
 		    SELECT project_id, COUNT(*) AS total FROM logs GROUP BY project_id
+		  ),
+		  -- Profiles are the largest thing stored, and unlike the other tables
+		  -- every row already carries its own compressed size, so this is summed
+		  -- outright rather than apportioned from a table total by row count.
+		  pr AS (
+		    SELECT project_id, SUM(size_bytes)::float8 AS bytes FROM profile_chunks GROUP BY project_id
 		  )
 		SELECT
 		  p.id, p.slug, p.name, p.public_key, p.passthrough_dsn, p.scrub_fields, p.scrub_patterns, p.profiling_enabled, p.created_at,
@@ -94,7 +100,8 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 		  (
 		    COALESCE(ev.total, 0)::float8 / s.total_ev  * s.ev_bytes  +
 		    COALESCE(tx.total, 0)::float8 / s.total_tx  * s.tx_bytes  +
-		    COALESCE(lg.total, 0)::float8 / s.total_log * s.log_bytes
+		    COALESCE(lg.total, 0)::float8 / s.total_log * s.log_bytes +
+		    COALESCE(pr.bytes, 0)
 		  )::int8 AS storage_bytes,
 		  COALESCE(lg.total, 0) AS log_count,
 		  COALESCE(tx.total, 0) AS tx_count
@@ -103,6 +110,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 		LEFT JOIN ev  ON ev.project_id  = p.id
 		LEFT JOIN tx  ON tx.project_id  = p.id
 		LEFT JOIN lg  ON lg.project_id  = p.id
+		LEFT JOIN pr  ON pr.project_id  = p.id
 		ORDER BY p.name ASC
 	`)
 	if err != nil {

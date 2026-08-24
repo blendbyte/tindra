@@ -311,6 +311,31 @@ describe('FlameGraph', () => {
       expect(w.find('.flame__crumbs').exists()).toBe(false)
     })
 
+    // The layout changes under the cursor, and layout keys are per function
+    // name, so a stale hit can highlight a box that is not the one it named.
+    it('drops the hover when zooming', async () => {
+      const w = await mountSized()
+      await hover(w, 500, 0)
+      expect(tip()).not.toBeNull()
+
+      await w.find('canvas').trigger('click')
+      await nextTick()
+      expect(tip()).toBeNull()
+    })
+
+    it('drops the hover when resetting', async () => {
+      const w = await mountSized()
+      await hover(w, 500, 0)
+      await w.find('canvas').trigger('click')
+      await nextTick()
+
+      await hover(w, 500, 1)
+      expect(tip()).not.toBeNull()
+      await w.findAll('.flame__crumb')[0].trigger('click')
+      await nextTick()
+      expect(tip()).toBeNull()
+    })
+
     it('drops the zoom when a different profile arrives', async () => {
       const w = await mountSized()
       await hover(w, 500, 0)

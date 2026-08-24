@@ -187,8 +187,14 @@ describe('shortName', () => {
       .toBe('Builder::get')
   })
 
-  it('trims a path to its tail', () => {
-    expect(shortName('/var/www/app/public/index.php')).toBe('public\\index.php')
+  // A path has to come back as a path. Rejoining with a backslash rendered the
+  // seeder's own PHP entry point as public\index.php on screen.
+  it('trims a path to its tail and keeps the slash', () => {
+    expect(shortName('/var/www/app/public/index.php')).toBe('public/index.php')
+  })
+
+  it('keeps a namespace separator for namespaced names', () => {
+    expect(shortName('App\\Support\\Money')).toBe('Support\\Money')
   })
 
   it('leaves a dotted python name alone', () => {

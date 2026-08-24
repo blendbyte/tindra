@@ -203,17 +203,25 @@ function onLeave() {
 function onClick() {
   const hit = hovered.value
   // Zooming into a leaf fills the view with one box and shows nothing new.
-  if (hit && hit.node.children?.length) zoomStack.value.push(hit.node)
+  if (hit && hit.node.children?.length) {
+    zoomStack.value.push(hit.node)
+    // The layout is about to change under the cursor, so the old hit refers to
+    // a box that no longer exists. Keys are per function name, so keeping it
+    // can highlight a different frame entirely.
+    hovered.value = null
+  }
 }
 
 function resetZoom() {
   zoomStack.value = []
+  hovered.value = null
 }
 
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && zoomStack.value.length) {
     e.preventDefault()
     zoomStack.value.pop()
+    hovered.value = null
   }
 }
 
@@ -235,8 +243,9 @@ onMounted(() => {
       width.value = Math.floor(entries[0].contentRect.width)
       draw()
     })
+    // No initial width seed: ResizeObserver delivers one on observe, and
+    // clientWidth would include the padding that contentRect.width excludes.
     observer.observe(wrapRef.value)
-    width.value = Math.floor(wrapRef.value.clientWidth)
   }
   window.addEventListener('keydown', onKey)
   draw()

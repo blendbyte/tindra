@@ -97,6 +97,7 @@ func foldV1(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 	rows, err := pool.Query(ctx, `
 		SELECT encoding, data FROM profile_chunks
 		WHERE project_id = $1 AND transaction_event_id = $2
+		ORDER BY received_at DESC
 		LIMIT 1`, ref.ProjectID, ref.EventID)
 	if err != nil {
 		return nil, fmt.Errorf("query v1 profile: %w", err)

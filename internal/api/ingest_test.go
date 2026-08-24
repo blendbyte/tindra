@@ -1019,3 +1019,43 @@ func TestHandleGetTransactionFlameGraph_errorPaths(t *testing.T) {
 		}
 	})
 }
+
+// contexts.trace.data is a free-form bag: SDKs put numbers and booleans in it
+// alongside thread.id. Decoding it into a typed map fails on the first number
+// and parseTransaction drops the whole transaction, spans and all, so a
+// profiling change would silently delete ordinary performance data.
+func TestHandleEnvelope_transactionWithMixedTypeTraceData(t *testing.T) {
+	buf := ingest.NewBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	const txName = "/mixed-trace-data"
+	payload := `{"event_id":"dd0e8400e29b41d4a716446655440000","transaction":"` + txName + `",` +
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",` +
+		`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok",` +
+		`"data":{"thread.id":"8412331008","sentry.sample_rate":1.0,` +
+		`"http.response.status_code":200,"sentry.parentIsRemote":false}}}}`
+	body := `{"event_id":"ee0e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(400 * time.Millisecond)
+
+	var threadID *string
+	err := testPool.QueryRow(ctx, `
+		SELECT thread_id FROM transactions
+		WHERE project_id = $1 AND transaction = $2`, testProject.ID, txName).Scan(&threadID)
+	if err != nil {
+		t.Fatalf("the transaction was dropped: %v", err)
+	}
+	if threadID == nil || *threadID != "8412331008" {
+		t.Errorf("thread_id = %v, want the string value alongside the numeric keys", threadID)
+	}
+}

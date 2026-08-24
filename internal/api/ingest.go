@@ -131,8 +131,18 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		body = sizeLimit
 	}
 
+	// The raw copy exists only to forward the envelope on. Teeing it
+	// unconditionally meant every request held a second full copy of the body
+	// for nothing, which got a lot more expensive once the decompressed cap
+	// rose to 20 MB for profiles.
+	forwarding := project.PassthroughDSN != nil && *project.PassthroughDSN != ""
 	var rawBuf bytes.Buffer
-	header, items, err := ingest.Parse(io.TeeReader(body, &rawBuf))
+	parseFrom := body
+	if forwarding {
+		parseFrom = io.TeeReader(body, &rawBuf)
+	}
+
+	header, items, err := ingest.Parse(parseFrom)
 	// Test the size caps before the parse error. An over-sized body is cut off
 	// mid-item, so it always surfaces as a parse failure; reporting that as a
 	// malformed envelope sends the operator hunting for a bug in their SDK.
@@ -179,6 +189,12 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			tx := parseTransaction(project.ID, item.Payload)
 			if tx == nil {
 				continue
+			}
+			// Some SDKs put the id only in the envelope header. It is the same
+			// id, and a v1 profile links to it by value, so fall back rather
+			// than lose the link.
+			if tx.EventID == "" && eventID != nil {
+				tx.EventID = trunc(*eventID, maxFieldLen)
 			}
 			ingest.ScrubTransaction(tx, scrubCfg)
 			if !ro.txBuf.Push(*tx) {
@@ -230,7 +246,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if project.PassthroughDSN != nil && *project.PassthroughDSN != "" {
+	if forwarding {
 		ingest.ForwardEnvelope(ro.passthroughClient, *project.PassthroughDSN, rawBuf.Bytes())
 	}
 
@@ -431,6 +447,17 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 	}
 }
 
+// traceDataString reads one value out of the free-form trace data bag. Only a
+// string is meaningful for the keys we care about; anything else is ignored
+// rather than coerced, since a thread id that arrived as a float is not one we
+// could match against a profile anyway.
+func traceDataString(data map[string]any, key string) string {
+	if s, ok := data[key].(string); ok {
+		return s
+	}
+	return ""
+}
+
 func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransaction {
 	var p struct {
 		EventID        string          `json:"event_id"`
@@ -445,7 +472,12 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 				Status  string `json:"status"`
 				// Continuous profiling puts the sampled thread here, which is
 				// what selects one thread's samples out of a chunk.
-				Data map[string]string `json:"data"`
+				//
+				// Decoded loosely on purpose: this is a free-form bag and SDKs
+				// mix numbers and booleans in alongside the strings. A typed map
+				// fails on the first number, and the error path below throws the
+				// entire transaction away.
+				Data map[string]any `json:"data"`
 			} `json:"trace"`
 			Profile struct {
 				ProfilerID string `json:"profiler_id"`
@@ -511,7 +543,7 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 		ProjectID:      projectID,
 		EventID:        trunc(p.EventID, maxFieldLen),
 		ProfilerID:     trunc(p.Contexts.Profile.ProfilerID, maxFieldLen),
-		ThreadID:       trunc(p.Contexts.Trace.Data["thread.id"], maxFieldLen),
+		ThreadID:       trunc(traceDataString(p.Contexts.Trace.Data, "thread.id"), maxFieldLen),
 		TraceID:        trunc(p.Contexts.Trace.TraceID, maxFieldLen),
 		SpanID:         trunc(p.Contexts.Trace.SpanID, maxFieldLen),
 		Transaction:    trunc(p.Transaction, maxFieldLen),

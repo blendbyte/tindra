@@ -110,9 +110,13 @@ export function isLibraryFrame(node: FlameNode): boolean {
  * part.
  */
 export function shortName(fn: string): string {
+  // Rejoin with the separator the name actually used. Splitting a path on "/"
+  // and rejoining with a backslash turned public/index.php into public\index.php
+  // on screen.
+  const sep = fn.includes('::') ? '::' : fn.includes('\\') ? '\\' : '/'
   const parts = fn.split(/\\|::|\//)
   if (parts.length <= 2) return fn
-  return parts.slice(-2).join(fn.includes('::') ? '::' : '\\')
+  return parts.slice(-2).join(sep)
 }
 
 /** Case-insensitive match across the identifiers shown on a box. */
