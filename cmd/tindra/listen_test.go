@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"os"
@@ -124,8 +125,9 @@ func TestListen_unix_serves_http(t *testing.T) {
 	defer srv.Close()
 
 	transport := &http.Transport{
-		Dial: func(_, _ string) (net.Conn, error) {
-			return net.Dial("unix", path)
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", path)
 		},
 	}
 	client := &http.Client{Transport: transport}
