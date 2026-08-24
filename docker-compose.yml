@@ -30,6 +30,10 @@ services:
       LOG_FORMAT: json
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       RETENTION_DAYS: ${RETENTION_DAYS:-90}
+      # Profiles are far larger per unit of time than anything else stored, so
+      # they age out on their own schedule and under a hard storage ceiling.
+      # PROFILE_RETENTION_DAYS: "7"
+      # PROFILE_STORAGE_LIMIT_MB: "2048"
       # CORS_ORIGIN: https://your-domain.com
       # EMAIL_PROVIDER: smtp
       # EMAIL_FROM: alerts@your-domain.com

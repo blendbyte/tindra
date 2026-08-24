@@ -33,6 +33,7 @@ One Go binary. One Postgres database. Compatible with every Sentry SDK: point yo
 - **Dashboard** with KPI strip, transaction density heatmap, hottest issues, release health, and recent alerts
 - **Error tracking** with grouping, stack traces, breadcrumbs, tags, assignees, merge and resolve
 - **Performance monitoring** with transaction list, span waterfall, and p50/p75/p95/p99 percentiles
+- **Profiling** with flame graphs on the transaction detail page, from both transaction-based and continuous Sentry SDK profiling
 - **Cron monitors** with check-in history, missed/error alerts, and Sentry, Oh Dear, and Spatie SDK compatibility
 - **Uptime monitors** with HTTP/HTTPS probing, configurable intervals and timeouts, expected status codes and body assertions, 24h/7d/30d uptime stats, and down/recovery alerts
 - **Releases** linked to issues and regressions
