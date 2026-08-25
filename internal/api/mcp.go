@@ -593,10 +593,7 @@ func (ro *router) mcpGetIssue(ctx context.Context, args map[string]any) (string,
 
 func (ro *router) mcpListTransactions(ctx context.Context, args map[string]any) (string, error) {
 	projectIDs := mcpProjectIDs(ctx, args)
-	hours := max(mcpArgInt(args, "hours", 24), 1)
-	if hours > 168 {
-		hours = 168
-	}
+	hours := min(max(mcpArgInt(args, "hours", 24), 1), 168)
 	limit := mcpArgLimit(args, "limit", 20, 50)
 
 	summaries, err := storage.ListTransactionSummaries(ctx, ro.pool, projectIDs, hours, 0, "", mcpArgString(args, "name"), "", "")
@@ -814,10 +811,7 @@ func (ro *router) mcpListSpanSummaries(ctx context.Context, args map[string]any)
 	default:
 		return "", mcpToolError{"type must be db, cache, or jobs"}
 	}
-	hours := max(mcpArgInt(args, "hours", 24), 1)
-	if hours > 720 {
-		hours = 720
-	}
+	hours := min(max(mcpArgInt(args, "hours", 24), 1), 720)
 	summaries, err := storage.GetSpanSummaries(ctx, ro.pool, category, mcpProjectIDs(ctx, args), hours, "", "")
 	if err != nil {
 		return "", fmt.Errorf("get span summaries: %w", err)

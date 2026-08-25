@@ -123,8 +123,7 @@ func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		found := slices.Contains(rule.ProjectIDs, tokenProjID)
-		if !found {
+		if !slices.Contains(rule.ProjectIDs, tokenProjID) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

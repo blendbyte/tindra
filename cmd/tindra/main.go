@@ -451,8 +451,7 @@ func serveCmd(cfg config) *cobra.Command {
 
 func listen(addr string, socketMode fs.FileMode) (net.Listener, error) {
 	lc := &net.ListenConfig{}
-	if after, ok := strings.CutPrefix(addr, "unix:"); ok {
-		path := after
+	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
 		// Remove stale socket from a previous run.
 		_ = os.Remove(path)
 		ln, err := lc.Listen(context.Background(), "unix", path)
