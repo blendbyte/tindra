@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,12 +19,56 @@ import (
 )
 
 const (
-	maxBodyBytes     = 20 * 1024 * 1024 // 20 MB - raw/uncompressed
-	maxGzipBodyBytes = 1 * 1024 * 1024  // 1 MB - decompressed; real SDK payloads are well under this
-	maxFieldLen      = 512
-	maxDescLen       = 2048
-	maxSpans         = 500
+	maxBodyBytes = 20 * 1024 * 1024 // 20 MB - raw/uncompressed
+
+	// maxGzipBodyBytes caps the decompressed size, matching the raw cap.
+	// Error events are tiny, but SDK profiling items are not: a single profile
+	// is hundreds of KB to megabytes before compression, and SDKs ship it in
+	// the same envelope as its transaction. The previous 1 MB cap truncated
+	// such a body mid-item, failing the parse for the whole envelope and
+	// discarding the transaction along with the profile.
+	maxGzipBodyBytes = 20 * 1024 * 1024
+
+	// Projects with profiling switched off keep the cap this had before
+	// profiles existed. Nothing else an SDK sends comes close to it, so there
+	// is no reason to let them force twenty times the allocation per request.
+	maxGzipBodyBytesNoProfiles = 1 * 1024 * 1024
+	maxFieldLen                = 512
+	maxDescLen                 = 2048
+	maxSpans                   = 500
 )
+
+// limitedReader reads at most a fixed number of bytes and records whether that
+// cap was reached. io.LimitReader truncates silently, which downgrades "the
+// body was too big" into an opaque parse failure further down the stack.
+type limitedReader struct {
+	r    io.Reader
+	left int64 // one past the cap, so reaching zero means the cap was exceeded
+	over bool
+}
+
+func newLimitedReader(r io.Reader, limit int64) *limitedReader {
+	return &limitedReader{r: r, left: limit + 1}
+}
+
+func (l *limitedReader) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		l.over = true
+		return 0, io.EOF
+	}
+	if int64(len(p)) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.r.Read(p)
+	l.left -= int64(n)
+	if l.left <= 0 {
+		l.over = true
+	}
+	return n, err
+}
+
+// exceeded reports whether more bytes were available than the cap allowed.
+func (l *limitedReader) exceeded() bool { return l.over }
 
 func trunc(s string, n int) string {
 	if len(s) <= n {
@@ -78,7 +123,9 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body := io.LimitReader(r.Body, maxBodyBytes)
+	rawLimit := newLimitedReader(r.Body, maxBodyBytes)
+	var body io.Reader = rawLimit
+	sizeLimit := rawLimit
 	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
 		gz, err := gzip.NewReader(body)
 		if err != nil {
@@ -86,11 +133,33 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer gz.Close()
-		body = io.LimitReader(gz, maxGzipBodyBytes)
+		gzipCap := int64(maxGzipBodyBytes)
+		if !project.ProfilingEnabled {
+			gzipCap = maxGzipBodyBytesNoProfiles
+		}
+		sizeLimit = newLimitedReader(gz, gzipCap)
+		body = sizeLimit
 	}
 
+	// The raw copy exists only to forward the envelope on. Teeing it
+	// unconditionally meant every request held a second full copy of the body
+	// for nothing, which got a lot more expensive once the decompressed cap
+	// rose to 20 MB for profiles.
+	forwarding := project.PassthroughDSN != nil && *project.PassthroughDSN != ""
 	var rawBuf bytes.Buffer
-	header, items, err := ingest.Parse(io.TeeReader(body, &rawBuf))
+	parseFrom := body
+	if forwarding {
+		parseFrom = io.TeeReader(body, &rawBuf)
+	}
+
+	header, items, err := ingest.Parse(parseFrom)
+	// Test the size caps before the parse error. An over-sized body is cut off
+	// mid-item, so it always surfaces as a parse failure; reporting that as a
+	// malformed envelope sends the operator hunting for a bug in their SDK.
+	if rawLimit.exceeded() || sizeLimit.exceeded() {
+		http.Error(w, "envelope too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 	if err != nil {
 		http.Error(w, "bad envelope", http.StatusBadRequest)
 		return
@@ -131,6 +200,12 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			if tx == nil {
 				continue
 			}
+			// Some SDKs put the id only in the envelope header. It is the same
+			// id, and a v1 profile links to it by value, so fall back rather
+			// than lose the link.
+			if tx.EventID == "" && eventID != nil {
+				tx.EventID = trunc(*eventID, maxFieldLen)
+			}
 			ingest.ScrubTransaction(tx, scrubCfg)
 			if !ro.txBuf.Push(*tx) {
 				w.Header().Set("Retry-After", "1")
@@ -147,6 +222,37 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 				ro.logBuf.Push(l) // best-effort; drop silently if full
 			})
 
+		case "profile", "profile_chunk":
+			if ro.profBuf == nil || !project.ProfilingEnabled {
+				continue
+			}
+			prof, err := ingest.ParseProfileItem(item.Header.Type, item.Payload)
+			if err != nil {
+				// A malformed or over-long profile is dropped on its own. The
+				// transaction it travels with is still good data.
+				slog.Debug("discarding profile", "project", project.Slug,
+					"type", item.Header.Type, "err", err)
+				continue
+			}
+			ingest.ScrubProfile(prof, scrubCfg)
+			// Compressed here rather than in the writer so the buffer holds
+			// bounded memory even when profiles arrive faster than they drain.
+			buffered, err := ingest.NewBufferedProfile(project.ID, prof)
+			if err != nil {
+				slog.Error("encode profile", "project", project.Slug, "err", err)
+				continue
+			}
+			// Best effort, like logs. Failing the envelope here would ask the
+			// SDK to resend one that already had its transaction accepted a few
+			// items earlier, and transactions carry no uniqueness guard, so the
+			// retry would duplicate the transaction to save a profile. The
+			// parse-error branch above drops the profile alone for the same
+			// reason.
+			if !ro.profBuf.Push(buffered) {
+				slog.Debug("profile buffer full, dropping profile",
+					"project", project.Slug, "type", item.Header.Type)
+			}
+
 		case "check_in":
 			if ro.pool == nil {
 				continue
@@ -155,7 +261,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if project.PassthroughDSN != nil && *project.PassthroughDSN != "" {
+	if forwarding {
 		ingest.ForwardEnvelope(ro.passthroughClient, *project.PassthroughDSN, rawBuf.Bytes())
 	}
 
@@ -356,8 +462,39 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 	}
 }
 
+// traceDataString reads one value out of the free-form trace data bag.
+//
+// Anything that is not an object of values is simply absent as far as this is
+// concerned. Nothing here is worth failing a transaction over, which is what
+// decoding the bag as part of the surrounding struct would do.
+//
+// A numeric thread id is coerced rather than dropped: ingest.flexString does
+// the same on the profile side, so the two would otherwise fail to match for
+// any SDK that sends thread.id unquoted, and the chunk would be folded across
+// every thread instead of one.
+func traceDataString(raw json.RawMessage, key string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return ""
+	}
+	switch v := data[key].(type) {
+	case string:
+		return v
+	case float64:
+		// JSON numbers decode as float64. Thread ids are integers, so format
+		// without an exponent or a trailing .0 that would never match.
+		return strconv.FormatInt(int64(v), 10)
+	default:
+		return ""
+	}
+}
+
 func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransaction {
 	var p struct {
+		EventID        string          `json:"event_id"`
 		Transaction    string          `json:"transaction"`
 		StartTimestamp json.RawMessage `json:"start_timestamp"`
 		Timestamp      json.RawMessage `json:"timestamp"`
@@ -367,7 +504,19 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 				SpanID  string `json:"span_id"`
 				Op      string `json:"op"`
 				Status  string `json:"status"`
+				// Continuous profiling puts the sampled thread here, which is
+				// what selects one thread's samples out of a chunk.
+				//
+				// Held raw and decoded separately. This is a free-form bag: SDKs
+				// mix numbers and booleans in with the strings, and PHP renders
+				// an empty one as [] rather than {}. Decoding it inline means any
+				// shape we did not anticipate fails the whole struct, and the
+				// error path below throws the entire transaction away.
+				Data json.RawMessage `json:"data"`
 			} `json:"trace"`
+			Profile struct {
+				ProfilerID string `json:"profiler_id"`
+			} `json:"profile"`
 		} `json:"contexts"`
 		Spans []struct {
 			SpanID         string          `json:"span_id"`
@@ -421,6 +570,9 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 
 	return &ingest.BufferedTransaction{
 		ProjectID:      projectID,
+		EventID:        trunc(p.EventID, maxFieldLen),
+		ProfilerID:     trunc(p.Contexts.Profile.ProfilerID, maxFieldLen),
+		ThreadID:       trunc(traceDataString(p.Contexts.Trace.Data, "thread.id"), maxFieldLen),
 		TraceID:        trunc(p.Contexts.Trace.TraceID, maxFieldLen),
 		SpanID:         trunc(p.Contexts.Trace.SpanID, maxFieldLen),
 		Transaction:    trunc(p.Transaction, maxFieldLen),

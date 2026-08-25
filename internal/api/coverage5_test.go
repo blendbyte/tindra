@@ -900,7 +900,7 @@ func TestTransactionTimeseries_invalidHours(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetSettings_withBillingURL(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "https://billing.example.com", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "https://billing.example.com", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
@@ -1328,7 +1328,7 @@ func TestGetSettings_respondsWithCommit(t *testing.T) {
 
 func TestGetStats_missingAuthHeader(t *testing.T) {
 	// Build a handler with a non-empty statsAPIKey so the key check is enforced.
-	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "some-stats-key-cov5", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "some-stats-key-cov5", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	// No Authorization header at all.
@@ -1344,7 +1344,7 @@ func TestGetStats_missingAuthHeader(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_wrongAPIKey(t *testing.T) {
-	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "correct-key-cov5", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "correct-key-cov5", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer wrong-key-cov5")
@@ -1361,7 +1361,7 @@ func TestGetStats_wrongAPIKey(t *testing.T) {
 
 func TestGetStats_correctAPIKey(t *testing.T) {
 	const key = "correct-stats-key-cov5"
-	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", key, "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", key, "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer "+key)

@@ -3,10 +3,11 @@ import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-import type { Transaction, Span, TraceError, Log, LogListPage } from '@/api/types'
+import type { Transaction, Span, TraceError, Log, LogListPage, FlameGraph } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
 import { useTimezone } from '@/composables/useTimezone'
 import Icon from '@/components/Icon.vue'
+import FlameGraphView from '@/components/FlameGraph.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -562,6 +563,23 @@ const { data: traceErrorsData } = useQuery({
 })
 const traceErrorList = computed(() => traceErrorsData.value ?? [])
 
+// Most transactions carry no profile: the SDK samples them out, or profiling
+// is off. The endpoint answers 404 for that, so it is treated as "nothing to
+// show" rather than retried as a failure.
+const { data: flameGraph } = useQuery({
+  queryKey: computed(() => ['transactions', txId.value, 'flamegraph']),
+  queryFn: async () => {
+    try {
+      return await apiFetch<FlameGraph>(`/api/transactions/${txId.value}/flamegraph`)
+    } catch {
+      return null
+    }
+  },
+  enabled: computed(() => !!txId.value),
+  retry: false,
+})
+
+
 // Map span_id → errors for O(1) lookup when rendering timeline bars.
 const errorsBySpanId = computed(() => {
   const m = new Map<string, TraceError[]>()
@@ -1051,6 +1069,12 @@ function traceErrorOffset(e: TraceError): string {
         </div>
 
       </div>
+    </div>
+
+    <!-- Flame graph. Named for what it is: TransactionProfileView is the
+         aggregate view for a transaction name and means something else. -->
+    <div v-if="flameGraph" class="trace-logs--flame">
+      <FlameGraphView :graph="flameGraph" />
     </div>
 
     <!-- Trace error correlation -->

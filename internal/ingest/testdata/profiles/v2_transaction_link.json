@@ -1,0 +1,26 @@
+{
+  "event_id": "5e6f70819a2b3c4d5e6f70819a2b3c4d",
+  "type": "transaction",
+  "transaction": "GET /api/orders",
+  "start_timestamp": "2026-08-24T10:15:32.101000Z",
+  "timestamp": "2026-08-24T10:15:32.141000Z",
+  "platform": "python",
+  "release": "orders@2.1.0",
+  "environment": "production",
+  "contexts": {
+    "trace": {
+      "trace_id": "c4d5e6f70819a2b3c4d5e6f70819a2b3",
+      "span_id": "9a2b3c4d5e6f7081",
+      "op": "http.server",
+      "status": "ok",
+      "data": {
+        "thread.id": "8412331008",
+        "thread.name": "MainThread"
+      }
+    },
+    "profile": {
+      "profiler_id": "4d229f1d3807421ba62a5f8bc295d836"
+    }
+  },
+  "spans": []
+}

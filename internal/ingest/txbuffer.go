@@ -23,7 +23,15 @@ type BufferedSpan struct {
 }
 
 type BufferedTransaction struct {
-	ProjectID      string
+	ProjectID string
+	// EventID is the transaction event's own id. A v1 profile names it to say
+	// which transaction it belongs to.
+	EventID string
+	// ProfilerID and ThreadID come from contexts.profile and
+	// contexts.trace.data on continuous-profiling events, and are how a
+	// transaction finds the profile chunks covering its window.
+	ProfilerID     string
+	ThreadID       string
 	TraceID        string
 	SpanID         string
 	Transaction    string
@@ -107,14 +115,16 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 		txBatch.Queue(`
 			INSERT INTO transactions
 				(project_id, trace_id, span_id, transaction, op, status, duration_ms,
-				 start_timestamp, timestamp, environment, release, platform, measurements)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+				 start_timestamp, timestamp, environment, release, platform, measurements,
+				 event_id, profiler_id, thread_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 			RETURNING id
 		`,
 			tx.ProjectID, nilStr(tx.TraceID), nilStr(tx.SpanID), tx.Transaction,
 			tx.Op, tx.Status, tx.DurationMs, tx.StartTimestamp, tx.Timestamp,
 			nilStr(tx.Environment), nilStr(tx.Release), nilStr(tx.Platform),
 			nilJSON(tx.Measurements),
+			nilStr(tx.EventID), nilStr(tx.ProfilerID), nilStr(tx.ThreadID),
 		)
 	}
 

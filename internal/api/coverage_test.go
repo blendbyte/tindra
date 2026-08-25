@@ -407,7 +407,7 @@ func TestMFAVerify_badRequestBody(t *testing.T) {
 		bytes.NewBufferString("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for bad body, got %d", rec.Code)
@@ -610,7 +610,7 @@ func TestHandleEnvelope_transactionEmptyName(t *testing.T) {
 		`{"type":"transaction"}` + "\n" +
 		`{"start_timestamp":"2024-01-01T00:00:00Z","timestamp":"2024-01-01T00:00:01Z"}` + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
 		bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
@@ -636,7 +636,7 @@ func TestHandleEnvelope_transactionEmptyStatus(t *testing.T) {
 		`{"type":"transaction"}` + "\n" +
 		payload + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
 		bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
@@ -662,7 +662,7 @@ func TestHandleEnvelope_transactionNegativeDuration(t *testing.T) {
 		`{"type":"transaction"}` + "\n" +
 		payload + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
 		bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
@@ -692,4 +692,91 @@ func TestUpdateIssue_badBody(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for bad body, got %d", rec.Code)
 	}
+}
+
+// --- per-project profiling toggle ---
+
+// The storage budget is instance-wide and purges oldest-first across every
+// project, so one busy service can evict everyone else's profiles. This switch
+// is the only lever against that, and it has to survive a round trip.
+func TestHandleUpdateProject_profilingToggle(t *testing.T) {
+	ctx := context.Background()
+	p, err := storage.CreateProject(ctx, testPool, "toggle-proj", "Toggle Project")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", p.ID) })
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	patch := func(t *testing.T, body string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+p.ID, bytes.NewBufferString(body))
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	enabled := func(t *testing.T) bool {
+		t.Helper()
+		var on bool
+		if err := testPool.QueryRow(ctx,
+			"SELECT profiling_enabled FROM projects WHERE id = $1", p.ID).Scan(&on); err != nil {
+			t.Fatalf("read flag: %v", err)
+		}
+		return on
+	}
+
+	if !enabled(t) {
+		t.Fatal("expected profiling on by default")
+	}
+
+	t.Run("turns off", func(t *testing.T) {
+		if code := patch(t, `{"name":"Toggle Project","slug":"toggle-proj","profiling_enabled":false}`); code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", code)
+		}
+		if enabled(t) {
+			t.Error("profiling should be off")
+		}
+	})
+
+	// A client that predates the field must not silently turn profiling back
+	// on, or off, just by renaming a project.
+	t.Run("omitting the field leaves it alone", func(t *testing.T) {
+		if code := patch(t, `{"name":"Renamed","slug":"toggle-proj"}`); code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", code)
+		}
+		if enabled(t) {
+			t.Error("profiling should still be off after an update that did not mention it")
+		}
+	})
+
+	t.Run("turns back on", func(t *testing.T) {
+		if code := patch(t, `{"name":"Renamed","slug":"toggle-proj","profiling_enabled":true}`); code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", code)
+		}
+		if !enabled(t) {
+			t.Error("profiling should be on")
+		}
+	})
+
+	t.Run("is returned to the client", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+p.ID,
+			bytes.NewBufferString(`{"name":"Renamed","slug":"toggle-proj","profiling_enabled":false}`))
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		var got struct {
+			ProfilingEnabled bool `json:"profiling_enabled"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.ProfilingEnabled {
+			t.Error("response should carry the new value so the UI does not need a refetch")
+		}
+	})
 }

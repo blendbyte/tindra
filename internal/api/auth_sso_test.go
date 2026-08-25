@@ -24,7 +24,7 @@ func (m mockProvider) Exchange(_ context.Context, _, _ string) (string, string, 
 // routerWithSSO builds a handler with one or more mock OAuth providers configured.
 // The pool is nil because the 403 short-circuits before any DB call.
 func routerWithSSO(providers ...oauthProvider) http.Handler {
-	return NewRouter(nil, ingest.NewBuffer(1), nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return NewRouter(nil, ingest.NewBuffer(1), nil, nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 func TestHandleLogin_ssoEnabled_rejectsPassword(t *testing.T) {

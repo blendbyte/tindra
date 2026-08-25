@@ -495,7 +495,7 @@ func TestUpdateProject_passthroughDSN(t *testing.T) {
 	}
 
 	dsn := "https://abc123@sentry.io/456"
-	updated, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn)
+	updated, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn, nil)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -523,12 +523,12 @@ func TestUpdateProject_clearPassthroughDSN(t *testing.T) {
 	}
 
 	dsn := "https://abc123@sentry.io/456"
-	p, err = storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn)
+	p, err = storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, &dsn, nil)
 	if err != nil {
 		t.Fatalf("set dsn: %v", err)
 	}
 
-	cleared, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, nil)
+	cleared, err := storage.UpdateProject(context.Background(), testPool, p.ID, p.Name, p.Slug, nil, nil)
 	if err != nil {
 		t.Fatalf("clear: %v", err)
 	}
@@ -835,4 +835,51 @@ func TestGetProjectIssueCounts_multipleProjects(t *testing.T) {
 	if byID[pc.ID] != 0 {
 		t.Errorf("project C: expected 0, got %d", byID[pc.ID])
 	}
+}
+
+// Profiles are the largest thing Tindra stores. Leaving them out of the
+// per-project figure made the settings page under-report exactly the data most
+// likely to fill someone's disk.
+func TestListProjects_storageIncludesProfiles(t *testing.T) {
+	ctx := context.Background()
+	p, err := storage.CreateProject(ctx, testPool, "profile-storage", "Profile Storage")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", p.ID)
+	})
+
+	before := storageFor(t, p.ID)
+
+	const blob = 5 * 1024 * 1024
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO profile_chunks
+			(project_id, format, profiler_id, chunk_id, start_ts, end_ts,
+			 sample_count, size_bytes, encoding, data)
+		VALUES ($1, 2, 'p', 'c', NOW(), NOW(), 100, $2, 1, '\x00'::bytea)`,
+		p.ID, blob); err != nil {
+		t.Fatalf("insert profile: %v", err)
+	}
+
+	after := storageFor(t, p.ID)
+	if after-before < blob {
+		t.Errorf("storage_bytes went %d -> %d, want at least %d more for the profile",
+			before, after, blob)
+	}
+}
+
+func storageFor(t *testing.T, projectID string) int64 {
+	t.Helper()
+	projects, err := storage.ListProjects(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	for _, p := range projects {
+		if p.ID == projectID {
+			return p.StorageBytes
+		}
+	}
+	t.Fatalf("project %s not listed", projectID)
+	return 0
 }

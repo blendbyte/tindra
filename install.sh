@@ -203,6 +203,11 @@ services:
       LOG_FORMAT: json
       COOKIE_SECURE: "${COOKIE_SECURE}"
       RETENTION_DAYS: "90"
+      # ── profiling (optional) ──────────────────────────────────────────────
+      # Profiles are far larger per unit of time than anything else stored, so
+      # they age out on their own schedule and under a hard storage ceiling.
+      # PROFILE_RETENTION_DAYS: "7"
+      # PROFILE_STORAGE_LIMIT_MB: "2048"
       # ── email alerts (optional) ───────────────────────────────────────────
       # EMAIL_PROVIDER: smtp          # smtp | postmark | brevo | lettermint | ahasend | cloudflare
       # EMAIL_FROM: alerts@example.com

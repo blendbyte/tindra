@@ -16,7 +16,7 @@ import (
 )
 
 func authHandlerWithURL(publicURL string) http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", publicURL, "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", publicURL, "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 func TestMFASetup_withPublicURL(t *testing.T) {

@@ -219,7 +219,7 @@ func TestCreateProject_duplicateSlug(t *testing.T) {
 
 func TestCreateProject_projectLimitReached(t *testing.T) {
 	// projectLimit=1; testProject already exists → 429.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 1, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 1, 0, 0, 0, 0, nil, false, false, nil)
 	body := bytes.NewBufferString(`{"name":"Limited","slug":"limited-proj"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/projects", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -281,7 +281,7 @@ func TestGetSettings_updateAvailable(t *testing.T) {
 	api.AppVersion = "v1.0.0"
 	defer func() { api.AppVersion = prev }()
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	api.SetLatestVersionForTest(h, "v9.9.9", "https://example.com/releases/v9.9.9")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
@@ -312,7 +312,7 @@ func TestGetSettings_updateAvailable(t *testing.T) {
 }
 
 func TestGetSettings_rowLimitsReturned(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	h.SetRowLimits(5_000_000, 10_000_000)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
@@ -1050,7 +1050,7 @@ func TestTestAlertRule_noEvaluator(t *testing.T) {
 	})
 
 	// Router created without an evaluator → 503.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodPost,
 		fmt.Sprintf("/api/alert-rules/%s/test", rule.ID), nil)
 	req.AddCookie(authCookie())
@@ -1065,7 +1065,7 @@ func TestTestAlertRule_noEvaluator(t *testing.T) {
 func TestTestAlertRule_notFound(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/alert-rules/00000000-0000-0000-0000-000000000000/test", nil)
 	req.AddCookie(authCookie())
@@ -1616,7 +1616,7 @@ func TestGetProjectStats_withProjectID(t *testing.T) {
 // --- handleGetStats ---
 
 func TestGetStats_wrongKey(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "my-key", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "my-key", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer wrong-key")
 	rec := httptest.NewRecorder()
@@ -1629,7 +1629,7 @@ func TestGetStats_wrongKey(t *testing.T) {
 
 func TestGetStats_success(t *testing.T) {
 	const statsKey = "test-stats-key-global"
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", statsKey, "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", statsKey, "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer "+statsKey)
@@ -1649,7 +1649,7 @@ func TestGetStats_success(t *testing.T) {
 }
 
 func TestGetStats_noKey(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer anything")
 	rec := httptest.NewRecorder()
@@ -2306,7 +2306,7 @@ func TestUpdateProjectPrivacy_invalidScrubPatternsJSON(t *testing.T) {
 // --- handleGetStats additional coverage ---
 
 func TestGetStats_responseFields(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "stats-key", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "stats-key", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer stats-key")
 	rec := httptest.NewRecorder()

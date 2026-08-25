@@ -181,7 +181,7 @@ func TestAdminSendPasswordReset_success_noEmail(t *testing.T) {
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	// Use handler with a publicURL so reset_url is absolute.
-	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "https://tindra.example.com", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).
+	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "https://tindra.example.com", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).
 		ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

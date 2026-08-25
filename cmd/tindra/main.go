@@ -39,14 +39,17 @@ var Commit = "unknown"
 var startupLog = slog.Default()
 
 type config struct {
-	databaseURL            string
-	bindAddr               string
-	publicURL              string
-	statsAPIKey            string
-	billingURL             string
-	logLevel               string
-	logFormat              string
-	ingestBufferSize       int
+	databaseURL      string
+	bindAddr         string
+	publicURL        string
+	statsAPIKey      string
+	billingURL       string
+	logLevel         string
+	logFormat        string
+	ingestBufferSize int
+	// profileBufferSize is sized independently of ingestBufferSize: a profile
+	// is orders of magnitude larger than an event, so the queue is far shorter.
+	profileBufferSize      int
 	dataDir                string
 	retentionDays          int
 	cookieSecure           bool
@@ -58,6 +61,8 @@ type config struct {
 	rateLimitEnvelope      int // max envelope requests per minute per project; 0 = disabled
 	logRowLimit            int // max log rows per project (0 = no cap)
 	txRowLimit             int // max transaction rows per project (0 = no cap)
+	profileRetentionDays   int // days to keep profiles (0 = keep forever)
+	profileStorageLimitMB  int // instance-wide profile storage budget (0 = no cap)
 	webhookAllowPrivateIPs bool
 	requireMFA             bool
 	trustedProxies         []*net.IPNet
@@ -103,6 +108,12 @@ func loadConfig() config {
 	if s := strings.TrimSpace(os.Getenv("INGEST_BUFFER_SIZE")); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			bufSize = n
+		}
+	}
+	profileBufSize := 500
+	if s := strings.TrimSpace(os.Getenv("PROFILE_BUFFER_SIZE")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			profileBufSize = n
 		}
 	}
 	bindAddr := os.Getenv("BIND_ADDR")
@@ -153,6 +164,22 @@ func loadConfig() config {
 			txRowLimit = n
 		}
 	}
+	// Profiles carry their own retention window and a byte budget rather than
+	// following RETENTION_DAYS. They are orders of magnitude larger per unit of
+	// time than anything else stored, so the 90-day default would run to tens of
+	// gigabytes for a handful of continuously profiled processes.
+	profileRetentionDays := 7
+	if s := strings.TrimSpace(os.Getenv("PROFILE_RETENTION_DAYS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			profileRetentionDays = n
+		}
+	}
+	profileStorageLimitMB := 2048
+	if s := strings.TrimSpace(os.Getenv("PROFILE_STORAGE_LIMIT_MB")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			profileStorageLimitMB = n
+		}
+	}
 	rateLimitLogin := 10
 	if s := strings.TrimSpace(os.Getenv("RATE_LIMIT_LOGIN")); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
@@ -191,6 +218,7 @@ func loadConfig() config {
 		logLevel:               logLevel,
 		logFormat:              os.Getenv("LOG_FORMAT"),
 		ingestBufferSize:       bufSize,
+		profileBufferSize:      profileBufSize,
 		dataDir:                dataDir,
 		retentionDays:          retentionDays,
 		cookieSecure:           os.Getenv("COOKIE_SECURE") == "true",
@@ -203,6 +231,8 @@ func loadConfig() config {
 		userLimit:              userLimit,
 		logRowLimit:            logRowLimit,
 		txRowLimit:             txRowLimit,
+		profileRetentionDays:   profileRetentionDays,
+		profileStorageLimitMB:  profileStorageLimitMB,
 		rateLimitLogin:         rateLimitLogin,
 		rateLimitEnvelope:      rateLimitEnvelope,
 		webhookAllowPrivateIPs: os.Getenv("WEBHOOK_ALLOW_PRIVATE_IPS") == "true",
@@ -322,6 +352,13 @@ func serveCmd(cfg config) *cobra.Command {
 				logBuf.Run(ctx, pool)
 			}()
 
+			profBuf := ingest.NewProfileBuffer(cfg.profileBufferSize)
+			profBufDone := make(chan struct{})
+			go func() {
+				defer close(profBufDone)
+				profBuf.Run(ctx, pool)
+			}()
+
 			grouper := issues.NewGrouper(pool)
 			go grouper.Run(ctx)
 
@@ -337,7 +374,10 @@ func serveCmd(cfg config) *cobra.Command {
 			smStore := sourcemaps.NewStore(cfg.dataDir, pool)
 			oauthProviders := api.LoadOAuthProviders(ctx)
 
-			go retention.NewWorker(pool, cfg.retentionDays).WithRowLimits(cfg.logRowLimit, cfg.txRowLimit).Run(ctx)
+			go retention.NewWorker(pool, cfg.retentionDays).
+				WithRowLimits(cfg.logRowLimit, cfg.txRowLimit).
+				WithProfileLimits(cfg.profileRetentionDays, cfg.profileStorageLimitMB).
+				Run(ctx)
 			go digest.NewWorker(pool, emailSender, cfg.publicURL).Run(ctx)
 			go uptime.NewWorker(pool).Run(ctx)
 
@@ -392,7 +432,7 @@ func serveCmd(cfg config) *cobra.Command {
 				"rate_limit_envelope", cfg.rateLimitEnvelope,
 			)
 
-			handler := api.NewRouter(pool, buf, txBuf, logBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.requireMFA, cfg.trustedProxies)
+			handler := api.NewRouter(pool, buf, txBuf, logBuf, profBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.requireMFA, cfg.trustedProxies)
 			handler.SetRowLimits(cfg.logRowLimit, cfg.txRowLimit)
 			if !cfg.disableVersionCheck {
 				handler.StartVersionChecker(ctx)
@@ -444,6 +484,7 @@ func serveCmd(cfg config) *cobra.Command {
 			<-bufDone
 			<-txBufDone
 			<-logBufDone
+			<-profBufDone
 			return nil
 		},
 	}

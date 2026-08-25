@@ -215,6 +215,9 @@ func (ro *router) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		Name           string  `json:"name"`
 		Slug           string  `json:"slug"`
 		PassthroughDSN *string `json:"passthrough_dsn"`
+		// Optional: omitting it leaves the current setting alone rather than
+		// turning profiling off for a client that predates the field.
+		ProfilingEnabled *bool `json:"profiling_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
 		http.Error(w, "name and slug required", http.StatusBadRequest)
@@ -234,7 +237,7 @@ func (ro *router) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	p, err := storage.UpdateProject(r.Context(), ro.pool, id, req.Name, req.Slug, req.PassthroughDSN)
+	p, err := storage.UpdateProject(r.Context(), ro.pool, id, req.Name, req.Slug, req.PassthroughDSN, req.ProfilingEnabled)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

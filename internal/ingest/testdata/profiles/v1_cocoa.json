@@ -1,0 +1,106 @@
+{
+  "event_id": "b3d4e5f60718293a4b5c6d7e8f901234",
+  "version": "1",
+  "platform": "cocoa",
+  "release": "2.4.0 (312)",
+  "environment": "production",
+  "timestamp": "2026-08-24T10:15:32.000Z",
+  "os": {
+    "name": "iOS",
+    "version": "18.2",
+    "build_number": "22C152"
+  },
+  "device": {
+    "architecture": "arm64e",
+    "is_emulator": false,
+    "locale": "en_GB",
+    "manufacturer": "Apple",
+    "model": "iPhone16,2"
+  },
+  "debug_meta": {
+    "images": [
+      {
+        "debug_id": "5F1B0A44-9C2D-3E71-B4A8-1D6E90C3F2A7",
+        "image_addr": "0x0000000104a10000",
+        "code_file": "/private/var/containers/Bundle/Application/1F2E3D4C-5B6A-7089-9AF0-B1C2D3E4F506/Orders.app/Orders",
+        "type": "macho",
+        "image_size": 2097152,
+        "image_vmaddr": "0x0000000100000000"
+      }
+    ]
+  },
+  "profile": {
+    "frames": [
+      {
+        "instruction_addr": "0x0000000104a1c2f0"
+      },
+      {
+        "instruction_addr": "0x0000000104a2d418"
+      },
+      {
+        "instruction_addr": "0x0000000104a3e5a4"
+      }
+    ],
+    "stacks": [
+      [
+        0
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        1,
+        0
+      ]
+    ],
+    "samples": [
+      {
+        "stack_id": 0,
+        "thread_id": "771",
+        "queue_address": "0x000000016b2f4300",
+        "elapsed_since_start_ns": "12750000"
+      },
+      {
+        "stack_id": 1,
+        "thread_id": "771",
+        "queue_address": "0x000000016b2f4300",
+        "elapsed_since_start_ns": "25500000"
+      },
+      {
+        "stack_id": 2,
+        "thread_id": "771",
+        "queue_address": "0x000000016b2f4300",
+        "elapsed_since_start_ns": "38250000"
+      },
+      {
+        "stack_id": 1,
+        "thread_id": "771",
+        "queue_address": "0x000000016b2f4300",
+        "elapsed_since_start_ns": "51000000"
+      }
+    ],
+    "thread_metadata": {
+      "771": {
+        "name": "main",
+        "priority": 47
+      }
+    },
+    "queue_metadata": {
+      "0x000000016b2f4300": {
+        "label": "com.apple.main-thread"
+      }
+    }
+  },
+  "transactions": [
+    {
+      "name": "OrdersViewController",
+      "trace_id": "e5f60718293a4b5c6d7e8f901234b3d4",
+      "id": "0718293a4b5c6d7e8f901234b3d4e5f6",
+      "active_thread_id": "771",
+      "relative_start_ns": "1250000",
+      "relative_end_ns": "62000000"
+    }
+  ]
+}

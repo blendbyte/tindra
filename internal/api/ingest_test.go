@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,7 +67,7 @@ func truncateEvents(t *testing.T) {
 }
 
 func newHandler(buf *ingest.Buffer) http.Handler {
-	return api.NewRouter(testPool, buf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 }
 
 func eventEnvelope(eventID, payload string) string {
@@ -320,7 +322,7 @@ func postLogEnvelopeAs(t *testing.T, projectID, publicKey, body string) *httptes
 	defer cancel()
 	go logBuf.Run(ctx, testPool)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/"+projectID+"/envelope/",
 		bytes.NewBufferString(body))
@@ -557,5 +559,743 @@ func TestHandleEnvelope_checkin_unknownMonitor(t *testing.T) {
 	// Unknown monitor is silently ignored; the envelope still returns 200.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A profile item rides in the same envelope as its transaction and dwarfs an
+// error event. Before the decompressed cap was raised, gzipped envelopes like
+// this were truncated mid-item and rejected as malformed, silently taking the
+// transaction down with the profile.
+func TestHandleEnvelope_gzipLargeProfileItem(t *testing.T) {
+	buf := ingest.NewBuffer(100)
+	txBuf := ingest.NewTransactionBuffer(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	const txName = "/profiling/large-envelope"
+	txPayload := fmt.Sprintf(`{"transaction":%q,"start_timestamp":"2024-01-01T00:00:00Z","timestamp":"2024-01-01T00:00:01Z","contexts":{"trace":{"trace_id":"aa","span_id":"bb"}}}`, txName)
+
+	// ~4 MB, comfortably past the old 1 MB decompressed cap.
+	profilePayload := fmt.Sprintf(`{"version":"1","platform":"php","padding":%q}`,
+		strings.Repeat("frame", 800_000))
+
+	body := `{"event_id":"770e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(txPayload)) + "\n" +
+		txPayload + "\n" +
+		fmt.Sprintf(`{"type":"profile","length":%d}`, len(profilePayload)) + "\n" +
+		profilePayload + "\n"
+
+	var gz bytes.Buffer
+	w := gzip.NewWriter(&gz)
+	_, _ = w.Write([]byte(body))
+	w.Close()
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(350 * time.Millisecond)
+
+	// The profile itself is still discarded, but the transaction must survive.
+	var count int
+	testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM transactions WHERE project_id = $1 AND transaction = $2",
+		testProject.ID, txName,
+	).Scan(&count)
+	if count < 1 {
+		t.Errorf("expected transaction to be stored alongside the oversized profile item, got %d", count)
+	}
+}
+
+func TestHandleEnvelope_tooLarge(t *testing.T) {
+	buf := ingest.NewBuffer(100)
+
+	var gz bytes.Buffer
+	w := gzip.NewWriter(&gz)
+	// Highly compressible, so the raw body stays small while the decompressed
+	// stream runs past maxGzipBodyBytes.
+	_, _ = w.Write(bytes.Repeat([]byte("a"), 21*1024*1024))
+	w.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	newHandler(buf).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 413 for oversized envelope, got %d", rec.Code)
+	}
+}
+
+// --- profiling ---
+
+func profileEnvelope(t *testing.T, itemType, fixtureFile string) string {
+	t.Helper()
+	payload, err := os.ReadFile(filepath.Join("..", "ingest", "testdata", "profiles", fixtureFile))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	compact := &bytes.Buffer{}
+	if err := json.Compact(compact, payload); err != nil {
+		t.Fatalf("compact fixture: %v", err)
+	}
+	body := compact.String()
+	return `{"event_id":"990e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":%q,"length":%d}`, itemType, len(body)) + "\n" +
+		body + "\n"
+}
+
+func newProfileHandler(profBuf *ingest.ProfileBuffer) http.Handler {
+	return api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, profBuf, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+}
+
+func postEnvelope(t *testing.T, h http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandleEnvelope_profileItems(t *testing.T) {
+	tests := []struct {
+		name     string
+		itemType string
+		fixture  string
+		format   int16
+	}{
+		{"v1 transaction profile", "profile", "v1_php_laravel.json", 1},
+		{"v2 continuous chunk", "profile_chunk", "v2_python_chunk.json", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := testPool.Exec(context.Background(),
+				"DELETE FROM profile_chunks WHERE project_id = $1", testProject.ID); err != nil {
+				t.Fatalf("clear profiles: %v", err)
+			}
+
+			profBuf := ingest.NewProfileBuffer(10)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go profBuf.Run(ctx, testPool)
+
+			rec := postEnvelope(t, newProfileHandler(profBuf), profileEnvelope(t, tt.itemType, tt.fixture))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+
+			time.Sleep(400 * time.Millisecond)
+
+			var format int16
+			var sampleCount int
+			err := testPool.QueryRow(context.Background(),
+				"SELECT format, sample_count FROM profile_chunks WHERE project_id = $1",
+				testProject.ID).Scan(&format, &sampleCount)
+			if err != nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if format != tt.format {
+				t.Errorf("format = %d, want %d", format, tt.format)
+			}
+			if sampleCount == 0 {
+				t.Error("sample_count should be non-zero")
+			}
+		})
+	}
+}
+
+// A profile that fails validation must not take its envelope down with it.
+func TestHandleEnvelope_malformedProfileIsDroppedAlone(t *testing.T) {
+	if _, err := testPool.Exec(context.Background(),
+		"DELETE FROM profile_chunks WHERE project_id = $1", testProject.ID); err != nil {
+		t.Fatalf("clear profiles: %v", err)
+	}
+
+	profBuf := ingest.NewProfileBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go profBuf.Run(ctx, testPool)
+
+	// Stack id points nowhere, so the parser rejects it.
+	bad := `{"version":"1","platform":"php","timestamp":"2026-08-24T10:00:00Z",` +
+		`"event_id":"aa","transaction":{"id":"bb","name":"GET /","trace_id":"cc"},` +
+		`"profile":{"frames":[],"stacks":[],"samples":[]}}`
+	body := `{"event_id":"aa0e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"profile","length":%d}`, len(bad)) + "\n" + bad + "\n"
+
+	rec := postEnvelope(t, newProfileHandler(profBuf), body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a malformed profile, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("stored %d profiles, want the malformed one discarded", count)
+	}
+}
+
+func TestHandleEnvelope_profilingDisabledForProject(t *testing.T) {
+	if _, err := testPool.Exec(context.Background(),
+		"DELETE FROM profile_chunks WHERE project_id = $1", testProject.ID); err != nil {
+		t.Fatalf("clear profiles: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(),
+		"UPDATE projects SET profiling_enabled = FALSE WHERE id = $1", testProject.ID); err != nil {
+		t.Fatalf("disable profiling: %v", err)
+	}
+	defer func() {
+		_, _ = testPool.Exec(context.Background(),
+			"UPDATE projects SET profiling_enabled = TRUE WHERE id = $1", testProject.ID)
+	}()
+
+	profBuf := ingest.NewProfileBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go profBuf.Run(ctx, testPool)
+
+	rec := postEnvelope(t, newProfileHandler(profBuf),
+		profileEnvelope(t, "profile", "v1_php_laravel.json"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("stored %d profiles, want none while the project has profiling off", count)
+	}
+}
+
+// The v2 link lives on the transaction, so those three columns have to survive
+// parsing or a chunk can never be found again.
+func TestHandleEnvelope_transactionCarriesProfileLink(t *testing.T) {
+	buf := ingest.NewBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	payload, err := os.ReadFile(filepath.Join("..", "ingest", "testdata", "profiles",
+		"v2_transaction_link.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	compact := &bytes.Buffer{}
+	if err := json.Compact(compact, payload); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	body := `{"event_id":"bb0e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, compact.Len()) + "\n" +
+		compact.String() + "\n"
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	rec := postEnvelope(t, h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(400 * time.Millisecond)
+
+	var eventID, profilerID, threadID string
+	err = testPool.QueryRow(context.Background(), `
+		SELECT event_id, profiler_id, thread_id FROM transactions
+		WHERE project_id = $1 AND transaction = 'GET /api/orders'
+		ORDER BY received_at DESC LIMIT 1`, testProject.ID,
+	).Scan(&eventID, &profilerID, &threadID)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+
+	if eventID != "5e6f70819a2b3c4d5e6f70819a2b3c4d" {
+		t.Errorf("event_id = %q", eventID)
+	}
+	if profilerID != "4d229f1d3807421ba62a5f8bc295d836" {
+		t.Errorf("profiler_id = %q, want the value from contexts.profile", profilerID)
+	}
+	if threadID != "8412331008" {
+		t.Errorf(`thread_id = %q, want the value from contexts.trace.data["thread.id"]`, threadID)
+	}
+}
+
+// --- flame graph endpoint ---
+
+// The endpoint has to fold a stored profile into a tree the UI can draw, and
+// distinguish "no profile" from a failure: most transactions have no profile,
+// either sampled out by the SDK or turned off for the project.
+func TestHandleGetTransactionFlameGraph(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, "TRUNCATE profile_chunks CASCADE"); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	profBuf := ingest.NewProfileBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	bufCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go profBuf.Run(bufCtx, testPool)
+	go txBuf.Run(bufCtx, testPool)
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	// Ingest the profile and a transaction naming it, exactly as an SDK would.
+	rec := postEnvelope(t, h, profileEnvelope(t, "profile", "v1_php_laravel.json"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("profile ingest: %d %s", rec.Code, rec.Body.String())
+	}
+
+	txPayload := `{"event_id":"3c2b1a09f8e7d6c5b4a39281706f5e4d","transaction":"GET /api/orders",` +
+		`"start_timestamp":"2026-08-24T10:15:32.123Z","timestamp":"2026-08-24T10:15:32.223Z",` +
+		`"contexts":{"trace":{"trace_id":"9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d","span_id":"aabbccdd",` +
+		`"op":"http.server","status":"ok"}}}`
+	body := `{"event_id":"cc0e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(txPayload)) + "\n" + txPayload + "\n"
+	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("transaction ingest: %d %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	var txID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id FROM transactions
+		WHERE project_id = $1 AND event_id = '3c2b1a09f8e7d6c5b4a39281706f5e4d'
+		ORDER BY received_at DESC LIMIT 1`, testProject.ID).Scan(&txID); err != nil {
+		t.Fatalf("find transaction: %v", err)
+	}
+
+	t.Run("returns the folded tree", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var got struct {
+			SampleCount      int   `json:"sample_count"`
+			SampleIntervalNs int64 `json:"sample_interval_ns"`
+			Root             struct {
+				Children []struct {
+					Function     string `json:"function"`
+					TotalSamples int    `json:"total_samples"`
+				} `json:"children"`
+			} `json:"root"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.SampleCount != 5 {
+			t.Errorf("sample_count = %d, want 5", got.SampleCount)
+		}
+		if got.SampleIntervalNs == 0 {
+			t.Error("sample_interval_ns should be measured from the samples")
+		}
+		if len(got.Root.Children) != 1 {
+			t.Fatalf("root has %d children, want 1", len(got.Root.Children))
+		}
+		if got.Root.Children[0].Function != "/var/www/app/public/index.php" {
+			t.Errorf("entry point = %q", got.Root.Children[0].Function)
+		}
+	})
+
+	t.Run("404 for a transaction with no profile", func(t *testing.T) {
+		var bareID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO transactions
+				(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+			VALUES ($1, 'GET /bare', 'http.server', 'ok', 10, NOW(), NOW())
+			RETURNING id`, testProject.ID).Scan(&bareID); err != nil {
+			t.Fatalf("insert bare transaction: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+bareID+"/flamegraph", nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("requires authentication", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401 without a session, got %d", rec.Code)
+		}
+	})
+}
+
+// The endpoint must distinguish "no profile", which is ordinary, from a real
+// failure. Both used to be untested, and they differ by status code alone.
+func TestHandleGetTransactionFlameGraph_errorPaths(t *testing.T) {
+	ctx := context.Background()
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	get := func(t *testing.T, id string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+id+"/flamegraph", nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	t.Run("malformed id is a server error, not a panic", func(t *testing.T) {
+		if code := get(t, "not-a-uuid"); code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", code)
+		}
+	})
+
+	t.Run("unknown transaction is a 404", func(t *testing.T) {
+		if code := get(t, "00000000-0000-0000-0000-000000000000"); code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", code)
+		}
+	})
+
+	// A blob that will not decode is a fault on our side, so it must not be
+	// dressed up as a missing profile.
+	t.Run("corrupt stored blob is a server error", func(t *testing.T) {
+		var txID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO transactions
+				(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, event_id)
+			VALUES ($1, 'GET /corrupt', 'http.server', 'ok', 10, NOW(), NOW(), 'corrupt-api-event')
+			RETURNING id`, testProject.ID).Scan(&txID); err != nil {
+			t.Fatalf("insert transaction: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO profile_chunks
+				(project_id, format, transaction_event_id, start_ts, end_ts,
+				 sample_count, size_bytes, encoding, data)
+			VALUES ($1, 1, 'corrupt-api-event', NOW(), NOW(), 10, 8, 1, $2)`,
+			testProject.ID, []byte("not zstd")); err != nil {
+			t.Fatalf("insert corrupt profile: %v", err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(),
+				"DELETE FROM profile_chunks WHERE transaction_event_id = 'corrupt-api-event'")
+		})
+
+		if code := get(t, txID); code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for a corrupt blob, got %d", code)
+		}
+	})
+}
+
+// contexts.trace.data is a free-form bag: SDKs put numbers and booleans in it
+// alongside thread.id. Decoding it into a typed map fails on the first number
+// and parseTransaction drops the whole transaction, spans and all, so a
+// profiling change would silently delete ordinary performance data.
+func TestHandleEnvelope_transactionWithMixedTypeTraceData(t *testing.T) {
+	buf := ingest.NewBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	const txName = "/mixed-trace-data"
+	payload := `{"event_id":"dd0e8400e29b41d4a716446655440000","transaction":"` + txName + `",` +
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",` +
+		`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok",` +
+		`"data":{"thread.id":"8412331008","sentry.sample_rate":1.0,` +
+		`"http.response.status_code":200,"sentry.parentIsRemote":false}}}}`
+	body := `{"event_id":"ee0e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(400 * time.Millisecond)
+
+	var threadID *string
+	err := testPool.QueryRow(ctx, `
+		SELECT thread_id FROM transactions
+		WHERE project_id = $1 AND transaction = $2`, testProject.ID, txName).Scan(&threadID)
+	if err != nil {
+		t.Fatalf("the transaction was dropped: %v", err)
+	}
+	if threadID == nil || *threadID != "8412331008" {
+		t.Errorf("thread_id = %v, want the string value alongside the numeric keys", threadID)
+	}
+}
+
+// ingest.flexString stringifies a numeric thread id on the profile side, so
+// dropping one on the transaction side left the two unable to match and the
+// chunk got folded across every thread instead of the one that ran.
+func TestHandleEnvelope_numericThreadIDInTraceData(t *testing.T) {
+	buf := ingest.NewBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	const txName = "/numeric-thread-id"
+	payload := `{"event_id":"ff0e8400e29b41d4a716446655440000","transaction":"` + txName + `",` +
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",` +
+		`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok",` +
+		`"data":{"thread.id":8412331008}}}}`
+	body := `{"event_id":"110e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	time.Sleep(400 * time.Millisecond)
+
+	var threadID *string
+	if err := testPool.QueryRow(ctx, `
+		SELECT thread_id FROM transactions WHERE project_id = $1 AND transaction = $2`,
+		testProject.ID, txName).Scan(&threadID); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if threadID == nil || *threadID != "8412331008" {
+		t.Errorf("thread_id = %v, want the number formatted as the profile side would", threadID)
+	}
+}
+
+// A profile arrives in the same envelope as its transaction, and the
+// transaction is pushed first. Failing the envelope to signal a full profile
+// buffer would have the SDK resend one whose transaction was already accepted,
+// and nothing deduplicates transactions, so the retry would duplicate real
+// performance data to save a profile. The profile is dropped instead.
+func TestHandleEnvelope_profileBufferFullDropsOnlyTheProfile(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx,
+		"DELETE FROM profile_chunks WHERE project_id = $1", testProject.ID); err != nil {
+		t.Fatalf("clear profiles: %v", err)
+	}
+
+	profBuf := ingest.NewProfileBuffer(1)
+	// Fill it, with no writer draining.
+	p, err := ingest.ParseProfile(fixtureBytes(t, "v1_php_laravel.json"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	first, err := ingest.NewBufferedProfile(testProject.ID, p)
+	if err != nil {
+		t.Fatalf("buffer: %v", err)
+	}
+	if !profBuf.Push(first) {
+		t.Fatal("expected the first push to fit")
+	}
+
+	txBuf := ingest.NewTransactionBuffer(10)
+	bufCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go txBuf.Run(bufCtx, testPool)
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	// One envelope carrying both, as the PHP SDK sends it.
+	const txName = "/buffer-full"
+	txPayload := fmt.Sprintf(`{"event_id":"220e8400e29b41d4a716446655440000","transaction":%q,`+
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",`+
+		`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok"}}}`, txName)
+	profPayload := string(fixtureBytes(t, "v1_php_laravel.json"))
+	compact := &bytes.Buffer{}
+	if err := json.Compact(compact, []byte(profPayload)); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	body := `{"event_id":"330e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(txPayload)) + "\n" + txPayload + "\n" +
+		fmt.Sprintf(`{"type":"profile","length":%d}`, compact.Len()) + "\n" + compact.String() + "\n"
+
+	rec := postEnvelope(t, h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 so the SDK does not resend the transaction, got %d", rec.Code)
+	}
+
+	time.Sleep(400 * time.Millisecond)
+
+	var txCount int
+	if err := testPool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM transactions WHERE project_id = $1 AND transaction = $2",
+		testProject.ID, txName).Scan(&txCount); err != nil {
+		t.Fatalf("count transactions: %v", err)
+	}
+	if txCount != 1 {
+		t.Errorf("stored %d transactions, want the one from this envelope kept", txCount)
+	}
+}
+
+func fixtureBytes(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "ingest", "testdata", "profiles", name))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return b
+}
+
+// A project-scoped API token must not read another project's flame graph. The
+// endpoint takes a transaction id with no project in the path, so this check is
+// the only thing keeping the two apart.
+func TestHandleGetTransactionFlameGraph_tokenScopedToAnotherProject(t *testing.T) {
+	ctx := context.Background()
+
+	other, err := storage.CreateProject(ctx, testPool, "flame-scope-other", "Flame Scope Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID) })
+
+	_, plaintext, err := storage.CreateAPIToken(ctx, testPool, other.ID, "scoped", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	// A transaction belonging to the *other* project than the token.
+	var txID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO transactions
+			(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+		VALUES ($1, 'GET /scoped', 'http.server', 'ok', 10, NOW(), NOW())
+		RETURNING id`, testProject.ID).Scan(&txID); err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for a token scoped to another project, got %d", rec.Code)
+	}
+}
+
+// contexts.trace.data is free-form, and an SDK can render it in shapes a typed
+// decode rejects. Any of them failing the surrounding struct would discard the
+// whole transaction, which is the regression ac95b1c already fixed once.
+func TestHandleEnvelope_oddlyShapedTraceData(t *testing.T) {
+	shapes := map[string]string{
+		// PHP renders an empty associative array as a JSON array.
+		"empty array":  `[]`,
+		"null":         `null`,
+		"a string":     `"nope"`,
+		"a number":     `7`,
+		"nested value": `{"thread.id":"8412331008","extra":{"deep":[1,2,3]}}`,
+	}
+
+	for name, data := range shapes {
+		t.Run(name, func(t *testing.T) {
+			buf := ingest.NewBuffer(10)
+			txBuf := ingest.NewTransactionBuffer(10)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go txBuf.Run(ctx, testPool)
+
+			txName := "/shape-" + strings.ReplaceAll(name, " ", "-")
+			payload := fmt.Sprintf(`{"event_id":"440e8400e29b41d4a716446655440000","transaction":%q,`+
+				`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",`+
+				`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok",`+
+				`"data":%s}}}`, txName, data)
+			body := `{"event_id":"550e8400e29b41d4a716446655440000"}` + "\n" +
+				fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+			h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+				0, 0, 0, 0, 0, 0, nil, false, true, nil)
+			if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rec.Code)
+			}
+			time.Sleep(400 * time.Millisecond)
+
+			var count int
+			if err := testPool.QueryRow(ctx,
+				"SELECT COUNT(*) FROM transactions WHERE project_id = $1 AND transaction = $2",
+				testProject.ID, txName).Scan(&count); err != nil {
+				t.Fatalf("count: %v", err)
+			}
+			if count != 1 {
+				t.Errorf("the transaction was dropped for trace data shaped as %s", data)
+			}
+		})
+	}
+}
+
+// A project with profiling off has no reason to be able to force twenty times
+// the allocation per request, so it keeps the cap this had before profiles.
+func TestHandleEnvelope_decompressedCapIsScopedToProfilingProjects(t *testing.T) {
+	ctx := context.Background()
+	restore := func(on bool) {
+		if _, err := testPool.Exec(ctx,
+			"UPDATE projects SET profiling_enabled = $2 WHERE id = $1", testProject.ID, on); err != nil {
+			t.Fatalf("set profiling_enabled: %v", err)
+		}
+	}
+	t.Cleanup(func() { restore(true) })
+
+	// ~4 MB decompressed: over the 1 MB no-profiling cap, under the 20 MB one.
+	payload := fmt.Sprintf(`{"version":"1","platform":"php","padding":%q}`,
+		strings.Repeat("frame", 800_000))
+	body := `{"event_id":"660e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"profile","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+	send := func(t *testing.T) int {
+		t.Helper()
+		var gz bytes.Buffer
+		w := gzip.NewWriter(&gz)
+		_, _ = w.Write([]byte(body))
+		w.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
+		req.Header.Set("Content-Encoding", "gzip")
+		req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+		rec := httptest.NewRecorder()
+		newProfileHandler(ingest.NewProfileBuffer(10)).ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	restore(true)
+	if code := send(t); code != http.StatusOK {
+		t.Errorf("profiling on: expected 200, got %d", code)
+	}
+
+	restore(false)
+	if code := send(t); code != http.StatusRequestEntityTooLarge {
+		t.Errorf("profiling off: expected 413 at the smaller cap, got %d", code)
 	}
 }

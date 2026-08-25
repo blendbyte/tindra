@@ -23,7 +23,7 @@ import (
 func TestHealthz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
-	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).ServeHTTP(rec, req)
+	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
@@ -32,7 +32,7 @@ func TestHealthz(t *testing.T) {
 func TestEmailLogoEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/assets/email-logo.png", nil)
 	rec := httptest.NewRecorder()
-	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).ServeHTTP(rec, req)
+	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -53,7 +53,7 @@ func TestEmailLogoEndpoint(t *testing.T) {
 func TestHandleEnvelopeCORS(t *testing.T) {
 	req := httptest.NewRequest(http.MethodOptions, "/api/"+testProject.ID+"/envelope/", nil)
 	rec := httptest.NewRecorder()
-	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).ServeHTTP(rec, req)
+	api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
@@ -133,7 +133,7 @@ func TestGetLatestEvent_smStoreResolution(t *testing.T) {
 	}
 
 	store, _ := newSmStore(t)
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	req := httptest.NewRequest(http.MethodGet,
 		fmt.Sprintf("/api/projects/test-project/issues/%s/events/latest", iss.ID), nil)
@@ -194,7 +194,7 @@ func newSmStore(t *testing.T) (*sourcemaps.Store, string) {
 func smHandler(t *testing.T) (http.Handler, *sourcemaps.Store) {
 	t.Helper()
 	store, _ := newSmStore(t)
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil), store
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil), store
 }
 
 func TestListSourcemaps_empty(t *testing.T) {
@@ -298,7 +298,7 @@ func TestUploadSourcemap_missingURL(t *testing.T) {
 }
 
 func TestUploadSourcemap_noStore(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -416,7 +416,7 @@ func TestUploadSourcemap_storeError(t *testing.T) {
 	}
 
 	store := sourcemaps.NewStore(dir, testPool)
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)

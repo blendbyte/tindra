@@ -7040,3 +7040,10 @@ select.field__input {
   display: flex;
   gap: 4px;
 }
+
+/* The flame graph is the last thing on the transaction page, so it needs room
+   below it rather than ending flush against the viewport edge. */
+.trace-logs--flame {
+  margin-top: 28px;
+  margin-bottom: 28px;
+}

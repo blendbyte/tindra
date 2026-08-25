@@ -19,7 +19,7 @@ import (
 )
 
 func newHandlerAllowPrivate(buf *ingest.Buffer) http.Handler {
-	return api.NewRouter(testPool, buf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, true, true, nil)
+	return api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, true, true, nil)
 }
 
 // apiPassthroughDSN builds a DSN that the forwarder will translate into
@@ -32,7 +32,7 @@ func apiPassthroughDSN(srv *httptest.Server, publicKey, projectID string) string
 func setPassthroughDSN(t *testing.T, dsn *string) {
 	t.Helper()
 	_, err := storage.UpdateProject(context.Background(), testPool,
-		testProject.ID, testProject.Name, testProject.Slug, dsn)
+		testProject.ID, testProject.Name, testProject.Slug, dsn, nil)
 	if err != nil {
 		t.Fatalf("set passthrough DSN: %v", err)
 	}

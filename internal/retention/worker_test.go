@@ -759,3 +759,252 @@ func TestWorker_doesNotPurgeWhenUnder1000(t *testing.T) {
 		t.Errorf("expected 5 firings to survive, got %d", after)
 	}
 }
+
+// --- profiles ---
+
+// insertProfile writes a profile row directly. The blob content is irrelevant
+// to retention, which only reads size_bytes and the timestamps.
+func insertProfile(t *testing.T, ageDays, sizeBytes int) string {
+	t.Helper()
+	var id string
+	err := testPool.QueryRow(context.Background(), `
+		INSERT INTO profile_chunks
+			(project_id, format, profiler_id, chunk_id, start_ts, end_ts, received_at,
+			 sample_count, size_bytes, encoding, data)
+		VALUES ($1, 2, 'prof', gen_random_uuid()::text,
+		        NOW() - ($2 * INTERVAL '1 day'), NOW() - ($2 * INTERVAL '1 day'),
+		        NOW() - ($2 * INTERVAL '1 day'), 100, $3, 1, $4)
+		RETURNING id`,
+		testProject.ID, ageDays, sizeBytes, make([]byte, 16),
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert profile: %v", err)
+	}
+	return id
+}
+
+func countProfiles(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM profile_chunks WHERE project_id = $1", testProject.ID).Scan(&n); err != nil {
+		t.Fatalf("count profiles: %v", err)
+	}
+	return n
+}
+
+func clearProfiles(t *testing.T) {
+	t.Helper()
+	testPool.Exec(context.Background(), "DELETE FROM profile_chunks")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM profile_chunks") })
+}
+
+// Profiles have their own window and must not follow RETENTION_DAYS: at the
+// 90-day default a few continuously profiled processes run to tens of GB.
+func TestWorker_profileRetentionIsIndependentOfGlobal(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	insertProfile(t, 2, 1024)  // inside a 7 day window
+	insertProfile(t, 30, 1024) // outside it, but well inside the 90 day global one
+
+	retention.NewWorker(testPool, 90).WithProfileLimits(7, 0).RunOnce(ctx)
+
+	if got := countProfiles(t); got != 1 {
+		t.Errorf("kept %d profiles, want 1: the 30 day old one is past the 7 day profile window", got)
+	}
+}
+
+func TestWorker_profileRetentionZeroKeepsEverything(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	insertProfile(t, 200, 1024)
+
+	retention.NewWorker(testPool, 90).WithProfileLimits(0, 0).RunOnce(ctx)
+
+	if got := countProfiles(t); got != 1 {
+		t.Errorf("kept %d profiles, want 1 with the profile window disabled", got)
+	}
+}
+
+// The byte budget, not a row cap: profile sizes range over orders of magnitude,
+// so a row count says nothing about disk.
+func TestWorker_profileStorageCapDeletesOldestFirst(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	const mb = 1024 * 1024
+	oldest := insertProfile(t, 5, 2*mb)
+	middle := insertProfile(t, 3, 2*mb)
+	newest := insertProfile(t, 1, 2*mb)
+
+	// Budget of 5 MB against 6 MB stored: the oldest has to go.
+	retention.NewWorker(testPool, 90).WithProfileLimits(0, 5).RunOnce(ctx)
+
+	rows, err := testPool.Query(ctx,
+		"SELECT id FROM profile_chunks WHERE project_id = $1", testProject.ID)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	survivors := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		survivors[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if len(survivors) != 2 {
+		t.Fatalf("kept %d profiles, want 2 to fit the 5 MB budget", len(survivors))
+	}
+	if survivors[oldest] {
+		t.Error("the oldest profile should have been purged first")
+	}
+	if !survivors[middle] || !survivors[newest] {
+		t.Error("the two newest profiles should have survived")
+	}
+}
+
+func TestWorker_profileStorageCapNoopWhenUnderBudget(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	insertProfile(t, 1, 1024*1024)
+
+	retention.NewWorker(testPool, 90).WithProfileLimits(0, 100).RunOnce(ctx)
+
+	if got := countProfiles(t); got != 1 {
+		t.Errorf("kept %d profiles, want 1 while under the budget", got)
+	}
+}
+
+func TestWorker_profileStorageCapZeroMeansNoCap(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	insertProfile(t, 1, 500*1024*1024)
+
+	retention.NewWorker(testPool, 90).WithProfileLimits(0, 0).RunOnce(ctx)
+
+	if got := countProfiles(t); got != 1 {
+		t.Errorf("kept %d profiles, want 1 with the budget disabled", got)
+	}
+}
+
+// An instance that keeps everything forever still needs a ceiling on profile
+// storage, or one misconfigured SDK fills the disk.
+func TestWorker_profileLimitsApplyWithGlobalRetentionOff(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	const mb = 1024 * 1024
+	insertProfile(t, 5, 2*mb)
+	insertProfile(t, 1, 2*mb)
+
+	retention.NewWorker(testPool, 0).WithProfileLimits(0, 3).RunOnce(ctx)
+
+	if got := countProfiles(t); got != 1 {
+		t.Errorf("kept %d profiles, want 1: the budget applies even with RETENTION_DAYS=0", got)
+	}
+}
+
+// Turning off global retention must not start purging anything else.
+func TestWorker_globalRetentionOffLeavesOtherDataAlone(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	testPool.Exec(ctx, "DELETE FROM logs")
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM logs") })
+	for i := range 5 {
+		testPool.Exec(ctx, `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW() - ($2 * INTERVAL '400 days'), NOW() - ($2 * INTERVAL '400 days'), 'info', 'x')
+		`, testProject.ID, i+1)
+	}
+
+	// Profile limits set, global retention off: the ancient logs must survive.
+	retention.NewWorker(testPool, 0).WithRowLimits(1, 0).WithProfileLimits(7, 10).RunOnce(ctx)
+
+	var logs int
+	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&logs)
+	if logs != 5 {
+		t.Errorf("logs = %d, want 5 untouched while RETENTION_DAYS=0", logs)
+	}
+}
+
+func TestWorker_profilePurgeBatchesLargeBacklog(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	// Enough rows to force more than one DELETE pass through the batch loop.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO profile_chunks
+			(project_id, format, profiler_id, chunk_id, start_ts, end_ts, received_at,
+			 sample_count, size_bytes, encoding, data)
+		SELECT $1, 2, 'prof', gen_random_uuid()::text,
+		       NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days',
+		       10, 128, 1, '\x00'::bytea
+		FROM generate_series(1, 5200)`, testProject.ID); err != nil {
+		t.Fatalf("bulk insert: %v", err)
+	}
+
+	retention.NewWorker(testPool, 90).WithProfileLimits(7, 0).RunOnce(ctx)
+
+	if got := countProfiles(t); got != 0 {
+		t.Errorf("kept %d profiles, want 0: the batch loop must drain the whole backlog", got)
+	}
+}
+
+// The cap ranks by received_at, our own clock. Ranking by start_ts would hand a
+// host with a skewed clock the eviction order for the whole instance: dated in
+// the future it never loses a profile and pushes every other project out of the
+// budget.
+func TestWorker_profileStorageCapIgnoresClientClockSkew(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	const mb = 1024 * 1024
+	// Arrived first, but claims to have been sampled far in the future.
+	var skewed string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO profile_chunks
+			(project_id, format, profiler_id, chunk_id, start_ts, end_ts, received_at,
+			 sample_count, size_bytes, encoding, data)
+		VALUES ($1, 2, 'skewed', 'skewed', NOW() + INTERVAL '10 years', NOW() + INTERVAL '10 years',
+		        NOW() - INTERVAL '2 hours', 100, $2, 1, '\x00'::bytea)
+		RETURNING id`, testProject.ID, 4*mb).Scan(&skewed); err != nil {
+		t.Fatalf("insert skewed profile: %v", err)
+	}
+
+	// Arrived after it, with an honest timestamp.
+	var honest string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO profile_chunks
+			(project_id, format, profiler_id, chunk_id, start_ts, end_ts, received_at,
+			 sample_count, size_bytes, encoding, data)
+		VALUES ($1, 2, 'honest', 'honest', NOW(), NOW(), NOW(),
+		        100, $2, 1, '\x00'::bytea)
+		RETURNING id`, testProject.ID, 4*mb).Scan(&honest); err != nil {
+		t.Fatalf("insert honest profile: %v", err)
+	}
+
+	// A 5 MB budget against 8 MB stored: exactly one has to go.
+	retention.NewWorker(testPool, 90).WithProfileLimits(0, 5).RunOnce(ctx)
+
+	var survivor string
+	if err := testPool.QueryRow(ctx,
+		"SELECT chunk_id FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&survivor); err != nil {
+		t.Fatalf("read survivor: %v", err)
+	}
+	if survivor != "honest" {
+		t.Errorf("survivor = %q, want the most recently received one regardless of its claimed sample time", survivor)
+	}
+}

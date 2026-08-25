@@ -29,6 +29,7 @@ vi.mock('@/stores/auth', () => ({
 import TransactionDetailView from '../TransactionDetailView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/api/client'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -54,12 +55,15 @@ function setupMocks(
   isLoading = false,
   traceLogs: unknown = undefined,
   traceErrors: unknown[] = [],
+  flameGraph: unknown = null,
 ) {
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref(tx), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(spans), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(traceLogs) } as any)
     .mockReturnValueOnce({ data: ref(traceErrors.length ? traceErrors : undefined) } as any)
+    // Null is the common case: most transactions were never profiled.
+    .mockReturnValueOnce({ data: ref(flameGraph) } as any)
 }
 
 beforeEach(() => {
@@ -270,6 +274,80 @@ describe('TransactionDetailView', () => {
     })
   })
 
+  describe('flame graph', () => {
+    const graph = {
+      sample_count: 42,
+      idle_samples: 0,
+      sample_interval_ns: 10_000_000,
+      duration_ns: 420_000_000,
+      thread_name: 'MainThread',
+      root: {
+        function: '',
+        total_samples: 42,
+        self_samples: 0,
+        children: [{ function: 'main', total_samples: 42, self_samples: 42 }],
+      },
+    }
+
+    // Most transactions were never profiled, so the panel has to stay out of
+    // the way rather than showing an empty box on every page.
+    it('is absent when the transaction has no profile', () => {
+      setupMocks(baseTx, [], false, false, undefined, [], null)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).not.toContain('Flame graph')
+    })
+
+    it('renders when a profile exists', () => {
+      setupMocks(baseTx, [], false, false, undefined, [], graph)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Flame graph')
+    })
+
+    // The heading carries the summary, the way Errors and Logs carry a count.
+    it('summarises the profile in the heading', () => {
+      setupMocks(baseTx, [], false, false, undefined, [], graph)
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('42 samples')
+      expect(wrapper.text()).toContain('MainThread')
+    })
+
+  })
+
+  // The query function itself never runs under a mocked useQuery, so it is
+  // invoked directly from the options the component handed over. A 404 there is
+  // the ordinary case and has to come back as "no profile" rather than an error.
+  describe('flame graph query', () => {
+    function flameQueryFn() {
+      const call = vi.mocked(useQuery).mock.calls
+        .map(c => c[0] as { queryKey?: unknown; queryFn?: () => Promise<unknown> })
+        .find(o => {
+          const key = (o.queryKey as { value?: unknown })?.value
+          return Array.isArray(key) && key.includes('flamegraph')
+        })
+      expect(call?.queryFn, 'no flamegraph query registered').toBeTruthy()
+      return call!.queryFn!
+    }
+
+    it('returns the graph when the endpoint answers', async () => {
+      setupMocks()
+      mount(TransactionDetailView, { global: { stubs } })
+
+      const payload = { sample_count: 5, root: { function: '', total_samples: 5, self_samples: 0 } }
+      vi.mocked(apiFetch).mockResolvedValueOnce(payload)
+      await expect(flameQueryFn()()).resolves.toEqual(payload)
+    })
+
+    // Most transactions were never profiled, so the 404 must not surface as a
+    // failed query and turn the panel into an error state.
+    it('turns a rejection into no profile', async () => {
+      setupMocks()
+      mount(TransactionDetailView, { global: { stubs } })
+
+      vi.mocked(apiFetch).mockRejectedValueOnce(new Error('404 not found'))
+      await expect(flameQueryFn()()).resolves.toBeNull()
+    })
+  })
+
   describe('spans error state', () => {
     it('shows spans error message when spans fail to load', () => {
       vi.mocked(useQuery)
@@ -277,6 +355,7 @@ describe('TransactionDetailView', () => {
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(true), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('Failed to load spans')
     })
@@ -567,6 +646,7 @@ describe('TransactionDetailView', () => {
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(true), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(null) } as any)
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       // Skeleton rows appear inside waterfall-left during spans loading
       expect(wrapper.find('.waterfall-left .skel').exists()).toBe(true)

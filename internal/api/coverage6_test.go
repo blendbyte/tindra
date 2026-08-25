@@ -1135,7 +1135,7 @@ func TestGetLatestEventGlobal_withSmStoreCov6(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSPAFallback_existingDistFile(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil,
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil,
 		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
 	rec := httptest.NewRecorder()
@@ -1151,7 +1151,7 @@ func TestSPAFallback_existingDistFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSPAFallback_unknownPathServesIndex(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil,
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil,
 		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
 	req := httptest.NewRequest(http.MethodGet, "/some/spa/route", nil)
 	rec := httptest.NewRecorder()

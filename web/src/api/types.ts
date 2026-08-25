@@ -31,6 +31,7 @@ export interface Project {
   public_key: string
   passthrough_dsn: string | null
   scrub_fields: string[]
+  profiling_enabled: boolean
   scrub_patterns: ScrubPattern[]
   created_at: string
   event_count: number
@@ -569,4 +570,26 @@ export interface WebVitalsPage {
   inp_p75: number
   cls_p75: number
   pass_rate: number
+}
+
+export interface FlameNode {
+  function: string
+  module?: string
+  filename?: string
+  lineno?: number
+  in_app?: boolean
+  self_samples: number
+  total_samples: number
+  children?: FlameNode[]
+}
+
+export interface FlameGraph {
+  sample_count: number
+  idle_samples: number
+  /** Measured at fold time, so 0 means it could not be determined. */
+  sample_interval_ns: number
+  duration_ns: number
+  thread_id?: string
+  thread_name?: string
+  root: FlameNode
 }

@@ -21,12 +21,15 @@ type Project struct {
 	PassthroughDSN *string         `json:"passthrough_dsn"`
 	ScrubFields    []string        `json:"scrub_fields"`
 	ScrubPatterns  json.RawMessage `json:"scrub_patterns"`
-	CreatedAt      time.Time       `json:"created_at"`
-	EventCount     int64           `json:"event_count"`
-	Events24h      int64           `json:"events_24h"`
-	StorageBytes   int64           `json:"storage_bytes"`
-	LogCount       int64           `json:"log_count"`
-	TxCount        int64           `json:"tx_count"`
+	// ProfilingEnabled gates profile ingestion per project, so a noisy service
+	// can be silenced without redeploying it to change its SDK config.
+	ProfilingEnabled bool      `json:"profiling_enabled"`
+	CreatedAt        time.Time `json:"created_at"`
+	EventCount       int64     `json:"event_count"`
+	Events24h        int64     `json:"events_24h"`
+	StorageBytes     int64     `json:"storage_bytes"`
+	LogCount         int64     `json:"log_count"`
+	TxCount          int64     `json:"tx_count"`
 }
 
 func CreateProject(ctx context.Context, pool *pgxpool.Pool, slug, name string) (*Project, error) {
@@ -38,8 +41,8 @@ func CreateProject(ctx context.Context, pool *pgxpool.Pool, slug, name string) (
 	err = pool.QueryRow(ctx, `
 		INSERT INTO projects (slug, name, public_key)
 		VALUES ($1, $2, $3)
-		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, created_at
-	`, slug, name, key).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt)
+		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
+	`, slug, name, key).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert: %w", err)
 	}
@@ -83,15 +86,22 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 		  ),
 		  lg AS (
 		    SELECT project_id, COUNT(*) AS total FROM logs GROUP BY project_id
+		  ),
+		  -- Profiles are the largest thing stored, and unlike the other tables
+		  -- every row already carries its own compressed size, so this is summed
+		  -- outright rather than apportioned from a table total by row count.
+		  pr AS (
+		    SELECT project_id, SUM(size_bytes)::float8 AS bytes FROM profile_chunks GROUP BY project_id
 		  )
 		SELECT
-		  p.id, p.slug, p.name, p.public_key, p.passthrough_dsn, p.scrub_fields, p.scrub_patterns, p.created_at,
+		  p.id, p.slug, p.name, p.public_key, p.passthrough_dsn, p.scrub_fields, p.scrub_patterns, p.profiling_enabled, p.created_at,
 		  COALESCE(ev.month_cnt, 0) + COALESCE(tx.month_cnt, 0) AS event_count,
 		  COALESCE(ev.day_cnt,   0) + COALESCE(tx.day_cnt,   0) AS events_24h,
 		  (
 		    COALESCE(ev.total, 0)::float8 / s.total_ev  * s.ev_bytes  +
 		    COALESCE(tx.total, 0)::float8 / s.total_tx  * s.tx_bytes  +
-		    COALESCE(lg.total, 0)::float8 / s.total_log * s.log_bytes
+		    COALESCE(lg.total, 0)::float8 / s.total_log * s.log_bytes +
+		    COALESCE(pr.bytes, 0)
 		  )::int8 AS storage_bytes,
 		  COALESCE(lg.total, 0) AS log_count,
 		  COALESCE(tx.total, 0) AS tx_count
@@ -100,6 +110,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 		LEFT JOIN ev  ON ev.project_id  = p.id
 		LEFT JOIN tx  ON tx.project_id  = p.id
 		LEFT JOIN lg  ON lg.project_id  = p.id
+		LEFT JOIN pr  ON pr.project_id  = p.id
 		ORDER BY p.name ASC
 	`)
 	if err != nil {
@@ -110,7 +121,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 	var projects []*Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt, &p.EventCount, &p.Events24h, &p.StorageBytes, &p.LogCount, &p.TxCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt, &p.EventCount, &p.Events24h, &p.StorageBytes, &p.LogCount, &p.TxCount); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		projects = append(projects, &p)
@@ -118,13 +129,20 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 	return projects, rows.Err()
 }
 
-func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id, name, slug string, passthroughDSN *string) (*Project, error) {
+// UpdateProject renames a project and updates its passthrough DSN.
+//
+// profilingEnabled is a pointer so that a caller which does not mention it
+// leaves the current value alone. An API client that only knows about the
+// older fields would otherwise silently turn profiling off for the project.
+func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id, name, slug string, passthroughDSN *string, profilingEnabled *bool) (*Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx, `
-		UPDATE projects SET name = $2, slug = $3, passthrough_dsn = $4
+		UPDATE projects
+		SET name = $2, slug = $3, passthrough_dsn = $4,
+		    profiling_enabled = COALESCE($5, profiling_enabled)
 		WHERE id = $1
-		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, created_at
-	`, id, name, slug, passthroughDSN).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt)
+		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
+	`, id, name, slug, passthroughDSN, profilingEnabled).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -237,9 +255,9 @@ func DeleteProject(ctx context.Context, pool *pgxpool.Pool, slug string) (bool, 
 func GetByPublicKey(ctx context.Context, pool *pgxpool.Pool, key string) (*Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx, `
-		SELECT id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, created_at
+		SELECT id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
 		FROM projects WHERE public_key = $1
-	`, key).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt)
+	`, key).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -254,9 +272,9 @@ func GetByPublicKey(ctx context.Context, pool *pgxpool.Pool, key string) (*Proje
 func GetByIDAndPublicKey(ctx context.Context, pool *pgxpool.Pool, id, publicKey string) (*Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx, `
-		SELECT id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, created_at
+		SELECT id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
 		FROM projects WHERE id = $1 AND public_key = $2
-	`, id, publicKey).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt)
+	`, id, publicKey).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -269,9 +287,9 @@ func GetByIDAndPublicKey(ctx context.Context, pool *pgxpool.Pool, id, publicKey 
 func GetProjectBySlug(ctx context.Context, pool *pgxpool.Pool, slug string) (*Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx, `
-		SELECT id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, created_at
+		SELECT id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
 		FROM projects WHERE slug = $1
-	`, slug).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt)
+	`, slug).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -286,8 +304,8 @@ func UpdateProjectScrubbing(ctx context.Context, pool *pgxpool.Pool, id string, 
 	err := pool.QueryRow(ctx, `
 		UPDATE projects SET scrub_fields = $2, scrub_patterns = $3
 		WHERE id = $1
-		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, created_at
-	`, id, fields, patterns).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.CreatedAt)
+		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
+	`, id, fields, patterns).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
