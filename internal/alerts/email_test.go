@@ -26,15 +26,15 @@ type capturedRequest struct {
 func mockSender(t *testing.T, statusCode int, s *httpSender) capturedRequest {
 	t.Helper()
 	var captured capturedRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured.header = r.Header.Clone()
 		captured.body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(statusCode)
 	}))
-	t.Cleanup(srv.Close)
+	srvClient := srv.Client()
 
 	s.endpoint = srv.URL
-	s.client = srv.Client()
+	s.client = srvClient
 
 	if err := s.Send(context.Background(), EmailMessage{
 		To:      "to@example.com",
@@ -182,15 +182,15 @@ func TestCloudflareSender(t *testing.T) {
 }
 
 func TestHTTPSender_non2xxError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	s := &httpSender{
 		endpoint: srv.URL,
-		client:   srv.Client(),
+		client:   srvClient,
 		headers:  map[string]string{"X-Postmark-Server-Token": "key"},
 		from:     "f@example.com",
 		buildBody: func(from, to, subject, text, html string) any {
