@@ -182,7 +182,7 @@ func parseSentryAuthHeader(v string) string {
 	if !strings.HasPrefix(v, prefix) {
 		return ""
 	}
-	for _, part := range strings.Split(v[len(prefix):], ",") {
+	for part := range strings.SplitSeq(v[len(prefix):], ",") {
 		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
 		if len(kv) == 2 && strings.TrimSpace(kv[0]) == "sentry_key" {
 			return strings.TrimSpace(kv[1])
@@ -390,10 +390,7 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 
 	startTS := ingest.ParseSentryTimestamp(p.StartTimestamp)
 	endTS := ingest.ParseSentryTimestamp(p.Timestamp)
-	durationMs := int(endTS.Sub(startTS).Milliseconds())
-	if durationMs < 0 {
-		durationMs = 0
-	}
+	durationMs := max(int(endTS.Sub(startTS).Milliseconds()), 0)
 
 	status := p.Contexts.Trace.Status
 	if status == "" {
@@ -408,10 +405,7 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 	for _, sp := range rawSpans {
 		spStart := ingest.ParseSentryTimestamp(sp.StartTimestamp)
 		spEnd := ingest.ParseSentryTimestamp(sp.Timestamp)
-		spDuration := int(spEnd.Sub(spStart).Milliseconds())
-		if spDuration < 0 {
-			spDuration = 0
-		}
+		spDuration := max(int(spEnd.Sub(spStart).Milliseconds()), 0)
 		spans = append(spans, ingest.BufferedSpan{
 			SpanID:         trunc(sp.SpanID, maxFieldLen),
 			ParentSpanID:   trunc(sp.ParentSpanID, maxFieldLen),

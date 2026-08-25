@@ -91,7 +91,7 @@ func semverGT(a, b string) bool {
 		if len(parts) != 3 {
 			return
 		}
-		patchStr := strings.SplitN(parts[2], "-", 2)[0] // strip pre-release suffix
+		patchStr, _, _ := strings.Cut(parts[2], "-") // strip pre-release suffix
 		maj, e1 := strconv.Atoi(parts[0])
 		min, e2 := strconv.Atoi(parts[1])
 		pat, e3 := strconv.Atoi(patchStr)

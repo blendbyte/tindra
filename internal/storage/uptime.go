@@ -72,7 +72,7 @@ type UptimeStats struct {
 // inclusive ranges ("200-299"), and combinations ("200-299,301").
 func ParseExpectedCodes(s string) ([]int, error) {
 	var codes []int
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

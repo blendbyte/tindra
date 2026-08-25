@@ -167,7 +167,7 @@ func loadConfig() config {
 	}
 	var trustedProxies []*net.IPNet
 	if s := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES")); s != "" {
-		for _, raw := range strings.Split(s, ",") {
+		for raw := range strings.SplitSeq(s, ",") {
 			raw = strings.TrimSpace(raw)
 			// Accept bare IPs as /32 or /128.
 			if net.ParseIP(raw) != nil {
@@ -451,8 +451,8 @@ func serveCmd(cfg config) *cobra.Command {
 
 func listen(addr string, socketMode fs.FileMode) (net.Listener, error) {
 	lc := &net.ListenConfig{}
-	if strings.HasPrefix(addr, "unix:") {
-		path := strings.TrimPrefix(addr, "unix:")
+	if after, ok := strings.CutPrefix(addr, "unix:"); ok {
+		path := after
 		// Remove stale socket from a previous run.
 		_ = os.Remove(path)
 		ln, err := lc.Listen(context.Background(), "unix", path)

@@ -550,7 +550,7 @@ func TestStore_setCachedLines_lruEviction(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert 66 entries (> fileCacheMax=64) to trigger eviction
-	for i := 0; i < 66; i++ {
+	for i := range 66 {
 		url := fmt.Sprintf("%s/file%d.js", srv.URL, i)
 		payload := json.RawMessage(fmt.Sprintf(
 			`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":1,"colno":0}]}}]}}`,

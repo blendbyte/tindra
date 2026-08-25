@@ -751,7 +751,7 @@ func TestListAlertRules_bearerTokenProjectFilter(t *testing.T) {
 	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "scoped", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL: strPtr("https://example.com/wh"), CooldownMins: 60,
+		WebhookURL: new("https://example.com/wh"), CooldownMins: 60,
 	})
 
 	tok := bearerToken(t, testProject.ID)
@@ -862,7 +862,7 @@ func TestUpdateAlertRule_clearFilterLevel(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "clear filter", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL:  strPtr("https://example.com/wh"),
+		WebhookURL:  new("https://example.com/wh"),
 		FilterLevel: &filterLevel, CooldownMins: 60,
 	})
 
@@ -896,7 +896,7 @@ func TestUpdateAlertRule_clearMinOccurrences(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "clear min occ", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL:     strPtr("https://example.com/wh"),
+		WebhookURL:     new("https://example.com/wh"),
 		MinOccurrences: &minOcc, CooldownMins: 60,
 	})
 
@@ -936,7 +936,7 @@ func TestUpdateAlertRule_updateProjectIDs(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "update proj ids", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL: strPtr("https://example.com/wh"), CooldownMins: 60,
+		WebhookURL: new("https://example.com/wh"), CooldownMins: 60,
 	})
 
 	b, _ := json.Marshal(map[string]any{
@@ -1254,7 +1254,7 @@ func TestUpdateAlertRule_clearFilterEnvironment(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "clear env", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL:        strPtr("https://example.com/wh"),
+		WebhookURL:        new("https://example.com/wh"),
 		FilterEnvironment: &filterEnv, CooldownMins: 60,
 	})
 

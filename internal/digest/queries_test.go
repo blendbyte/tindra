@@ -345,7 +345,7 @@ func TestProjectBreakdown_orderedByErrorsDesc(t *testing.T) {
 	day := now.AddDate(0, 0, -1)
 
 	seedEvent(t, p1.ID, day)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		seedEvent(t, p2.ID, day)
 	}
 
@@ -523,7 +523,7 @@ func TestTopIssues_respectsLimit(t *testing.T) {
 	from := now.AddDate(0, 0, -7)
 	day := now.AddDate(0, 0, -1)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		fp := "fp-lim-" + string(rune('a'+i))
 		title := "Issue " + string(rune('A'+i))
 		issID := seedIssue(t, p.ID, fp, title, "open", day)
@@ -625,7 +625,7 @@ func TestTopTransactions_respectsLimit(t *testing.T) {
 	from := now.AddDate(0, 0, -7)
 	day := now.AddDate(0, 0, -1)
 
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		name := "/api/route-" + string(rune('a'+i))
 		seedTransaction(t, p.ID, name, 10, day.Add(time.Duration(i)*time.Second))
 	}

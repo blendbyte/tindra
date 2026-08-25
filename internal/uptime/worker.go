@@ -75,12 +75,10 @@ func (w *Worker) tick(ctx context.Context) {
 	for _, m := range monitors {
 		select {
 		case w.sem <- struct{}{}:
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer func() { <-w.sem }()
 				w.probe(ctx, m)
-			}()
+			})
 		case <-ctx.Done():
 			wg.Wait()
 			return

@@ -163,7 +163,7 @@ func TestListEventsForIssue(t *testing.T) {
 	}
 
 	payload := json.RawMessage(`{"level":"error"}`)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		testPool.Exec(ctx, `
 			INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
 			VALUES ($1, NOW(), NOW() - ($2 * interval '1 second'), $3, 'fp-list-ev', $4)
@@ -188,7 +188,7 @@ func TestListEventsForIssue_pagination(t *testing.T) {
 
 	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-evpage", "Error", "error", "error", "", "", time.Now())
 	payload := json.RawMessage(`{"level":"error"}`)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		testPool.Exec(ctx, `
 			INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
 			VALUES ($1, NOW(), NOW() - ($2 * interval '1 second'), $3, 'fp-evpage', $4)

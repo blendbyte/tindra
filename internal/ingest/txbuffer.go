@@ -208,7 +208,7 @@ func nilStr(s string) *string {
 	return &s
 }
 
-func nilJSON(b json.RawMessage) interface{} {
+func nilJSON(b json.RawMessage) any {
 	if len(b) == 0 || string(b) == "null" {
 		return nil
 	}

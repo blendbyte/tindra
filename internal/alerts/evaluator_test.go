@@ -120,7 +120,7 @@ func TestConditionMet_eventCount_underThreshold(t *testing.T) {
 	}
 
 	// Insert fewer events than threshold
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		testPool.Exec(context.Background(), `
 			INSERT INTO events (project_id, timestamp, payload)
 			VALUES ($1, NOW(), '{"level":"error"}'::jsonb)
@@ -146,7 +146,7 @@ func TestConditionMet_eventCount_overThreshold(t *testing.T) {
 		Threshold: &threshold, WindowMins: &window,
 	}
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		testPool.Exec(context.Background(), `
 			INSERT INTO events (project_id, timestamp, payload)
 			VALUES ($1, NOW(), '{"level":"error"}'::jsonb)

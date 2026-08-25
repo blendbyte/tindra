@@ -8,9 +8,6 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
-func strPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
-
 func TestAppendIssueFilters_noFilters(t *testing.T) {
 	rule := &storage.AlertRule{}
 	where, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
@@ -24,7 +21,7 @@ func TestAppendIssueFilters_noFilters(t *testing.T) {
 }
 
 func TestAppendIssueFilters_levelOnly(t *testing.T) {
-	rule := &storage.AlertRule{FilterLevel: strPtr("warning")}
+	rule := &storage.AlertRule{FilterLevel: new("warning")}
 	where, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
 
 	if !strings.Contains(where, "level = ANY($2::text[])") {
@@ -44,7 +41,7 @@ func TestAppendIssueFilters_levelOnly(t *testing.T) {
 }
 
 func TestAppendIssueFilters_environmentOnly(t *testing.T) {
-	rule := &storage.AlertRule{FilterEnvironment: strPtr("production")}
+	rule := &storage.AlertRule{FilterEnvironment: new("production")}
 	where, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
 
 	expected := fmt.Sprintf("AND environment = $%d", len(args))
@@ -57,7 +54,7 @@ func TestAppendIssueFilters_environmentOnly(t *testing.T) {
 }
 
 func TestAppendIssueFilters_minOccurrencesOnly(t *testing.T) {
-	rule := &storage.AlertRule{MinOccurrences: intPtr(5)}
+	rule := &storage.AlertRule{MinOccurrences: new(5)}
 	where, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
 
 	expected := fmt.Sprintf("AND event_count >= $%d", len(args))
@@ -71,9 +68,9 @@ func TestAppendIssueFilters_minOccurrencesOnly(t *testing.T) {
 
 func TestAppendIssueFilters_allThree(t *testing.T) {
 	rule := &storage.AlertRule{
-		FilterLevel:       strPtr("error"),
-		FilterEnvironment: strPtr("staging"),
-		MinOccurrences:    intPtr(10),
+		FilterLevel:       new("error"),
+		FilterEnvironment: new("staging"),
+		MinOccurrences:    new(10),
 	}
 	where, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
 
@@ -94,7 +91,7 @@ func TestAppendIssueFilters_allThree(t *testing.T) {
 
 func TestAppendIssueFilters_levelPerformance(t *testing.T) {
 	// "performance" is a separate category; levelsAtOrAbove returns only ["performance"]
-	rule := &storage.AlertRule{FilterLevel: strPtr("performance")}
+	rule := &storage.AlertRule{FilterLevel: new("performance")}
 	_, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
 
 	levels, ok := args[1].([]string)

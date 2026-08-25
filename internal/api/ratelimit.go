@@ -93,10 +93,7 @@ func (rl *rateLimiter) limitBy(keyFn func(*http.Request) string) func(http.Handl
 			key := keyFn(r)
 			if !rl.allow(key) {
 				_, resetAt := rl.peek(key)
-				secs := int(time.Until(resetAt).Seconds()) + 1
-				if secs < 1 {
-					secs = 1
-				}
+				secs := max(int(time.Until(resetAt).Seconds())+1, 1)
 				w.Header().Set("Retry-After", strconv.Itoa(secs))
 				http.Error(w, "too many requests", http.StatusTooManyRequests)
 				return

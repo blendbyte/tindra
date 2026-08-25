@@ -109,7 +109,7 @@ func (sm *SourceMap) parseMappings() error {
 			continue
 		}
 		genCol := 0 // resets at each new generated line
-		for _, rawSeg := range strings.Split(rawLine, ",") {
+		for rawSeg := range strings.SplitSeq(rawLine, ",") {
 			if rawSeg == "" {
 				continue
 			}

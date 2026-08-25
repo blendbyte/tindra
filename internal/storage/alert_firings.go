@@ -123,7 +123,7 @@ func ListPendingRetries(ctx context.Context, pool *pgxpool.Pool) ([]*AlertFiring
 
 // nullableJSON returns nil for empty/nil slices so they are stored as SQL NULL
 // rather than an empty JSONB value.
-func nullableJSON(b []byte) interface{} {
+func nullableJSON(b []byte) any {
 	if len(b) == 0 {
 		return nil
 	}

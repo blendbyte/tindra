@@ -10,7 +10,7 @@ import (
 
 func TestRateLimiter_allowUnderLimit(t *testing.T) {
 	rl := newRateLimiter(3, time.Minute)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !rl.allow("key") {
 			t.Fatalf("expected allow on call %d", i+1)
 		}
@@ -28,7 +28,7 @@ func TestRateLimiter_allowBlocksAtLimit(t *testing.T) {
 
 func TestRateLimiter_disabledWhenLimitZero(t *testing.T) {
 	rl := newRateLimiter(0, time.Minute)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if !rl.allow("key") {
 			t.Fatalf("expected allow to always return true when limit=0, failed on call %d", i+1)
 		}
@@ -160,7 +160,7 @@ func TestRateLimiter_limitByIPIsolatesAddresses(t *testing.T) {
 func TestRateLimiter_pruningDoesNotPanic(t *testing.T) {
 	rl := newRateLimiter(1000, 5*time.Millisecond)
 	// Fill 499 calls with distinct keys, then let windows expire.
-	for i := 0; i < 499; i++ {
+	for i := range 499 {
 		rl.allow(fmt.Sprintf("key-%d", i))
 	}
 	time.Sleep(10 * time.Millisecond) // let all windows expire
