@@ -26,6 +26,11 @@ type Worker struct {
 // keeps both bounded.
 const profilePurgeBatch = 5000
 
+// maxStorageCapIDsPerPass bounds how many ids one storage-cap pass holds in
+// memory. Dropping PROFILE_STORAGE_LIMIT_MB on a large instance would otherwise
+// load every over-budget id into the retention goroutine at once.
+const maxStorageCapIDsPerPass = 200_000
+
 func NewWorker(pool *pgxpool.Pool, retentionDays int) *Worker {
 	return &Worker{pool: pool, retentionDays: retentionDays}
 }
@@ -172,18 +177,24 @@ func (w *Worker) purgeProfilesStorageCap(ctx context.Context) int64 {
 	}
 	limitBytes := int64(w.profileStorageLimitMB) * 1024 * 1024
 
-	// The running total is taken newest first, so every row past the budget is
-	// one to drop. The window is evaluated once and the ids are then deleted in
-	// batches: running it per batch meant a full scan and sort of the table for
-	// every 5000 rows, which on a large overage is a scan per batch rather than
-	// one for the whole pass.
+	// Ranked by received_at, not start_ts. start_ts comes from the client's own
+	// sample timestamps, so a host with a skewed clock would decide the
+	// eviction order for the whole instance: a future clock keeps its own
+	// profiles permanently and pushes every other project's out of the budget.
+	// received_at is ours, and the age purge above already relies on it.
+	//
+	// The window is evaluated once and the ids deleted in batches. Running it
+	// per batch meant a full scan and sort for every 5000 rows. The limit bounds
+	// how many ids one pass holds in memory; the hourly cycle picks up the rest,
+	// and the oldest always go first.
 	rows, err := w.pool.Query(ctx, `
 		SELECT id FROM (
-			SELECT id, SUM(size_bytes) OVER (ORDER BY start_ts DESC, id DESC) AS running
+			SELECT id, SUM(size_bytes) OVER (ORDER BY received_at DESC, id DESC) AS running
 			FROM profile_chunks
 		) ranked
 		WHERE running > $1
-		ORDER BY running DESC`, limitBytes)
+		ORDER BY running DESC
+		LIMIT $2`, limitBytes, maxStorageCapIDsPerPass)
 	if err != nil {
 		slog.Error("retention: rank profiles for storage cap", "err", err)
 		return 0

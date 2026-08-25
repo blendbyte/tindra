@@ -1,9 +1,11 @@
 package profiles_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/blendbyte/tindra/internal/ingest"
 	"github.com/blendbyte/tindra/internal/profiles"
@@ -450,5 +452,50 @@ func TestFold_ordersEqualSiblingsByName(t *testing.T) {
 	}
 	if g.Root.Children[0].Function != "alpha" {
 		t.Errorf("order = %v, want alpha first on an equal-weight tie", names(g.Root))
+	}
+}
+
+// With no thread filter, pooling every timestamp measures the stagger between
+// threads rather than how often either was sampled, and understates every
+// duration on screen by roughly the thread count.
+func TestFold_measuresTheIntervalWithinEachThread(t *testing.T) {
+	// Four threads sampled every 40ms, each offset 10ms from the last, so the
+	// merged stream has 10ms gaps while every thread's real period is 40ms.
+	p := &ingest.Profile{
+		Frames: []ingest.ProfileFrame{{Function: "main"}},
+		Stacks: [][]int32{{0}},
+	}
+	for _, offset := range []int64{0, 10, 20, 30} {
+		for i := range int64(5) {
+			p.Samples = append(p.Samples, ingest.ProfileSample{
+				ThreadID:    fmt.Sprintf("t%d", offset),
+				StackID:     0,
+				TimestampNs: (offset + i*40) * int64(time.Millisecond),
+			})
+		}
+	}
+
+	g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+	if got := time.Duration(g.SampleIntervalNs); got != 40*time.Millisecond {
+		t.Errorf("interval = %s, want 40ms measured within a thread, not the inter-thread stagger", got)
+	}
+}
+
+// Filtering to one thread must still measure that thread's own period.
+func TestFold_intervalWithASingleThreadSelected(t *testing.T) {
+	p := &ingest.Profile{
+		Frames: []ingest.ProfileFrame{{Function: "main"}},
+		Stacks: [][]int32{{0}},
+		Samples: []ingest.ProfileSample{
+			{ThreadID: "a", StackID: 0, TimestampNs: 0},
+			{ThreadID: "b", StackID: 0, TimestampNs: 5 * int64(time.Millisecond)},
+			{ThreadID: "a", StackID: 0, TimestampNs: 20 * int64(time.Millisecond)},
+			{ThreadID: "b", StackID: 0, TimestampNs: 25 * int64(time.Millisecond)},
+			{ThreadID: "a", StackID: 0, TimestampNs: 40 * int64(time.Millisecond)},
+		},
+	}
+	g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{ThreadID: "a"})
+	if got := time.Duration(g.SampleIntervalNs); got != 20*time.Millisecond {
+		t.Errorf("interval = %s, want 20ms", got)
 	}
 }

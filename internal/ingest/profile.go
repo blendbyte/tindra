@@ -49,6 +49,9 @@ var (
 	ErrProfileMalformedStacks    = errors.New("profile stack references a missing frame")
 	ErrProfileTooLong            = errors.New("profile exceeds the maximum duration")
 	ErrProfileTooManySamples     = errors.New("profile exceeds the maximum sample count")
+	// A v1 profile names the transaction it belongs to. Without one there is no
+	// way to reach it again, so it is rejected rather than stored unreachable.
+	ErrProfileNoTransaction = errors.New("profile has no associated transaction")
 )
 
 // ProfileFrame is one function in a stack. Which fields are populated depends
@@ -165,12 +168,13 @@ func ParseProfile(payload []byte) (*Profile, error) {
 	if tx == nil && len(raw.Transactions) > 0 {
 		tx = &raw.Transactions[0]
 	}
-	if tx != nil {
-		p.TransactionID = tx.ID
-		p.TransactionName = tx.Name
-		p.TraceID = tx.TraceID
-		p.ActiveThreadID = tx.ActiveThreadID.String()
+	if tx == nil {
+		return nil, ErrProfileNoTransaction
 	}
+	p.TransactionID = tx.ID
+	p.TransactionName = tx.Name
+	p.TraceID = tx.TraceID
+	p.ActiveThreadID = tx.ActiveThreadID.String()
 
 	// Keep only the samples taken while the transaction was running, matching
 	// Relay. The profiler starts before the transaction and stops after it, so
@@ -180,7 +184,7 @@ func ParseProfile(payload []byte) (*Profile, error) {
 	//
 	// The zero check is Relay's own compatibility guard for older SDKs that
 	// omit the window entirely.
-	if tx != nil && tx.RelativeEndNs > 0 {
+	if tx.RelativeEndNs > 0 {
 		kept := raw.Profile.Samples[:0]
 		for _, s := range raw.Profile.Samples {
 			if s.ElapsedSinceStartNs >= tx.RelativeStartNs && s.ElapsedSinceStartNs <= tx.RelativeEndNs {

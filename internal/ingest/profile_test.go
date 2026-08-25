@@ -952,3 +952,18 @@ func TestParseProfileChunk_nullSampleTimestamp(t *testing.T) {
 		t.Errorf("bounds = [%d, %d], want both at the epoch", p.StartNs, p.EndNs)
 	}
 }
+
+// Relay rejects a v1 profile with no transaction metadata. Storing one leaves a
+// row neither fold path can reach, and it sits outside both partial unique
+// indexes, so every retry writes another copy of the largest rows in the schema.
+func TestParseProfile_rejectsAProfileWithNoTransaction(t *testing.T) {
+	payload := `{
+		"version":"1","platform":"python","timestamp":"2026-08-24T10:00:00Z","event_id":"aa",
+		"profile":{"frames":[{"function":"f"}],"stacks":[[0]],"samples":[
+			{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":1000000},
+			{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":2000000}]}}`
+
+	if _, err := ingest.ParseProfile([]byte(payload)); !errors.Is(err, ingest.ErrProfileNoTransaction) {
+		t.Errorf("err = %v, want ErrProfileNoTransaction", err)
+	}
+}

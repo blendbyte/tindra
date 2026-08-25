@@ -19,10 +19,20 @@ import (
 // work instead of needing a range index.
 const maxChunkDuration = 70 * time.Second
 
-// maxChunksPerTransaction caps how many chunks one request decompresses. A
-// transaction spanning more than this many 66s chunks would be over an hour
-// long, which is not a request we should be serving from a blob scan.
-const maxChunksPerTransaction = 64
+// maxChunksPerTransaction caps how many chunks one request decompresses. At the
+// 66s ceiling this still covers a transaction running for a quarter of an hour,
+// which is far past anything worth drawing a flame graph of.
+const maxChunksPerTransaction = 16
+
+// maxDecodedBytesPerRequest bounds the decompressed total, not just the count.
+// Each chunk is individually capped, so without an aggregate one authenticated
+// request could hold a gigabyte of samples in memory at once.
+const maxDecodedBytesPerRequest = 96 << 20
+
+// approxBytesPerSample is a rough per-sample cost used only to bound how much
+// one request decodes. Samples dominate a decoded profile, and the exact figure
+// matters less than having any ceiling at all.
+const approxBytesPerSample = 64
 
 // ErrNoProfile means the transaction has no profile: either none was sent, or
 // it aged out, or profiling is off for the project.
@@ -163,7 +173,10 @@ func foldV2(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 func decodeRows(rows pgx.Rows) ([]*ingest.Profile, error) {
 	defer rows.Close()
 
-	var profs []*ingest.Profile
+	var (
+		profs   []*ingest.Profile
+		samples int
+	)
 	for rows.Next() {
 		var (
 			encoding int16
@@ -177,6 +190,14 @@ func decodeRows(rows pgx.Rows) ([]*ingest.Profile, error) {
 			return nil, fmt.Errorf("decode profile: %w", err)
 		}
 		profs = append(profs, p)
+
+		// Stop accumulating rather than fail: the chunks are ordered by time,
+		// so what has been decoded already is the start of the window and still
+		// draws a usable graph.
+		samples += len(p.Samples)
+		if samples*approxBytesPerSample > maxDecodedBytesPerRequest {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read profile rows: %w", err)

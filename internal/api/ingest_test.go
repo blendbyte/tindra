@@ -1096,9 +1096,18 @@ func TestHandleEnvelope_numericThreadIDInTraceData(t *testing.T) {
 	}
 }
 
-// Backpressure has to reach the SDK. Silently dropping profiles when the writer
-// is behind would look like profiling simply not working.
-func TestHandleEnvelope_profileBufferFull(t *testing.T) {
+// A profile arrives in the same envelope as its transaction, and the
+// transaction is pushed first. Failing the envelope to signal a full profile
+// buffer would have the SDK resend one whose transaction was already accepted,
+// and nothing deduplicates transactions, so the retry would duplicate real
+// performance data to save a profile. The profile is dropped instead.
+func TestHandleEnvelope_profileBufferFullDropsOnlyTheProfile(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx,
+		"DELETE FROM profile_chunks WHERE project_id = $1", testProject.ID); err != nil {
+		t.Fatalf("clear profiles: %v", err)
+	}
+
 	profBuf := ingest.NewProfileBuffer(1)
 	// Fill it, with no writer draining.
 	p, err := ingest.ParseProfile(fixtureBytes(t, "v1_php_laravel.json"))
@@ -1113,14 +1122,43 @@ func TestHandleEnvelope_profileBufferFull(t *testing.T) {
 		t.Fatal("expected the first push to fit")
 	}
 
-	rec := postEnvelope(t, newProfileHandler(profBuf),
-		profileEnvelope(t, "profile", "v1_php_laravel.json"))
+	txBuf := ingest.NewTransactionBuffer(10)
+	bufCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go txBuf.Run(bufCtx, testPool)
 
-	if rec.Code != http.StatusTooManyRequests {
-		t.Errorf("expected 429 when the profile buffer is full, got %d", rec.Code)
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	// One envelope carrying both, as the PHP SDK sends it.
+	const txName = "/buffer-full"
+	txPayload := fmt.Sprintf(`{"event_id":"220e8400e29b41d4a716446655440000","transaction":%q,`+
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",`+
+		`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok"}}}`, txName)
+	profPayload := string(fixtureBytes(t, "v1_php_laravel.json"))
+	compact := &bytes.Buffer{}
+	if err := json.Compact(compact, []byte(profPayload)); err != nil {
+		t.Fatalf("compact: %v", err)
 	}
-	if rec.Header().Get("Retry-After") == "" {
-		t.Error("expected a Retry-After header so the SDK backs off")
+	body := `{"event_id":"330e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(txPayload)) + "\n" + txPayload + "\n" +
+		fmt.Sprintf(`{"type":"profile","length":%d}`, compact.Len()) + "\n" + compact.String() + "\n"
+
+	rec := postEnvelope(t, h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 so the SDK does not resend the transaction, got %d", rec.Code)
+	}
+
+	time.Sleep(400 * time.Millisecond)
+
+	var txCount int
+	if err := testPool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM transactions WHERE project_id = $1 AND transaction = $2",
+		testProject.ID, txName).Scan(&txCount); err != nil {
+		t.Fatalf("count transactions: %v", err)
+	}
+	if txCount != 1 {
+		t.Errorf("stored %d transactions, want the one from this envelope kept", txCount)
 	}
 }
 

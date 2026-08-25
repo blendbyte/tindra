@@ -233,10 +233,15 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 				slog.Error("encode profile", "project", project.Slug, "err", err)
 				continue
 			}
+			// Best effort, like logs. Failing the envelope here would ask the
+			// SDK to resend one that already had its transaction accepted a few
+			// items earlier, and transactions carry no uniqueness guard, so the
+			// retry would duplicate the transaction to save a profile. The
+			// parse-error branch above drops the profile alone for the same
+			// reason.
 			if !ro.profBuf.Push(buffered) {
-				w.Header().Set("Retry-After", "1")
-				http.Error(w, "buffer full", http.StatusTooManyRequests)
-				return
+				slog.Debug("profile buffer full, dropping profile",
+					"project", project.Slug, "type", item.Header.Type)
 			}
 
 		case "check_in":

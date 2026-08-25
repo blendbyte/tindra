@@ -961,3 +961,50 @@ func TestWorker_profilePurgeBatchesLargeBacklog(t *testing.T) {
 		t.Errorf("kept %d profiles, want 0: the batch loop must drain the whole backlog", got)
 	}
 }
+
+// The cap ranks by received_at, our own clock. Ranking by start_ts would hand a
+// host with a skewed clock the eviction order for the whole instance: dated in
+// the future it never loses a profile and pushes every other project out of the
+// budget.
+func TestWorker_profileStorageCapIgnoresClientClockSkew(t *testing.T) {
+	clearProfiles(t)
+	ctx := context.Background()
+
+	const mb = 1024 * 1024
+	// Arrived first, but claims to have been sampled far in the future.
+	var skewed string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO profile_chunks
+			(project_id, format, profiler_id, chunk_id, start_ts, end_ts, received_at,
+			 sample_count, size_bytes, encoding, data)
+		VALUES ($1, 2, 'skewed', 'skewed', NOW() + INTERVAL '10 years', NOW() + INTERVAL '10 years',
+		        NOW() - INTERVAL '2 hours', 100, $2, 1, '\x00'::bytea)
+		RETURNING id`, testProject.ID, 4*mb).Scan(&skewed); err != nil {
+		t.Fatalf("insert skewed profile: %v", err)
+	}
+
+	// Arrived after it, with an honest timestamp.
+	var honest string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO profile_chunks
+			(project_id, format, profiler_id, chunk_id, start_ts, end_ts, received_at,
+			 sample_count, size_bytes, encoding, data)
+		VALUES ($1, 2, 'honest', 'honest', NOW(), NOW(), NOW(),
+		        100, $2, 1, '\x00'::bytea)
+		RETURNING id`, testProject.ID, 4*mb).Scan(&honest); err != nil {
+		t.Fatalf("insert honest profile: %v", err)
+	}
+
+	// A 5 MB budget against 8 MB stored: exactly one has to go.
+	retention.NewWorker(testPool, 90).WithProfileLimits(0, 5).RunOnce(ctx)
+
+	var survivor string
+	if err := testPool.QueryRow(ctx,
+		"SELECT chunk_id FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&survivor); err != nil {
+		t.Fatalf("read survivor: %v", err)
+	}
+	if survivor != "honest" {
+		t.Errorf("survivor = %q, want the most recently received one regardless of its claimed sample time", survivor)
+	}
+}

@@ -72,7 +72,10 @@ func Fold(profs []*ingest.Profile, opt FoldOptions) *FlameGraph {
 	// form is a plain tree.
 	index := map[*FlameNode]map[string]*FlameNode{}
 
-	var times []int64
+	// Grouped by thread: when no thread filter is applied, pooling every
+	// timestamp measures the stagger between threads rather than the sampling
+	// period, and understates every duration by roughly the thread count.
+	timesByThread := map[string][]int64{}
 	for _, p := range profs {
 		if p == nil {
 			continue
@@ -95,7 +98,7 @@ func Fold(profs []*ingest.Profile, opt FoldOptions) *FlameGraph {
 				continue
 			}
 			stack := p.Stacks[s.StackID]
-			times = append(times, s.TimestampNs)
+			timesByThread[s.ThreadID] = append(timesByThread[s.ThreadID], s.TimestampNs)
 			if len(stack) == 0 {
 				g.IdleSamples++
 				continue
@@ -118,10 +121,23 @@ func Fold(profs []*ingest.Profile, opt FoldOptions) *FlameGraph {
 		}
 	}
 
-	g.SampleIntervalNs = medianInterval(times)
-	if len(times) > 0 {
-		sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
-		g.DurationNs = times[len(times)-1] - times[0]
+	g.SampleIntervalNs = medianInterval(timesByThread)
+
+	var lo, hi int64
+	var seen bool
+	for _, ts := range timesByThread {
+		for _, t := range ts {
+			if !seen || t < lo {
+				lo = t
+			}
+			if !seen || t > hi {
+				hi = t
+			}
+			seen = true
+		}
+	}
+	if seen {
+		g.DurationNs = hi - lo
 	}
 	sortTree(g.Root)
 	return g
@@ -174,23 +190,28 @@ func displayName(f ingest.ProfileFrame) string {
 	return "<unknown>"
 }
 
-// medianInterval estimates the sampling period from observed timestamps. The
-// median rejects the outliers that chunk boundaries and scheduler stalls
-// introduce, which a mean would fold into every duration on screen.
-func medianInterval(times []int64) int64 {
-	if len(times) < 2 {
-		return 0
-	}
-	sorted := make([]int64, len(times))
-	copy(sorted, times)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-
-	gaps := make([]int64, 0, len(sorted)-1)
-	for i := 1; i < len(sorted); i++ {
-		// Samples taken on several threads share a timestamp; a zero gap says
-		// nothing about the sampling period.
-		if d := sorted[i] - sorted[i-1]; d > 0 {
-			gaps = append(gaps, d)
+// medianInterval estimates the sampling period from observed timestamps.
+//
+// Gaps are measured within a thread and then pooled, because consecutive
+// samples from different threads say nothing about how often either one was
+// sampled. The median across the pool rejects the outliers that chunk
+// boundaries and scheduler stalls introduce, which a mean would fold into every
+// duration on screen.
+func medianInterval(timesByThread map[string][]int64) int64 {
+	var gaps []int64
+	for _, times := range timesByThread {
+		if len(times) < 2 {
+			continue
+		}
+		sorted := make([]int64, len(times))
+		copy(sorted, times)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		for i := 1; i < len(sorted); i++ {
+			// Two samples of one thread sharing a timestamp say nothing about
+			// the period either.
+			if d := sorted[i] - sorted[i-1]; d > 0 {
+				gaps = append(gaps, d)
+			}
 		}
 	}
 	if len(gaps) == 0 {

@@ -63,10 +63,17 @@ func (b *ProfileBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 		case <-ctx.Done():
 			drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
+			// Drain in the same batch size as the steady state. Appending the
+			// whole queue into one pgx.Batch would put up to PROFILE_BUFFER_SIZE
+			// blobs in a single statement against a 10s deadline, which is the
+			// most likely way to lose all of them rather than most of them.
 			for {
 				select {
 				case p := <-b.ch:
 					batch = append(batch, p)
+					if len(batch) >= batchSize {
+						flush(drainCtx)
+					}
 				default:
 					flush(drainCtx)
 					return
