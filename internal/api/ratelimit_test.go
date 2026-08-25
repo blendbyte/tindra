@@ -5,12 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
 func TestRateLimiter_allowUnderLimit(t *testing.T) {
 	rl := newRateLimiter(3, time.Minute)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !rl.allow("key") {
 			t.Fatalf("expected allow on call %d", i+1)
 		}
@@ -28,7 +29,7 @@ func TestRateLimiter_allowBlocksAtLimit(t *testing.T) {
 
 func TestRateLimiter_disabledWhenLimitZero(t *testing.T) {
 	rl := newRateLimiter(0, time.Minute)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if !rl.allow("key") {
 			t.Fatalf("expected allow to always return true when limit=0, failed on call %d", i+1)
 		}
@@ -36,17 +37,19 @@ func TestRateLimiter_disabledWhenLimitZero(t *testing.T) {
 }
 
 func TestRateLimiter_windowReset(t *testing.T) {
-	rl := newRateLimiter(1, 20*time.Millisecond)
-	if !rl.allow("key") {
-		t.Fatal("first call should be allowed")
-	}
-	if rl.allow("key") {
-		t.Error("second call in same window should be blocked")
-	}
-	time.Sleep(30 * time.Millisecond)
-	if !rl.allow("key") {
-		t.Error("call after window expiry should be allowed")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		rl := newRateLimiter(1, 20*time.Millisecond)
+		if !rl.allow("key") {
+			t.Fatal("first call should be allowed")
+		}
+		if rl.allow("key") {
+			t.Error("second call in same window should be blocked")
+		}
+		synctest.Sleep(30 * time.Millisecond)
+		if !rl.allow("key") {
+			t.Error("call after window expiry should be allowed")
+		}
+	})
 }
 
 func TestRateLimiter_separateKeys(t *testing.T) {
@@ -93,17 +96,19 @@ func TestRateLimiter_peekDisabledReturnsZero(t *testing.T) {
 }
 
 func TestRateLimiter_peekExpiredWindowReturnsZero(t *testing.T) {
-	rl := newRateLimiter(5, 20*time.Millisecond)
-	rl.allow("key")
-	time.Sleep(30 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		rl := newRateLimiter(5, 20*time.Millisecond)
+		rl.allow("key")
+		synctest.Sleep(30 * time.Millisecond)
 
-	count, resetAt := rl.peek("key")
-	if count != 0 {
-		t.Errorf("peek after window expiry: got count %d, want 0", count)
-	}
-	if !resetAt.IsZero() {
-		t.Error("peek resetAt after window expiry should be zero")
-	}
+		count, resetAt := rl.peek("key")
+		if count != 0 {
+			t.Errorf("peek after window expiry: got count %d, want 0", count)
+		}
+		if !resetAt.IsZero() {
+			t.Error("peek resetAt after window expiry should be zero")
+		}
+	})
 }
 
 func TestRateLimiter_limitByIPMiddlewareBlocks(t *testing.T) {
@@ -158,12 +163,14 @@ func TestRateLimiter_limitByIPIsolatesAddresses(t *testing.T) {
 }
 
 func TestRateLimiter_pruningDoesNotPanic(t *testing.T) {
-	rl := newRateLimiter(1000, 5*time.Millisecond)
-	// Fill 499 calls with distinct keys, then let windows expire.
-	for i := 0; i < 499; i++ {
-		rl.allow(fmt.Sprintf("key-%d", i))
-	}
-	time.Sleep(10 * time.Millisecond) // let all windows expire
-	// 500th call triggers the pruning loop - must not panic.
-	rl.allow("prune-trigger")
+	synctest.Test(t, func(t *testing.T) {
+		rl := newRateLimiter(1000, 5*time.Millisecond)
+		// Fill 499 calls with distinct keys, then let windows expire.
+		for i := range 499 {
+			rl.allow(fmt.Sprintf("key-%d", i))
+		}
+		synctest.Sleep(10 * time.Millisecond) // let all windows expire
+		// 500th call triggers the pruning loop - must not panic.
+		rl.allow("prune-trigger")
+	})
 }

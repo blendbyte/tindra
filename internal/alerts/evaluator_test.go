@@ -120,7 +120,7 @@ func TestConditionMet_eventCount_underThreshold(t *testing.T) {
 	}
 
 	// Insert fewer events than threshold
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		testPool.Exec(context.Background(), `
 			INSERT INTO events (project_id, timestamp, payload)
 			VALUES ($1, NOW(), '{"level":"error"}'::jsonb)
@@ -146,7 +146,7 @@ func TestConditionMet_eventCount_overThreshold(t *testing.T) {
 		Threshold: &threshold, WindowMins: &window,
 	}
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		testPool.Exec(context.Background(), `
 			INSERT INTO events (project_id, timestamp, payload)
 			VALUES ($1, NOW(), '{"level":"error"}'::jsonb)
@@ -196,11 +196,10 @@ func TestConditionMet_eventCount_nilThreshold(t *testing.T) {
 
 func TestFireWebhook_success(t *testing.T) {
 	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -239,11 +238,10 @@ func TestFireWebhook_emptyURL(t *testing.T) {
 }
 
 func TestFireWebhook_non2xx(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(500)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -259,12 +257,11 @@ func TestFireWebhook_non2xx(t *testing.T) {
 func TestFireSlack_success(t *testing.T) {
 	var body []byte
 	var ct string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		ct = r.Header.Get("Content-Type")
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -307,11 +304,10 @@ func TestFireSlack_success(t *testing.T) {
 
 func TestFireSlack_withIssues(t *testing.T) {
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
 	url := srv.URL
@@ -360,11 +356,10 @@ func TestFireSlack_emptyURL(t *testing.T) {
 }
 
 func TestFireSlack_non2xx(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(403)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -387,11 +382,10 @@ func TestFireSlack_triggerLabels(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	for _, tt := range tests {
 		t.Run(tt.trigger, func(t *testing.T) {
@@ -413,12 +407,12 @@ func TestEvaluate_firesSlack(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
 	fired := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		fired = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold, window := 1, 60
@@ -429,7 +423,7 @@ func TestEvaluate_firesSlack(t *testing.T) {
 	})
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	if !fired {
@@ -442,12 +436,11 @@ func TestEvaluate_firesSlack(t *testing.T) {
 func TestFireDiscord_success(t *testing.T) {
 	var body []byte
 	var ct string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		ct = r.Header.Get("Content-Type")
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -507,11 +500,10 @@ func TestFireDiscord_success(t *testing.T) {
 
 func TestFireDiscord_withIssues(t *testing.T) {
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
 	url := srv.URL
@@ -559,11 +551,10 @@ func TestFireDiscord_emptyURL(t *testing.T) {
 }
 
 func TestFireDiscord_non2xx(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(401)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -586,11 +577,10 @@ func TestFireDiscord_triggerLabels(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	for _, tt := range tests {
 		t.Run(tt.trigger, func(t *testing.T) {
@@ -612,12 +602,12 @@ func TestEvaluate_firesDiscord(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
 	fired := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		fired = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold, window := 1, 60
@@ -628,7 +618,7 @@ func TestEvaluate_firesDiscord(t *testing.T) {
 	})
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	if !fired {
@@ -641,12 +631,11 @@ func TestEvaluate_firesDiscord(t *testing.T) {
 func TestFireTeams_success(t *testing.T) {
 	var body []byte
 	var ct string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		ct = r.Header.Get("Content-Type")
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -728,11 +717,10 @@ func TestFireTeams_success(t *testing.T) {
 
 func TestFireTeams_withIssues(t *testing.T) {
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
 	url := srv.URL
@@ -780,11 +768,10 @@ func TestFireTeams_emptyURL(t *testing.T) {
 }
 
 func TestFireTeams_non2xx(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(403)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -807,11 +794,10 @@ func TestFireTeams_triggerLabels(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	for _, tt := range tests {
 		t.Run(tt.trigger, func(t *testing.T) {
@@ -833,12 +819,12 @@ func TestEvaluate_firesTeams(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
 	fired := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		fired = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold, window := 1, 60
@@ -849,7 +835,7 @@ func TestEvaluate_firesTeams(t *testing.T) {
 	})
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	if !fired {
@@ -914,12 +900,12 @@ func TestEvaluate_firesWebhook(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
 	fired := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		fired = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold, window := 1, 60
@@ -930,7 +916,7 @@ func TestEvaluate_firesWebhook(t *testing.T) {
 	})
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	if !fired {
@@ -953,18 +939,18 @@ func TestEvaluate_marksFiredAt(t *testing.T) {
 	}
 
 	// Use a mock server so the delivery doesn't fail
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 	*created.WebhookURL = srv.URL
 
 	// Update rule in DB to point to the test server
 	storage.UpdateAlertRule(context.Background(), testPool, created)
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	got, _ := storage.GetAlertRule(context.Background(), testPool, created.ID)
@@ -978,12 +964,12 @@ func TestEvaluate_conditionNotMet(t *testing.T) {
 	testPool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", testProject.ID)
 
 	callCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		callCount++
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold := 1000
@@ -994,7 +980,7 @@ func TestEvaluate_conditionNotMet(t *testing.T) {
 		Threshold: &threshold, WindowMins: &window, CooldownMins: 60,
 	})
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	if callCount != 0 {
@@ -1090,12 +1076,12 @@ func TestEvaluate_cooldownPreventsReFire(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules CASCADE")
 
 	callCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		callCount++
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold, window := 1, 60
@@ -1106,7 +1092,7 @@ func TestEvaluate_cooldownPreventsReFire(t *testing.T) {
 	})
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	// Manually set last_fired_at to now so cooldown is active
@@ -1349,11 +1335,10 @@ func TestEmailSubject_single_titleTruncated(t *testing.T) {
 
 func TestNotifyAutoResolved_noIssues_noFire(t *testing.T) {
 	var called bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	e.NotifyAutoResolved(context.Background(), nil)
@@ -1366,11 +1351,11 @@ func TestNotifyAutoResolved_firesWebhook(t *testing.T) {
 	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
 
 	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	_, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
@@ -1383,7 +1368,7 @@ func TestNotifyAutoResolved_firesWebhook(t *testing.T) {
 	}
 
 	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000001", ProjectID: testProject.ID, Title: "N+1 query"}}
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.NotifyAutoResolved(context.Background(), issues)
 
 	if received == nil {
@@ -1406,11 +1391,11 @@ func TestNotifyAutoResolved_skipsUnmatchedProject(t *testing.T) {
 	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
 
 	var called bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
@@ -1421,7 +1406,7 @@ func TestNotifyAutoResolved_skipsUnmatchedProject(t *testing.T) {
 
 	// Issue belongs to a different project — rule should not fire.
 	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000002", ProjectID: "00000000-0000-0000-0000-000000000099", Title: "N+1"}}
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.NotifyAutoResolved(context.Background(), issues)
 
 	if called {
@@ -1433,11 +1418,11 @@ func TestNotifyAutoResolved_globalRule_firesForAnyProject(t *testing.T) {
 	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
 
 	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
@@ -1447,7 +1432,7 @@ func TestNotifyAutoResolved_globalRule_firesForAnyProject(t *testing.T) {
 	})
 
 	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000003", ProjectID: "00000000-0000-0000-0000-000000000099", Title: "N+1"}}
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.NotifyAutoResolved(context.Background(), issues)
 
 	if received == nil {
@@ -1901,11 +1886,11 @@ func TestConditionMet_newIssue_withMinOccurrences(t *testing.T) {
 
 func TestFireTest_webhook(t *testing.T) {
 	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	rule := &storage.AlertRule{
@@ -1917,7 +1902,7 @@ func TestFireTest_webhook(t *testing.T) {
 		WebhookURL: &url,
 	}
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	err := e.FireTest(context.Background(), rule)
 	if err != nil {
 		t.Fatalf("FireTest webhook: %v", err)
@@ -1974,11 +1959,11 @@ func TestFireTest_unknownChannel(t *testing.T) {
 
 func TestFireTest_cronMissed_webhook(t *testing.T) {
 	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	rule := &storage.AlertRule{
@@ -1990,7 +1975,7 @@ func TestFireTest_cronMissed_webhook(t *testing.T) {
 		WebhookURL: &url,
 	}
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	err := e.FireTest(context.Background(), rule)
 	if err != nil {
 		t.Fatalf("FireTest cron_missed webhook: %v", err)
@@ -2039,11 +2024,11 @@ func TestMoreLabel_regressed_plural(t *testing.T) {
 
 func TestFireTest_slack(t *testing.T) {
 	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	rule := &storage.AlertRule{
@@ -2055,7 +2040,7 @@ func TestFireTest_slack(t *testing.T) {
 		WebhookURL: &url,
 	}
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	err := e.FireTest(context.Background(), rule)
 	if err != nil {
 		t.Fatalf("FireTest slack: %v", err)
@@ -2067,11 +2052,11 @@ func TestFireTest_slack(t *testing.T) {
 
 func TestFireTest_discord(t *testing.T) {
 	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	rule := &storage.AlertRule{
@@ -2083,7 +2068,7 @@ func TestFireTest_discord(t *testing.T) {
 		WebhookURL: &url,
 	}
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	err := e.FireTest(context.Background(), rule)
 	if err != nil {
 		t.Fatalf("FireTest discord: %v", err)
@@ -2179,11 +2164,11 @@ func TestNotifyAutoResolved_skipsNonIssueTrigger(t *testing.T) {
 	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
 
 	var called bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	// event_count and cron_missed rules should NOT receive auto-resolve notifications.
@@ -2196,7 +2181,7 @@ func TestNotifyAutoResolved_skipsNonIssueTrigger(t *testing.T) {
 	})
 
 	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000004", ProjectID: testProject.ID, Title: "some issue"}}
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.NotifyAutoResolved(context.Background(), issues)
 
 	if called {
@@ -2249,11 +2234,11 @@ func TestItemCountFromPayload_unknownKey(t *testing.T) {
 func TestLogFiring_successCreatesRecord(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold, window := 1, 60
@@ -2264,7 +2249,7 @@ func TestLogFiring_successCreatesRecord(t *testing.T) {
 	})
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	var count int
@@ -2277,11 +2262,11 @@ func TestLogFiring_successCreatesRecord(t *testing.T) {
 func TestLogFiring_failureSchedulesRetry(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(500)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	threshold, window := 1, 60
@@ -2292,7 +2277,7 @@ func TestLogFiring_failureSchedulesRetry(t *testing.T) {
 	})
 	testPool.Exec(context.Background(), `INSERT INTO events (project_id, timestamp, payload) VALUES ($1, NOW(), '{"level":"error"}'::jsonb)`, testProject.ID)
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.evaluate(context.Background())
 
 	var status string
@@ -2343,12 +2328,12 @@ func TestProcessRetries_success(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
 
 	fired := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		fired = true
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
@@ -2366,7 +2351,7 @@ func TestProcessRetries_success(t *testing.T) {
 		Status: "pending", Error: &errMsg, Attempt: 1, NextRetryAt: &past, Payload: payloadJSON,
 	})
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.processRetries(context.Background())
 
 	if !fired {
@@ -2389,11 +2374,11 @@ func TestProcessRetries_success(t *testing.T) {
 func TestProcessRetries_continuesToFail_schedulesNextRetry(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(500)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
@@ -2410,7 +2395,7 @@ func TestProcessRetries_continuesToFail_schedulesNextRetry(t *testing.T) {
 		Status: "pending", Error: &errMsg, Attempt: 1, NextRetryAt: &past, Payload: payloadJSON,
 	})
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.processRetries(context.Background())
 
 	var status string
@@ -2433,11 +2418,11 @@ func TestProcessRetries_continuesToFail_schedulesNextRetry(t *testing.T) {
 func TestProcessRetries_permanentFailureAfterMaxAttempts(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
 		w.WriteHeader(500)
 	}))
-	defer srv.Close()
+	srvClient := srv.Client()
 
 	url := srv.URL
 	rule, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
@@ -2455,7 +2440,7 @@ func TestProcessRetries_permanentFailureAfterMaxAttempts(t *testing.T) {
 		Status: "pending", Error: &errMsg, Attempt: maxDeliveryAttempts - 1, NextRetryAt: &past, Payload: payloadJSON,
 	})
 
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srvClient}
 	e.processRetries(context.Background())
 
 	var status string

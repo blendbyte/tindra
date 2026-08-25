@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
 
@@ -122,14 +123,7 @@ func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		found := false
-		for _, pid := range rule.ProjectIDs {
-			if pid == tokenProjID {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(rule.ProjectIDs, tokenProjID) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

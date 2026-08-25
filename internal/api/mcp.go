@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -434,8 +435,7 @@ func (ro *router) mcpCallTool(ctx context.Context, id any, params json.RawMessag
 		return mcpOK(id, mcpContentError("unknown tool: "+p.Name))
 	}
 
-	var toolErr mcpToolError
-	if errors.As(err, &toolErr) {
+	if toolErr, ok := errors.AsType[mcpToolError](err); ok {
 		return mcpOK(id, mcpContentError(toolErr.msg))
 	}
 	if err != nil {
@@ -593,13 +593,7 @@ func (ro *router) mcpGetIssue(ctx context.Context, args map[string]any) (string,
 
 func (ro *router) mcpListTransactions(ctx context.Context, args map[string]any) (string, error) {
 	projectIDs := mcpProjectIDs(ctx, args)
-	hours := mcpArgInt(args, "hours", 24)
-	if hours < 1 {
-		hours = 1
-	}
-	if hours > 168 {
-		hours = 168
-	}
+	hours := min(max(mcpArgInt(args, "hours", 24), 1), 168)
 	limit := mcpArgLimit(args, "limit", 20, 50)
 
 	summaries, err := storage.ListTransactionSummaries(ctx, ro.pool, projectIDs, hours, 0, "", mcpArgString(args, "name"), "", "")
@@ -692,10 +686,8 @@ func (ro *router) mcpListAlerts(ctx context.Context, args map[string]any) (strin
 // ruleMatchesProjects reports whether an alert rule's project list intersects with the given IDs.
 func ruleMatchesProjects(rule *storage.AlertRule, projectIDs []string) bool {
 	for _, rp := range rule.ProjectIDs {
-		for _, p := range projectIDs {
-			if rp == p {
-				return true
-			}
+		if slices.Contains(projectIDs, rp) {
+			return true
 		}
 	}
 	return false
@@ -819,13 +811,7 @@ func (ro *router) mcpListSpanSummaries(ctx context.Context, args map[string]any)
 	default:
 		return "", mcpToolError{"type must be db, cache, or jobs"}
 	}
-	hours := mcpArgInt(args, "hours", 24)
-	if hours < 1 {
-		hours = 1
-	}
-	if hours > 720 {
-		hours = 720
-	}
+	hours := min(max(mcpArgInt(args, "hours", 24), 1), 720)
 	summaries, err := storage.GetSpanSummaries(ctx, ro.pool, category, mcpProjectIDs(ctx, args), hours, "", "")
 	if err != nil {
 		return "", fmt.Errorf("get span summaries: %w", err)

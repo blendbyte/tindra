@@ -153,7 +153,7 @@ func TestListAlertRules(t *testing.T) {
 	storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "a", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL: strPtr("https://a.example.com"), CooldownMins: 60,
+		WebhookURL: new("https://a.example.com"), CooldownMins: 60,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/alert-rules", nil)
@@ -182,7 +182,7 @@ func TestGetAlertRule(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "get me", Enabled: true,
 		Trigger: "new_or_regressed", Channel: "webhook",
-		WebhookURL: strPtr("https://203.0.113.1/hook"), CooldownMins: 60,
+		WebhookURL: new("https://203.0.113.1/hook"), CooldownMins: 60,
 	})
 
 	req := httptest.NewRequest(http.MethodGet,
@@ -210,7 +210,7 @@ func TestUpdateAlertRule_disable(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "disable me", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL: strPtr("https://203.0.113.1/hook"), CooldownMins: 60,
+		WebhookURL: new("https://203.0.113.1/hook"), CooldownMins: 60,
 	})
 
 	b, _ := json.Marshal(map[string]any{"enabled": false})
@@ -258,7 +258,7 @@ func TestDeleteAlertRule(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "del", Enabled: true,
 		Trigger: "new_or_regressed", Channel: "webhook",
-		WebhookURL: strPtr("https://203.0.113.1/hook"), CooldownMins: 60,
+		WebhookURL: new("https://203.0.113.1/hook"), CooldownMins: 60,
 	})
 
 	req := httptest.NewRequest(http.MethodDelete,
@@ -483,7 +483,7 @@ func TestUpdateAlertRule_switchToDiscord(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "to-discord", Enabled: true,
 		Trigger: "new_or_regressed", Channel: "email",
-		EmailTo: strPtr("x@example.com"), CooldownMins: 60,
+		EmailTo: new("x@example.com"), CooldownMins: 60,
 	})
 
 	b, _ := json.Marshal(map[string]any{
@@ -574,7 +574,7 @@ func TestUpdateAlertRule_switchToTeams(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "to-teams", Enabled: true,
 		Trigger: "new_or_regressed", Channel: "email",
-		EmailTo: strPtr("x@example.com"), CooldownMins: 60,
+		EmailTo: new("x@example.com"), CooldownMins: 60,
 	})
 
 	b, _ := json.Marshal(map[string]any{
@@ -605,7 +605,7 @@ func TestUpdateAlertRule_switchToSlack(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "to-slack", Enabled: true,
 		Trigger: "new_or_regressed", Channel: "email",
-		EmailTo: strPtr("x@example.com"), CooldownMins: 60,
+		EmailTo: new("x@example.com"), CooldownMins: 60,
 	})
 
 	b, _ := json.Marshal(map[string]any{
@@ -670,7 +670,7 @@ func TestUpdateAlertRule_badBody(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "patch me", Enabled: true,
 		Trigger: "new_or_regressed", Channel: "webhook",
-		WebhookURL: strPtr("https://203.0.113.1/hook"), CooldownMins: 60,
+		WebhookURL: new("https://203.0.113.1/hook"), CooldownMins: 60,
 	})
 
 	req := httptest.NewRequest(http.MethodPatch,
@@ -692,7 +692,7 @@ func TestUpdateAlertRule_validationFailAfterPatch(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "validate me", Enabled: true,
 		Trigger: "new_or_regressed", Channel: "webhook",
-		WebhookURL: strPtr("https://203.0.113.1/hook"), CooldownMins: 60,
+		WebhookURL: new("https://203.0.113.1/hook"), CooldownMins: 60,
 	})
 
 	// Patch trigger to "event_count" without providing threshold/window_mins → validation fails
@@ -732,7 +732,7 @@ func TestUpdateAlertRule_allPatchFields(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "full-patch", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL: strPtr("https://orig.example.com"), CooldownMins: 60,
+		WebhookURL: new("https://orig.example.com"), CooldownMins: 60,
 	})
 
 	threshold := 100
@@ -775,8 +775,6 @@ func TestUpdateAlertRule_allPatchFields(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string { return &s }
-
 func TestGetAlertRule_bearerTokenWrongProject(t *testing.T) {
 	truncateAlertRules(t)
 	truncateTokens(t)
@@ -792,7 +790,7 @@ func TestGetAlertRule_bearerTokenWrongProject(t *testing.T) {
 		Enabled:      true,
 		Trigger:      "new_issue",
 		Channel:      "webhook",
-		WebhookURL:   strPtr("https://203.0.113.1/hook"),
+		WebhookURL:   new("https://203.0.113.1/hook"),
 		CooldownMins: 60,
 	})
 	if err != nil {

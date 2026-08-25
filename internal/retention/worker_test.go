@@ -714,7 +714,7 @@ func TestWorker_purgesOldAlertFirings(t *testing.T) {
 	}
 
 	// Insert 1005 firings
-	for i := 0; i < 1005; i++ {
+	for range 1005 {
 		testPool.Exec(ctx, `
 			INSERT INTO alert_firings (rule_id, trigger, channel, status, attempt)
 			VALUES ($1, 'new_issue', 'webhook', 'success', 1)`, rule.ID)
@@ -745,7 +745,7 @@ func TestWorker_doesNotPurgeWhenUnder1000(t *testing.T) {
 		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
 	})
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		testPool.Exec(ctx, `
 			INSERT INTO alert_firings (rule_id, trigger, channel, status, attempt)
 			VALUES ($1, 'new_issue', 'webhook', 'success', 1)`, rule.ID)

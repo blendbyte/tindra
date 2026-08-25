@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/blendbyte/tindra/actions/workflows/ci.yml"><img src="https://github.com/blendbyte/tindra/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://codecov.io/gh/blendbyte/tindra"><img src="https://codecov.io/gh/blendbyte/tindra/branch/main/graph/badge.svg" alt="Coverage"></a>
-  <a href="https://go.dev/dl/"><img src="https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white" alt="Go"></a>
+  <a href="https://go.dev/dl/"><img src="https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white" alt="Go"></a>
   <a href="https://github.com/blendbyte/tindra/pkgs/container/tindra"><img src="https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
   <a href="https://github.com/blendbyte/tindra/releases"><img src="https://img.shields.io/github/v/release/blendbyte/tindra" alt="Release"></a>
   <a href="https://www.elastic.co/licensing/elastic-license"><img src="https://img.shields.io/badge/license-ELv2-blue" alt="License: ELv2"></a>

@@ -1164,7 +1164,7 @@ func TestGetLatestEventGlobal_withPositiveOffset(t *testing.T) {
 		testProject.ID, "fp-gleg-offset-cov5", "GLEG Offset Cov5", "error", "error", "", "", time.Now().UTC())
 
 	// Insert 2 events.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		testPool.Exec(context.Background(), `
 			INSERT INTO events (project_id, issue_id, payload, fingerprint, timestamp, received_at)
 			VALUES ($1, $2, '{"level":"error"}'::jsonb, 'fp-gleg-offset-cov5', NOW(), NOW())
@@ -1193,7 +1193,7 @@ func TestGetIssueTrace_positiveOffset(t *testing.T) {
 		"error", "error", "", "", time.Now().UTC())
 
 	// Insert 2 events.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		testPool.Exec(context.Background(), `
 			INSERT INTO events (project_id, issue_id, payload, fingerprint, timestamp, received_at)
 			VALUES ($1, $2, '{"level":"error"}'::jsonb, 'fp-trace-pos-offset-cov5', NOW(), NOW())

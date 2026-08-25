@@ -284,13 +284,6 @@ func TestDeleteAPITokenByID_ignoredProjectBoundary(t *testing.T) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // --- Writable field ---
 
 func TestCreateAPIToken_writable_true(t *testing.T) {

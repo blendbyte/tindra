@@ -886,7 +886,7 @@ func TestListUptimeChecks_withLimit(t *testing.T) {
 	m := seedUptimeMonitor(t)
 
 	// Insert 3 checks
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		testPool.Exec(context.Background(), `UPDATE uptime_monitors SET next_check_at = NOW() - INTERVAL '1 second' WHERE id=$1`, m.ID)
 		code := 200
 		ms := 10

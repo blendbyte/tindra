@@ -128,7 +128,7 @@ func TestUserDigestSlot_deterministic(t *testing.T) {
 
 func TestUserDigestSlot_distributes(t *testing.T) {
 	seen := make(map[int]bool)
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		id := fmt.Sprintf("user-%d", i)
 		seen[userDigestSlot(id)] = true
 	}

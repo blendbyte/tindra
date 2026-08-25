@@ -42,8 +42,7 @@ func TestGrouper_createsIssueForUngroupedEvent(t *testing.T) {
 
 	g := issues.NewGrouper(testPool)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go g.Run(ctx)
 
 	var issueList []*storage.Issue
@@ -80,8 +79,7 @@ func TestGrouper_groupsSameFingerprint(t *testing.T) {
 
 	g := issues.NewGrouper(testPool)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go g.Run(ctx)
 
 	// Poll until both events are grouped or we time out. The grouper ticks at
@@ -117,8 +115,7 @@ func TestGrouper_separateFingerprints(t *testing.T) {
 
 	g := issues.NewGrouper(testPool)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go g.Run(ctx)
 
 	var issueList []*storage.Issue
@@ -149,8 +146,7 @@ func TestGrouper_defaultsLevelToError(t *testing.T) {
 
 	g := issues.NewGrouper(testPool)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go g.Run(ctx)
 
 	var issueList []*storage.Issue
@@ -179,11 +175,10 @@ func TestGrouper_setsEventIssueID(t *testing.T) {
 
 	g := issues.NewGrouper(testPool)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go g.Run(ctx)
 
-	var issueID interface{}
+	var issueID any
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
@@ -222,8 +217,7 @@ func TestGrouper_storesImplicitTags(t *testing.T) {
 	insertRawEvent(t, payload)
 
 	g := issues.NewGrouper(testPool)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go g.Run(ctx)
 
 	var issueList []*storage.Issue
@@ -296,8 +290,7 @@ func TestGrouper_regressionDetected(t *testing.T) {
 	insertRawEvent(t, payload)
 
 	g := issues.NewGrouper(testPool)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go g.Run(ctx)
 
 	// Wait for the initial issue to be created.
