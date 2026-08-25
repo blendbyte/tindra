@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,8 +15,16 @@ import (
 // blobs. Compression happens on the request goroutine so that a full buffer
 // holds tens of MB rather than the gigabytes raw sample data would occupy.
 type ProfileBuffer struct {
-	ch chan BufferedProfile
+	ch    chan BufferedProfile
+	bytes atomic.Int64
 }
+
+// maxQueuedProfileBytes bounds the queue by size as well as by length. A
+// profile is variable and can be orders of magnitude larger than the typical
+// one, so a length alone promises nothing about memory: PROFILE_BUFFER_SIZE
+// large profiles would be gigabytes if the writer stalls. Whichever limit is
+// reached first applies.
+const maxQueuedProfileBytes = 128 << 20
 
 // NewProfileBuffer sizes the queue. Profiles are far larger than events, so
 // this is configured well below INGEST_BUFFER_SIZE.
@@ -23,15 +32,25 @@ func NewProfileBuffer(size int) *ProfileBuffer {
 	return &ProfileBuffer{ch: make(chan BufferedProfile, size)}
 }
 
-// Push queues a profile, reporting false when the buffer is full.
+// Push queues a profile, reporting false when the buffer is full by either
+// measure. Callers treat a refusal as "drop this profile", so a slow writer
+// costs profiles rather than memory.
 func (b *ProfileBuffer) Push(p BufferedProfile) bool {
+	size := int64(p.SizeBytes())
+	if b.bytes.Load()+size > maxQueuedProfileBytes {
+		return false
+	}
 	select {
 	case b.ch <- p:
+		b.bytes.Add(size)
 		return true
 	default:
 		return false
 	}
 }
+
+// QueuedBytes is the size currently held in the queue.
+func (b *ProfileBuffer) QueuedBytes() int64 { return b.bytes.Load() }
 
 // Run is the batch writer loop for profiles. Call in a dedicated goroutine.
 func (b *ProfileBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
@@ -48,6 +67,9 @@ func (b *ProfileBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 			return
 		}
 		writeProfileBatch(ctx, pool, batch)
+		for _, p := range batch {
+			b.bytes.Add(-int64(p.SizeBytes()))
+		}
 		batch = batch[:0]
 	}
 

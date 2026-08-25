@@ -28,9 +28,14 @@ const (
 	// such a body mid-item, failing the parse for the whole envelope and
 	// discarding the transaction along with the profile.
 	maxGzipBodyBytes = 20 * 1024 * 1024
-	maxFieldLen      = 512
-	maxDescLen       = 2048
-	maxSpans         = 500
+
+	// Projects with profiling switched off keep the cap this had before
+	// profiles existed. Nothing else an SDK sends comes close to it, so there
+	// is no reason to let them force twenty times the allocation per request.
+	maxGzipBodyBytesNoProfiles = 1 * 1024 * 1024
+	maxFieldLen                = 512
+	maxDescLen                 = 2048
+	maxSpans                   = 500
 )
 
 // limitedReader reads at most a fixed number of bytes and records whether that
@@ -128,7 +133,11 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer gz.Close()
-		sizeLimit = newLimitedReader(gz, maxGzipBodyBytes)
+		gzipCap := int64(maxGzipBodyBytes)
+		if !project.ProfilingEnabled {
+			gzipCap = maxGzipBodyBytesNoProfiles
+		}
+		sizeLimit = newLimitedReader(gz, gzipCap)
 		body = sizeLimit
 	}
 
@@ -455,11 +464,22 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 
 // traceDataString reads one value out of the free-form trace data bag.
 //
+// Anything that is not an object of values is simply absent as far as this is
+// concerned. Nothing here is worth failing a transaction over, which is what
+// decoding the bag as part of the surrounding struct would do.
+//
 // A numeric thread id is coerced rather than dropped: ingest.flexString does
 // the same on the profile side, so the two would otherwise fail to match for
 // any SDK that sends thread.id unquoted, and the chunk would be folded across
 // every thread instead of one.
-func traceDataString(data map[string]any, key string) string {
+func traceDataString(raw json.RawMessage, key string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return ""
+	}
 	switch v := data[key].(type) {
 	case string:
 		return v
@@ -487,11 +507,12 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 				// Continuous profiling puts the sampled thread here, which is
 				// what selects one thread's samples out of a chunk.
 				//
-				// Decoded loosely on purpose: this is a free-form bag and SDKs
-				// mix numbers and booleans in alongside the strings. A typed map
-				// fails on the first number, and the error path below throws the
-				// entire transaction away.
-				Data map[string]any `json:"data"`
+				// Held raw and decoded separately. This is a free-form bag: SDKs
+				// mix numbers and booleans in with the strings, and PHP renders
+				// an empty one as [] rather than {}. Decoding it inline means any
+				// shape we did not anticipate fails the whole struct, and the
+				// error path below throws the entire transaction away.
+				Data json.RawMessage `json:"data"`
 			} `json:"trace"`
 			Profile struct {
 				ProfilerID string `json:"profiler_id"`

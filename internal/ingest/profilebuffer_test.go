@@ -385,3 +385,58 @@ func TestProfileBuffer_drainsAQueueOnShutdown(t *testing.T) {
 		t.Errorf("drained %d of %d queued profiles", count, n)
 	}
 }
+
+// A queue bounded only by length promises nothing about memory: profiles vary
+// by orders of magnitude, so the byte ceiling is what actually holds.
+func TestProfileBuffer_boundsQueuedBytesNotJustRows(t *testing.T) {
+	buf := ingest.NewProfileBuffer(10_000)
+
+	big := stubProfile(t, "v1_php_laravel.json", "profile")
+	// 16 MB apiece: eight fit inside the 128 MB ceiling, the ninth does not,
+	// even though the queue is nowhere near its length limit.
+	big.Data = make([]byte, 16<<20)
+
+	accepted := 0
+	for i := range 12 {
+		c := big
+		c.ChunkID = fmt.Sprintf("big-%02d", i)
+		if buf.Push(c) {
+			accepted++
+		}
+	}
+
+	if accepted != 8 {
+		t.Errorf("accepted %d profiles, want 8 before the byte ceiling refused the rest", accepted)
+	}
+	if q := buf.QueuedBytes(); q > 128<<20 {
+		t.Errorf("queued %d bytes, past the ceiling", q)
+	}
+}
+
+// Flushing has to release the reservation, or the queue jams shut after the
+// first burst.
+func TestProfileBuffer_releasesBytesOnFlush(t *testing.T) {
+	truncateProfiles(t)
+
+	buf := ingest.NewProfileBuffer(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go buf.Run(ctx, testPool)
+
+	base := stubProfile(t, "v2_python_chunk.json", "profile_chunk")
+	for i := range 5 {
+		c := base
+		c.ChunkID = fmt.Sprintf("release-%02d", i)
+		if !buf.Push(c) {
+			t.Fatalf("push %d failed", i)
+		}
+	}
+	if buf.QueuedBytes() == 0 {
+		t.Fatal("expected the queue to be holding bytes")
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	if q := buf.QueuedBytes(); q != 0 {
+		t.Errorf("queued bytes = %d after the flush, want 0", q)
+	}
+}

@@ -1209,3 +1209,96 @@ func TestHandleGetTransactionFlameGraph_tokenScopedToAnotherProject(t *testing.T
 		t.Errorf("expected 404 for a token scoped to another project, got %d", rec.Code)
 	}
 }
+
+// contexts.trace.data is free-form, and an SDK can render it in shapes a typed
+// decode rejects. Any of them failing the surrounding struct would discard the
+// whole transaction, which is the regression ac95b1c already fixed once.
+func TestHandleEnvelope_oddlyShapedTraceData(t *testing.T) {
+	shapes := map[string]string{
+		// PHP renders an empty associative array as a JSON array.
+		"empty array":  `[]`,
+		"null":         `null`,
+		"a string":     `"nope"`,
+		"a number":     `7`,
+		"nested value": `{"thread.id":"8412331008","extra":{"deep":[1,2,3]}}`,
+	}
+
+	for name, data := range shapes {
+		t.Run(name, func(t *testing.T) {
+			buf := ingest.NewBuffer(10)
+			txBuf := ingest.NewTransactionBuffer(10)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go txBuf.Run(ctx, testPool)
+
+			txName := "/shape-" + strings.ReplaceAll(name, " ", "-")
+			payload := fmt.Sprintf(`{"event_id":"440e8400e29b41d4a716446655440000","transaction":%q,`+
+				`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",`+
+				`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok",`+
+				`"data":%s}}}`, txName, data)
+			body := `{"event_id":"550e8400e29b41d4a716446655440000"}` + "\n" +
+				fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+			h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+				0, 0, 0, 0, 0, 0, nil, false, true, nil)
+			if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rec.Code)
+			}
+			time.Sleep(400 * time.Millisecond)
+
+			var count int
+			if err := testPool.QueryRow(ctx,
+				"SELECT COUNT(*) FROM transactions WHERE project_id = $1 AND transaction = $2",
+				testProject.ID, txName).Scan(&count); err != nil {
+				t.Fatalf("count: %v", err)
+			}
+			if count != 1 {
+				t.Errorf("the transaction was dropped for trace data shaped as %s", data)
+			}
+		})
+	}
+}
+
+// A project with profiling off has no reason to be able to force twenty times
+// the allocation per request, so it keeps the cap this had before profiles.
+func TestHandleEnvelope_decompressedCapIsScopedToProfilingProjects(t *testing.T) {
+	ctx := context.Background()
+	restore := func(on bool) {
+		if _, err := testPool.Exec(ctx,
+			"UPDATE projects SET profiling_enabled = $2 WHERE id = $1", testProject.ID, on); err != nil {
+			t.Fatalf("set profiling_enabled: %v", err)
+		}
+	}
+	t.Cleanup(func() { restore(true) })
+
+	// ~4 MB decompressed: over the 1 MB no-profiling cap, under the 20 MB one.
+	payload := fmt.Sprintf(`{"version":"1","platform":"php","padding":%q}`,
+		strings.Repeat("frame", 800_000))
+	body := `{"event_id":"660e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"profile","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+	send := func(t *testing.T) int {
+		t.Helper()
+		var gz bytes.Buffer
+		w := gzip.NewWriter(&gz)
+		_, _ = w.Write([]byte(body))
+		w.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
+		req.Header.Set("Content-Encoding", "gzip")
+		req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+		rec := httptest.NewRecorder()
+		newProfileHandler(ingest.NewProfileBuffer(10)).ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	restore(true)
+	if code := send(t); code != http.StatusOK {
+		t.Errorf("profiling on: expected 200, got %d", code)
+	}
+
+	restore(false)
+	if code := send(t); code != http.StatusRequestEntityTooLarge {
+		t.Errorf("profiling off: expected 413 at the smaller cap, got %d", code)
+	}
+}

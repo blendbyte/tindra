@@ -208,5 +208,8 @@ func ScrubProfile(p *Profile, cfg ScrubConfig) {
 		f.Filename = scrubString(f.Filename, regexps)
 		f.Function = scrubString(f.Function, regexps)
 		f.Module = scrubString(f.Module, regexps)
+		// Package is the dynamic library path on native platforms and the
+		// container on Java, so it carries the same deploy paths as AbsPath.
+		f.Package = scrubString(f.Package, regexps)
 	}
 }
