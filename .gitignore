@@ -6,6 +6,6 @@ web/package-lock.json
 web/coverage/
 internal/ui/dist/
 /bench-*/
-seed
+/seed
 /tindra
 coverage.out

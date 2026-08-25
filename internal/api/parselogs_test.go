@@ -203,7 +203,7 @@ func TestParseLogs_missingTimestampDefaultsToNow(t *testing.T) {
 
 func TestParseLogs_capsRecordsPerItem(t *testing.T) {
 	var records []string
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		records = append(records, fmt.Sprintf(`{"level":"info","body":"log %d"}`, i))
 	}
 	payload := `{"version":2,"items":[` + strings.Join(records, ",") + `]}`

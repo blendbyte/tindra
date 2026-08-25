@@ -271,17 +271,11 @@ func (s *Store) fetchContextLine(ctx context.Context, rawURL string, lineno, col
 
 	// Centre the window around colno, clamped to line bounds.
 	half := ctxLineMax / 2
-	start := colno - half
-	if start < 0 {
-		start = 0
-	}
+	start := max(colno-half, 0)
 	end := start + ctxLineMax
 	if end > len(line) {
 		end = len(line)
-		start = end - ctxLineMax
-		if start < 0 {
-			start = 0
-		}
+		start = max(end-ctxLineMax, 0)
 	}
 
 	snippet := line[start:end]

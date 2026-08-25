@@ -46,15 +46,13 @@ func emailRule(projectID string) *storage.AlertRule {
 		Name:         "test email",
 		Enabled:      true,
 		Trigger:      "event_count",
-		Threshold:    intPtr(100),
-		WindowMins:   intPtr(5),
+		Threshold:    new(100),
+		WindowMins:   new(5),
 		Channel:      "email",
 		EmailTo:      &to,
 		CooldownMins: 30,
 	}
 }
-
-func intPtr(n int) *int { return &n }
 
 func TestCreateAlertRule_webhook(t *testing.T) {
 	p := setupProjectForAlerts(t)

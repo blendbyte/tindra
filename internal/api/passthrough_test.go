@@ -61,8 +61,7 @@ func TestHandleEnvelope_passthroughForwards(t *testing.T) {
 	t.Cleanup(func() { setPassthroughDSN(t, nil) })
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"error","message":"pt-test"}`
@@ -142,8 +141,7 @@ func TestHandleEnvelope_passthroughUpstreamFailDoesNotAffectIngest(t *testing.T)
 	t.Cleanup(func() { setPassthroughDSN(t, nil) })
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"error"}`

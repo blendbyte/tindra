@@ -31,7 +31,7 @@ func TestForwardEnvelope_sendsRawBytesWithCorrectHeaders(t *testing.T) {
 		gotBody        []byte
 	)
 	done := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotAuth = r.Header.Get("X-Sentry-Auth")
 		gotContentType = r.Header.Get("Content-Type")
@@ -39,10 +39,11 @@ func TestForwardEnvelope_sendsRawBytesWithCorrectHeaders(t *testing.T) {
 		close(done)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
+	// srv.URL is only populated once the server starts, which Client() does.
+	client := srv.Client()
 	dsn := buildDSN(srv, "mykey", "proj1")
-	ingest.ForwardEnvelope(&http.Client{Timeout: 5 * time.Second}, dsn, raw)
+	ingest.ForwardEnvelope(client, dsn, raw)
 
 	select {
 	case <-done:
@@ -82,14 +83,13 @@ func TestForwardEnvelope_sendsRawBytesWithCorrectHeaders(t *testing.T) {
 func TestForwardEnvelope_postsToCorrectEndpoint(t *testing.T) {
 	var gotPath string
 	done := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		close(done)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
-	ingest.ForwardEnvelope(&http.Client{Timeout: 5 * time.Second}, buildDSN(srv, "k", "42"), []byte("{}"))
+	ingest.ForwardEnvelope(srv.Client(), buildDSN(srv, "k", "42"), []byte("{}"))
 
 	select {
 	case <-done:
@@ -104,13 +104,12 @@ func TestForwardEnvelope_postsToCorrectEndpoint(t *testing.T) {
 
 func TestForwardEnvelope_upstreamErrorDoesNotPanic(t *testing.T) {
 	done := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(done)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer srv.Close()
 
-	ingest.ForwardEnvelope(&http.Client{Timeout: 5 * time.Second}, buildDSN(srv, "k", "123"), []byte("{}"))
+	ingest.ForwardEnvelope(srv.Client(), buildDSN(srv, "k", "123"), []byte("{}"))
 
 	select {
 	case <-done:

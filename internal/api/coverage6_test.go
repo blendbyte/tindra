@@ -311,7 +311,7 @@ func TestUpdateAlertRule_clearProjectIDsCov6(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "clear-proj-ids-cov6", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL: strPtr("https://example.com/wh"), CooldownMins: 60,
+		WebhookURL: new("https://example.com/wh"), CooldownMins: 60,
 	})
 
 	b, _ := json.Marshal(map[string]any{"project_ids": []string{}})
@@ -1409,7 +1409,7 @@ func TestTestAlertRule_evaluatorNilCov6(t *testing.T) {
 		Enabled:      true,
 		Trigger:      "new_issue",
 		Channel:      "webhook",
-		WebhookURL:   strPtr("https://example.com/wh"),
+		WebhookURL:   new("https://example.com/wh"),
 		CooldownMins: 60,
 	})
 	if err != nil {

@@ -349,11 +349,10 @@ func TestFireSlack_uptimeTriggerLabels(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	for _, tt := range tests {
 		t.Run(tt.trigger, func(t *testing.T) {
@@ -383,11 +382,10 @@ func TestFireDiscord_uptimeTriggerLabels(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	for _, tt := range tests {
 		t.Run(tt.trigger, func(t *testing.T) {
@@ -421,11 +419,10 @@ func TestFireSlack_uptimeDown_monitorDetails(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -453,11 +450,10 @@ func TestFireSlack_uptimeRecovered_monitorDetails(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -488,11 +484,10 @@ func TestFireSlack_uptimeDown_historyEmoji(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -522,11 +517,10 @@ func TestFireDiscord_uptimeDown_monitorDetails(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -553,11 +547,10 @@ func TestFireDiscord_uptimeRecovered_greenColor(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -592,11 +585,10 @@ func TestFireTeams_uptimeDown_monitorDetails(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL
@@ -627,11 +619,10 @@ func TestFireTeams_uptimeRecovered_goodColor(t *testing.T) {
 	}
 
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
 
 	e := &Evaluator{pool: testPool, client: srv.Client()}
 	url := srv.URL

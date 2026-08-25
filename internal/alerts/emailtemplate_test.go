@@ -784,17 +784,3 @@ func TestRenderAlertEmail_cronError(t *testing.T) {
 		t.Error("HTML should contain monitor name")
 	}
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

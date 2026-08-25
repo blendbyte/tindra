@@ -82,8 +82,7 @@ func TestHandleEnvelope_validEvent(t *testing.T) {
 	truncateEvents(t)
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"error","message":"test"}`
@@ -116,8 +115,7 @@ func TestHandleEnvelope_deduplicatesOnRetry(t *testing.T) {
 	truncateEvents(t)
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"error"}`
@@ -202,8 +200,7 @@ func TestHandleEnvelope_gzip(t *testing.T) {
 	truncateEvents(t)
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"info"}`

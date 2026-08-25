@@ -42,8 +42,7 @@ func TestBuffer_Run_drainOnCancel(t *testing.T) {
 }
 
 func TestBuffer_Run_tickerFlush(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	eventID := "ticker-evt-1"
 	buf := ingest.NewBuffer(10)
@@ -79,7 +78,7 @@ func TestBuffer_Run_deduplicates(t *testing.T) {
 	eventID := "dedup-evt-1"
 	buf := ingest.NewBuffer(10)
 	// Push the same event_id twice
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		buf.Push(ingest.BufferedEvent{
 			ProjectID: testProject.ID,
 			EventID:   &eventID,

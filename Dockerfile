@@ -7,7 +7,7 @@ COPY web/ ./
 RUN bun run build
 
 # Stage 2: Compile Go binary (cross-compile on build host)
-FROM --platform=$BUILDPLATFORM golang:1.26.3-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.0-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

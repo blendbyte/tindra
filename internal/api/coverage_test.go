@@ -39,8 +39,7 @@ func TestHandleEnvelope_eventNoTimestamp(t *testing.T) {
 	truncateEvents(t)
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	// No "timestamp" field - parseTimestamp falls back to time.Now()
@@ -308,8 +307,7 @@ func TestHandleEnvelope_sentryKeyQueryParam(t *testing.T) {
 	truncateEvents(t)
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"error","message":"qp"}`
@@ -330,8 +328,7 @@ func TestHandleEnvelope_authorizationHeader(t *testing.T) {
 	truncateEvents(t)
 
 	buf := ingest.NewBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 
 	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"error","message":"authz"}`
@@ -630,8 +627,7 @@ func TestHandleEnvelope_transactionEmptyName(t *testing.T) {
 func TestHandleEnvelope_transactionEmptyStatus(t *testing.T) {
 	buf := ingest.NewBuffer(100)
 	txBuf := ingest.NewTransactionBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go txBuf.Run(ctx, testPool)
 
 	// Status omitted - parseTransaction should default to "ok".
@@ -657,8 +653,7 @@ func TestHandleEnvelope_transactionEmptyStatus(t *testing.T) {
 func TestHandleEnvelope_transactionNegativeDuration(t *testing.T) {
 	buf := ingest.NewBuffer(100)
 	txBuf := ingest.NewTransactionBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go txBuf.Run(ctx, testPool)
 
 	// end before start → durationMs < 0 → clamped to 0

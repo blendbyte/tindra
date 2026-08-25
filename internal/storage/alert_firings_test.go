@@ -114,7 +114,7 @@ func TestListAlertFirings_orderedNewestFirst(t *testing.T) {
 	rule := setupRuleForFirings(t)
 	truncateFirings(t)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f := &storage.AlertFiring{RuleID: rule.ID, Trigger: "new_issue", Channel: "webhook", Status: "success", Attempt: 1}
 		storage.CreateAlertFiring(context.Background(), testPool, f)
 	}
@@ -137,7 +137,7 @@ func TestListAlertFirings_limit(t *testing.T) {
 	rule := setupRuleForFirings(t)
 	truncateFirings(t)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		f := &storage.AlertFiring{RuleID: rule.ID, Trigger: "new_issue", Channel: "webhook", Status: "success", Attempt: 1}
 		storage.CreateAlertFiring(context.Background(), testPool, f)
 	}

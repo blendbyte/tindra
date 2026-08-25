@@ -18,8 +18,8 @@ license) cannot be accepted.
 1. Open an issue first for anything beyond trivial fixes - alignment on approach before
    code saves everyone time.
 2. Fork the repo, create a branch, submit a PR against `main`.
-3. Follow the conventions in [CLAUDE.md](CLAUDE.md): conventional commits, no ORM, no
-   new dependencies without discussion, tests ship with the code.
+3. Follow the project conventions: conventional commits, no ORM, no new
+   dependencies without discussion, tests ship with the code.
 4. Check the PR template - the CLA checkbox must be ticked before a PR can be merged.
 
 ## Questions

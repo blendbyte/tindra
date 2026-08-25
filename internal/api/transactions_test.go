@@ -276,8 +276,7 @@ func TestHandleEnvelope_transactionItem(t *testing.T) {
 
 	buf := ingest.NewBuffer(100)
 	txBuf := ingest.NewTransactionBuffer(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go buf.Run(ctx, testPool)
 	go txBuf.Run(ctx, testPool)
 

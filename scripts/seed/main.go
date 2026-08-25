@@ -37,6 +37,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -223,8 +224,6 @@ func weightedHour() int {
 	}
 	return 12
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 func truncate(s string, max int) string {
 	if len(s) <= max {
@@ -498,7 +497,7 @@ var laravelIssues = []issueTemplate{
 		level:       "error",
 		platform:    "php",
 		transaction: "POST /api/auth/register",
-		handled:     boolPtr(false),
+		handled:     new(false),
 		stacktrace: []stackFrame{
 			{
 				function: "runQueryCallback",
@@ -736,7 +735,7 @@ var laravelIssues = []issueTemplate{
 		level:       "error",
 		platform:    "php",
 		transaction: "POST /api/subscriptions",
-		handled:     boolPtr(false),
+		handled:     new(false),
 		hasUser:     true,
 		stacktrace: []stackFrame{
 			{
@@ -804,7 +803,7 @@ var laravelIssues = []issueTemplate{
 		level:       "fatal",
 		platform:    "php",
 		transaction: "queue:work --queue=sync",
-		handled:     boolPtr(false),
+		handled:     new(false),
 		stacktrace: []stackFrame{
 			{
 				function: "connect",
@@ -1232,7 +1231,7 @@ var goIssues = []issueTemplate{
 		platform:    "go",
 		transaction: "POST /api/alerts",
 		fingerprint: []string{"go-panic", "index-out-of-range", "alerts-engine"},
-		handled:     boolPtr(false),
+		handled:     new(false),
 		stacktrace: []stackFrame{
 			{
 				function:    "evaluateConditions",
@@ -1624,7 +1623,7 @@ var pythonIssues = []issueTemplate{
 		level:       "fatal",
 		platform:    "python",
 		transaction: "celery:app.tasks.send_invoice_pdf",
-		handled:     boolPtr(false),
+		handled:     new(false),
 		stacktrace: []stackFrame{
 			{"retry", "celery.app.task", "celery/app/task.py", 702, "", nil, nil},
 			{
@@ -1744,7 +1743,7 @@ var jsIssues = []issueTemplate{
 		level:       "error",
 		platform:    "javascript",
 		transaction: "/dashboard",
-		handled:     boolPtr(false),
+		handled:     new(false),
 		hasUser:     true,
 		stacktrace: []stackFrame{
 			{
@@ -1795,7 +1794,7 @@ var jsIssues = []issueTemplate{
 		level:       "error",
 		platform:    "javascript",
 		transaction: "worker.processQueue",
-		handled:     boolPtr(false),
+		handled:     new(false),
 		stacktrace: []stackFrame{
 			{"createConnectionError", "ioredis/built/utils", "node_modules/ioredis/built/utils/index.js", 141, "", nil, nil},
 			{"Socket.<anonymous>", "ioredis/built/connectors", "node_modules/ioredis/built/connectors/StandaloneConnector.js", 44, "", nil, nil},
@@ -1817,7 +1816,7 @@ var jsIssues = []issueTemplate{
 		platform:    "javascript",
 		transaction: "/issues/:id",
 		fingerprint: []string{"chunk-load-error", "IssueDetail"},
-		handled:     boolPtr(false),
+		handled:     new(false),
 		stacktrace: []stackFrame{
 			{"__webpack_require__.f.j", "webpack/runtime", "webpack/runtime/ensure chunk.js", 22, "", nil, nil},
 			{"Promise.then.then", "runtime-core", "node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js", 5511, "", nil, nil},
@@ -2146,7 +2145,7 @@ func buildTransaction(tmpl txTemplate, ts time.Time, releases, envs []string) ma
 	spans := buildSpanNodes(tmpl.spans, rootSpanID, ts)
 
 	status := "ok"
-	if rand.Float64() < 0.05 { //nolint:gosec - 5% chance of errored transaction
+	if rand.Float64() < 0.05 { // 5% chance of errored transaction
 		status = "internal_error"
 	}
 
@@ -2477,20 +2476,14 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 				insertCheck("down", downCode, nil, &errStr, checkedAt)
 			} else {
 				c := 200
-				r := spec.baseRespMs + rand.Intn(40) - 20 //nolint:gosec
-				if r < 10 {
-					r = 10
-				}
+				r := max(spec.baseRespMs+rand.Intn(40)-20, 10) //nolint:gosec
 				insertCheck("up", &c, &r, nil, checkedAt)
 			}
 		}
 
 		// Phase 2: fresh probe to make the monitor look live.
 		if spec.monitorStatus == "active" {
-			freshAgo := time.Duration(spec.intervalSecs) * time.Second
-			if freshAgo > 2*time.Minute {
-				freshAgo = 2 * time.Minute
-			}
+			freshAgo := min(time.Duration(spec.intervalSecs)*time.Second, 2*time.Minute)
 			freshAt := now.Add(-freshAgo)
 			if spec.forceDown {
 				code := 503
@@ -2498,10 +2491,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 				insertCheck("down", &code, nil, &errStr, freshAt)
 			} else {
 				c := 200
-				r := spec.baseRespMs + rand.Intn(20) - 10 //nolint:gosec
-				if r < 10 {
-					r = 10
-				}
+				r := max(spec.baseRespMs+rand.Intn(20)-10, 10) //nolint:gosec
 				insertCheck("up", &c, &r, nil, freshAt)
 			}
 		}
@@ -2559,7 +2549,7 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
 			description: "multiple ok runs → state ok",
 			seed: func(id string) {
 				// Several historical ok runs.
-				for i := 0; i < 5; i++ {
+				for i := range 5 {
 					dur := 8.5 + float64(i)*0.3
 					if err := cronPing(target.baseURL, id, "ok", dur); err != nil {
 						fmt.Printf("    FAIL ping: %v\n", err)
@@ -2573,7 +2563,7 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
 			description: "last run errored → state error",
 			seed: func(id string) {
 				// A few ok runs, then an error.
-				for i := 0; i < 3; i++ {
+				for range 3 {
 					cronPing(target.baseURL, id, "ok", 1.2) //nolint:errcheck
 					time.Sleep(50 * time.Millisecond)
 				}
@@ -2585,7 +2575,7 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
 			description: "currently running → state in_progress",
 			seed: func(id string) {
 				// A few completed runs first.
-				for i := 0; i < 2; i++ {
+				for range 2 {
 					cronPing(target.baseURL, id, "ok", 0.8) //nolint:errcheck
 					time.Sleep(50 * time.Millisecond)
 				}
@@ -2603,7 +2593,7 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
 			description: "recent ok run → state ok",
 			seed: func(id string) {
 				// Mix of start/finish and simple pings.
-				for i := 0; i < 3; i++ {
+				for range 3 {
 					checkinID, err := cronCheckinStart(target.baseURL, id)
 					if err != nil {
 						cronPing(target.baseURL, id, "ok", 2.1) //nolint:errcheck
@@ -2630,7 +2620,7 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
 			name: "Thumbnail generator", schedule: "*/30 * * * *", graceSecs: 180,
 			description: "start/finish cycle history → state ok",
 			seed: func(id string) {
-				for i := 0; i < 4; i++ {
+				for i := range 4 {
 					checkinID, err := cronCheckinStart(target.baseURL, id)
 					if err != nil {
 						fmt.Printf("    FAIL start: %v\n", err)
@@ -2676,7 +2666,7 @@ func parseSeedSections(s string) (map[string]bool, error) {
 		}
 		return out, nil
 	}
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		part = strings.TrimSpace(strings.ToLower(part))
 		if part == "" {
 			continue
@@ -2685,13 +2675,7 @@ func parseSeedSections(s string) (map[string]bool, error) {
 			out[canonical] = true
 			continue
 		}
-		valid := false
-		for _, v := range canonicalSections {
-			if part == v {
-				valid = true
-				break
-			}
-		}
+		valid := slices.Contains(canonicalSections, part)
 		if !valid {
 			return nil, fmt.Errorf("unknown section %q - valid: %s (or aliases: queries, caches, jobs, browser)",
 				part, strings.Join(canonicalSections, ", "))
@@ -2716,7 +2700,7 @@ func dotenvDBURL() string {
 			if err != nil {
 				continue
 			}
-			for _, line := range strings.Split(string(data), "\n") {
+			for line := range strings.SplitSeq(string(data), "\n") {
 				line = strings.TrimSpace(line)
 				if strings.HasPrefix(line, "#") {
 					continue
@@ -2817,9 +2801,7 @@ func main() {
 
 	deliver := func(label string, payload any, typ string) {
 		sema <- struct{}{} // blocks when all 20 slots are busy
-		deliverWg.Add(1)
-		go func() {
-			defer deliverWg.Done()
+		deliverWg.Go(func() {
 			defer func() { <-sema }()
 			envelope := buildEnvelope([]envelopeItem{{typ: typ, payload: payload}})
 			for {
@@ -2850,7 +2832,7 @@ func main() {
 				mu.Unlock()
 				break
 			}
-		}()
+		})
 	}
 
 	if seed["issues"] {
@@ -2896,10 +2878,7 @@ func main() {
 		}
 
 		fmt.Println("\n=== Fresh transactions (last 5 min) ===")
-		freshCount := 6
-		if len(def.txs) < freshCount {
-			freshCount = len(def.txs)
-		}
+		freshCount := min(len(def.txs), 6)
 		for _, tmpl := range def.txs[:freshCount] {
 			ts := time.Now().UTC().Add(-time.Duration(rand.Intn(5*60)) * time.Second) //nolint:gosec
 			tx := buildTransaction(tmpl, ts, def.releases, def.environments)
@@ -3315,7 +3294,7 @@ func buildLogBatches(releases, environments []string) [][]map[string]any {
 
 func buildFreshLogs(releases, environments []string) []map[string]any {
 	var batch []map[string]any
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		ago := time.Duration(rand.Intn(2*60)) * time.Second //nolint:gosec
 		ts := time.Now().UTC().Add(-ago)
 		level := pickLogLevel()
