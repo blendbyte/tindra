@@ -29,6 +29,7 @@ vi.mock('@/stores/auth', () => ({
 import TransactionDetailView from '../TransactionDetailView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/api/client'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -310,6 +311,41 @@ describe('TransactionDetailView', () => {
       expect(wrapper.text()).toContain('MainThread')
     })
 
+  })
+
+  // The query function itself never runs under a mocked useQuery, so it is
+  // invoked directly from the options the component handed over. A 404 there is
+  // the ordinary case and has to come back as "no profile" rather than an error.
+  describe('flame graph query', () => {
+    function flameQueryFn() {
+      const call = vi.mocked(useQuery).mock.calls
+        .map(c => c[0] as { queryKey?: unknown; queryFn?: () => Promise<unknown> })
+        .find(o => {
+          const key = (o.queryKey as { value?: unknown })?.value
+          return Array.isArray(key) && key.includes('flamegraph')
+        })
+      expect(call?.queryFn, 'no flamegraph query registered').toBeTruthy()
+      return call!.queryFn!
+    }
+
+    it('returns the graph when the endpoint answers', async () => {
+      setupMocks()
+      mount(TransactionDetailView, { global: { stubs } })
+
+      const payload = { sample_count: 5, root: { function: '', total_samples: 5, self_samples: 0 } }
+      vi.mocked(apiFetch).mockResolvedValueOnce(payload)
+      await expect(flameQueryFn()()).resolves.toEqual(payload)
+    })
+
+    // Most transactions were never profiled, so the 404 must not surface as a
+    // failed query and turn the panel into an error state.
+    it('turns a rejection into no profile', async () => {
+      setupMocks()
+      mount(TransactionDetailView, { global: { stubs } })
+
+      vi.mocked(apiFetch).mockRejectedValueOnce(new Error('404 not found'))
+      await expect(flameQueryFn()()).resolves.toBeNull()
+    })
   })
 
   describe('spans error state', () => {

@@ -54,7 +54,7 @@ export function layoutFlame(root: FlameNode | null | undefined, opts: LayoutOpti
   }
 
   if (opts.drawRoot) {
-    walk(root, 0, 0, 1, nodeKey(root) || '<root>')
+    walk(root, 0, 0, 1, nodeKey(root))
     return out
   }
 

@@ -2,6 +2,7 @@ package ingest_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -317,5 +318,70 @@ func TestProfileBuffer_deduplicatesARedeliveredChunk(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("stored %d copies of one chunk, want 1", count)
+	}
+}
+
+// The writer flushes as soon as a batch fills rather than waiting for the
+// ticker, which is what keeps a burst from sitting in memory for 200ms.
+func TestProfileBuffer_flushesOnceTheBatchIsFull(t *testing.T) {
+	truncateProfiles(t)
+
+	buf := ingest.NewProfileBuffer(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go buf.Run(ctx, testPool)
+
+	// More than one full batch, each with its own chunk id so none dedupe away.
+	const n = 25
+	base := stubProfile(t, "v2_python_chunk.json", "profile_chunk")
+	for i := range n {
+		c := base
+		c.ChunkID = fmt.Sprintf("batch-chunk-%02d", i)
+		if !buf.Push(c) {
+			t.Fatalf("push %d failed", i)
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != n {
+		t.Errorf("stored %d of %d profiles", count, n)
+	}
+}
+
+// Anything still queued at shutdown is drained, not dropped.
+func TestProfileBuffer_drainsAQueueOnShutdown(t *testing.T) {
+	truncateProfiles(t)
+
+	buf := ingest.NewProfileBuffer(100)
+	base := stubProfile(t, "v2_python_chunk.json", "profile_chunk")
+	const n = 5
+	for i := range n {
+		c := base
+		c.ChunkID = fmt.Sprintf("drain-chunk-%02d", i)
+		if !buf.Push(c) {
+			t.Fatalf("push %d failed", i)
+		}
+	}
+
+	// Start the writer with a context that is already done, so the only path
+	// that can save these is the drain.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	buf.Run(ctx, testPool)
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != n {
+		t.Errorf("drained %d of %d queued profiles", count, n)
 	}
 }

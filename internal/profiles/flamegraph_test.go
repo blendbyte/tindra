@@ -331,3 +331,124 @@ func TestFold_emptyInput(t *testing.T) {
 		t.Error("expected nil profiles to be skipped")
 	}
 }
+
+// Indices come out of a stored blob, so the guards against a corrupt one are
+// worth pinning: they are the difference between skipping a sample and
+// panicking the request goroutine.
+func TestFold_skipsCorruptIndices(t *testing.T) {
+	t.Run("sample pointing outside the stack table", func(t *testing.T) {
+		p := &ingest.Profile{
+			Frames: []ingest.ProfileFrame{{Function: "main"}},
+			Stacks: [][]int32{{0}},
+			Samples: []ingest.ProfileSample{
+				{ThreadID: "1", StackID: 0, TimestampNs: 100},
+				{ThreadID: "1", StackID: 99, TimestampNs: 200},
+				{ThreadID: "1", StackID: -1, TimestampNs: 300},
+			},
+		}
+		g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+		if g.SampleCount != 1 {
+			t.Errorf("count = %d, want only the one valid sample", g.SampleCount)
+		}
+	})
+
+	// Stacks are leaf first and walked backwards, so a bad index part way in
+	// stops the descent there and keeps the frames nearer the entry point.
+	t.Run("stack pointing outside the frame table", func(t *testing.T) {
+		p := &ingest.Profile{
+			Frames: []ingest.ProfileFrame{{Function: "main"}},
+			Stacks: [][]int32{{99, 0}, {-1, 0}},
+			Samples: []ingest.ProfileSample{
+				{ThreadID: "1", StackID: 0, TimestampNs: 100},
+				{ThreadID: "1", StackID: 1, TimestampNs: 200},
+			},
+		}
+		g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+		if len(g.Root.Children) != 1 || g.Root.Children[0].Function != "main" {
+			t.Errorf("want the frames up to the bad index, got %v", names(g.Root))
+		}
+	})
+
+	// A bad index at the entry-point end leaves nothing to attribute at all.
+	t.Run("stack whose root frame is missing", func(t *testing.T) {
+		p := &ingest.Profile{
+			Frames: []ingest.ProfileFrame{{Function: "main"}},
+			Stacks: [][]int32{{0, 99}},
+			Samples: []ingest.ProfileSample{
+				{ThreadID: "1", StackID: 0, TimestampNs: 100},
+				{ThreadID: "1", StackID: 0, TimestampNs: 200},
+			},
+		}
+		g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+		if len(g.Root.Children) != 0 {
+			t.Errorf("want no tree, got %v", names(g.Root))
+		}
+	})
+}
+
+// Native frames arrive with no name at all, and an unnamed box is useless.
+func TestFold_displayNameFallbacks(t *testing.T) {
+	p := &ingest.Profile{
+		Frames: []ingest.ProfileFrame{
+			{Filename: "worker.rb"},
+			{InstructionAddr: "0x104a1c2f0"},
+			{},
+		},
+		Stacks: [][]int32{{0}, {1}, {2}},
+		Samples: []ingest.ProfileSample{
+			{ThreadID: "1", StackID: 0, TimestampNs: 100},
+			{ThreadID: "1", StackID: 1, TimestampNs: 200},
+			{ThreadID: "1", StackID: 2, TimestampNs: 300},
+			{ThreadID: "1", StackID: 0, TimestampNs: 400},
+		},
+	}
+	g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+
+	got := map[string]bool{}
+	for _, c := range g.Root.Children {
+		got[c.Function] = true
+	}
+	for _, want := range []string{"worker.rb", "0x104a1c2f0", "<unknown>"} {
+		if !got[want] {
+			t.Errorf("missing fallback name %q, have %v", want, names(g.Root))
+		}
+	}
+}
+
+// Every sample sharing one timestamp leaves no positive gap to measure, and a
+// fabricated interval would put wrong millisecond figures on every box.
+func TestFold_reportsNoIntervalWhenEveryGapIsZero(t *testing.T) {
+	p := &ingest.Profile{
+		Frames: []ingest.ProfileFrame{{Function: "main"}},
+		Stacks: [][]int32{{0}},
+		Samples: []ingest.ProfileSample{
+			{ThreadID: "a", StackID: 0, TimestampNs: 500},
+			{ThreadID: "a", StackID: 0, TimestampNs: 500},
+			{ThreadID: "a", StackID: 0, TimestampNs: 500},
+		},
+	}
+	g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+	if g.SampleIntervalNs != 0 {
+		t.Errorf("interval = %d, want 0 rather than an invented figure", g.SampleIntervalNs)
+	}
+}
+
+// Siblings of equal weight fall back to the name so the same profile always
+// renders in the same order.
+func TestFold_ordersEqualSiblingsByName(t *testing.T) {
+	p := &ingest.Profile{
+		Frames: []ingest.ProfileFrame{{Function: "zulu"}, {Function: "alpha"}},
+		Stacks: [][]int32{{0}, {1}},
+		Samples: []ingest.ProfileSample{
+			{ThreadID: "1", StackID: 0, TimestampNs: 100},
+			{ThreadID: "1", StackID: 1, TimestampNs: 200},
+		},
+	}
+	g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+	if len(g.Root.Children) != 2 {
+		t.Fatalf("want 2 children, got %v", names(g.Root))
+	}
+	if g.Root.Children[0].Function != "alpha" {
+		t.Errorf("order = %v, want alpha first on an equal-weight tie", names(g.Root))
+	}
+}

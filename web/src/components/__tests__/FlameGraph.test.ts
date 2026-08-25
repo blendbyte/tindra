@@ -239,6 +239,14 @@ describe('FlameGraph', () => {
       expect(text).toContain('83.3%')
     })
 
+    // Sub-millisecond frames are common in a fast request, and showing "0.0ms"
+    // for all of them would flatten exactly the detail profiling is for.
+    it('reports sub-millisecond frames in microseconds', async () => {
+      const w = await mountSized(graph({ sample_interval_ns: 5_000 }))
+      await hover(w, 500, 1)
+      expect(tip()?.textContent).toContain('µs')
+    })
+
     it('outlines the hovered box', async () => {
       const w = await mountSized()
       expect(recorder.strokes).toBe(0)
@@ -334,6 +342,42 @@ describe('FlameGraph', () => {
       await w.findAll('.flame__crumb')[0].trigger('click')
       await nextTick()
       expect(tip()).toBeNull()
+    })
+
+    // The breadcrumb is a path, so clicking a middle entry has to truncate to
+    // that depth rather than clear everything.
+    it('truncates to the clicked breadcrumb entry', async () => {
+      const deep = graph({
+        root: {
+          function: '',
+          total_samples: 100,
+          self_samples: 0,
+          children: [{
+            function: 'a', total_samples: 100, self_samples: 0,
+            children: [{
+              function: 'b', total_samples: 100, self_samples: 0,
+              children: [{ function: 'c', total_samples: 100, self_samples: 100 }],
+            }],
+          }],
+        },
+      })
+      const w = await mountSized(deep)
+
+      await hover(w, 500, 0)
+      await w.find('canvas').trigger('click')
+      await nextTick()
+      await hover(w, 500, 1)
+      await w.find('canvas').trigger('click')
+      await nextTick()
+
+      // All / a / b
+      expect(w.findAll('.flame__crumb')).toHaveLength(3)
+
+      // Click "a": the path keeps a and drops b.
+      await w.findAll('.flame__crumb')[1].trigger('click')
+      await nextTick()
+      const crumbs = w.findAll('.flame__crumb').map(c => c.text())
+      expect(crumbs).toEqual(['All', 'a'])
     })
 
     it('drops the zoom when a different profile arrives', async () => {

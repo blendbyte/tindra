@@ -1095,3 +1095,79 @@ func TestHandleEnvelope_numericThreadIDInTraceData(t *testing.T) {
 		t.Errorf("thread_id = %v, want the number formatted as the profile side would", threadID)
 	}
 }
+
+// Backpressure has to reach the SDK. Silently dropping profiles when the writer
+// is behind would look like profiling simply not working.
+func TestHandleEnvelope_profileBufferFull(t *testing.T) {
+	profBuf := ingest.NewProfileBuffer(1)
+	// Fill it, with no writer draining.
+	p, err := ingest.ParseProfile(fixtureBytes(t, "v1_php_laravel.json"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	first, err := ingest.NewBufferedProfile(testProject.ID, p)
+	if err != nil {
+		t.Fatalf("buffer: %v", err)
+	}
+	if !profBuf.Push(first) {
+		t.Fatal("expected the first push to fit")
+	}
+
+	rec := postEnvelope(t, newProfileHandler(profBuf),
+		profileEnvelope(t, "profile", "v1_php_laravel.json"))
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("expected 429 when the profile buffer is full, got %d", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("expected a Retry-After header so the SDK backs off")
+	}
+}
+
+func fixtureBytes(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "ingest", "testdata", "profiles", name))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return b
+}
+
+// A project-scoped API token must not read another project's flame graph. The
+// endpoint takes a transaction id with no project in the path, so this check is
+// the only thing keeping the two apart.
+func TestHandleGetTransactionFlameGraph_tokenScopedToAnotherProject(t *testing.T) {
+	ctx := context.Background()
+
+	other, err := storage.CreateProject(ctx, testPool, "flame-scope-other", "Flame Scope Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID) })
+
+	_, plaintext, err := storage.CreateAPIToken(ctx, testPool, other.ID, "scoped", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	// A transaction belonging to the *other* project than the token.
+	var txID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO transactions
+			(project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+		VALUES ($1, 'GET /scoped', 'http.server', 'ok', 10, NOW(), NOW())
+		RETURNING id`, testProject.ID).Scan(&txID); err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+
+	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for a token scoped to another project, got %d", rec.Code)
+	}
+}

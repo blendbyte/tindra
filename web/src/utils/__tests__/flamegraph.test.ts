@@ -296,3 +296,11 @@ describe('layoutFlame sibling identity', () => {
     expect(new Set(keys).size).toBe(2)
   })
 })
+
+describe('layoutFlame missing children', () => {
+  it('treats an absent children array like an empty one', () => {
+    const bare: FlameNode = { function: 'solo', total_samples: 3, self_samples: 3 }
+    expect(layoutFlame(bare)).toEqual([])
+    expect(layoutFlame(bare, { drawRoot: true })).toHaveLength(1)
+  })
+})

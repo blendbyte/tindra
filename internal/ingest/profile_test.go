@@ -805,3 +805,150 @@ func TestParseProfile_keepsEverythingWhenNoWindowReported(t *testing.T) {
 		t.Errorf("kept %d samples, want all 3 when the SDK reports no window", len(p.Samples))
 	}
 }
+
+// The lenient scalars exist to absorb SDK variation, so their odd branches are
+// the ones most likely to meet a real payload nobody anticipated.
+func TestParseProfile_scalarEdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		frame   string
+		sample  string
+		wantErr bool
+		check   func(t *testing.T, p *ingest.Profile)
+	}{
+		{
+			name:   "float line number truncates",
+			frame:  `{"function":"f","lineno":42.9}`,
+			sample: `{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":2000000}`,
+			check: func(t *testing.T, p *ingest.Profile) {
+				if p.Frames[0].Lineno != 42 {
+					t.Errorf("lineno = %d, want 42", p.Frames[0].Lineno)
+				}
+			},
+		},
+		{
+			name:   "null line number stays zero",
+			frame:  `{"function":"f","lineno":null}`,
+			sample: `{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":2000000}`,
+			check: func(t *testing.T, p *ingest.Profile) {
+				if p.Frames[0].Lineno != 0 {
+					t.Errorf("lineno = %d, want 0", p.Frames[0].Lineno)
+				}
+			},
+		},
+		{
+			name:    "unparseable line number is rejected",
+			frame:   `{"function":"f","lineno":"not-a-line"}`,
+			sample:  `{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":2000000}`,
+			wantErr: true,
+		},
+		{
+			name:   "empty string offset stays at the origin",
+			frame:  `{"function":"f"}`,
+			sample: `{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":""}`,
+			check: func(t *testing.T, p *ingest.Profile) {
+				if len(p.Samples) != 2 {
+					t.Errorf("samples = %d, want 2", len(p.Samples))
+				}
+			},
+		},
+		{
+			name:    "a thread id that is neither string nor number is rejected",
+			frame:   `{"function":"f"}`,
+			sample:  `{"stack_id":0,"thread_id":{"nested":true},"elapsed_since_start_ns":2000000}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := fmt.Sprintf(`{
+				"version":"1","platform":"python","timestamp":"2026-08-24T10:00:00Z","event_id":"aa",
+				"transaction":{"id":"bb","name":"GET /","trace_id":"cc"},
+				"profile":{"frames":[%s],"stacks":[[0]],"samples":[
+					{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":1000000},
+					%s]}}`, tt.frame, tt.sample)
+
+			p, err := ingest.ParseProfile([]byte(payload))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			tt.check(t, p)
+		})
+	}
+}
+
+// v2 timestamps are floats, and a value that will not parse must fail rather
+// than silently place the sample at the epoch.
+func TestParseProfileChunk_unparseableTimestamp(t *testing.T) {
+	payload := `{"version":"2","platform":"python","chunk_id":"a","profiler_id":"b",
+		"profile":{"frames":[{"function":"f"}],"stacks":[[0]],"samples":[
+			{"stack_id":0,"thread_id":"1","timestamp":"not-a-time"},
+			{"stack_id":0,"thread_id":"1","timestamp":1787911732.1}]}}`
+	if _, err := ingest.ParseProfileChunk([]byte(payload)); err == nil {
+		t.Error("expected an error for an unparseable sample timestamp")
+	}
+}
+
+// A chunk over the sample ceiling has to be rejected on the v2 path too, not
+// just on v1.
+func TestParseProfileChunk_tooManySamples(t *testing.T) {
+	var b []byte
+	b = append(b, `{"version":"2","platform":"python","chunk_id":"a","profiler_id":"b",
+		"profile":{"frames":[{"function":"f"}],"stacks":[[0]],"samples":[`...)
+	for i := range 200_001 {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, fmt.Sprintf(`{"stack_id":0,"thread_id":"1","timestamp":%d.0}`, 1787911732+i)...)
+	}
+	b = append(b, `]}}`...)
+
+	if _, err := ingest.ParseProfileChunk(b); !errors.Is(err, ingest.ErrProfileTooManySamples) {
+		t.Errorf("err = %v, want ErrProfileTooManySamples", err)
+	}
+}
+
+// Every named thread being filtered out should leave no map behind, so the
+// response does not carry an empty object.
+func TestParseProfile_dropsThreadNamesEntirelyWhenNoneSurvive(t *testing.T) {
+	payload := `{
+		"version":"1","platform":"python","timestamp":"2026-08-24T10:00:00Z","event_id":"aa",
+		"transaction":{"id":"bb","name":"GET /","trace_id":"cc"},
+		"profile":{"frames":[{"function":"f"}],"stacks":[[0]],"samples":[
+			{"stack_id":0,"thread_id":"kept","elapsed_since_start_ns":1000000},
+			{"stack_id":0,"thread_id":"kept","elapsed_since_start_ns":2000000}],
+		"thread_metadata":{"gone":{"name":"Worker-1"}}}}`
+
+	p, err := ingest.ParseProfile([]byte(payload))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if p.ThreadNames != nil {
+		t.Errorf("thread names = %v, want nil once none are referenced", p.ThreadNames)
+	}
+}
+
+// A null sample timestamp in a chunk places it at the epoch rather than
+// failing, which then trips the duration ceiling instead of silently drawing a
+// graph spanning fifty years.
+func TestParseProfileChunk_nullSampleTimestamp(t *testing.T) {
+	payload := `{"version":"2","platform":"python","chunk_id":"a","profiler_id":"b",
+		"profile":{"frames":[{"function":"f"}],"stacks":[[0]],"samples":[
+			{"stack_id":0,"thread_id":"1","timestamp":null},
+			{"stack_id":0,"thread_id":"1","timestamp":null}]}}`
+
+	p, err := ingest.ParseProfileChunk([]byte(payload))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if p.StartNs != 0 || p.EndNs != 0 {
+		t.Errorf("bounds = [%d, %d], want both at the epoch", p.StartNs, p.EndNs)
+	}
+}
