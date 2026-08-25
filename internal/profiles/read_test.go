@@ -387,3 +387,26 @@ func TestFlameGraphForTransaction_v1FallsBackWhenActiveThreadIsAbsent(t *testing
 			g.SampleCount, len(p.Samples))
 	}
 }
+
+// A chunk can overlap the transaction's window and still contribute nothing
+// once the thread filter is applied. Returning the empty graph rendered a panel
+// with no bars, which reads as a broken feature rather than an unprofiled
+// transaction.
+func TestFlameGraphForTransaction_v2ChunkOverlapsButContributesNothing(t *testing.T) {
+	reset(t)
+	ctx := context.Background()
+
+	const profilerID = "profiler-empty-slice"
+	base := time.Now().Add(-time.Minute).UTC().Truncate(time.Millisecond)
+	insertProfile(t, syntheticChunk(profilerID, "thread-a", base, 100))
+
+	// Same profiler and window, but the transaction ran on a thread the chunk
+	// never sampled.
+	txID := insertTransaction(t, "", profilerID, "thread-nobody",
+		base, base.Add(990*time.Millisecond))
+
+	_, err := profiles.FlameGraphForTransaction(ctx, testPool, txID)
+	if !errors.Is(err, profiles.ErrNoProfile) {
+		t.Errorf("err = %v, want ErrNoProfile rather than an empty graph", err)
+	}
+}

@@ -1059,3 +1059,39 @@ func TestHandleEnvelope_transactionWithMixedTypeTraceData(t *testing.T) {
 		t.Errorf("thread_id = %v, want the string value alongside the numeric keys", threadID)
 	}
 }
+
+// ingest.flexString stringifies a numeric thread id on the profile side, so
+// dropping one on the transaction side left the two unable to match and the
+// chunk got folded across every thread instead of the one that ran.
+func TestHandleEnvelope_numericThreadIDInTraceData(t *testing.T) {
+	buf := ingest.NewBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	const txName = "/numeric-thread-id"
+	payload := `{"event_id":"ff0e8400e29b41d4a716446655440000","transaction":"` + txName + `",` +
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",` +
+		`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok",` +
+		`"data":{"thread.id":8412331008}}}}`
+	body := `{"event_id":"110e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	time.Sleep(400 * time.Millisecond)
+
+	var threadID *string
+	if err := testPool.QueryRow(ctx, `
+		SELECT thread_id FROM transactions WHERE project_id = $1 AND transaction = $2`,
+		testProject.ID, txName).Scan(&threadID); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if threadID == nil || *threadID != "8412331008" {
+		t.Errorf("thread_id = %v, want the number formatted as the profile side would", threadID)
+	}
+}

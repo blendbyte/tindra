@@ -752,3 +752,56 @@ func TestParseProfile_stringLineNumbers(t *testing.T) {
 		t.Errorf("colno = %d, want 4 from the string form", p.Frames[0].Colno)
 	}
 }
+
+// Relay drops v1 samples outside [relative_start_ns, relative_end_ns] before
+// storing. The profiler runs either side of the transaction, and on platforms
+// that report real offsets those extra samples are work the request never did.
+func TestParseProfile_windowsSamplesToTheTransaction(t *testing.T) {
+	payload := `{
+		"version":"1","platform":"cocoa","timestamp":"2026-08-24T10:00:00Z","event_id":"aa",
+		"transactions":[{"id":"bb","name":"GET /","trace_id":"cc",
+			"relative_start_ns":"20000000","relative_end_ns":"40000000"}],
+		"profile":{"frames":[{"function":"f"}],"stacks":[[0]],"samples":[
+			{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":"10000000"},
+			{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":"20000000"},
+			{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":"30000000"},
+			{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":"40000000"},
+			{"stack_id":0,"thread_id":"1","elapsed_since_start_ns":"50000000"}]}}`
+
+	p, err := ingest.ParseProfile([]byte(payload))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The three inside the window, bounds inclusive.
+	if len(p.Samples) != 3 {
+		t.Errorf("kept %d samples, want the 3 inside the transaction window", len(p.Samples))
+	}
+	base := p.BaseNs
+	for _, s := range p.Samples {
+		off := s.TimestampNs - base
+		if off < 20_000_000 || off > 40_000_000 {
+			t.Errorf("sample at +%dns is outside the transaction window", off)
+		}
+	}
+}
+
+// Relay applies the window only when the SDK reports one, for compatibility
+// with older versions that omit it. Dropping everything in that case would
+// empty the graph.
+func TestParseProfile_keepsEverythingWhenNoWindowReported(t *testing.T) {
+	payload := `{
+		"version":"1","platform":"php","timestamp":"2026-08-24T10:00:00Z","event_id":"aa",
+		"transaction":{"id":"bb","name":"GET /","trace_id":"cc","active_thread_id":"0"},
+		"profile":{"frames":[{"function":"f"}],"stacks":[[0]],"samples":[
+			{"stack_id":0,"thread_id":"0","elapsed_since_start_ns":10000000},
+			{"stack_id":0,"thread_id":"0","elapsed_since_start_ns":20000000},
+			{"stack_id":0,"thread_id":"0","elapsed_since_start_ns":30000000}]}}`
+
+	p, err := ingest.ParseProfile([]byte(payload))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(p.Samples) != 3 {
+		t.Errorf("kept %d samples, want all 3 when the SDK reports no window", len(p.Samples))
+	}
+}

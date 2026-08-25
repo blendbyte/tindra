@@ -172,31 +172,50 @@ func (w *Worker) purgeProfilesStorageCap(ctx context.Context) int64 {
 	}
 	limitBytes := int64(w.profileStorageLimitMB) * 1024 * 1024
 
+	// The running total is taken newest first, so every row past the budget is
+	// one to drop. The window is evaluated once and the ids are then deleted in
+	// batches: running it per batch meant a full scan and sort of the table for
+	// every 5000 rows, which on a large overage is a scan per batch rather than
+	// one for the whole pass.
+	rows, err := w.pool.Query(ctx, `
+		SELECT id FROM (
+			SELECT id, SUM(size_bytes) OVER (ORDER BY start_ts DESC, id DESC) AS running
+			FROM profile_chunks
+		) ranked
+		WHERE running > $1
+		ORDER BY running DESC`, limitBytes)
+	if err != nil {
+		slog.Error("retention: rank profiles for storage cap", "err", err)
+		return 0
+	}
+	var doomed []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			slog.Error("retention: scan profile id", "err", err)
+			break
+		}
+		doomed = append(doomed, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		slog.Error("retention: read profile ids", "err", err)
+		return 0
+	}
+
 	var total int64
-	for {
-		// The running total is taken newest-first, so every row past the
-		// budget is one we want gone. Deleting the largest running totals
-		// first means an interrupted run has still removed the oldest data.
-		tag, err := w.pool.Exec(ctx, `
-			DELETE FROM profile_chunks
-			WHERE id IN (
-				SELECT id FROM (
-					SELECT id, SUM(size_bytes) OVER (ORDER BY start_ts DESC, id DESC) AS running
-					FROM profile_chunks
-				) ranked
-				WHERE running > $1
-				ORDER BY running DESC
-				LIMIT $2
-			)`, limitBytes, profilePurgeBatch)
+	for len(doomed) > 0 {
+		n := min(profilePurgeBatch, len(doomed))
+		tag, err := w.pool.Exec(ctx,
+			`DELETE FROM profile_chunks WHERE id = ANY($1::uuid[])`, doomed[:n])
 		if err != nil {
 			slog.Error("retention: purge profile storage cap", "err", err)
 			return total
 		}
 		total += tag.RowsAffected()
-		if tag.RowsAffected() < profilePurgeBatch {
-			return total
-		}
+		doomed = doomed[n:]
 	}
+	return total
 }
 
 func (w *Worker) purgeEvents(ctx context.Context, cutoff time.Time) (eventsDeleted, issuesDeleted int64) {

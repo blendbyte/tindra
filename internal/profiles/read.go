@@ -145,11 +145,19 @@ func foldV2(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 		return nil, ErrNoProfile
 	}
 
-	return Fold(profs, FoldOptions{
+	g := Fold(profs, FoldOptions{
 		ThreadID: ref.ThreadID,
 		StartNs:  ref.Start.UnixNano(),
 		EndNs:    ref.End.UnixNano(),
-	}), nil
+	})
+	// Chunks can overlap the window and still contribute nothing once the
+	// thread and the exact bounds are applied. Returning the empty graph would
+	// render a panel with no bars in it, which reads as a broken feature rather
+	// than as a transaction that was not profiled. foldV1 guards the same case.
+	if g.SampleCount == 0 {
+		return nil, ErrNoProfile
+	}
+	return g, nil
 }
 
 func decodeRows(rows pgx.Rows) ([]*ingest.Profile, error) {

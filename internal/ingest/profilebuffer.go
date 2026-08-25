@@ -77,6 +77,8 @@ func (b *ProfileBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 }
 
 func writeProfileBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedProfile) {
+	// ON CONFLICT DO NOTHING below leans on the partial unique indexes: a
+	// retried envelope must not fold into the graph twice.
 	pb := &pgx.Batch{}
 	for _, p := range batch {
 		pb.Queue(`
@@ -85,6 +87,7 @@ func writeProfileBatch(ctx context.Context, pool *pgxpool.Pool, batch []Buffered
 				 start_ts, end_ts, environment, release, platform,
 				 sample_count, size_bytes, encoding, data)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			ON CONFLICT DO NOTHING
 		`,
 			p.ProjectID, int16(p.Format), nilStr(p.TransactionEventID), nilStr(p.TraceID),
 			nilStr(p.ProfilerID), nilStr(p.ChunkID),

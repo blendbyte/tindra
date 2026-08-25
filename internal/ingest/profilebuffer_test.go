@@ -289,3 +289,33 @@ func TestProfileBuffer_survivesAFailedInsert(t *testing.T) {
 		t.Errorf("stored %d profiles, want the good one written after the bad one failed", count)
 	}
 }
+
+// SDKs retry envelopes after a 429 or a 5xx. Without a uniqueness guard the
+// same chunk lands twice and foldV2 folds both, doubling every sample count in
+// the graph.
+func TestProfileBuffer_deduplicatesARedeliveredChunk(t *testing.T) {
+	truncateProfiles(t)
+
+	buf := ingest.NewProfileBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go buf.Run(ctx, testPool)
+
+	chunk := stubProfile(t, "v2_python_chunk.json", "profile_chunk")
+	for range 3 {
+		if !buf.Push(chunk) {
+			t.Fatal("push failed")
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM profile_chunks WHERE project_id = $1", testProject.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("stored %d copies of one chunk, want 1", count)
+	}
+}

@@ -19,6 +19,17 @@ export interface LayoutOptions {
 }
 
 /**
+ * Identity of a node within its parent.
+ *
+ * The server merges children on function, module and file, so two siblings can
+ * share a name and still be different frames. Keying on the name alone made
+ * them one box as far as hover and zoom were concerned.
+ */
+function nodeKey(n: FlameNode): string {
+  return `${n.function}\u0000${n.module ?? ''}\u0000${n.filename ?? ''}`
+}
+
+/**
  * Lays a call tree out as an icicle: entry points on top, callees below, each
  * box as wide as its share of the samples.
  *
@@ -37,13 +48,13 @@ export function layoutFlame(root: FlameNode | null | undefined, opts: LayoutOpti
     let cursor = x0
     for (const c of n.children ?? []) {
       const w = span * (c.total_samples / denom)
-      walk(c, depth + 1, cursor, cursor + w, `${path}/${c.function}`)
+      walk(c, depth + 1, cursor, cursor + w, `${path}/${nodeKey(c)}`)
       cursor += w
     }
   }
 
   if (opts.drawRoot) {
-    walk(root, 0, 0, 1, root.function || '<root>')
+    walk(root, 0, 0, 1, nodeKey(root) || '<root>')
     return out
   }
 
@@ -51,7 +62,7 @@ export function layoutFlame(root: FlameNode | null | undefined, opts: LayoutOpti
   let cursor = 0
   for (const c of root.children ?? []) {
     const w = c.total_samples / denom
-    walk(c, 0, cursor, cursor + w, c.function)
+    walk(c, 0, cursor, cursor + w, nodeKey(c))
     cursor += w
   }
   return out

@@ -271,3 +271,28 @@ describe('clampTooltip', () => {
     expect(top).toBeGreaterThanOrEqual(8)
   })
 })
+
+// The server merges children on function, module and file, so two siblings can
+// share a name and still be different frames. Keying the layout on the name
+// alone made hover and zoom treat them as one box.
+describe('layoutFlame sibling identity', () => {
+  const sameName = node('', 4, 0, [
+    { function: 'execute', module: 'django.db', total_samples: 3, self_samples: 3 },
+    { function: 'execute', module: 'psycopg2', total_samples: 1, self_samples: 1 },
+  ])
+
+  it('gives same-named siblings from different modules distinct keys', () => {
+    const rects = layoutFlame(sameName)
+    expect(rects).toHaveLength(2)
+    expect(rects[0].key).not.toBe(rects[1].key)
+  })
+
+  it('keeps them distinct when only the filename differs', () => {
+    const byFile = node('', 2, 0, [
+      { function: 'handler', filename: 'a.py', total_samples: 1, self_samples: 1 },
+      { function: 'handler', filename: 'b.py', total_samples: 1, self_samples: 1 },
+    ])
+    const keys = layoutFlame(byFile).map(r => r.key)
+    expect(new Set(keys).size).toBe(2)
+  })
+})

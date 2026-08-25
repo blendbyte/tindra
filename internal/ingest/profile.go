@@ -172,6 +172,24 @@ func ParseProfile(payload []byte) (*Profile, error) {
 		p.ActiveThreadID = tx.ActiveThreadID.String()
 	}
 
+	// Keep only the samples taken while the transaction was running, matching
+	// Relay. The profiler starts before the transaction and stops after it, so
+	// on platforms that report real offsets (Cocoa and Android do; Python
+	// hardcodes 0 to the profile duration) the extra samples would inflate the
+	// graph with work the request never did.
+	//
+	// The zero check is Relay's own compatibility guard for older SDKs that
+	// omit the window entirely.
+	if tx != nil && tx.RelativeEndNs > 0 {
+		kept := raw.Profile.Samples[:0]
+		for _, s := range raw.Profile.Samples {
+			if s.ElapsedSinceStartNs >= tx.RelativeStartNs && s.ElapsedSinceStartNs <= tx.RelativeEndNs {
+				kept = append(kept, s)
+			}
+		}
+		raw.Profile.Samples = kept
+	}
+
 	if err := p.adoptSampleData(raw.Profile, func(s *rawSample) int64 {
 		return baseNs + int64(s.ElapsedSinceStartNs)
 	}); err != nil {
@@ -378,6 +396,10 @@ type rawTxMeta struct {
 	Name           string     `json:"name"`
 	TraceID        string     `json:"trace_id"`
 	ActiveThreadID flexString `json:"active_thread_id"`
+	// The slice of the profile that belongs to this transaction. The profiler
+	// can run either side of it, so these are not always the whole profile.
+	RelativeStartNs flexUint64 `json:"relative_start_ns"`
+	RelativeEndNs   flexUint64 `json:"relative_end_ns"`
 }
 
 type rawSample struct {

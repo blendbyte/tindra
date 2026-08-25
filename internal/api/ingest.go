@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -447,15 +448,23 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 	}
 }
 
-// traceDataString reads one value out of the free-form trace data bag. Only a
-// string is meaningful for the keys we care about; anything else is ignored
-// rather than coerced, since a thread id that arrived as a float is not one we
-// could match against a profile anyway.
+// traceDataString reads one value out of the free-form trace data bag.
+//
+// A numeric thread id is coerced rather than dropped: ingest.flexString does
+// the same on the profile side, so the two would otherwise fail to match for
+// any SDK that sends thread.id unquoted, and the chunk would be folded across
+// every thread instead of one.
 func traceDataString(data map[string]any, key string) string {
-	if s, ok := data[key].(string); ok {
-		return s
+	switch v := data[key].(type) {
+	case string:
+		return v
+	case float64:
+		// JSON numbers decode as float64. Thread ids are integers, so format
+		// without an exponent or a trailing .0 that would never match.
+		return strconv.FormatInt(int64(v), 10)
+	default:
+		return ""
 	}
-	return ""
 }
 
 func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransaction {
