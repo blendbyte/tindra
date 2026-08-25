@@ -3659,7 +3659,7 @@ func pickLeaf(leaves []profileLeaf) profileLeaf {
 	if total <= 0 {
 		return leaves[0]
 	}
-	n := rand.Intn(total) //nolint:gosec - seed data, not security
+	n := rand.Intn(total) //nolint:gosec
 	for _, l := range leaves {
 		n -= l.weight
 		if n < 0 {
@@ -3750,7 +3750,7 @@ func buildV1Profile(tmpl profileTemplate, ts time.Time, releases, envs []string)
 // same sample stream.
 func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases, envs []string) (chunk map[string]any, txs []map[string]any) {
 	profilerID := newEventID()
-	threadID := fmt.Sprintf("%d", 8412331008+rand.Intn(4096)) //nolint:gosec - seed data
+	threadID := fmt.Sprintf("%d", 8412331008+rand.Intn(4096)) //nolint:gosec
 	release := randomChoice(releases)
 	env := randomChoice(envs)
 
@@ -3827,5 +3827,5 @@ func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases
 // of 7. Spreading them over a week like transactions would have the retention
 // worker delete half of them on its first pass.
 func profileAge() time.Duration {
-	return time.Duration(rand.Intn(3*24*60)) * time.Minute //nolint:gosec - seed data
+	return time.Duration(rand.Intn(3*24*60)) * time.Minute //nolint:gosec
 }
