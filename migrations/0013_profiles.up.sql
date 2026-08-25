@@ -30,10 +30,12 @@ CREATE TABLE profile_chunks (
     -- 1 = transaction-based (v1), 2 = continuous chunk (v2).
     format      SMALLINT    NOT NULL,
 
-    -- v1 only: the transaction event this profile belongs to.
+    -- v1 only: the transaction event this profile belongs to. Partial-unique
+    -- below, so a retried envelope cannot store the same profile twice.
     transaction_event_id TEXT,
     trace_id             TEXT,
-    -- v2 only: the profiler session and the chunk within it.
+    -- v2 only: the profiler session and the chunk within it. chunk_id is
+    -- partial-unique for the same reason.
     profiler_id TEXT,
     chunk_id    TEXT,
 
@@ -71,13 +73,25 @@ CREATE INDEX profile_chunks_profiler
     WHERE profiler_id IS NOT NULL;
 
 -- v1 read path: straight from a transaction's event id.
-CREATE INDEX profile_chunks_transaction
+--
+-- Unique because SDKs retry envelopes after a 429 or a 5xx and nothing else
+-- deduplicated the result. One transaction has exactly one profile, so a second
+-- copy is always a redelivery. The same index serves the lookup.
+CREATE UNIQUE INDEX profile_chunks_transaction_uniq
     ON profile_chunks (project_id, transaction_event_id)
     WHERE transaction_event_id IS NOT NULL;
 
--- Retention purges by age; the byte budget purges oldest-first by start_ts.
+-- The v2 equivalent. foldV2 folds every row it matches, so without this a
+-- redelivered chunk doubled every sample count in the graph.
+CREATE UNIQUE INDEX profile_chunks_chunk_uniq
+    ON profile_chunks (project_id, chunk_id)
+    WHERE chunk_id IS NOT NULL;
+
+-- Both purges work from received_at: the age cutoff directly, and the byte
+-- budget by ranking on it. start_ts is deliberately not indexed on its own,
+-- since nothing filters or orders by it alone; the overlap lookup above leads
+-- with project_id and profiler_id.
 CREATE INDEX profile_chunks_received ON profile_chunks (received_at);
-CREATE INDEX profile_chunks_start    ON profile_chunks (start_ts);
 
 -- The payload is already zstd-compressed, so Postgres attempting pglz on it
 -- burns CPU on every read and write for no gain. EXTERNAL stores it out of
