@@ -109,6 +109,23 @@ describe('LogsView', () => {
       expect(wrapper.text()).toContain('Database connection failed')
     })
 
+    // A long message must not widen the message column: the cell carries the
+    // width cap and the body inside it is the part that ellipsizes.
+    it('caps the message cell so long bodies cannot stretch the table', () => {
+      const long = 'x'.repeat(4000)
+      setupMocks([makeLog('l1', 'error', long)])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const cell = wrapper.find('tbody .log-msg-col')
+      expect(cell.exists()).toBe(true)
+      expect(cell.find('.log-msg__body').text()).toBe(long)
+    })
+
+    it('caps the message cell in the loading skeleton too', () => {
+      setupMocks([], true)
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.findAll('tbody .log-msg-col').length).toBe(12)
+    })
+
     // Ingest normalizes the log protocol's "warn" to "warning", which is the
     // spelling the level filter sends and the only one with a styled dot.
     it('styles the level dot for normalized warning logs', () => {

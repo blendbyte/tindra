@@ -124,7 +124,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
           <tr v-for="i in 12" :key="i" class="perf-table__skel-row">
             <td><span class="skel" style="width: 80px; height: 10px; display: block" /></td>
             <td><span class="skel" style="width: 44px; height: 18px; display: block; border-radius: 3px" /></td>
-            <td><span class="skel" :style="{ width: `${40 + (i % 5) * 10}%` }" style="height: 10px; display: block" /></td>
+            <td class="log-msg-col"><span class="skel" :style="{ width: `${40 + (i % 5) * 10}%` }" style="height: 10px; display: block" /></td>
             <td v-if="showProject"><span class="skel" style="width: 70px; height: 10px; display: block; margin-left: auto" /></td>
             <td><span class="skel" style="width: 60px; height: 10px; display: block; margin-left: auto" /></td>
           </tr>
@@ -173,7 +173,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
                   {{ log.level }}
                 </span>
               </td>
-              <td>
+              <td class="log-msg-col">
                 <div class="log-msg">
                   <span class="log-msg__body">{{ log.body }}</span>
                   <RouterLink

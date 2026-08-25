@@ -6904,6 +6904,14 @@ select.field__input {
 .log-level--debug   { background: var(--surface-2);     color: var(--text-3);         border: 1px solid var(--border); }
 .log-level--trace   { background: var(--surface-2);     color: var(--text-3);         border: 1px solid var(--border); }
 
+/* Message column: the table uses auto layout, so without a width cap the column
+   sizes to the longest message and drags the whole table past the viewport.
+   max-width:0 leaves it as the only flexible column, so it absorbs whatever the
+   fixed-width columns don't use and the body below can ellipsize inside it. */
+.log-msg-col {
+  max-width: 0;
+}
+
 /* Message cell: body ellipsizes, the trace link keeps its full width */
 .log-msg {
   display: flex;
