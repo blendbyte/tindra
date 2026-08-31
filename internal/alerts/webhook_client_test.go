@@ -63,3 +63,12 @@ func TestNewWebhookClient_dnsFailure(t *testing.T) {
 		t.Error("expected error for unresolvable host")
 	}
 }
+
+func TestNewWebhookClient_blocksNAT64(t *testing.T) {
+	// Dial-time check must catch IPv4-in-IPv6 destinations, not only save-time validation.
+	client := alerts.NewWebhookClient(false)
+	_, err := client.Get("http://[64:ff9b::169.254.169.254]/hook")
+	if err == nil {
+		t.Error("expected NAT64 link-local destination to be blocked at dial time")
+	}
+}

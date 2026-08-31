@@ -38,7 +38,7 @@ func NewWebhookClient(allowPrivate bool) *http.Client {
 					if ip == nil {
 						continue
 					}
-					if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() {
+					if isBlockedIP(ip) {
 						return nil, fmt.Errorf("webhook host %s resolves to a private address", host)
 					}
 				}
