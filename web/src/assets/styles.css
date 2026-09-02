@@ -1568,6 +1568,22 @@ a { color: inherit; text-decoration: none; }
   overflow-wrap: anywhere;
 }
 .detail-hero__title .mono { color: var(--accent); font-weight: 500; letter-spacing: -0.01em; }
+.detail-hero__more {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.5;
+  vertical-align: baseline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.detail-hero__more:hover { color: var(--text-1); border-color: var(--text-3); }
 
 .issue-meta {
   display: flex;

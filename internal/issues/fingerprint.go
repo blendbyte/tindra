@@ -94,12 +94,13 @@ func Title(raw json.RawMessage) string {
 }
 
 // truncRunes truncates s to at most max runes, preserving UTF-8 boundaries.
+// Truncated values end in an ellipsis so the cut is visible to readers.
 func truncRunes(s string, max int) string {
 	r := []rune(s)
 	if len(r) <= max {
 		return s
 	}
-	return string(r[:max])
+	return string(r[:max-1]) + "\u2026"
 }
 
 func sha256hex(b []byte) string {

@@ -1760,6 +1760,94 @@ describe('IssueDetailView', () => {
     })
   })
 
+  describe('truncated issue title', () => {
+    const longValue = `${'a'.repeat(180)} and the rest of the message`
+    const truncatedIssue = { ...baseIssue, title: `Exception: ${longValue}`.slice(0, 199) + '\u2026' }
+    const eventWithFullValue = {
+      id: 'evt-1',
+      payload: { exception: { values: [{ type: 'Exception', value: longValue }] } },
+    }
+
+    function mountTruncated(issue: unknown = truncatedIssue, event: unknown = eventWithFullValue) {
+      setupQueries(issue, [{}, {}, { data: ref(event) }])
+      return mount(IssueDetailView, { global: { stubs } })
+    }
+
+    it('shows a toggle when the stored title is shorter than the event message', () => {
+      const wrapper = mountTruncated()
+      expect(wrapper.find('.detail-hero__more').exists()).toBe(true)
+    })
+
+    it('drops the stored ellipsis while collapsed so it is not doubled', () => {
+      const wrapper = mountTruncated()
+      expect(wrapper.find('.detail-hero__title').text()).not.toContain('\u2026\u2026')
+      expect(wrapper.find('.detail-hero__more').text()).toBe('\u2026')
+    })
+
+    it('reveals the full message when the toggle is clicked', async () => {
+      const wrapper = mountTruncated()
+      expect(wrapper.find('.detail-hero__title').text()).not.toContain('and the rest of the message')
+      await wrapper.find('.detail-hero__more').trigger('click')
+      expect(wrapper.find('.detail-hero__title').text()).toContain('and the rest of the message')
+      expect(wrapper.find('.detail-hero__more').text()).toBe('Show less')
+    })
+
+    it('collapses again on a second click', async () => {
+      const wrapper = mountTruncated()
+      await wrapper.find('.detail-hero__more').trigger('click')
+      await wrapper.find('.detail-hero__more').trigger('click')
+      expect(wrapper.find('.detail-hero__title').text()).not.toContain('and the rest of the message')
+    })
+
+    it('expands titles stored before the ellipsis marker existed', () => {
+      const legacy = { ...baseIssue, title: `Exception: ${longValue}`.slice(0, 200) }
+      const wrapper = mountTruncated(legacy)
+      expect(wrapper.find('.detail-hero__more').exists()).toBe(true)
+    })
+
+    it('hides the toggle when the event message matches the stored title', () => {
+      const event = {
+        id: 'evt-1',
+        payload: { exception: { values: [{ type: 'TypeError', value: 'cannot read properties of undefined' }] } },
+      }
+      const wrapper = mountTruncated(baseIssue, event)
+      expect(wrapper.find('.detail-hero__more').exists()).toBe(false)
+    })
+
+    it('hides the toggle when the event belongs to a different message', () => {
+      const event = {
+        id: 'evt-1',
+        payload: { exception: { values: [{ type: 'Exception', value: `something else entirely ${longValue}` }] } },
+      }
+      const wrapper = mountTruncated(truncatedIssue, event)
+      expect(wrapper.find('.detail-hero__more').exists()).toBe(false)
+    })
+
+    it('falls back to the payload message when there is no exception', () => {
+      const event = { id: 'evt-1', payload: { message: longValue } }
+      const messageIssue = { ...baseIssue, title: longValue.slice(0, 199) + '\u2026' }
+      const wrapper = mountTruncated(messageIssue, event)
+      expect(wrapper.find('.detail-hero__more').exists()).toBe(true)
+    })
+
+    it('uses the innermost exception, matching how titles are built at ingest', async () => {
+      const event = {
+        id: 'evt-1',
+        payload: {
+          exception: {
+            values: [
+              { type: 'OuterError', value: 'outer' },
+              { type: 'Exception', value: longValue },
+            ],
+          },
+        },
+      }
+      const wrapper = mountTruncated(truncatedIssue, event)
+      await wrapper.find('.detail-hero__more').trigger('click')
+      expect(wrapper.find('.detail-hero__title').text()).toContain('and the rest of the message')
+    })
+  })
+
   describe('history label for status_changed to unknown status', () => {
     it('renders "Status changed to <value>" for unrecognised to value', () => {
       const entry = {

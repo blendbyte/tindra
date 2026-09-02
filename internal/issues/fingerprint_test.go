@@ -105,8 +105,11 @@ func TestTitle_truncates(t *testing.T) {
 	long := strings.Repeat("a", 300)
 	payload, _ := json.Marshal(map[string]string{"message": long})
 	title := issues.Title(payload)
-	if len(title) > 200 {
-		t.Errorf("title too long: %d chars", len(title))
+	if r := []rune(title); len(r) > 200 {
+		t.Errorf("title too long: %d runes", len(r))
+	}
+	if !strings.HasSuffix(title, "\u2026") {
+		t.Errorf("expected truncated title to end in an ellipsis, got %q", title)
 	}
 }
 
@@ -128,8 +131,26 @@ func TestTitle_exceptionValueTruncates(t *testing.T) {
 		},
 	})
 	title := issues.Title(json.RawMessage(payload))
-	if len(title) > 200 {
-		t.Errorf("exception title too long: %d chars", len(title))
+	if r := []rune(title); len(r) > 200 {
+		t.Errorf("exception title too long: %d runes", len(r))
+	}
+	if !strings.HasPrefix(title, "LongError: ") {
+		t.Errorf("expected exception type prefix, got %q", title)
+	}
+	if !strings.HasSuffix(title, "\u2026") {
+		t.Errorf("expected truncated title to end in an ellipsis, got %q", title)
+	}
+}
+
+func TestTitle_exactLengthNotEllipsised(t *testing.T) {
+	// A title exactly at the limit must not be marked as truncated.
+	payload, _ := json.Marshal(map[string]string{"message": strings.Repeat("a", 200)})
+	title := issues.Title(json.RawMessage(payload))
+	if strings.HasSuffix(title, "\u2026") {
+		t.Errorf("title at the limit must not be ellipsised, got %q", title)
+	}
+	if r := []rune(title); len(r) != 200 {
+		t.Errorf("expected 200 runes, got %d", len(r))
 	}
 }
 
@@ -192,6 +213,9 @@ func TestTitle_truncatesAtRuneBoundary(t *testing.T) {
 	title := issues.Title(json.RawMessage(payload))
 	if r := []rune(title); len(r) > 200 {
 		t.Errorf("expected at most 200 runes, got %d", len(r))
+	}
+	if !strings.HasSuffix(title, "\u2026") {
+		t.Errorf("expected truncated title to end in an ellipsis, got %q", title)
 	}
 	for i, b := range title {
 		if b == '�' {

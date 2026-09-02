@@ -219,6 +219,46 @@ const frames = computed(() => {
 
 const eventPlatform = computed(() => (currentEvent.value?.payload as Record<string, unknown> | undefined)?.platform as string | undefined)
 
+const titleExpanded = ref(false)
+watch(issueId, () => { titleExpanded.value = false })
+
+// Stored issue titles are capped at ingest time, so recover the untruncated
+// text from the current event payload to offer it behind a toggle.
+const fullTitle = computed(() => {
+  const payload = currentEvent.value?.payload as { message?: unknown } | undefined
+  const exc = currentEvent.value?.payload?.exception as { values?: { type?: string; value?: string }[] } | undefined
+  const values = exc?.values
+  if (values?.length) {
+    const last = values[values.length - 1]
+    if (last?.value) return [last.type, last.value].filter(Boolean).join(': ')
+    return last?.type ?? ''
+  }
+  return typeof payload?.message === 'string' ? payload.message : ''
+})
+
+const titleTruncated = computed(() => {
+  const stored = issue.value?.title ?? ''
+  const full = fullTitle.value
+  if (!stored || !full || full.length <= stored.length) return false
+  // Titles stored before the ellipsis marker was added simply end mid-sentence.
+  const base = stored.endsWith('\u2026') ? stored.slice(0, -1) : stored
+  return full.startsWith(base)
+})
+
+const displayTitle = computed(() => {
+  const stored = issue.value?.title ?? ''
+  if (!titleTruncated.value) return stored
+  if (titleExpanded.value) return fullTitle.value
+  // The toggle button renders the ellipsis, so drop the stored one.
+  return stored.endsWith('\u2026') ? stored.slice(0, -1) : stored
+})
+
+const titleType = computed(() => displayTitle.value.split(':')[0])
+const titleRest = computed(() => {
+  const i = displayTitle.value.indexOf(':')
+  return i === -1 ? '' : displayTitle.value.slice(i + 1).trim()
+})
+
 const rawStackText = computed(() => {
   const exc = currentEvent.value?.payload?.exception as { values?: { type?: string; value?: string; stacktrace?: { frames?: Record<string, unknown>[] } }[] } | undefined
   if (!exc?.values?.length) return ''
@@ -790,7 +830,13 @@ onUnmounted(() => {
         </div>
 
         <h1 class="detail-hero__title">
-          <span class="mono">{{ issue.title.split(':')[0] }}</span><template v-if="issue.title.includes(':')">: {{ issue.title.split(':').slice(1).join(':').trim() }}</template>
+          <span class="mono">{{ titleType }}</span><template v-if="titleRest">: {{ titleRest }}</template><button
+            v-if="titleTruncated"
+            class="detail-hero__more"
+            :aria-expanded="titleExpanded"
+            :title="titleExpanded ? 'Collapse the message' : 'Show the full message'"
+            @click="titleExpanded = !titleExpanded"
+          >{{ titleExpanded ? 'Show less' : '\u2026' }}</button>
         </h1>
 
         <div class="issue-meta">
