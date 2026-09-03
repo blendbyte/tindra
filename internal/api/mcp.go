@@ -221,11 +221,14 @@ func mcpToolList() []map[string]any {
 		},
 		{
 			"name":        "get_issue",
-			"description": "Returns full details for a single issue including top stack frames.",
+			"description": "Returns full details for a single issue plus the latest event payload — exception, stack trace, breadcrumbs, request, user, and contexts, matching the issue detail UI. Pass offset to inspect older occurrences (0 = newest).",
 			"inputSchema": map[string]any{
-				"type":       "object",
-				"properties": map[string]any{"id": prop("string", "Issue ID.")},
-				"required":   []string{"id"},
+				"type": "object",
+				"properties": map[string]any{
+					"id":     prop("string", "Issue ID."),
+					"offset": prop("integer", "Event occurrence offset, newest first (0 = latest, default 0)."),
+				},
+				"required": []string{"id"},
 			},
 		},
 		{
@@ -289,7 +292,7 @@ func mcpToolList() []map[string]any {
 		},
 		{
 			"name":        "list_issue_events",
-			"description": "Lists recent event occurrences for an issue showing timestamps, environment, and release.",
+			"description": "Lists recent event occurrences for an issue showing timestamps, environment, and release. Use get_issue with offset for the full payload including stack traces.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -569,6 +572,14 @@ func (ro *router) mcpListIssues(ctx context.Context, args map[string]any) (strin
 	return string(b), nil
 }
 
+// mcpIssueEvent is the event attached to get_issue, matching GET /api/issues/{id}/events/latest.
+type mcpIssueEvent struct {
+	ID         string          `json:"id"`
+	TraceID    *string         `json:"trace_id,omitempty"`
+	ReceivedAt time.Time       `json:"received_at"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
 func (ro *router) mcpGetIssue(ctx context.Context, args map[string]any) (string, error) {
 	id := mcpArgString(args, "id")
 	if id == "" {
@@ -587,7 +598,51 @@ func (ro *router) mcpGetIssue(ctx context.Context, args map[string]any) (string,
 			return "", mcpToolError{"issue not found"}
 		}
 	}
-	b, _ := json.MarshalIndent(issue, "", "  ")
+
+	offset := mcpArgInt(args, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+
+	out := struct {
+		*storage.Issue
+		Event      *mcpIssueEvent        `json:"event,omitempty"`
+		PerfEvents *[]*storage.PerfEvent `json:"perf_events,omitempty"`
+	}{Issue: issue}
+
+	ev, err := storage.GetEventForIssueAtOffset(ctx, ro.pool, id, offset)
+	if err != nil {
+		return "", fmt.Errorf("get event: %w", err)
+	}
+	if ev != nil {
+		payload := ev.Payload
+		if ro.smStore != nil {
+			release := ""
+			if ev.Release != nil {
+				release = *ev.Release
+			}
+			payload = ro.smStore.ResolveEventPayload(ctx, issue.ProjectID, release, payload)
+		}
+		out.Event = &mcpIssueEvent{
+			ID:         ev.ID,
+			TraceID:    ev.TraceID,
+			ReceivedAt: ev.ReceivedAt,
+			Payload:    payload,
+		}
+	}
+
+	if issue.Kind == "n1_query" {
+		perfEvents, err := storage.ListPerfEvents(ctx, ro.pool, id, 25)
+		if err != nil {
+			return "", fmt.Errorf("list perf events: %w", err)
+		}
+		if perfEvents == nil {
+			perfEvents = []*storage.PerfEvent{}
+		}
+		out.PerfEvents = &perfEvents
+	}
+
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return string(b), nil
 }
 

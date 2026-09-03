@@ -352,6 +352,212 @@ func TestMCP_getIssue_found(t *testing.T) {
 	if got["title"] != "MCP Get Issue" {
 		t.Errorf("title: got %v", got["title"])
 	}
+	if _, ok := got["event"]; ok {
+		t.Errorf("expected no event when issue has none, got %v", got["event"])
+	}
+}
+
+func seedMCPIssueEvent(t *testing.T, issueID, fingerprint, payload string, receivedAt time.Time) string {
+	t.Helper()
+	var evID string
+	err := testPool.QueryRow(context.Background(), `
+		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
+		VALUES ($1, $2, $2, $3::jsonb, $4, $5)
+		RETURNING id
+	`, testProject.ID, receivedAt, payload, fingerprint, issueID).Scan(&evID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	return evID
+}
+
+func TestMCP_getIssue_includesEventPayload(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "mcp-stack-fp", "TypeError: cannot read")
+	payload := `{
+		"exception": {"values": [{
+			"type": "TypeError",
+			"value": "cannot read properties of undefined",
+			"stacktrace": {"frames": [
+				{"function": "boot", "filename": "boot.js", "lineno": 1, "in_app": false},
+				{"function": "handleClick", "filename": "app.js", "lineno": 42, "colno": 8, "in_app": true, "context_line": "user.name.toUpperCase()"}
+			]}
+		}]},
+		"breadcrumbs": {"values": [{"category": "console", "message": "boom", "timestamp": 1716739678.943}]},
+		"request": {"url": "https://example.com/checkout", "method": "POST"},
+		"user": {"id": "u-1", "email": "ada@example.com"},
+		"contexts": {"os": {"name": "macOS", "version": "14.5"}}
+	}`
+	evID := seedMCPIssueEvent(t, iss.ID, "mcp-stack-fp", payload, time.Now().UTC())
+
+	result := toolCall(t, mcpHandler(), "get_issue", map[string]any{"id": iss.ID}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError:true: %s", toolText(t, result))
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(toolText(t, result)), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	rawEvent, ok := got["event"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected event object, got %T %v", got["event"], got["event"])
+	}
+	if rawEvent["id"] != evID {
+		t.Errorf("event id: got %v, want %s", rawEvent["id"], evID)
+	}
+	evPayload, ok := rawEvent["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected payload object, got %T", rawEvent["payload"])
+	}
+	exc, _ := evPayload["exception"].(map[string]any)
+	values, _ := exc["values"].([]any)
+	if len(values) != 1 {
+		t.Fatalf("expected 1 exception value, got %d", len(values))
+	}
+	val, _ := values[0].(map[string]any)
+	if val["type"] != "TypeError" {
+		t.Errorf("exception type: got %v", val["type"])
+	}
+	st, _ := val["stacktrace"].(map[string]any)
+	frames, _ := st["frames"].([]any)
+	if len(frames) != 2 {
+		t.Fatalf("expected 2 stack frames, got %d", len(frames))
+	}
+	topApp, _ := frames[1].(map[string]any)
+	if topApp["function"] != "handleClick" || topApp["lineno"] != float64(42) {
+		t.Errorf("in-app frame: got %#v", topApp)
+	}
+	if topApp["context_line"] != "user.name.toUpperCase()" {
+		t.Errorf("context_line: got %v", topApp["context_line"])
+	}
+	if _, ok := evPayload["breadcrumbs"]; !ok {
+		t.Error("expected breadcrumbs in payload")
+	}
+	req, _ := evPayload["request"].(map[string]any)
+	if req["url"] != "https://example.com/checkout" {
+		t.Errorf("request url: got %v", req["url"])
+	}
+	user, _ := evPayload["user"].(map[string]any)
+	if user["email"] != "ada@example.com" {
+		t.Errorf("user email: got %v", user["email"])
+	}
+}
+
+func TestMCP_getIssue_offsetSelectsOlderEvent(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "mcp-offset-fp", "Offset Error")
+	older := time.Now().UTC().Add(-time.Hour)
+	newer := time.Now().UTC()
+	oldID := seedMCPIssueEvent(t, iss.ID, "mcp-offset-fp", `{"message":"older"}`, older)
+	newID := seedMCPIssueEvent(t, iss.ID, "mcp-offset-fp", `{"message":"newer"}`, newer)
+
+	latest := toolCall(t, mcpHandler(), "get_issue", map[string]any{"id": iss.ID}, authCookie())
+	var gotLatest map[string]any
+	if err := json.Unmarshal([]byte(toolText(t, latest)), &gotLatest); err != nil {
+		t.Fatalf("decode latest: %v", err)
+	}
+	evLatest, _ := gotLatest["event"].(map[string]any)
+	if evLatest["id"] != newID {
+		t.Errorf("offset 0: got event %v, want %s", evLatest["id"], newID)
+	}
+
+	neg := toolCall(t, mcpHandler(), "get_issue", map[string]any{"id": iss.ID, "offset": -1}, authCookie())
+	var gotNeg map[string]any
+	if err := json.Unmarshal([]byte(toolText(t, neg)), &gotNeg); err != nil {
+		t.Fatalf("decode negative offset: %v", err)
+	}
+	evNeg, _ := gotNeg["event"].(map[string]any)
+	if evNeg["id"] != newID {
+		t.Errorf("offset -1 should clamp to 0: got event %v, want %s", evNeg["id"], newID)
+	}
+
+	olderRes := toolCall(t, mcpHandler(), "get_issue", map[string]any{"id": iss.ID, "offset": 1}, authCookie())
+	var gotOlder map[string]any
+	if err := json.Unmarshal([]byte(toolText(t, olderRes)), &gotOlder); err != nil {
+		t.Fatalf("decode older: %v", err)
+	}
+	evOlder, _ := gotOlder["event"].(map[string]any)
+	if evOlder["id"] != oldID {
+		t.Errorf("offset 1: got event %v, want %s", evOlder["id"], oldID)
+	}
+	payload, _ := evOlder["payload"].(map[string]any)
+	if payload["message"] != "older" {
+		t.Errorf("offset 1 payload: got %v", payload["message"])
+	}
+}
+
+func TestMCP_getIssue_n1QueryIncludesPerfEvents(t *testing.T) {
+	truncateIssues(t)
+	ctx := context.Background()
+	iss, _, _, err := storage.UpsertIssue(ctx, testPool, testProject.ID, "mcp-n1-fp", "N+1 query", "error", "n1_query", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	var txID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+		VALUES ($1, 'GET /api/items', 'http.server', 'ok', 240, NOW(), NOW())
+		RETURNING id
+	`, testProject.ID).Scan(&txID); err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+	if err := storage.InsertPerfEvent(ctx, testPool, iss.ID, txID, 12, 240); err != nil {
+		t.Fatalf("insert perf event: %v", err)
+	}
+
+	result := toolCall(t, mcpHandler(), "get_issue", map[string]any{"id": iss.ID}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError:true: %s", toolText(t, result))
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(toolText(t, result)), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["kind"] != "n1_query" {
+		t.Errorf("kind: got %v, want n1_query", got["kind"])
+	}
+	perf, ok := got["perf_events"].([]any)
+	if !ok {
+		t.Fatalf("expected perf_events array for n1_query issue, got %T %v", got["perf_events"], got["perf_events"])
+	}
+	if len(perf) != 1 {
+		t.Fatalf("expected 1 perf event, got %d", len(perf))
+	}
+	pe, _ := perf[0].(map[string]any)
+	if pe["transaction"] != "GET /api/items" {
+		t.Errorf("transaction: got %v", pe["transaction"])
+	}
+	if pe["span_count"] != float64(12) {
+		t.Errorf("span_count: got %v", pe["span_count"])
+	}
+}
+
+func TestMCP_getIssue_resolvesSourceMaps(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "mcp-sm-fp", "SM Error")
+	evID := seedMCPIssueEvent(t, iss.ID, "mcp-sm-fp", `{"exception":{"values":[{"stacktrace":{"frames":[{"filename":"app.js","lineno":1}]}}]},"release":"v1"}`, time.Now().UTC())
+	store, _ := newSmStore(t)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+
+	result := toolCall(t, h, "get_issue", map[string]any{"id": iss.ID}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError:true: %s", toolText(t, result))
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(toolText(t, result)), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	ev, _ := got["event"].(map[string]any)
+	if ev["id"] != evID {
+		t.Errorf("event id: got %v, want %s", ev["id"], evID)
+	}
+	if _, ok := ev["payload"].(map[string]any); !ok {
+		t.Errorf("expected payload object after source-map resolution, got %T", ev["payload"])
+	}
 }
 
 // --- list_transactions ---
