@@ -484,6 +484,27 @@ describe('LogsView', () => {
       const chips = wrapper.findAllComponents({ name: 'FilterChip' })
       await chips.find(c => c.props('label') === 'Level')?.vm.$emit('change', 'Error')
       expect(wrapper.find('button.export-menu__trigger').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('.alert-on-this').attributes('aria-label')).toBe('Create a project first')
+    })
+
+    it('tells you to set a severe level when Alert on this is disabled', () => {
+      setupMocks([makeLog('l1', 'info', 'x')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.find('button.export-menu__trigger').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('.alert-on-this').attributes('aria-label')).toBe(
+        'Set Level to Error or Fatal, or Warning with a search',
+      )
+    })
+
+    it('tells you to add a search when warning has none', async () => {
+      setupMocks([makeLog('l1', 'warning', 'x')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips.find(c => c.props('label') === 'Level')?.vm.$emit('change', 'Warning')
+      expect(wrapper.find('button.export-menu__trigger').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('.alert-on-this').attributes('aria-label')).toBe(
+        'Add a search — warning alerts need a message match',
+      )
     })
 
     it('is enabled for All projects (empty selection) and prefills every project', async () => {
@@ -580,6 +601,9 @@ describe('LogsView', () => {
       const wrapper = mount(LogsView, { global: { stubs } })
       const btn = wrapper.find('button.export-menu__trigger')
       expect(btn.attributes('disabled')).toBeUndefined()
+      expect(wrapper.find('.alert-on-this').attributes('aria-label')).toBe(
+        'Create an alert from these filters',
+      )
       await btn.trigger('click')
       const dest = String(pushMock.mock.calls[0][0])
       expect(dest).toContain('level=warning')

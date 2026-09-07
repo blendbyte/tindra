@@ -67,6 +67,12 @@ const canAlertOnThis = computed(() => {
   if (lv === 'Error' || lv === 'Fatal') return true
   return lv === 'Warning' && searchQuery.value.trim() !== ''
 })
+const alertOnThisHint = computed(() => {
+  if (canAlertOnThis.value) return 'Create an alert from these filters'
+  if (alertProjectIds.value.length === 0) return 'Create a project first'
+  if (levelFilter.value === 'Warning') return 'Add a search — warning alerts need a message match'
+  return 'Set Level to Error or Fatal, or Warning with a search'
+})
 
 function alertOnThis() {
   const params = new URLSearchParams()
@@ -197,15 +203,20 @@ onUnmounted(() => clearTimeout(debounceTimer))
         />
       </div>
 
-      <button
+      <span
         v-if="canManageAlerts"
-        class="btn btn--ghost export-menu__trigger"
-        :disabled="!canAlertOnThis"
-        :title="canAlertOnThis ? 'Create an alert from these filters' : 'Pick error/fatal, or warning with a search'"
-        @click="alertOnThis()"
+        class="alert-on-this"
+        v-tooltip="alertOnThisHint"
+        :aria-label="alertOnThisHint"
       >
-        Alert on this
-      </button>
+        <button
+          class="btn btn--ghost export-menu__trigger"
+          :disabled="!canAlertOnThis"
+          @click="alertOnThis()"
+        >
+          Alert on this
+        </button>
+      </span>
 
       <button
         class="filterbar__refresh"
