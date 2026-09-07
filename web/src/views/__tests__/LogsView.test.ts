@@ -14,6 +14,13 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
+const pushMock = vi.fn()
+const replaceMock = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: pushMock, replace: replaceMock }),
+  useRoute: () => ({ query: {} }),
+}))
+
 vi.mock('@/utils/formatters', () => ({
   formatTs: vi.fn((ts: string) => ts),
 }))
@@ -65,7 +72,12 @@ beforeEach(() => {
   vi.mocked(useQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
   vi.mocked(useAuthStore).mockReset()
-  vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
+  vi.mocked(useAuthStore).mockReturnValue({
+    user: { timezone: 'UTC', permissions: { manage_alerts: true } },
+    setUser: vi.fn(),
+  } as any)
+  pushMock.mockReset()
+  replaceMock.mockReset()
 })
 
 describe('LogsView', () => {
@@ -433,6 +445,38 @@ describe('LogsView', () => {
       const levelChip = chips.find(c => c.props('label') === 'Level')
       await levelChip?.vm.$emit('change', 'Error')
       expect(wrapper.text()).toContain('Try adjusting your filters')
+    })
+  })
+
+  describe('alert on this', () => {
+    it('shows the button for users who can manage alerts', () => {
+      setupMocks([makeLog('l1', 'error', 'x')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Alert on this')
+    })
+
+    it('hides the button without manage_alerts', () => {
+      vi.mocked(useAuthStore).mockReturnValue({
+        user: { timezone: 'UTC', permissions: { manage_alerts: false } },
+        setUser: vi.fn(),
+      } as any)
+      setupMocks([makeLog('l1', 'error', 'x')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.text()).not.toContain('Alert on this')
+    })
+
+    it('navigates to settings with current filters', async () => {
+      setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      const levelChip = chips.find(c => c.props('label') === 'Level')
+      await levelChip?.vm.$emit('change', 'Error')
+      await wrapper.find('button.export-menu__trigger').trigger('click')
+      expect(pushMock).toHaveBeenCalled()
+      const dest = String(pushMock.mock.calls[0][0])
+      expect(dest).toContain('/settings/alerts')
+      expect(dest).toContain('trigger=log_count')
+      expect(dest).toContain('level=error')
     })
   })
 })

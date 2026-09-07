@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
+
+const logCountQueryTimeout = 2 * time.Second
 
 const maxDeliveryAttempts = 3
 
@@ -88,6 +91,12 @@ func levelsAtOrAbove(minLevel string) []string {
 		}
 	}
 	return all
+}
+
+// LogLevelsAtOrAbove is the level set used by log_count alerts and the
+// /api/logs/count preview. Same severity range as issue/event filters.
+func LogLevelsAtOrAbove(minLevel string) []string {
+	return levelsAtOrAbove(minLevel)
 }
 
 // appendIssueFilters extends a WHERE clause + args slice with the optional
@@ -241,6 +250,25 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			"window_mins": *rule.WindowMins,
 		}, nil
 
+	case "log_count":
+		if rule.WindowMins == nil || rule.Threshold == nil {
+			return false, nil, fmt.Errorf("log_count rule %s missing window_mins or threshold", rule.ID)
+		}
+		qctx, cancel := context.WithTimeout(ctx, logCountQueryTimeout)
+		defer cancel()
+		ok, err := storage.LogsReachThreshold(qctx, e.pool, logFilterFromRule(rule), *rule.Threshold)
+		if err != nil {
+			if qctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+				slog.Error("log_count query timed out", "rule", rule.ID, "err", err)
+				return false, nil, nil
+			}
+			return false, nil, fmt.Errorf("log_count: %w", err)
+		}
+		if !ok {
+			return false, nil, nil
+		}
+		return true, logCountDetails(rule, *rule.Threshold), nil
+
 	case "cron_missed":
 		var clauses []string
 		var args []any
@@ -354,6 +382,7 @@ type AlertPayload struct {
 	Issues         []*storage.Issue         `json:"issues,omitempty"`
 	Monitors       []*storage.CronMonitor   `json:"monitors,omitempty"`
 	UptimeMonitors []*storage.UptimeMonitor `json:"uptime_monitors,omitempty"`
+	Logs           []*storage.Log           `json:"logs,omitempty"`
 }
 
 // firstProjectID returns the first project ID for scoped rules, or "" for global.
@@ -362,6 +391,63 @@ func firstProjectID(rule *storage.AlertRule) string {
 		return rule.ProjectIDs[0]
 	}
 	return ""
+}
+
+func logFilterFromRule(rule *storage.AlertRule) storage.LogFilter {
+	f := storage.LogFilter{ProjectIDs: rule.ProjectIDs}
+	if rule.WindowMins != nil {
+		f.WindowMins = *rule.WindowMins
+	}
+	if rule.FilterLevel != nil && *rule.FilterLevel != "" {
+		f.Levels = levelsAtOrAbove(*rule.FilterLevel)
+	}
+	if rule.FilterEnvironment != nil {
+		f.Environment = *rule.FilterEnvironment
+	}
+	if rule.FilterSearch != nil {
+		f.Search = *rule.FilterSearch
+	}
+	return f
+}
+
+func logCountDetails(rule *storage.AlertRule, count int) map[string]any {
+	d := map[string]any{
+		"log_count":   count,
+		"project_ids": rule.ProjectIDs,
+	}
+	if rule.Threshold != nil {
+		d["threshold"] = *rule.Threshold
+	}
+	if rule.WindowMins != nil {
+		d["window_mins"] = *rule.WindowMins
+	}
+	if rule.FilterLevel != nil {
+		d["filter_level"] = *rule.FilterLevel
+	}
+	if rule.FilterEnvironment != nil {
+		d["filter_environment"] = *rule.FilterEnvironment
+	}
+	if rule.FilterSearch != nil && *rule.FilterSearch != "" {
+		d["filter_search"] = *rule.FilterSearch
+	}
+	return d
+}
+
+func truncateLogBody(body string, n int) string {
+	body = strings.ReplaceAll(body, "\n", " ")
+	runes := []rune(body)
+	if len(runes) <= n {
+		return body
+	}
+	return string(runes[:n]) + "…"
+}
+
+func formatLogSampleLines(logs []*storage.Log) string {
+	var sb strings.Builder
+	for _, l := range logs {
+		fmt.Fprintf(&sb, "`%s` %s\n", l.Level, truncateLogBody(l.Body, 120))
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, rule *storage.AlertRule) {
@@ -479,6 +565,40 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		if err == nil {
 			payload.UptimeMonitors = monitors
 		}
+	case "log_count":
+		filter := logFilterFromRule(rule)
+		qctx, cancel := context.WithTimeout(ctx, logCountQueryTimeout)
+		count, err := storage.CountLogs(qctx, e.pool, filter)
+		cancel()
+		if payload.Details == nil {
+			payload.Details = map[string]any{}
+		}
+		if err == nil {
+			for k, v := range logCountDetails(rule, count) {
+				payload.Details[k] = v
+			}
+		} else {
+			slog.Error("log_count enrich count", "rule", rule.ID, "err", err)
+			// Keep the threshold-as-lower-bound seeded by conditionMet / FireTest.
+			if _, ok := payload.Details["log_count"]; !ok {
+				n := 0
+				if rule.Threshold != nil {
+					n = *rule.Threshold
+				}
+				for k, v := range logCountDetails(rule, n) {
+					payload.Details[k] = v
+				}
+			}
+		}
+		filter.Limit = 5
+		sctx, scancel := context.WithTimeout(ctx, logCountQueryTimeout)
+		logs, _, err := storage.ListLogs(sctx, e.pool, filter)
+		scancel()
+		if err == nil {
+			payload.Logs = logs
+		} else {
+			slog.Error("log_count enrich samples", "rule", rule.ID, "err", err)
+		}
 	}
 
 	for _, iss := range payload.Issues {
@@ -559,7 +679,7 @@ func itemCountFromPayload(payload AlertPayload) *int {
 	found := false
 	for k, v := range payload.Details {
 		switch k {
-		case "new_issue_count", "regressed_count", "event_count",
+		case "new_issue_count", "regressed_count", "event_count", "log_count",
 			"missed_count", "error_count", "resolved_count":
 			if n, ok := v.(int); ok {
 				total += n
@@ -743,6 +863,7 @@ var alertTriggerLabels = map[string]string{
 	"regressed":           "Regression",
 	"new_or_regressed":    "New issue or regression",
 	"event_count":         "Event count",
+	"log_count":           "Log count",
 	"cron_missed":         "Cron monitor missed",
 	"cron_error":          "Cron monitor error",
 	"uptime_down":         "Uptime monitor down",
@@ -843,6 +964,20 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 		})
 	}
 
+	if len(payload.Logs) > 0 {
+		blocks = append(blocks, block{
+			Type: "section",
+			Text: &textObj{Type: "mrkdwn", Text: "*Logs:*\n" + formatLogSampleLines(payload.Logs)},
+		})
+	}
+	if payload.Trigger == "log_count" && e.publicURL != "" {
+		view := logsViewURL(strings.TrimRight(e.publicURL, "/"), payload)
+		blocks = append(blocks, block{
+			Type: "section",
+			Text: &textObj{Type: "mrkdwn", Text: "<" + view + "|View logs>"},
+		})
+	}
+
 	blocks = append(blocks, block{
 		Type:     "context",
 		Elements: []textObj{{Type: "mrkdwn", Text: "Tindra · " + payload.FiredAt.UTC().Format("2006-01-02 15:04 UTC")}},
@@ -921,6 +1056,22 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 			}
 		}
 		description = strings.TrimRight(sb.String(), "\n")
+	}
+
+	if len(payload.Logs) > 0 {
+		desc := formatLogSampleLines(payload.Logs)
+		if description != "" {
+			description += "\n" + desc
+		} else {
+			description = desc
+		}
+	}
+	if payload.Trigger == "log_count" && e.publicURL != "" {
+		view := logsViewURL(strings.TrimRight(e.publicURL, "/"), payload)
+		if description != "" {
+			description += "\n"
+		}
+		description += "[View logs](" + view + ")"
 	}
 
 	if len(payload.UptimeMonitors) > 0 {
@@ -1063,6 +1214,14 @@ func (e *Evaluator) fireTeams(ctx context.Context, rule *storage.AlertRule, payl
 			}
 		}
 		body = append(body, textBlock{Type: "TextBlock", Text: "**Issues:**\n" + strings.TrimRight(sb.String(), "\n"), Wrap: true})
+	}
+
+	if len(payload.Logs) > 0 {
+		body = append(body, textBlock{Type: "TextBlock", Text: "**Logs:**\n" + formatLogSampleLines(payload.Logs), Wrap: true})
+	}
+	if payload.Trigger == "log_count" && e.publicURL != "" {
+		view := logsViewURL(strings.TrimRight(e.publicURL, "/"), payload)
+		body = append(body, textBlock{Type: "TextBlock", Text: "[View logs](" + view + ")", Wrap: true})
 	}
 
 	if len(payload.UptimeMonitors) > 0 {
@@ -1216,6 +1375,10 @@ func buildAlertSubject(p AlertPayload) string {
 		count, _ := p.Details["event_count"].(int)
 		window, _ := p.Details["window_mins"].(int)
 		return fmt.Sprintf("[Tindra] %s%d events in %dmin", prefix, count, window)
+	case "log_count":
+		count, _ := p.Details["log_count"].(int)
+		window, _ := p.Details["window_mins"].(int)
+		return fmt.Sprintf("[Tindra] %s%d logs in %dmin", prefix, count, window)
 	case "cron_missed":
 		count, _ := p.Details["missed_count"].(int)
 		if count == 1 {

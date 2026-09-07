@@ -519,3 +519,116 @@ func TestListLogs_cursorPaginationWithJoin(t *testing.T) {
 		t.Errorf("second page: got %+v, want [older]", second)
 	}
 }
+
+func TestCountLogs_windowAndLevels(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+
+	seedLog(t, p.ID, "error", "stripe failed", now, "production")
+	seedLog(t, p.ID, "fatal", "process dying", now, "production")
+	seedLog(t, p.ID, "warning", "retry", now, "production")
+	seedLog(t, p.ID, "error", "old error", now.Add(-2*time.Hour), "production")
+	seedLog(t, p.ID, "error", "staging error", now, "staging")
+
+	count, err := storage.CountLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs:  []string{p.ID},
+		Levels:      []string{"fatal", "error"},
+		Environment: "production",
+		WindowMins:  5,
+	})
+	if err != nil {
+		t.Fatalf("CountLogs: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("CountLogs: got %d, want 2 (error+fatal in window, production)", count)
+	}
+}
+
+func TestCountLogs_searchEscapesLikeMeta(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+	seedLog(t, p.ID, "error", "100% done", now, "")
+	seedLog(t, p.ID, "error", "hello", now, "")
+
+	count, err := storage.CountLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Search:     "%",
+		WindowMins: 5,
+	})
+	if err != nil {
+		t.Fatalf("CountLogs: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("literal %% search: got %d, want 1", count)
+	}
+}
+
+func TestLogsReachThreshold_shortCircuits(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+	for range 20 {
+		seedLog(t, p.ID, "error", "burst", now, "")
+	}
+
+	ok, err := storage.LogsReachThreshold(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Levels:     []string{"error"},
+		WindowMins: 5,
+	}, 10)
+	if err != nil {
+		t.Fatalf("LogsReachThreshold: %v", err)
+	}
+	if !ok {
+		t.Error("expected threshold met")
+	}
+
+	ok, err = storage.LogsReachThreshold(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Levels:     []string{"error"},
+		WindowMins: 5,
+	}, 50)
+	if err != nil {
+		t.Fatalf("LogsReachThreshold under: %v", err)
+	}
+	if ok {
+		t.Error("expected threshold not met")
+	}
+}
+
+func TestLogsReachThreshold_warnSpelling(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+	seedLog(t, p.ID, "warn", "legacy", now, "")
+	seedLog(t, p.ID, "warning", "normalized", now, "")
+
+	ok, err := storage.LogsReachThreshold(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Levels:     []string{"warning"},
+		WindowMins: 5,
+	}, 2)
+	if err != nil {
+		t.Fatalf("LogsReachThreshold: %v", err)
+	}
+	if !ok {
+		t.Error("expected both warn spellings to count toward warning+")
+	}
+}
+
+func TestListLogs_searchEscapesLikeMeta(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+	seedLog(t, p.ID, "info", "100% done", now, "")
+	seedLog(t, p.ID, "info", "hello", now, "")
+
+	logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Search:     "%",
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("ListLogs: %v", err)
+	}
+	if len(logs) != 1 || logs[0].Body != "100% done" {
+		t.Errorf("literal %% search: got %+v", logs)
+	}
+}

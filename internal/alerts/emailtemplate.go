@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"net/url"
 	"strings"
 	"time"
 
@@ -216,6 +217,14 @@ type alertUptimeMonitorData struct {
 	History    []string // "up" or "down", oldest first
 }
 
+type alertLogData struct {
+	Level       string
+	LevelColor  string
+	Body        string
+	Time        string
+	Environment string
+}
+
 type alertEmailData struct {
 	RuleName       string
 	FiredAt        string
@@ -225,6 +234,7 @@ type alertEmailData struct {
 	Issues         []alertIssueData
 	Monitors       []alertMonitorData
 	UptimeMonitors []alertUptimeMonitorData
+	Logs           []alertLogData
 	MoreCount      int
 	MoreLabel      string
 }
@@ -283,6 +293,20 @@ var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
       {{if .DownSince}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Down since {{.DownSince}}</p>{{end}}
       {{if .Downtime}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Was down for {{.Downtime}}</p>{{end}}
       {{if .History}}<p style="margin:7px 0 0;line-height:1;font-size:0;">{{range .History}}<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 1px;background:{{if eq . "up"}}#22c55e{{else}}#ef4444{{end}};"></span>{{end}}</p>{{end}}
+    </td>
+  </tr>
+</table>
+{{end}}
+{{end}}
+{{if .Logs}}
+{{range .Logs}}
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
+  <tr>
+    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
+      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
+        <strong style="color:{{.LevelColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.Level}}</strong>{{if .Environment}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.Environment}}</span>{{end}}{{if .Time}}&nbsp;&bull;&nbsp;<span style="color:#9ca3af;">{{.Time}}</span>{{end}}
+      </p>
+      <p style="margin:0;font-size:13px;color:#111827;line-height:1.45;font-family:'Courier New',Courier,monospace;">{{.Body}}</p>
     </td>
   </tr>
 </table>
@@ -372,6 +396,15 @@ func alertTriggerLine(p AlertPayload) string {
 		threshold, _ := p.Details["threshold"].(int)
 		windowMins, _ := p.Details["window_mins"].(int)
 		return fmt.Sprintf("%d events in the last %d minutes (threshold: %d).", count, windowMins, threshold)
+	case "log_count":
+		count, _ := p.Details["log_count"].(int)
+		threshold, _ := p.Details["threshold"].(int)
+		windowMins, _ := p.Details["window_mins"].(int)
+		query := logCountQueryLabel(p)
+		if query != "" {
+			return fmt.Sprintf("%d logs matching %s in the last %d minutes (threshold: %d).", count, query, windowMins, threshold)
+		}
+		return fmt.Sprintf("%d logs in the last %d minutes (threshold: %d).", count, windowMins, threshold)
 	case "cron_missed":
 		count, _ := p.Details["missed_count"].(int)
 		if count == 1 {
@@ -508,12 +541,81 @@ func moreLabel(trigger string, count int) string {
 			return "regressed issue"
 		}
 		return "regressed issues"
+	case "log_count":
+		if count == 1 {
+			return "log"
+		}
+		return "logs"
 	default:
 		if count == 1 {
 			return "new issue"
 		}
 		return "new issues"
 	}
+}
+
+func logCountQueryLabel(p AlertPayload) string {
+	var parts []string
+	if v, ok := p.Details["filter_environment"].(string); ok && v != "" {
+		parts = append(parts, v)
+	}
+	if v, ok := p.Details["filter_level"].(string); ok && v != "" {
+		if v == "fatal" {
+			parts = append(parts, "fatal")
+		} else {
+			parts = append(parts, v+"+")
+		}
+	}
+	if v, ok := p.Details["filter_search"].(string); ok && v != "" {
+		parts = append(parts, `"`+v+`"`)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func logsViewURL(base string, p AlertPayload) string {
+	q := url.Values{}
+	if v, ok := p.Details["filter_level"].(string); ok && v != "" {
+		q.Set("min_level", v)
+	}
+	if v, ok := p.Details["filter_environment"].(string); ok && v != "" {
+		q.Set("environment", v)
+	}
+	if v, ok := p.Details["filter_search"].(string); ok && v != "" {
+		q.Set("search", v)
+	}
+	switch ids := p.Details["project_ids"].(type) {
+	case []string:
+		for _, id := range ids {
+			if id != "" {
+				q.Add("project_id", id)
+			}
+		}
+	}
+	if p.ProjectID != "" && q.Get("project_id") == "" {
+		q.Add("project_id", p.ProjectID)
+	}
+	encoded := q.Encode()
+	if encoded == "" {
+		return base + "/logs"
+	}
+	return base + "/logs?" + encoded
+}
+
+func buildLogCards(logs []*storage.Log) []alertLogData {
+	cards := make([]alertLogData, 0, len(logs))
+	for _, l := range logs {
+		card := alertLogData{
+			Level:      l.Level,
+			LevelColor: alertLevelColor(l.Level),
+			Body:       truncateLogBody(l.Body, 240),
+			Time:       l.Timestamp.UTC().Format("15:04:05 UTC"),
+		}
+		if l.Environment != nil {
+			card.Environment = *l.Environment
+		}
+		cards = append(cards, card)
+	}
+	return cards
 }
 
 // RenderAlertEmail returns (html, text) for an alert notification email.
@@ -523,20 +625,26 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 
 	isCron := payload.Trigger == "cron_missed" || payload.Trigger == "cron_error"
 	isUptime := payload.Trigger == "uptime_down" || payload.Trigger == "uptime_recovered"
+	isLogs := payload.Trigger == "log_count"
 
 	viewURL := ""
 	viewLabel := "View issues"
 	if base != "" {
-		if isCron || isUptime {
+		switch {
+		case isCron || isUptime:
 			viewURL = base + "/monitors"
 			viewLabel = "View monitors"
-		} else {
+		case isLogs:
+			viewURL = logsViewURL(base, payload)
+			viewLabel = "View logs"
+		default:
 			viewURL = base + "/issues"
 		}
 	}
 
 	issueCards := buildIssueCards(payload.Issues, payload.ProjectName, payload.ProjectNames, base)
 	uptimeCards := buildUptimeMonitorCards(payload.UptimeMonitors, payload.Trigger, base)
+	logCards := buildLogCards(payload.Logs)
 
 	var monitorCards []alertMonitorData
 	for _, m := range payload.Monitors {
@@ -597,6 +705,10 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 		if n, ok := payload.Details["recovered_count"].(int); ok {
 			moreCount = n - len(uptimeCards)
 		}
+	case "log_count":
+		if n, ok := payload.Details["log_count"].(int); ok {
+			moreCount = n - len(logCards)
+		}
 	}
 	if moreCount < 0 {
 		moreCount = 0
@@ -611,6 +723,7 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 		Issues:         issueCards,
 		Monitors:       monitorCards,
 		UptimeMonitors: uptimeCards,
+		Logs:           logCards,
 		MoreCount:      moreCount,
 		MoreLabel:      moreLabel(payload.Trigger, moreCount),
 	}
@@ -703,6 +816,18 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 			fmt.Fprintf(&tb, "History (oldest→newest): %s\n", dots.String())
 		}
 		tb.WriteString("\n")
+	}
+
+	for _, l := range data.Logs {
+		tb.WriteString("----------------------------------------\n")
+		meta := strings.ToUpper(l.Level)
+		if l.Environment != "" {
+			meta += " · " + l.Environment
+		}
+		if l.Time != "" {
+			meta += " · " + l.Time
+		}
+		fmt.Fprintf(&tb, "%s\n%s\n\n", meta, l.Body)
 	}
 
 	if data.MoreCount > 0 {

@@ -943,6 +943,12 @@ describe('SettingsView', () => {
       expect(wrapper.text()).toContain('>50 events')
     })
 
+    it('shows threshold for log_count trigger', () => {
+      setupAlertsTab([makeRuleWithTrigger('log_count', 10, 5)])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('>10 logs')
+    })
+
     it('shows "Cron monitor missed" for cron_missed trigger', () => {
       setupAlertsTab([makeRuleWithTrigger('cron_missed')])
       const wrapper = mount(SettingsView, { global: { stubs } })
@@ -2445,6 +2451,19 @@ describe('SettingsView', () => {
       await wrapper.find('.rule__head').trigger('click')
       expect(wrapper.text()).toContain('Email to')
       expect(wrapper.text()).toContain('team@example.com')
+    })
+
+    it('new rule form shows log_count fields when trigger changed', async () => {
+      setupAlerts([])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.findAll('.btn').find(b => b.text().includes('New rule'))!.trigger('click')
+      const triggerSelect = wrapper.findAll('select.field__input').find(s =>
+        s.findAll('option').some(o => o.text().includes('Log count')),
+      )
+      expect(triggerSelect).toBeTruthy()
+      await triggerSelect!.setValue('log_count')
+      expect(wrapper.text()).toContain('Threshold (logs)')
+      expect(wrapper.text()).toContain('Search')
     })
 
     it('new rule form shows event_count fields when trigger changed', async () => {

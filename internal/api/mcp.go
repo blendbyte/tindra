@@ -362,15 +362,18 @@ func mcpToolList() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"name":          prop("string", "Rule name."),
-					"trigger":       prop("string", "Trigger: new_issue, regressed, new_or_regressed, event_count, cron_missed, or cron_error."),
-					"channel":       prop("string", "Notification channel: webhook, slack, discord, teams, or email."),
-					"webhook_url":   prop("string", "Webhook/Slack/Discord/Teams URL (required for those channels)."),
-					"email_to":      prop("string", "Email address (required for email channel)."),
-					"threshold":     prop("integer", "Event count threshold (required for event_count trigger)."),
-					"window_mins":   prop("integer", "Window in minutes for event_count trigger."),
-					"project_id":    prop("string", "Project to apply the rule to. Defaults to token's project or all projects for session auth."),
-					"cooldown_mins": prop("integer", "Minutes between repeated firings (default 60)."),
+					"name":               prop("string", "Rule name."),
+					"trigger":            prop("string", "Trigger: new_issue, regressed, new_or_regressed, event_count, log_count, cron_missed, cron_error, uptime_down, or uptime_recovered."),
+					"channel":            prop("string", "Notification channel: webhook, slack, discord, teams, or email."),
+					"webhook_url":        prop("string", "Webhook/Slack/Discord/Teams URL (required for those channels)."),
+					"email_to":           prop("string", "Email address (required for email channel)."),
+					"threshold":          prop("integer", "Count threshold (required for event_count and log_count)."),
+					"window_mins":        prop("integer", "Window in minutes for event_count and log_count (log_count max 60)."),
+					"filter_level":       prop("string", "Minimum severity: fatal, error, warning, info, or debug. Required for log_count (fatal, error, or warning)."),
+					"filter_search":      prop("string", "Log body search (log_count). Required when min level is warning."),
+					"filter_environment": prop("string", "Environment filter, e.g. production."),
+					"project_id":         prop("string", "Project to apply the rule to. Required for log_count. Defaults to token's project or all projects for session auth."),
+					"cooldown_mins":      prop("integer", "Minutes between repeated firings (default 60)."),
 				},
 				"required": []string{"name", "trigger", "channel"},
 			},
@@ -1078,6 +1081,15 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 	}
 	if v := mcpArgInt(args, "window_mins", 0); v > 0 {
 		rule.WindowMins = &v
+	}
+	if v := mcpArgString(args, "filter_level"); v != "" {
+		rule.FilterLevel = &v
+	}
+	if v := mcpArgString(args, "filter_search"); v != "" {
+		rule.FilterSearch = &v
+	}
+	if v := mcpArgString(args, "filter_environment"); v != "" {
+		rule.FilterEnvironment = &v
 	}
 
 	if msg := validateAlertRule(rule); msg != "" {

@@ -285,3 +285,86 @@ func TestListLogs_transactionIDSerialized(t *testing.T) {
 		t.Errorf("expected transaction_id omitted for untraced log, got %v", plain["transaction_id"])
 	}
 }
+
+func TestListLogs_minLevel(t *testing.T) {
+	truncateLogs(t)
+	seedLog(t, "warning", "retry")
+	seedLog(t, "error", "failed")
+	seedLog(t, "fatal", "dead")
+	seedLog(t, "info", "ok")
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs?project_id="+testProject.ID+"&min_level=error", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Logs []*storage.Log `json:"logs"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Logs) != 2 {
+		t.Fatalf("min_level=error: got %d, want 2 (error+fatal)", len(resp.Logs))
+	}
+}
+
+func TestCountLogs_ok(t *testing.T) {
+	truncateLogs(t)
+	seedLog(t, "error", "stripe failed")
+	seedLog(t, "fatal", "dead")
+	seedLog(t, "warning", "retry")
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=error&window_mins=5", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Count      int `json:"count"`
+		WindowMins int `json:"window_mins"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Count != 2 {
+		t.Errorf("count: got %d, want 2 (error+fatal)", resp.Count)
+	}
+	if resp.WindowMins != 5 {
+		t.Errorf("window_mins: got %d", resp.WindowMins)
+	}
+}
+
+func TestCountLogs_requiresProjectAndLevel(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/logs/count?level=error", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing project: got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/logs/count?project_id="+testProject.ID+"&level=info", nil)
+	req.AddCookie(authCookie())
+	rec = httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("info level: got %d", rec.Code)
+	}
+}
+
+func TestCountLogs_unauthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/logs/count?project_id="+testProject.ID+"&level=error", nil)
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}

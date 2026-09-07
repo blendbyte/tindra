@@ -286,6 +286,7 @@ export type AlertTrigger =
   | 'regressed'
   | 'new_or_regressed'
   | 'event_count'
+  | 'log_count'
   | 'cron_missed'
   | 'cron_error'
   | 'uptime_down'
@@ -343,6 +344,7 @@ export interface AlertRule {
   filter_level: string | null
   filter_environment: string | null
   min_occurrences: number | null
+  filter_search?: string | null
   last_fired_at: string | null
   created_at: string
 }

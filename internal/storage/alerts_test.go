@@ -93,6 +93,51 @@ func TestCreateAlertRule_email(t *testing.T) {
 	}
 }
 
+func TestCreateAlertRule_filterSearch(t *testing.T) {
+	p := setupProjectForAlerts(t)
+	search := "stripe"
+	level := "error"
+	th, win := 10, 5
+	url := "https://example.com/webhook"
+	created, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs:   []string{p.ID},
+		Name:         "log spike",
+		Enabled:      true,
+		Trigger:      "log_count",
+		Threshold:    &th,
+		WindowMins:   &win,
+		Channel:      "webhook",
+		WebhookURL:   &url,
+		CooldownMins: 60,
+		FilterLevel:  &level,
+		FilterSearch: &search,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.FilterSearch == nil || *created.FilterSearch != "stripe" {
+		t.Errorf("FilterSearch after create: got %v", created.FilterSearch)
+	}
+
+	got, err := storage.GetAlertRule(context.Background(), testPool, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.FilterSearch == nil || *got.FilterSearch != "stripe" {
+		t.Errorf("FilterSearch after get: got %v", got.FilterSearch)
+	}
+
+	cleared := *got
+	cleared.FilterSearch = nil
+	updated, err := storage.UpdateAlertRule(context.Background(), testPool, &cleared)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.FilterSearch != nil {
+		t.Errorf("FilterSearch after clear: got %v", updated.FilterSearch)
+	}
+}
+
 func TestGetAlertRule(t *testing.T) {
 	p := setupProjectForAlerts(t)
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, webhookRule(p.ID))

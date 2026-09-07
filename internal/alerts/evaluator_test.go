@@ -192,6 +192,117 @@ func TestConditionMet_eventCount_nilThreshold(t *testing.T) {
 	}
 }
 
+func TestConditionMet_logCount_underThreshold(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM logs WHERE project_id = $1", testProject.ID)
+
+	threshold, window := 10, 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &threshold,
+		WindowMins:  &window,
+		FilterLevel: &level,
+	}
+	for range 3 {
+		testPool.Exec(context.Background(), `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'error', 'burst')
+		`, testProject.ID)
+	}
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false when log count is below threshold")
+	}
+}
+
+func TestConditionMet_logCount_overThreshold(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM logs WHERE project_id = $1", testProject.ID)
+
+	threshold, window := 3, 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &threshold,
+		WindowMins:  &window,
+		FilterLevel: &level,
+	}
+	for range 5 {
+		testPool.Exec(context.Background(), `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'error', 'burst')
+		`, testProject.ID)
+	}
+	met, details, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true when log count exceeds threshold")
+	}
+	if details["threshold"].(int) != threshold {
+		t.Errorf("threshold detail: got %v", details["threshold"])
+	}
+	if details["window_mins"].(int) != window {
+		t.Errorf("window_mins detail: got %v", details["window_mins"])
+	}
+}
+
+func TestEnrichPayload_logCount(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM logs WHERE project_id = $1", testProject.ID)
+	for i := range 6 {
+		testPool.Exec(context.Background(), `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'error', $2)
+		`, testProject.ID, "line "+string(rune('a'+i)))
+	}
+	threshold, window := 3, 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &threshold,
+		WindowMins:  &window,
+		FilterLevel: &level,
+	}
+	payload := AlertPayload{Trigger: "log_count", Details: map[string]any{}}
+	testEvaluator(nil).enrichPayload(context.Background(), &payload, rule)
+	if payload.Details["log_count"].(int) < 6 {
+		t.Errorf("log_count: got %v", payload.Details["log_count"])
+	}
+	if len(payload.Logs) != 5 {
+		t.Errorf("sample logs: got %d, want 5", len(payload.Logs))
+	}
+}
+
+func TestTruncateLogBody_utf8(t *testing.T) {
+	got := truncateLogBody("ééééé", 2)
+	if got != "éé…" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestEmailSubject_logCount(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger: "log_count",
+		Details: map[string]any{"log_count": 14, "window_mins": 5},
+	})
+	if got != "[Tindra] 14 logs in 5min" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestItemCountFromPayload_logCount(t *testing.T) {
+	n := itemCountFromPayload(AlertPayload{Details: map[string]any{"log_count": 14}})
+	if n == nil || *n != 14 {
+		t.Errorf("got %v", n)
+	}
+}
+
 // --- fireWebhook ---
 
 func TestFireWebhook_success(t *testing.T) {
@@ -378,6 +489,7 @@ func TestFireSlack_triggerLabels(t *testing.T) {
 		{"regressed", "Regression"},
 		{"new_or_regressed", "New issue or regression"},
 		{"event_count", "Event count"},
+		{"log_count", "Log count"},
 		{"unknown", "unknown"},
 	}
 
@@ -573,6 +685,7 @@ func TestFireDiscord_triggerLabels(t *testing.T) {
 		{"regressed", "Regression"},
 		{"new_or_regressed", "New issue or regression"},
 		{"event_count", "Event count"},
+		{"log_count", "Log count"},
 		{"unknown", "unknown"},
 	}
 
@@ -790,6 +903,7 @@ func TestFireTeams_triggerLabels(t *testing.T) {
 		{"regressed", "Regression"},
 		{"new_or_regressed", "New issue or regression"},
 		{"event_count", "Event count"},
+		{"log_count", "Log count"},
 		{"unknown", "unknown"},
 	}
 

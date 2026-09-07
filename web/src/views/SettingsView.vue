@@ -585,6 +585,7 @@ const newRule = reactive({
   filter_level: '',
   filter_environment: '',
   min_occurrences: 0,
+  filter_search: '',
 })
 
 function resetNewRule() {
@@ -600,6 +601,7 @@ function resetNewRule() {
   newRule.filter_level = ''
   newRule.filter_environment = ''
   newRule.min_occurrences = 0
+  newRule.filter_search = ''
 }
 
 const alertProjects = computed(() => (projects.value as Project[]) ?? [])
@@ -624,6 +626,7 @@ function firingTriggerLabel(trigger: string): string {
     regressed: 'Regression',
     new_or_regressed: 'New issue / regression',
     event_count: 'Event count',
+    log_count: 'Log count',
     cron_missed: 'Cron missed',
     cron_error: 'Cron error',
     uptime_down: 'Uptime down',
@@ -644,6 +647,7 @@ function triggerLabel(rule: AlertRule): string {
   if (rule.trigger === 'new_or_regressed') return 'New issue or regression'
   if (rule.trigger === 'always') return 'Always'
   if (rule.trigger === 'event_count') return `>${rule.threshold} events in ${rule.window_mins}m`
+  if (rule.trigger === 'log_count') return `>${rule.threshold} logs in ${rule.window_mins}m`
   if (rule.trigger === 'cron_missed') return 'Cron monitor missed'
   if (rule.trigger === 'cron_error') return 'Cron monitor error'
   if (rule.trigger === 'uptime_down') return 'Uptime monitor down'
@@ -655,6 +659,44 @@ function openNewRule() {
   showNewRule.value = !showNewRule.value
 }
 
+function queryParam(v: unknown): string {
+  if (Array.isArray(v)) return String(v[0] ?? '')
+  return typeof v === 'string' ? v : ''
+}
+function queryParamList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string' && x !== '')
+  if (typeof v === 'string' && v) return [v]
+  return []
+}
+
+function applyLogCountDefaults() {
+  newRule.threshold = 10
+  newRule.window_mins = 5
+  if (!['fatal', 'error', 'warning'].includes(newRule.filter_level)) {
+    newRule.filter_level = 'error'
+  }
+}
+
+watch(() => newRule.trigger, (t, prev) => {
+  if (t === 'log_count' && prev !== 'log_count') applyLogCountDefaults()
+})
+
+function applyAlertQueryPrefill() {
+  if (tab.value !== 'alerts' || route.query.new !== '1') return
+  showNewRule.value = true
+  if (queryParam(route.query.trigger) === 'log_count') {
+    newRule.trigger = 'log_count'
+    applyLogCountDefaults()
+    const level = queryParam(route.query.level)
+    if (['fatal', 'error', 'warning'].includes(level)) newRule.filter_level = level
+    newRule.filter_environment = queryParam(route.query.environment)
+    newRule.filter_search = queryParam(route.query.search)
+    const pids = queryParamList(route.query.project_id)
+    if (pids.length) newRule.projectIDs = pids
+  }
+  router.replace({ name: 'settings', params: { tab: 'alerts' } })
+}
+
 const { mutate: createAlertRule, isPending: creatingRule } = useMutation({
   mutationFn: () => {
     const body: Record<string, unknown> = {
@@ -664,7 +706,10 @@ const { mutate: createAlertRule, isPending: creatingRule } = useMutation({
       cooldown_mins: Number(newRule.cooldown_mins),
       project_ids: newRule.projectIDs,
     }
-    if (newRule.trigger === 'event_count') {
+    if (newRule.trigger === 'log_count' && newRule.projectIDs.length === 0) {
+      throw new Error('Pick at least one project for a log count alert')
+    }
+    if (newRule.trigger === 'event_count' || newRule.trigger === 'log_count') {
       body.threshold = Number(newRule.threshold)
       body.window_mins = Number(newRule.window_mins)
     }
@@ -676,6 +721,7 @@ const { mutate: createAlertRule, isPending: creatingRule } = useMutation({
     if (newRule.filter_level) body.filter_level = newRule.filter_level
     if (newRule.filter_environment) body.filter_environment = newRule.filter_environment
     if (newRule.min_occurrences > 0) body.min_occurrences = Number(newRule.min_occurrences)
+    if (newRule.trigger === 'log_count') body.filter_search = newRule.filter_search.trim() || null
     return apiFetch<AlertRule>('/api/alert-rules', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -733,6 +779,7 @@ const editRule = reactive({
   filter_level: '',
   filter_environment: '',
   min_occurrences: 0,
+  filter_search: '',
 })
 
 function startEditRule(rule: AlertRule) {
@@ -740,8 +787,8 @@ function startEditRule(rule: AlertRule) {
   editRule.projectIDs = rule.project_ids ? [...rule.project_ids] : []
   editRule.name = rule.name
   editRule.trigger = rule.trigger
-  editRule.threshold = rule.threshold ?? 100
-  editRule.window_mins = rule.window_mins ?? 60
+  editRule.threshold = rule.threshold ?? (rule.trigger === 'log_count' ? 10 : 100)
+  editRule.window_mins = rule.window_mins ?? (rule.trigger === 'log_count' ? 5 : 60)
   editRule.channel = rule.channel
   editRule.webhook_url = rule.webhook_url ?? ''
   editRule.email_to = rule.email_to ?? ''
@@ -749,7 +796,17 @@ function startEditRule(rule: AlertRule) {
   editRule.filter_level = rule.filter_level ?? ''
   editRule.filter_environment = rule.filter_environment ?? ''
   editRule.min_occurrences = rule.min_occurrences ?? 0
+  editRule.filter_search = rule.filter_search ?? ''
 }
+
+watch(() => editRule.trigger, (t, prev) => {
+  if (t === 'log_count' && prev !== 'log_count') {
+    if (editRule.window_mins > 60 || editRule.window_mins < 1) editRule.window_mins = 5
+    if (!['fatal', 'error', 'warning'].includes(editRule.filter_level)) {
+      editRule.filter_level = 'error'
+    }
+  }
+})
 
 function cancelEditRule() {
   editingRuleID.value = null
@@ -767,7 +824,10 @@ const { mutate: saveAlertRule, isPending: savingRule } = useMutation({
       min_occurrences: editRule.min_occurrences > 0 ? Number(editRule.min_occurrences) : null,
       project_ids: editRule.projectIDs,
     }
-    if (editRule.trigger === 'event_count') {
+    if (editRule.trigger === 'log_count' && editRule.projectIDs.length === 0) {
+      throw new Error('Pick at least one project for a log count alert')
+    }
+    if (editRule.trigger === 'event_count' || editRule.trigger === 'log_count') {
       body.threshold = Number(editRule.threshold)
       body.window_mins = Number(editRule.window_mins)
     }
@@ -776,6 +836,7 @@ const { mutate: saveAlertRule, isPending: savingRule } = useMutation({
     } else {
       body.webhook_url = editRule.webhook_url
     }
+    body.filter_search = editRule.trigger === 'log_count' ? (editRule.filter_search.trim() || null) : null
     return apiFetch(`/api/alert-rules/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -875,6 +936,33 @@ const { data: expandedRuleFiringsData } = useQuery({
 })
 const expandedRuleFirings = computed(() => expandedRuleFiringsData.value ?? [])
 
+const logPreviewSource = computed(() => {
+  const rule = editingRuleID.value ? editRule : newRule
+  const formOpen = editingRuleID.value ? true : showNewRule.value
+  if (!formOpen || rule.trigger !== 'log_count' || !rule.projectIDs.length || !rule.filter_level) return ''
+  const p = new URLSearchParams()
+  for (const id of rule.projectIDs) p.append('project_id', id)
+  p.set('level', rule.filter_level)
+  p.set('window_mins', String(rule.window_mins || 5))
+  if (rule.filter_environment) p.set('environment', rule.filter_environment)
+  if (rule.filter_search.trim()) p.set('search', rule.filter_search.trim())
+  return p.toString()
+})
+
+const logPreviewKey = ref('')
+let previewTimer: ReturnType<typeof setTimeout>
+watch(logPreviewSource, (v) => {
+  clearTimeout(previewTimer)
+  previewTimer = setTimeout(() => { logPreviewKey.value = v }, 300)
+}, { immediate: true })
+onUnmounted(() => clearTimeout(previewTimer))
+
+const { data: logPreview } = useQuery({
+  queryKey: computed(() => ['logs-count', logPreviewKey.value]),
+  queryFn: () => apiFetch<{ count: number; window_mins: number }>(`/api/logs/count?${logPreviewKey.value}`),
+  enabled: computed(() => logPreviewKey.value !== ''),
+})
+
 const showNewProject = ref(false)
 const newProjectName = ref('')
 const newProjectSlug = ref('')
@@ -883,8 +971,14 @@ const newProjectError = ref<string | null>(null)
 const createdProject = ref<Project | null>(null)
 
 // Auto-open the new-project form when arriving via ?new=1
-onMounted(() => { if (tab.value === 'projects' && route.query.new === '1') openNewProject() })
-watch(() => route.query.new, (v) => { if (tab.value === 'projects' && v === '1') openNewProject() })
+onMounted(() => {
+  if (tab.value === 'projects' && route.query.new === '1') openNewProject()
+  applyAlertQueryPrefill()
+})
+watch(() => [route.query.new, tab.value] as const, () => {
+  if (tab.value === 'projects' && route.query.new === '1') openNewProject()
+  applyAlertQueryPrefill()
+})
 
 // Edit state
 const editingProject = ref<string | null>(null)
@@ -2240,7 +2334,7 @@ function actionKindOf(action: string) {
               <input v-model="newRule.name" class="field__input" placeholder="e.g. High error rate" />
             </div>
             <div v-if="alertProjects.length > 0" class="field" style="grid-column: 1 / -1">
-              <label class="field__label">Projects <span style="font-weight: normal; color: var(--text-2)">(none = global)</span></label>
+              <label class="field__label">Projects <span style="font-weight: normal; color: var(--text-2)">{{ newRule.trigger === 'log_count' ? '(at least one required)' : '(none = global)' }}</span></label>
               <div class="rule__project-checks">
                 <label v-for="p in alertProjects" :key="p.id" class="rule__project-check">
                   <input type="checkbox" :value="p.id" v-model="newRule.projectIDs" />
@@ -2255,20 +2349,21 @@ function actionKindOf(action: string) {
                 <option value="regressed">Regression (resolved issue breaks again)</option>
                 <option value="new_or_regressed">New issue or regression</option>
                 <option value="event_count">Event count above threshold</option>
+                <option value="log_count">Log count above threshold</option>
                 <option value="cron_missed">Cron monitor missed check-in</option>
                 <option value="cron_error">Cron monitor check-in error</option>
                 <option value="uptime_down">Uptime monitor went down</option>
                 <option value="uptime_recovered">Uptime monitor recovered</option>
               </select>
             </div>
-            <template v-if="newRule.trigger === 'event_count'">
+            <template v-if="newRule.trigger === 'event_count' || newRule.trigger === 'log_count'">
               <div class="field">
-                <label class="field__label">Threshold (events)</label>
+                <label class="field__label">{{ newRule.trigger === 'log_count' ? 'Threshold (logs)' : 'Threshold (events)' }}</label>
                 <input v-model.number="newRule.threshold" class="field__input" type="number" min="1" />
               </div>
               <div class="field">
                 <label class="field__label">Window (minutes)</label>
-                <input v-model.number="newRule.window_mins" class="field__input" type="number" min="1" />
+                <input v-model.number="newRule.window_mins" class="field__input" type="number" min="1" :max="newRule.trigger === 'log_count' ? 60 : undefined" />
               </div>
             </template>
             <div class="field">
@@ -2296,25 +2391,34 @@ function actionKindOf(action: string) {
             <div class="field">
               <label class="field__label">Min. level</label>
               <select v-model="newRule.filter_level" class="field__input">
-                <option value="">Any level</option>
+                <option v-if="newRule.trigger !== 'log_count'" value="">Any level</option>
                 <option value="fatal">Fatal only</option>
                 <option value="error">Error and above</option>
-                <option value="warning">Warning and above</option>
-                <option value="info">Info and above</option>
-                <option value="performance">Performance issues only</option>
+                <option value="warning">{{ newRule.trigger === 'log_count' ? 'Warning and above (requires search)' : 'Warning and above' }}</option>
+                <option v-if="newRule.trigger !== 'log_count'" value="info">Info and above</option>
+                <option v-if="newRule.trigger !== 'log_count'" value="performance">Performance issues only</option>
               </select>
             </div>
             <div class="field">
               <label class="field__label">Environment</label>
               <input v-model="newRule.filter_environment" class="field__input" placeholder="e.g. production" />
             </div>
-            <div v-if="newRule.trigger !== 'event_count'" class="field">
+            <div v-if="newRule.trigger === 'log_count'" class="field" style="grid-column: 1 / -1">
+              <label class="field__label">Search</label>
+              <input v-model="newRule.filter_search" class="field__input" placeholder="Same as the Logs search box" maxlength="200" />
+              <div class="field__hint">Required if min level is warning. Matches the log message.</div>
+            </div>
+            <div v-if="newRule.trigger !== 'event_count' && newRule.trigger !== 'log_count'" class="field">
               <label class="field__label">Min. occurrences</label>
               <input v-model.number="newRule.min_occurrences" class="field__input" type="number" min="0" placeholder="Any" />
             </div>
           </div>
+          <p v-if="newRule.trigger === 'log_count' && logPreview" class="field__hint" style="margin-top: 10px">
+            {{ logPreview.count }} matching log{{ logPreview.count === 1 ? '' : 's' }} in the last {{ logPreview.window_mins }}m
+            <span v-if="logPreview.count >= Number(newRule.threshold)" style="color: var(--warning)"> — this would fire immediately</span>
+          </p>
           <div style="display: flex; gap: 8px; margin-top: 14px">
-            <button class="btn btn--primary" :disabled="creatingRule" @click="createAlertRule()">
+            <button class="btn btn--primary" :disabled="creatingRule || (newRule.trigger === 'log_count' && newRule.projectIDs.length === 0)" @click="createAlertRule()">
               {{ creatingRule ? 'Creating…' : 'Create rule' }}
             </button>
             <button class="btn btn--ghost" @click="showNewRule = false; resetNewRule()">Cancel</button>
@@ -2365,7 +2469,7 @@ function actionKindOf(action: string) {
                   <input v-model="editRule.name" class="field__input" />
                 </div>
                 <div v-if="alertProjects.length > 0" class="field" style="grid-column: 1 / -1">
-                  <label class="field__label">Projects <span style="font-weight: normal; color: var(--text-2)">(none = global)</span></label>
+                  <label class="field__label">Projects <span style="font-weight: normal; color: var(--text-2)">{{ editRule.trigger === 'log_count' ? '(at least one required)' : '(none = global)' }}</span></label>
                   <div class="rule__project-checks">
                     <label v-for="p in alertProjects" :key="p.id" class="rule__project-check">
                       <input type="checkbox" :value="p.id" v-model="editRule.projectIDs" />
@@ -2380,20 +2484,21 @@ function actionKindOf(action: string) {
                     <option value="regressed">Regression (resolved issue breaks again)</option>
                     <option value="new_or_regressed">New issue or regression</option>
                     <option value="event_count">Event count above threshold</option>
+                    <option value="log_count">Log count above threshold</option>
                     <option value="cron_missed">Cron monitor missed check-in</option>
                     <option value="cron_error">Cron monitor check-in error</option>
                     <option value="uptime_down">Uptime monitor went down</option>
                     <option value="uptime_recovered">Uptime monitor recovered</option>
                   </select>
                 </div>
-                <template v-if="editRule.trigger === 'event_count'">
+                <template v-if="editRule.trigger === 'event_count' || editRule.trigger === 'log_count'">
                   <div class="field">
-                    <label class="field__label">Threshold (events)</label>
+                    <label class="field__label">{{ editRule.trigger === 'log_count' ? 'Threshold (logs)' : 'Threshold (events)' }}</label>
                     <input v-model.number="editRule.threshold" class="field__input" type="number" min="1" />
                   </div>
                   <div class="field">
                     <label class="field__label">Window (minutes)</label>
-                    <input v-model.number="editRule.window_mins" class="field__input" type="number" min="1" />
+                    <input v-model.number="editRule.window_mins" class="field__input" type="number" min="1" :max="editRule.trigger === 'log_count' ? 60 : undefined" />
                   </div>
                 </template>
                 <div class="field">
@@ -2421,25 +2526,33 @@ function actionKindOf(action: string) {
                 <div class="field">
                   <label class="field__label">Min. level</label>
                   <select v-model="editRule.filter_level" class="field__input">
-                    <option value="">Any level</option>
+                    <option v-if="editRule.trigger !== 'log_count'" value="">Any level</option>
                     <option value="fatal">Fatal only</option>
                     <option value="error">Error and above</option>
-                    <option value="warning">Warning and above</option>
-                    <option value="info">Info and above</option>
-                    <option value="performance">Performance issues only</option>
+                    <option value="warning">{{ editRule.trigger === 'log_count' ? 'Warning and above (requires search)' : 'Warning and above' }}</option>
+                    <option v-if="editRule.trigger !== 'log_count'" value="info">Info and above</option>
+                    <option v-if="editRule.trigger !== 'log_count'" value="performance">Performance issues only</option>
                   </select>
                 </div>
                 <div class="field">
                   <label class="field__label">Environment</label>
                   <input v-model="editRule.filter_environment" class="field__input" placeholder="e.g. production" />
                 </div>
-                <div v-if="editRule.trigger !== 'event_count'" class="field">
+                <div v-if="editRule.trigger === 'log_count'" class="field" style="grid-column: 1 / -1">
+                  <label class="field__label">Search</label>
+                  <input v-model="editRule.filter_search" class="field__input" placeholder="Same as the Logs search box" maxlength="200" />
+                </div>
+                <div v-if="editRule.trigger !== 'event_count' && editRule.trigger !== 'log_count'" class="field">
                   <label class="field__label">Min. occurrences</label>
                   <input v-model.number="editRule.min_occurrences" class="field__input" type="number" min="0" placeholder="Any" />
                 </div>
               </div>
+              <p v-if="editRule.trigger === 'log_count' && logPreview" class="field__hint" style="margin-top: 10px">
+                {{ logPreview.count }} matching log{{ logPreview.count === 1 ? '' : 's' }} in the last {{ logPreview.window_mins }}m
+                <span v-if="logPreview.count >= Number(editRule.threshold)" style="color: var(--warning)"> — this would fire immediately</span>
+              </p>
               <div style="display: flex; gap: 8px; margin-top: 14px">
-                <button class="btn btn--primary" :disabled="savingRule" @click="saveAlertRule({ id: rule.id })">
+                <button class="btn btn--primary" :disabled="savingRule || (editRule.trigger === 'log_count' && editRule.projectIDs.length === 0)" @click="saveAlertRule({ id: rule.id })">
                   {{ savingRule ? 'Saving…' : 'Save' }}
                 </button>
                 <button class="btn btn--ghost" @click="cancelEditRule()">Cancel</button>
@@ -2460,11 +2573,15 @@ function actionKindOf(action: string) {
                 <span class="rule__detail-v">{{ ruleProjectNames(rule) }}</span>
                 <span class="rule__detail-k">Trigger</span>
                 <span class="rule__detail-v">{{ triggerLabel(rule) }}</span>
-                <template v-if="rule.trigger === 'event_count'">
+                <template v-if="rule.trigger === 'event_count' || rule.trigger === 'log_count'">
                   <span class="rule__detail-k">Threshold</span>
-                  <span class="rule__detail-v">{{ rule.threshold }} events</span>
+                  <span class="rule__detail-v">{{ rule.threshold }} {{ rule.trigger === 'log_count' ? 'logs' : 'events' }}</span>
                   <span class="rule__detail-k">Window</span>
                   <span class="rule__detail-v">{{ rule.window_mins }} minutes</span>
+                </template>
+                <template v-if="rule.trigger === 'log_count' && rule.filter_search">
+                  <span class="rule__detail-k">Search</span>
+                  <span class="rule__detail-v">{{ rule.filter_search }}</span>
                 </template>
                 <span class="rule__detail-k">Channel</span>
                 <span class="rule__detail-v">{{ rule.channel }}</span>
