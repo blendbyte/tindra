@@ -54,8 +54,15 @@ const envOptions = computed(() => {
 })
 
 const canManageAlerts = computed(() => auth.user?.permissions.manage_alerts ?? false)
+const selectedProjectIds = computed(() => projects.selectedIds)
+// Navbar "All projects" is an empty selection, which still lists every
+// project's logs. The alert needs explicit project IDs, so use the full list.
+const alertProjectIds = computed(() => {
+  if (selectedProjectIds.value.length > 0) return selectedProjectIds.value
+  return (projects.projects ?? []).map((p) => p.id)
+})
 const canAlertOnThis = computed(() => {
-  if (selectedProjectIds.value.length === 0) return false
+  if (alertProjectIds.value.length === 0) return false
   const lv = levelFilter.value
   if (lv === 'Error' || lv === 'Fatal') return true
   return lv === 'Warning' && searchQuery.value.trim() !== ''
@@ -69,11 +76,9 @@ function alertOnThis() {
   if (lv === 'error' || lv === 'fatal' || lv === 'warning') params.set('level', lv)
   if (envFilter.value !== 'All') params.set('environment', envFilter.value)
   if (searchQuery.value.trim()) params.set('search', searchQuery.value.trim())
-  for (const id of selectedProjectIds.value) params.append('project_id', id)
+  for (const id of alertProjectIds.value) params.append('project_id', id)
   router.push(`/settings/alerts?${params}`)
 }
-
-const selectedProjectIds = computed(() => projects.selectedIds)
 
 // The project column only earns its space when the filter leaves more than one
 // project in play — with exactly one selected every row would repeat its name.
@@ -196,7 +201,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
         v-if="canManageAlerts"
         class="btn btn--ghost export-menu__trigger"
         :disabled="!canAlertOnThis"
-        :title="canAlertOnThis ? 'Create an alert from these filters' : 'Select a project and error/fatal (warning needs a search)'"
+        :title="canAlertOnThis ? 'Create an alert from these filters' : 'Pick error/fatal, or warning with a search'"
         @click="alertOnThis()"
       >
         Alert on this

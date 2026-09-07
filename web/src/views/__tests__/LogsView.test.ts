@@ -65,8 +65,13 @@ const PROJECTS = [
   { id: 'p2', name: 'Web Frontend' },
 ]
 
-function setupMocks(logs: unknown[] = [], isLoading = false, selectedIds: string[] = []) {
-  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds, projects: PROJECTS, setSelected: vi.fn() } as any)
+function setupMocks(
+  logs: unknown[] = [],
+  isLoading = false,
+  selectedIds: string[] = [],
+  projectList: { id: string; name: string }[] = PROJECTS,
+) {
+  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds, projects: projectList, setSelected: vi.fn() } as any)
   vi.mocked(useQuery).mockReturnValue({
     data: ref(logs.length > 0 ? { logs, has_more: false } : (isLoading ? undefined : { logs: [], has_more: false })),
     isLoading: ref(isLoading),
@@ -473,13 +478,27 @@ describe('LogsView', () => {
       expect(wrapper.text()).not.toContain('Alert on this')
     })
 
-    it('is disabled without a selected project', () => {
-      setupMocks([makeLog('l1', 'error', 'x')])
+    it('is disabled when the instance has no projects', async () => {
+      setupMocks([makeLog('l1', 'error', 'x')], false, [], [])
       const wrapper = mount(LogsView, { global: { stubs } })
       const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-      const levelChip = chips.find(c => c.props('label') === 'Level')
-      levelChip?.vm.$emit('change', 'Error')
+      await chips.find(c => c.props('label') === 'Level')?.vm.$emit('change', 'Error')
       expect(wrapper.find('button.export-menu__trigger').attributes('disabled')).toBeDefined()
+    })
+
+    it('is enabled for All projects (empty selection) and prefills every project', async () => {
+      routeState.query = { level: 'warning', search: 'disk', environment: 'production' }
+      setupMocks([makeLog('l1', 'warning', 'disk usage')], false, [])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const btn = wrapper.find('button.export-menu__trigger')
+      expect(btn.attributes('disabled')).toBeUndefined()
+      await btn.trigger('click')
+      const dest = String(pushMock.mock.calls[0][0])
+      expect(dest).toContain('level=warning')
+      expect(dest).toContain('search=disk')
+      expect(dest).toContain('environment=production')
+      expect(dest).toContain('project_id=p1')
+      expect(dest).toContain('project_id=p2')
     })
 
     it('hydrates min_level and a custom environment from the URL', () => {
