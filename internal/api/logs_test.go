@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,6 +313,29 @@ func TestListLogs_minLevel(t *testing.T) {
 	}
 }
 
+func TestListLogs_minLevelWarn(t *testing.T) {
+	truncateLogs(t)
+	seedLog(t, "warn", "legacy")
+	seedLog(t, "warning", "normalized")
+	seedLog(t, "info", "skip")
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs?project_id="+testProject.ID+"&min_level=warn", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Logs []*storage.Log `json:"logs"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp.Logs) != 2 {
+		t.Fatalf("min_level=warn: got %d, want 2", len(resp.Logs))
+	}
+}
+
 func TestCountLogs_ok(t *testing.T) {
 	truncateLogs(t)
 	seedLog(t, "error", "stripe failed")
@@ -357,6 +381,70 @@ func TestCountLogs_requiresProjectAndLevel(t *testing.T) {
 	logsHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("info level: got %d", rec.Code)
+	}
+}
+
+func TestCountLogs_defaultWindow(t *testing.T) {
+	truncateLogs(t)
+	seedLog(t, "error", "x")
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=error", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		WindowMins int `json:"window_mins"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.WindowMins != 5 {
+		t.Errorf("default window: got %d", resp.WindowMins)
+	}
+}
+
+func TestCountLogs_warnLevelAndWindow(t *testing.T) {
+	truncateLogs(t)
+	seedLog(t, "warning", "retry")
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=warn&window_mins=5", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCountLogs_badWindow(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=error&window_mins=0", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("window 0: got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=error&window_mins=nope", nil)
+	req.AddCookie(authCookie())
+	rec = httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("window nope: got %d", rec.Code)
+	}
+}
+
+func TestCountLogs_searchTooLong(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=error&search="+strings.Repeat("a", 201), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("long search: got %d", rec.Code)
 	}
 }
 

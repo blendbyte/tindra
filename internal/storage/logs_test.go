@@ -595,6 +595,34 @@ func TestLogsReachThreshold_shortCircuits(t *testing.T) {
 	}
 }
 
+func TestLogsReachThreshold_zeroThreshold(t *testing.T) {
+	ok, err := storage.LogsReachThreshold(context.Background(), testPool, storage.LogFilter{}, 0)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ok {
+		t.Error("threshold 0 should not be reached")
+	}
+}
+
+func TestCountLogs_warnOnlyLevel(t *testing.T) {
+	p := setupProjectForLogs(t)
+	now := time.Now().UTC()
+	seedLog(t, p.ID, "warn", "legacy", now, "")
+	seedLog(t, p.ID, "info", "skip", now, "")
+	count, err := storage.CountLogs(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{p.ID},
+		Levels:     []string{"warn"},
+		WindowMins: 5,
+	})
+	if err != nil {
+		t.Fatalf("CountLogs: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("warn-only: got %d", count)
+	}
+}
+
 func TestLogsReachThreshold_warnSpelling(t *testing.T) {
 	p := setupProjectForLogs(t)
 	now := time.Now().UTC()

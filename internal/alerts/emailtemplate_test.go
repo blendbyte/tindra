@@ -135,6 +135,44 @@ func TestAlertTriggerLine_eventCount(t *testing.T) {
 	}
 }
 
+func TestLogCountQueryLabel_fatalAndEmpty(t *testing.T) {
+	got := logCountQueryLabel(AlertPayload{Details: map[string]any{"filter_level": "fatal"}})
+	if got != "fatal" {
+		t.Errorf("got %q", got)
+	}
+	if logCountQueryLabel(AlertPayload{Details: map[string]any{}}) != "" {
+		t.Error("expected empty label")
+	}
+}
+
+func TestMoreLabel_logCount(t *testing.T) {
+	if moreLabel("log_count", 1) != "log" {
+		t.Error("expected singular log")
+	}
+	if moreLabel("log_count", 2) != "logs" {
+		t.Error("expected plural logs")
+	}
+}
+
+func TestLogsViewURL_emptyAndFallback(t *testing.T) {
+	if got := logsViewURL("https://tindra.example.com", AlertPayload{}); got != "https://tindra.example.com/logs" {
+		t.Errorf("empty: %q", got)
+	}
+	got := logsViewURL("https://tindra.example.com", AlertPayload{ProjectID: "p1"})
+	if !strings.Contains(got, "project_id=p1") {
+		t.Errorf("fallback project: %q", got)
+	}
+}
+
+func TestAlertTriggerLine_logCountNoQuery(t *testing.T) {
+	got := alertTriggerLine(AlertPayload{Trigger: "log_count", Details: map[string]any{
+		"log_count": 3, "threshold": 1, "window_mins": 5,
+	}})
+	if !strings.Contains(got, "3 logs in the last 5 minutes") {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestAlertTriggerLine_logCount(t *testing.T) {
 	p := AlertPayload{Trigger: "log_count", Details: map[string]any{
 		"log_count": 14, "threshold": 10, "window_mins": 5,

@@ -16,9 +16,10 @@ vi.mock('@/api/client', () => ({
 
 const pushMock = vi.fn()
 const replaceMock = vi.fn()
+let routeQuery: Record<string, string | string[]> = {}
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock, replace: replaceMock }),
-  useRoute: () => ({ query: {} }),
+  useRoute: () => ({ query: routeQuery }),
 }))
 
 vi.mock('@/utils/formatters', () => ({
@@ -59,7 +60,7 @@ const PROJECTS = [
 ]
 
 function setupMocks(logs: unknown[] = [], isLoading = false, selectedIds: string[] = []) {
-  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds, projects: PROJECTS } as any)
+  vi.mocked(useProjectsStore).mockReturnValue({ selectedIds, projects: PROJECTS, setSelected: vi.fn() } as any)
   vi.mocked(useQuery).mockReturnValue({
     data: ref(logs.length > 0 ? { logs, has_more: false } : (isLoading ? undefined : { logs: [], has_more: false })),
     isLoading: ref(isLoading),
@@ -78,6 +79,7 @@ beforeEach(() => {
   } as any)
   pushMock.mockReset()
   replaceMock.mockReset()
+  routeQuery = {}
 })
 
 describe('LogsView', () => {
@@ -463,6 +465,27 @@ describe('LogsView', () => {
       setupMocks([makeLog('l1', 'error', 'x')])
       const wrapper = mount(LogsView, { global: { stubs } })
       expect(wrapper.text()).not.toContain('Alert on this')
+    })
+
+    it('is disabled without a selected project', () => {
+      setupMocks([makeLog('l1', 'error', 'x')])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      const levelChip = chips.find(c => c.props('label') === 'Level')
+      levelChip?.vm.$emit('change', 'Error')
+      expect(wrapper.find('button.export-menu__trigger').attributes('disabled')).toBeDefined()
+    })
+
+    it('hydrates min_level and a custom environment from the URL', () => {
+      routeQuery = { min_level: 'error', environment: 'eu-west', search: 'stripe', project_id: 'p1' }
+      setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      const levelChip = chips.find(c => c.props('label') === 'Level')
+      const envChip = chips.find(c => c.props('label') === 'Environment')
+      expect(levelChip?.props('value')).toBe('Error')
+      expect(envChip?.props('value')).toBe('eu-west')
+      expect(envChip?.props('options')).toContain('eu-west')
     })
 
     it('navigates to settings with current filters', async () => {

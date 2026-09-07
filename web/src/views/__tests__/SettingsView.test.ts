@@ -104,14 +104,16 @@ function setupMocks(meData: unknown = adminUser) {
     .mockReturnValue({ data: ref(undefined) } as any)        // fallback
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.mocked(useQuery).mockReset()
   vi.mocked(useAuthStore).mockReset()
   vi.mocked(useMutation).mockReset()
   vi.mocked(useMutation).mockImplementation(() => ({ mutate: vi.fn(), isPending: ref(false) } as any))
+  currentTab = 'overview'
+  const { useRoute } = await import('vue-router')
+  vi.mocked(useRoute).mockImplementation(() => ({ params: { tab: currentTab }, query: {} } as any))
   pushMock.mockReset()
   replaceMock.mockReset()
-  currentTab = 'overview'
   localStorage.clear()
 })
 
@@ -2282,12 +2284,12 @@ describe('SettingsView', () => {
       filter_level: null, filter_environment: null, min_occurrences: 0, project_ids: [],
     }
 
-    function setupAlerts(rules: unknown[]) {
+    function setupAlerts(rules: unknown[], projects: unknown[] = []) {
       currentTab = 'alerts'
       vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]) } as any)
-        .mockReturnValueOnce({ data: ref([]) } as any)
+        .mockReturnValueOnce({ data: ref(projects) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref([]) } as any)
         .mockReturnValueOnce({ data: ref(adminUser) } as any)
@@ -2451,6 +2453,106 @@ describe('SettingsView', () => {
       await wrapper.find('.rule__head').trigger('click')
       expect(wrapper.text()).toContain('Email to')
       expect(wrapper.text()).toContain('team@example.com')
+    })
+
+    const logCountProj = { id: 'p1', name: 'App', slug: 'app', public_key: 'k', event_count: 0, event_limit: 0 }
+
+    it('log_count form requires a project and shows the search field', async () => {
+      setupAlerts([], [logCountProj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.findAll('.btn').find(b => b.text().includes('New rule'))!.trigger('click')
+      const triggerSelect = wrapper.findAll('select.field__input').find(s =>
+        s.findAll('option').some(o => o.text().includes('Log count')),
+      )
+      await triggerSelect!.setValue('log_count')
+      expect(wrapper.text()).toContain('at least one required')
+      expect(wrapper.text()).toContain('Search')
+      const createBtn = wrapper.findAll('.btn--primary').find(b => b.text().includes('Create rule'))
+      expect(createBtn!.attributes('disabled')).toBeDefined()
+    })
+
+    it('expands a log_count rule and shows search in the detail pane', async () => {
+      const rule = {
+        ...baseRule,
+        trigger: 'log_count' as const,
+        threshold: 10,
+        window_mins: 5,
+        filter_search: 'stripe',
+        filter_level: 'error',
+        project_ids: ['p1'],
+      }
+      setupAlerts([rule], [logCountProj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.rule__head').trigger('click')
+      expect(wrapper.text()).toContain('Search')
+      expect(wrapper.text()).toContain('stripe')
+      expect(wrapper.text()).toContain('10 logs')
+    })
+
+    it('edit form for log_count shows search and required-project hint', async () => {
+      const rule = {
+        ...baseRule,
+        trigger: 'log_count' as const,
+        threshold: 10,
+        window_mins: 5,
+        filter_search: 'stripe',
+        filter_level: 'error',
+        project_ids: ['p1'],
+      }
+      setupAlerts([rule], [logCountProj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.rule__head').trigger('click')
+      await wrapper.findAll('.btn').find(b => b.text().includes('Edit'))!.trigger('click')
+      expect(wrapper.text()).toContain('at least one required')
+      expect(wrapper.text()).toContain('Threshold (logs)')
+      const search = wrapper.findAll('input').find(i => i.attributes('placeholder')?.includes('Logs search'))
+      expect(search).toBeTruthy()
+    })
+
+    it('prefills a log_count rule from the alerts query string', async () => {
+      currentTab = 'alerts'
+      const { useRoute } = await import('vue-router')
+      vi.mocked(useRoute).mockReturnValueOnce({
+        params: { tab: 'alerts' },
+        query: { new: '1', trigger: 'log_count', level: 'error', search: 'stripe', environment: 'production', project_id: 'p1' },
+      } as any)
+      setupAlerts([], [logCountProj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Create alert rule')
+      expect(wrapper.text()).toContain('Threshold (logs)')
+      expect(replaceMock).toHaveBeenCalled()
+    })
+
+    it('create mutation for log_count sends filter_search', async () => {
+      const { apiFetch } = await import('@/api/client')
+      vi.mocked(apiFetch).mockResolvedValue({ id: 'new-rule' } as any)
+      setupAlerts([], [logCountProj])
+      const { useMutation } = await import('@tanstack/vue-query')
+      vi.mocked(useMutation).mockImplementation((opts: any) => ({
+        mutate: (arg?: unknown) => opts?.mutationFn?.(arg),
+        isPending: ref(false),
+      }) as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.findAll('.btn').find(b => b.text().includes('New rule'))!.trigger('click')
+      const triggerSelect = wrapper.findAll('select.field__input').find(s =>
+        s.findAll('option').some(o => o.text().includes('Log count')),
+      )
+      await triggerSelect!.setValue('log_count')
+      const nameInput = wrapper.find('input[placeholder="e.g. High error rate"]')
+      await nameInput.setValue('stripe errors')
+      const projectCheck = wrapper.find('input[type="checkbox"]')
+      await projectCheck.setValue(true)
+      const search = wrapper.findAll('input').find(i => i.attributes('placeholder')?.includes('Logs search'))
+      await search!.setValue('stripe')
+      await wrapper.findAll('.btn--primary').find(b => b.text().includes('Create rule'))!.trigger('click')
+      expect(apiFetch).toHaveBeenCalled()
+      const call = vi.mocked(apiFetch).mock.calls.find(c => String(c[0]).includes('/api/alert-rules'))
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String(call![1]?.body))
+      expect(body.trigger).toBe('log_count')
+      expect(body.filter_search).toBe('stripe')
+      expect(body.project_ids).toContain('p1')
     })
 
     it('new rule form shows log_count fields when trigger changed', async () => {
