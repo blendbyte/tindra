@@ -12,21 +12,21 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tanstack/vue-query": "^5.101.4",
+    "@tanstack/vue-query": "^5.102.8",
     "@tanstack/vue-virtual": "^3.13.36",
     "cronstrue": "^3.24.0",
     "pinia": "^4.0.3",
     "shiki": "^4.4.3",
-    "vue": "^3.5.41",
-    "vue-router": "^5.2.0"
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/coverage-v8": "^4.1.11",
-    "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.11.6",
+    "@vue/test-utils": "^2.5.0",
+    "happy-dom": "^20.14.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vite": "^8.2.2",
