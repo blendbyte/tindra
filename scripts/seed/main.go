@@ -3063,6 +3063,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 		cooldownMins int
 		filterLevel  *string
 		filterEnv    *string
+		filterSearch *string
 		lastFiredAgo *time.Duration
 		firings      []firingDef
 	}
@@ -3136,6 +3137,17 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			firings:      nil,
 		},
 		{
+			name: "Error logs — stripe", enabled: true,
+			trigger: "log_count", threshold: ip(10), windowMins: ip(5),
+			channel: "email", emailTo: sp("alerts@example.com"),
+			cooldownMins: 60, filterLevel: sp("error"), filterEnv: sp("production"),
+			filterSearch: sp("stripe"),
+			lastFiredAgo: dp(12 * time.Minute),
+			firings: []firingDef{
+				{firedAgo: 12 * time.Minute, status: "success", statusCode: ip(200), itemCount: ip(14), attempt: 1},
+			},
+		},
+		{
 			name: "High error volume (disabled)", enabled: false,
 			trigger: "event_count", threshold: ip(200), windowMins: ip(30),
 			channel: "discord", webhookURL: sp("https://discord.com/api/webhooks/example/placeholder"),
@@ -3162,16 +3174,24 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			INSERT INTO alert_rules
 				(name, enabled, trigger, threshold, window_mins,
 				 channel, webhook_url, email_to, cooldown_mins,
-				 filter_level, filter_environment, min_occurrences, last_fired_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+				 filter_level, filter_environment, min_occurrences, filter_search, last_fired_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			RETURNING id`,
 			r.name, r.enabled, r.trigger, r.threshold, r.windowMins,
 			r.channel, r.webhookURL, r.emailTo, r.cooldownMins,
-			r.filterLevel, r.filterEnv, nil, lastFiredAt,
+			r.filterLevel, r.filterEnv, nil, r.filterSearch, lastFiredAt,
 		).Scan(&id)
 		if err != nil {
 			fmt.Printf("  FAIL  create alert %q: %v\n", r.name, err)
 			continue
+		}
+		if r.trigger == "log_count" {
+			if _, perr := pool.Exec(context.Background(), `
+				INSERT INTO alert_rule_projects (rule_id, project_id)
+				SELECT $1, id FROM projects ORDER BY created_at LIMIT 1
+			`, id); perr != nil {
+				fmt.Printf("  FAIL  attach project for %q: %v\n", r.name, perr)
+			}
 		}
 
 		status := "enabled"

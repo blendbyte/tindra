@@ -192,6 +192,356 @@ func TestConditionMet_eventCount_nilThreshold(t *testing.T) {
 	}
 }
 
+func TestConditionMet_logCount_underThreshold(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM logs WHERE project_id = $1", testProject.ID)
+
+	threshold, window := 10, 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &threshold,
+		WindowMins:  &window,
+		FilterLevel: &level,
+	}
+	for range 3 {
+		testPool.Exec(context.Background(), `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'error', 'burst')
+		`, testProject.ID)
+	}
+	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false when log count is below threshold")
+	}
+}
+
+func TestConditionMet_logCount_overThreshold(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM logs WHERE project_id = $1", testProject.ID)
+
+	threshold, window := 3, 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &threshold,
+		WindowMins:  &window,
+		FilterLevel: &level,
+	}
+	for range 5 {
+		testPool.Exec(context.Background(), `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'error', 'burst')
+		`, testProject.ID)
+	}
+	met, details, err := testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !met {
+		t.Error("expected true when log count exceeds threshold")
+	}
+	if details["threshold"].(int) != threshold {
+		t.Errorf("threshold detail: got %v", details["threshold"])
+	}
+	if details["window_mins"].(int) != window {
+		t.Errorf("window_mins detail: got %v", details["window_mins"])
+	}
+}
+
+func TestEnrichPayload_logCount(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM logs WHERE project_id = $1", testProject.ID)
+	for i := range 6 {
+		testPool.Exec(context.Background(), `
+			INSERT INTO logs (project_id, timestamp, received_at, level, body)
+			VALUES ($1, NOW(), NOW(), 'error', $2)
+		`, testProject.ID, "line "+string(rune('a'+i)))
+	}
+	threshold, window := 3, 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &threshold,
+		WindowMins:  &window,
+		FilterLevel: &level,
+	}
+	payload := AlertPayload{Trigger: "log_count", Details: map[string]any{}}
+	testEvaluator(nil).enrichPayload(context.Background(), &payload, rule)
+	if payload.Details["log_count"].(int) < 6 {
+		t.Errorf("log_count: got %v", payload.Details["log_count"])
+	}
+	if len(payload.Logs) != 5 {
+		t.Errorf("sample logs: got %d, want 5", len(payload.Logs))
+	}
+}
+
+func TestTruncateLogBody_utf8(t *testing.T) {
+	got := truncateLogBody("ééééé", 2)
+	if got != "éé…" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestEmailSubject_logCount(t *testing.T) {
+	got := buildAlertSubject(AlertPayload{
+		Trigger: "log_count",
+		Details: map[string]any{"log_count": 14, "window_mins": 5},
+	})
+	if got != "[Tindra] 14 logs in 5min" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestItemCountFromPayload_logCount(t *testing.T) {
+	n := itemCountFromPayload(AlertPayload{Details: map[string]any{"log_count": 14}})
+	if n == nil || *n != 14 {
+		t.Errorf("got %v", n)
+	}
+}
+
+func TestLogLevelsAtOrAbove(t *testing.T) {
+	got := LogLevelsAtOrAbove("error")
+	if len(got) != 2 || got[0] != "fatal" || got[1] != "error" {
+		t.Errorf("error+: got %v", got)
+	}
+}
+
+func TestLogFilterFromRule_andDetails(t *testing.T) {
+	th, win := 10, 5
+	level, env, search := "error", "production", "stripe"
+	rule := &storage.AlertRule{
+		ProjectIDs:        []string{"p1"},
+		Threshold:         &th,
+		WindowMins:        &win,
+		FilterLevel:       &level,
+		FilterEnvironment: &env,
+		FilterSearch:      &search,
+	}
+	f := logFilterFromRule(rule)
+	if f.WindowMins != 5 || f.Environment != "production" || f.Search != "stripe" {
+		t.Errorf("filter: %+v", f)
+	}
+	if len(f.Levels) == 0 || f.Levels[0] != "fatal" {
+		t.Errorf("levels: %v", f.Levels)
+	}
+	d := logCountDetails(rule, 12)
+	if d["log_count"] != 12 || d["filter_search"] != "stripe" || d["filter_environment"] != "production" {
+		t.Errorf("details: %v", d)
+	}
+
+	empty := logFilterFromRule(&storage.AlertRule{})
+	if empty.WindowMins != 0 || empty.Search != "" || empty.Levels != nil {
+		t.Errorf("empty filter: %+v", empty)
+	}
+	bare := logCountDetails(&storage.AlertRule{ProjectIDs: []string{"p1"}}, 3)
+	if _, ok := bare["threshold"]; ok {
+		t.Error("bare details should omit threshold")
+	}
+}
+
+func TestFormatLogSampleLines(t *testing.T) {
+	got := formatLogSampleLines([]*storage.Log{
+		{Level: "error", Body: "stripe failed\nretry"},
+	})
+	if !strings.Contains(got, "`error`") || !strings.Contains(got, "stripe failed retry") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTruncateLogBody_short(t *testing.T) {
+	if got := truncateLogBody("hi", 10); got != "hi" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestConditionMet_logCount_missingFields(t *testing.T) {
+	th := 3
+	_, _, err := testEvaluator(nil).conditionMet(context.Background(), &storage.AlertRule{
+		Trigger: "log_count", Threshold: &th,
+	})
+	if err == nil {
+		t.Error("expected error when WindowMins is nil")
+	}
+	win := 5
+	_, _, err = testEvaluator(nil).conditionMet(context.Background(), &storage.AlertRule{
+		Trigger: "log_count", WindowMins: &win,
+	})
+	if err == nil {
+		t.Error("expected error when Threshold is nil")
+	}
+}
+
+func TestConditionMet_logCount_cancelledContext(t *testing.T) {
+	th, win := 1, 5
+	level := "error"
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	met, _, err := testEvaluator(nil).conditionMet(ctx, &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &th,
+		WindowMins:  &win,
+		FilterLevel: &level,
+	})
+	if err != nil {
+		t.Fatalf("cancelled ctx should not surface as error, got %v", err)
+	}
+	if met {
+		t.Error("expected not met on cancelled context")
+	}
+}
+
+func TestEnrichPayload_logCount_cancelledSeedsThreshold(t *testing.T) {
+	th, win := 7, 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		Threshold:   &th,
+		WindowMins:  &win,
+		FilterLevel: &level,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	payload := AlertPayload{Trigger: "log_count"}
+	testEvaluator(nil).enrichPayload(ctx, &payload, rule)
+	if payload.Details["log_count"] != 7 {
+		t.Errorf("expected threshold fallback, got %v", payload.Details["log_count"])
+	}
+}
+
+func logCountSamplePayload() AlertPayload {
+	env := "production"
+	return AlertPayload{
+		Trigger:   "log_count",
+		RuleName:  "stripe errors",
+		ProjectID: "p1",
+		FiredAt:   time.Now().UTC(),
+		Details: map[string]any{
+			"log_count": 12, "threshold": 10, "window_mins": 5,
+			"filter_level": "error", "filter_search": "stripe",
+			"filter_environment": "production",
+			"project_ids":        []string{"p1"},
+		},
+		Logs: []*storage.Log{
+			{Level: "error", Body: "stripe timeout", Environment: &env, Timestamp: time.Now().UTC()},
+		},
+	}
+}
+
+func TestFireSlack_logCountSamples(t *testing.T) {
+	var body []byte
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
+	url := srv.URL
+	if _, err := e.fireSlack(context.Background(), &storage.AlertRule{WebhookURL: &url}, logCountSamplePayload()); err != nil {
+		t.Fatalf("fireSlack: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "stripe timeout") {
+		t.Error("missing sample body")
+	}
+	if !strings.Contains(s, "View logs") || !strings.Contains(s, "min_level=error") {
+		t.Error("missing view logs link")
+	}
+}
+
+func TestFireDiscord_logCountSamples(t *testing.T) {
+	var body []byte
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
+	url := srv.URL
+	if _, err := e.fireDiscord(context.Background(), &storage.AlertRule{WebhookURL: &url}, logCountSamplePayload()); err != nil {
+		t.Fatalf("fireDiscord: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "stripe timeout") || !strings.Contains(s, "View logs") {
+		t.Errorf("discord body: %s", s)
+	}
+}
+
+func TestFireTeams_logCountSamples(t *testing.T) {
+	var body []byte
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
+	url := srv.URL
+	if _, err := e.fireTeams(context.Background(), &storage.AlertRule{WebhookURL: &url}, logCountSamplePayload()); err != nil {
+		t.Fatalf("fireTeams: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "stripe timeout") || !strings.Contains(s, "View logs") {
+		t.Errorf("teams body: %s", s)
+	}
+}
+
+func TestConditionMet_logCount_queryError(t *testing.T) {
+	th, win := 1, 5
+	level := "error"
+	_, _, err := testEvaluator(nil).conditionMet(context.Background(), &storage.AlertRule{
+		ProjectIDs:  []string{"not-a-uuid"},
+		Trigger:     "log_count",
+		Threshold:   &th,
+		WindowMins:  &win,
+		FilterLevel: &level,
+	})
+	if err == nil {
+		t.Fatal("expected log_count query error")
+	}
+}
+
+func TestEnrichPayload_logCount_cancelledNilThreshold(t *testing.T) {
+	win := 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		WindowMins:  &win,
+		FilterLevel: &level,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	payload := AlertPayload{Trigger: "log_count"}
+	testEvaluator(nil).enrichPayload(ctx, &payload, rule)
+	if payload.Details["log_count"] != 0 {
+		t.Errorf("expected 0 fallback without threshold, got %v", payload.Details["log_count"])
+	}
+}
+
+func TestFireDiscord_logCountWithIssues(t *testing.T) {
+	var body []byte
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
+	url := srv.URL
+	p := logCountSamplePayload()
+	p.Issues = []*storage.Issue{{ID: "i1", Title: "boom"}}
+	if _, err := e.fireDiscord(context.Background(), &storage.AlertRule{WebhookURL: &url}, p); err != nil {
+		t.Fatalf("fireDiscord: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "boom") || !strings.Contains(s, "stripe timeout") {
+		t.Error("expected both issue title and log sample")
+	}
+	if !strings.Contains(s, "View logs") {
+		t.Error("expected view logs link after existing description")
+	}
+}
+
 // --- fireWebhook ---
 
 func TestFireWebhook_success(t *testing.T) {
@@ -378,6 +728,7 @@ func TestFireSlack_triggerLabels(t *testing.T) {
 		{"regressed", "Regression"},
 		{"new_or_regressed", "New issue or regression"},
 		{"event_count", "Event count"},
+		{"log_count", "Log count"},
 		{"unknown", "unknown"},
 	}
 
@@ -573,6 +924,7 @@ func TestFireDiscord_triggerLabels(t *testing.T) {
 		{"regressed", "Regression"},
 		{"new_or_regressed", "New issue or regression"},
 		{"event_count", "Event count"},
+		{"log_count", "Log count"},
 		{"unknown", "unknown"},
 	}
 
@@ -790,6 +1142,7 @@ func TestFireTeams_triggerLabels(t *testing.T) {
 		{"regressed", "Regression"},
 		{"new_or_regressed", "New issue or regression"},
 		{"event_count", "Event count"},
+		{"log_count", "Log count"},
 		{"unknown", "unknown"},
 	}
 

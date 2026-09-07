@@ -1023,6 +1023,30 @@ func TestMCP_createAlertRule_sessionAuth_email(t *testing.T) {
 	}
 }
 
+func TestMCP_createAlertRule_logCount(t *testing.T) {
+	truncateAlertRules(t)
+	result := toolCall(t, mcpHandler(), "create_alert_rule", map[string]any{
+		"name":               "MCP log count",
+		"trigger":            "log_count",
+		"channel":            "email",
+		"email_to":           "oncall@example.com",
+		"threshold":          10,
+		"window_mins":        5,
+		"filter_level":       "error",
+		"filter_search":      "stripe",
+		"filter_environment": "production",
+		"project_id":         testProject.ID,
+	}, authCookie())
+	isErr, _ := result["isError"].(bool)
+	if isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	text := toolText(t, result)
+	if !strings.Contains(text, "log_count") || !strings.Contains(text, "stripe") {
+		t.Errorf("created rule: %s", text)
+	}
+}
+
 func TestMCP_createAlertRule_missingFields(t *testing.T) {
 	result := toolCall(t, mcpHandler(), "create_alert_rule", map[string]any{
 		"name":    "incomplete",

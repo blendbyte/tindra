@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -17,6 +18,7 @@ var validTriggers = map[string]bool{
 	"regressed":        true,
 	"new_or_regressed": true,
 	"event_count":      true,
+	"log_count":        true,
 	"cron_missed":      true,
 	"cron_error":       true,
 	"uptime_down":      true,
@@ -24,13 +26,16 @@ var validTriggers = map[string]bool{
 }
 var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "teams": true, "email": true}
 var validLevels = map[string]bool{"fatal": true, "error": true, "warning": true, "info": true, "debug": true}
+var validLogCountLevels = map[string]bool{"fatal": true, "error": true, "warning": true}
+
+const maxFilterSearchLen = 200
 
 func validateAlertRule(r *storage.AlertRule) string {
 	if r.Name == "" {
 		return "name is required"
 	}
 	if !validTriggers[r.Trigger] {
-		return "trigger must be new_issue, regressed, new_or_regressed, event_count, cron_missed, cron_error, uptime_down, or uptime_recovered"
+		return "trigger must be new_issue, regressed, new_or_regressed, event_count, log_count, cron_missed, cron_error, uptime_down, or uptime_recovered"
 	}
 	if r.Trigger == "event_count" {
 		if r.Threshold == nil || r.WindowMins == nil {
@@ -38,6 +43,40 @@ func validateAlertRule(r *storage.AlertRule) string {
 		}
 		if *r.Threshold <= 0 || *r.WindowMins <= 0 {
 			return "threshold and window_mins must be positive"
+		}
+	}
+	if r.Trigger == "log_count" {
+		if nonemptyProjectCount(r.ProjectIDs) == 0 {
+			return "project_ids required for log_count trigger"
+		}
+		if r.Threshold == nil || r.WindowMins == nil {
+			return "threshold and window_mins required for log_count trigger"
+		}
+		if *r.Threshold <= 0 {
+			return "threshold must be positive"
+		}
+		if *r.WindowMins < 1 || *r.WindowMins > 60 {
+			return "window_mins must be between 1 and 60 for log_count trigger"
+		}
+		if r.FilterLevel == nil || *r.FilterLevel == "" {
+			return "filter_level required for log_count trigger"
+		}
+		if !validLogCountLevels[*r.FilterLevel] {
+			return "filter_level must be fatal, error, or warning for log_count trigger"
+		}
+		if r.FilterSearch != nil {
+			trimmed := strings.TrimSpace(*r.FilterSearch)
+			if trimmed == "" {
+				r.FilterSearch = nil
+			} else {
+				if len(trimmed) > maxFilterSearchLen {
+					return "filter_search must be at most 200 characters"
+				}
+				r.FilterSearch = &trimmed
+			}
+		}
+		if *r.FilterLevel == "warning" && (r.FilterSearch == nil || *r.FilterSearch == "") {
+			return "filter_search required when log_count min level is warning"
 		}
 	}
 	if !validChannels[r.Channel] {
@@ -49,7 +88,7 @@ func validateAlertRule(r *storage.AlertRule) string {
 	if r.Channel == "email" && (r.EmailTo == nil || *r.EmailTo == "") {
 		return "email_to required for email channel"
 	}
-	if r.FilterLevel != nil && !validLevels[*r.FilterLevel] {
+	if r.FilterLevel != nil && r.Trigger != "log_count" && !validLevels[*r.FilterLevel] {
 		return "filter_level must be fatal, error, warning, info, or debug"
 	}
 	if r.MinOccurrences != nil && *r.MinOccurrences < 1 {
@@ -59,6 +98,16 @@ func validateAlertRule(r *storage.AlertRule) string {
 		r.CooldownMins = 60
 	}
 	return ""
+}
+
+func nonemptyProjectCount(ids []string) int {
+	n := 0
+	for _, id := range ids {
+		if strings.TrimSpace(id) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
@@ -159,11 +208,13 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		FilterLevel       *string  `json:"filter_level"`
 		FilterEnvironment *string  `json:"filter_environment"`
 		MinOccurrences    *int     `json:"min_occurrences"`
+		FilterSearch      *string  `json:"filter_search"`
 		ProjectIDs        []string `json:"project_ids"`
 		// Explicit nulls: sending null clears the field.
 		ClearFilterLevel       bool `json:"-"`
 		ClearFilterEnvironment bool `json:"-"`
 		ClearMinOccurrences    bool `json:"-"`
+		ClearFilterSearch      bool `json:"-"`
 		HasProjectIDs          bool `json:"-"`
 	}
 	// Use a raw map to detect explicit nulls vs omitted fields.
@@ -210,6 +261,12 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 				patch.ClearMinOccurrences = true
 			} else {
 				parseErr = json.Unmarshal(v, &patch.MinOccurrences)
+			}
+		case "filter_search":
+			if string(v) == "null" {
+				patch.ClearFilterSearch = true
+			} else {
+				parseErr = json.Unmarshal(v, &patch.FilterSearch)
 			}
 		case "project_ids":
 			parseErr = json.Unmarshal(v, &patch.ProjectIDs)
@@ -265,6 +322,11 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		existing.MinOccurrences = patch.MinOccurrences
 	} else if patch.ClearMinOccurrences {
 		existing.MinOccurrences = nil
+	}
+	if patch.FilterSearch != nil {
+		existing.FilterSearch = patch.FilterSearch
+	} else if patch.ClearFilterSearch {
+		existing.FilterSearch = nil
 	}
 	if patch.HasProjectIDs {
 		existing.ProjectIDs = patch.ProjectIDs

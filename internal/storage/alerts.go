@@ -26,6 +26,7 @@ type AlertRule struct {
 	FilterLevel       *string    `json:"filter_level,omitempty"`
 	FilterEnvironment *string    `json:"filter_environment,omitempty"`
 	MinOccurrences    *int       `json:"min_occurrences,omitempty"`
+	FilterSearch      *string    `json:"filter_search,omitempty"`
 	LastFiredAt       *time.Time `json:"last_fired_at"`
 	CreatedAt         time.Time  `json:"created_at"`
 }
@@ -35,7 +36,7 @@ type AlertRule struct {
 const alertRuleQuery = `
 	SELECT ar.id, ar.name, ar.enabled, ar.trigger, ar.threshold, ar.window_mins,
 	       ar.channel, ar.webhook_url, ar.email_to, ar.cooldown_mins,
-	       ar.filter_level, ar.filter_environment, ar.min_occurrences,
+	       ar.filter_level, ar.filter_environment, ar.min_occurrences, ar.filter_search,
 	       ar.last_fired_at, ar.created_at,
 	       COALESCE(array_agg(arp.project_id::text) FILTER (WHERE arp.project_id IS NOT NULL), '{}') AS project_ids
 	FROM alert_rules ar
@@ -48,7 +49,7 @@ func scanAlertRule(scan func(...any) error) (*AlertRule, error) {
 		&r.Threshold, &r.WindowMins,
 		&r.Channel, &r.WebhookURL, &r.EmailTo,
 		&r.CooldownMins,
-		&r.FilterLevel, &r.FilterEnvironment, &r.MinOccurrences,
+		&r.FilterLevel, &r.FilterEnvironment, &r.MinOccurrences, &r.FilterSearch,
 		&r.LastFiredAt, &r.CreatedAt,
 		&r.ProjectIDs,
 	)
@@ -73,21 +74,21 @@ func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		INSERT INTO alert_rules
 			(name, enabled, trigger, threshold, window_mins,
 			 channel, webhook_url, email_to, cooldown_mins,
-			 filter_level, filter_environment, min_occurrences)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			 filter_level, filter_environment, min_occurrences, filter_search)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING id, name, enabled, trigger, threshold, window_mins,
 		          channel, webhook_url, email_to, cooldown_mins,
-		          filter_level, filter_environment, min_occurrences,
+		          filter_level, filter_environment, min_occurrences, filter_search,
 		          last_fired_at, created_at`,
 		r.Name, r.Enabled, r.Trigger, r.Threshold, r.WindowMins,
 		r.Channel, r.WebhookURL, r.EmailTo, r.CooldownMins,
-		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences,
+		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences, r.FilterSearch,
 	).Scan(
 		&created.ID, &created.Name, &created.Enabled, &created.Trigger,
 		&created.Threshold, &created.WindowMins,
 		&created.Channel, &created.WebhookURL, &created.EmailTo,
 		&created.CooldownMins,
-		&created.FilterLevel, &created.FilterEnvironment, &created.MinOccurrences,
+		&created.FilterLevel, &created.FilterEnvironment, &created.MinOccurrences, &created.FilterSearch,
 		&created.LastFiredAt, &created.CreatedAt,
 	)
 	if err != nil {
@@ -199,21 +200,22 @@ func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		UPDATE alert_rules SET
 			name=$2, enabled=$3, trigger=$4, threshold=$5, window_mins=$6,
 			channel=$7, webhook_url=$8, email_to=$9, cooldown_mins=$10,
-			filter_level=$11, filter_environment=$12, min_occurrences=$13
+			filter_level=$11, filter_environment=$12, min_occurrences=$13,
+			filter_search=$14
 		WHERE id=$1
 		RETURNING id, name, enabled, trigger, threshold, window_mins,
 		          channel, webhook_url, email_to, cooldown_mins,
-		          filter_level, filter_environment, min_occurrences,
+		          filter_level, filter_environment, min_occurrences, filter_search,
 		          last_fired_at, created_at`,
 		r.ID, r.Name, r.Enabled, r.Trigger, r.Threshold, r.WindowMins,
 		r.Channel, r.WebhookURL, r.EmailTo, r.CooldownMins,
-		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences,
+		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences, r.FilterSearch,
 	).Scan(
 		&updated.ID, &updated.Name, &updated.Enabled, &updated.Trigger,
 		&updated.Threshold, &updated.WindowMins,
 		&updated.Channel, &updated.WebhookURL, &updated.EmailTo,
 		&updated.CooldownMins,
-		&updated.FilterLevel, &updated.FilterEnvironment, &updated.MinOccurrences,
+		&updated.FilterLevel, &updated.FilterEnvironment, &updated.MinOccurrences, &updated.FilterSearch,
 		&updated.LastFiredAt, &updated.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blendbyte/tindra/internal/api"
@@ -906,6 +907,344 @@ func TestListAlertFirings_withData(t *testing.T) {
 	}
 	if resp.Firings[0].Status != "success" {
 		t.Errorf("status: got %q, want success", resp.Firings[0].Status)
+	}
+}
+
+func TestCreateAlertRule_logCount(t *testing.T) {
+	truncateAlertRules(t)
+
+	b, _ := json.Marshal(map[string]any{
+		"name":          "stripe errors",
+		"trigger":       "log_count",
+		"threshold":     10,
+		"window_mins":   5,
+		"channel":       "webhook",
+		"webhook_url":   "https://example.com/wh",
+		"project_ids":   []string{testProject.ID},
+		"filter_level":  "error",
+		"filter_search": "stripe",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules",
+		bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var rule storage.AlertRule
+	if err := json.NewDecoder(rec.Body).Decode(&rule); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if rule.Trigger != "log_count" {
+		t.Errorf("trigger: got %q", rule.Trigger)
+	}
+	if rule.FilterSearch == nil || *rule.FilterSearch != "stripe" {
+		t.Errorf("filter_search: got %v", rule.FilterSearch)
+	}
+}
+
+func TestCreateAlertRule_logCountMissingProjects(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "no projects", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "error",
+		"channel": "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountWarningWithoutSearch(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "warn firehose", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "warning",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountWindowTooLarge(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "wide window", "trigger": "log_count",
+		"threshold": 10, "window_mins": 61, "filter_level": "error",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountInfoRejected(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "info logs", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "info",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountMissingThreshold(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "no thresh", "trigger": "log_count", "filter_level": "error",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountZeroThreshold(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "zero", "trigger": "log_count",
+		"threshold": 0, "window_mins": 5, "filter_level": "error",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountEmptySearchTrimmed(t *testing.T) {
+	truncateAlertRules(t)
+	b, _ := json.Marshal(map[string]any{
+		"name": "trim search", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "error",
+		"filter_search": "   ",
+		"project_ids":   []string{testProject.ID},
+		"channel":       "webhook", "webhook_url": "https://example.com/wh",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var rule storage.AlertRule
+	json.NewDecoder(rec.Body).Decode(&rule)
+	if rule.FilterSearch != nil {
+		t.Errorf("blank search should store nil, got %v", rule.FilterSearch)
+	}
+}
+
+func TestCreateAlertRule_logCountWarningWithSearch(t *testing.T) {
+	truncateAlertRules(t)
+	b, _ := json.Marshal(map[string]any{
+		"name": "warn search", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "warning",
+		"filter_search": "invalid password",
+		"project_ids":   []string{testProject.ID},
+		"channel":       "webhook", "webhook_url": "https://example.com/wh",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateAlertRule_filterSearchNull(t *testing.T) {
+	truncateAlertRules(t)
+	search, level := "stripe", "error"
+	th, win := 10, 5
+	hook := "https://example.com/wh"
+	created, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs:   []string{testProject.ID},
+		Name:         "search rule",
+		Enabled:      true,
+		Trigger:      "log_count",
+		Threshold:    &th,
+		WindowMins:   &win,
+		Channel:      "webhook",
+		WebhookURL:   &hook,
+		CooldownMins: 60,
+		FilterLevel:  &level,
+		FilterSearch: &search,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	b, _ := json.Marshal(map[string]any{"filter_search": nil})
+	req := httptest.NewRequest(http.MethodPatch, "/api/alert-rules/"+created.ID, bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var rule storage.AlertRule
+	json.NewDecoder(rec.Body).Decode(&rule)
+	if rule.FilterSearch != nil {
+		t.Errorf("expected cleared search, got %v", rule.FilterSearch)
+	}
+}
+
+func TestCreateAlertRule_logCountSearchTooLong(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "long search", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "error",
+		"filter_search": strings.Repeat("a", 201),
+		"project_ids":   []string{testProject.ID},
+		"channel":       "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountMissingFilterLevel(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "no level", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5,
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountEmptyFilterLevel(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "empty level", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountWindowZero(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "zero window", "trigger": "log_count",
+		"threshold": 10, "window_mins": 0, "filter_level": "error",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountBlankProjectIDs(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "blank ids", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "error",
+		"project_ids": []string{"  ", ""},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateAlertRule_filterSearchValue(t *testing.T) {
+	truncateAlertRules(t)
+	level := "error"
+	th, win := 10, 5
+	hook := "https://example.com/wh"
+	created, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs:   []string{testProject.ID},
+		Name:         "search rule",
+		Enabled:      true,
+		Trigger:      "log_count",
+		Threshold:    &th,
+		WindowMins:   &win,
+		Channel:      "webhook",
+		WebhookURL:   &hook,
+		CooldownMins: 60,
+		FilterLevel:  &level,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	b, _ := json.Marshal(map[string]any{"filter_search": "  timeout  "})
+	req := httptest.NewRequest(http.MethodPatch, "/api/alert-rules/"+created.ID, bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var rule storage.AlertRule
+	json.NewDecoder(rec.Body).Decode(&rule)
+	if rule.FilterSearch == nil || *rule.FilterSearch != "timeout" {
+		t.Errorf("expected trimmed search, got %v", rule.FilterSearch)
 	}
 }
 

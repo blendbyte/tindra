@@ -135,6 +135,94 @@ func TestAlertTriggerLine_eventCount(t *testing.T) {
 	}
 }
 
+func TestLogCountQueryLabel_fatalAndEmpty(t *testing.T) {
+	got := logCountQueryLabel(AlertPayload{Details: map[string]any{"filter_level": "fatal"}})
+	if got != "fatal" {
+		t.Errorf("got %q", got)
+	}
+	if logCountQueryLabel(AlertPayload{Details: map[string]any{}}) != "" {
+		t.Error("expected empty label")
+	}
+}
+
+func TestMoreLabel_logCount(t *testing.T) {
+	if moreLabel("log_count", 1) != "log" {
+		t.Error("expected singular log")
+	}
+	if moreLabel("log_count", 2) != "logs" {
+		t.Error("expected plural logs")
+	}
+}
+
+func TestLogsViewURL_emptyAndFallback(t *testing.T) {
+	if got := logsViewURL("https://tindra.example.com", AlertPayload{}); got != "https://tindra.example.com/logs" {
+		t.Errorf("empty: %q", got)
+	}
+	got := logsViewURL("https://tindra.example.com", AlertPayload{ProjectID: "p1"})
+	if !strings.Contains(got, "project_id=p1") {
+		t.Errorf("fallback project: %q", got)
+	}
+}
+
+func TestAlertTriggerLine_logCountNoQuery(t *testing.T) {
+	got := alertTriggerLine(AlertPayload{Trigger: "log_count", Details: map[string]any{
+		"log_count": 3, "threshold": 1, "window_mins": 5,
+	}})
+	if !strings.Contains(got, "3 logs in the last 5 minutes") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestAlertTriggerLine_logCount(t *testing.T) {
+	p := AlertPayload{Trigger: "log_count", Details: map[string]any{
+		"log_count": 14, "threshold": 10, "window_mins": 5,
+		"filter_level": "error", "filter_search": "stripe", "filter_environment": "production",
+	}}
+	got := alertTriggerLine(p)
+	if !strings.Contains(got, "14 logs") || !strings.Contains(got, `"stripe"`) || !strings.Contains(got, "error+") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRenderAlertEmail_logCount(t *testing.T) {
+	env := "production"
+	payload := AlertPayload{
+		Trigger:   "log_count",
+		RuleName:  "stripe errors",
+		ProjectID: "p1",
+		Details: map[string]any{
+			"log_count": 7, "threshold": 5, "window_mins": 5,
+			"filter_level": "error", "filter_search": "stripe",
+			"project_ids": []string{"p1"},
+		},
+		Logs: []*storage.Log{
+			{Level: "error", Body: "stripe timeout", Timestamp: time.Now().UTC(), Environment: &env},
+		},
+	}
+	html, text, err := RenderAlertEmail(payload, "https://tindra.example.com")
+	if err != nil {
+		t.Fatalf("RenderAlertEmail: %v", err)
+	}
+	if !strings.Contains(html, "stripe timeout") {
+		t.Error("html missing sample body")
+	}
+	if !strings.Contains(html, "View logs") {
+		t.Error("html missing View logs")
+	}
+	if !strings.Contains(html, "/logs?") {
+		t.Error("html missing logs URL")
+	}
+	if !strings.Contains(html, "min_level=error") {
+		t.Error("html logs URL should use min_level so fatal rows are included")
+	}
+	if !strings.Contains(text, "stripe timeout") {
+		t.Error("text missing sample body")
+	}
+	if !strings.Contains(html, "and 6 more logs") && !strings.Contains(text, "6 more logs") {
+		t.Error("missing moreCount")
+	}
+}
+
 func TestAlertTriggerLine_autoResolved_single(t *testing.T) {
 	p := AlertPayload{Trigger: "issue_auto_resolved", Details: map[string]any{"resolved_count": 1}}
 	got := alertTriggerLine(p)

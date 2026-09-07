@@ -1,21 +1,90 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
+import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api/client'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Log, LogListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import FilterChip from '@/components/FilterChip.vue'
 import { useProjectsStore } from '@/stores/projects'
+import { useAuthStore } from '@/stores/auth'
 
 const projects = useProjectsStore()
+const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const { formatTs } = useFormatters()
 
-const levelFilter = ref('All')
-const envFilter = ref('All')
-const searchQuery = ref('')
+const LEVELS = ['Fatal', 'Error', 'Warning', 'Info', 'Debug', 'Trace']
+const ENVS = ['production', 'staging', 'preview', 'development']
 
+function queryParam(v: unknown): string {
+  if (Array.isArray(v)) return String(v[0] ?? '')
+  return typeof v === 'string' ? v : ''
+}
+function queryParamList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string' && x !== '')
+  if (typeof v === 'string' && v) return [v]
+  return []
+}
+
+function levelFromQuery(raw: string): string {
+  const lower = raw.toLowerCase()
+  if (lower === 'warn') return 'Warning'
+  const cap = lower.charAt(0).toUpperCase() + lower.slice(1)
+  return LEVELS.includes(cap) ? cap : 'All'
+}
+
+const q = route.query
+const minLevelMode = ref(!!queryParam(q.min_level))
+const levelFilter = ref(levelFromQuery(queryParam(q.min_level) || queryParam(q.level)))
+const envFromQuery = queryParam(q.environment)
+const envFilter = ref(envFromQuery || 'All')
+const searchQuery = ref(queryParam(q.search))
+const pids = queryParamList(q.project_id)
+if (pids.length) projects.setSelected(pids)
+
+const envOptions = computed(() => {
+  const base = ['All', ...ENVS]
+  if (envFilter.value !== 'All' && !base.includes(envFilter.value)) {
+    return [...base, envFilter.value]
+  }
+  return base
+})
+
+const canManageAlerts = computed(() => auth.user?.permissions.manage_alerts ?? false)
 const selectedProjectIds = computed(() => projects.selectedIds)
+// Navbar "All projects" is an empty selection, which still lists every
+// project's logs. The alert needs explicit project IDs, so use the full list.
+const alertProjectIds = computed(() => {
+  if (selectedProjectIds.value.length > 0) return selectedProjectIds.value
+  return (projects.projects ?? []).map((p) => p.id)
+})
+const canAlertOnThis = computed(() => {
+  if (alertProjectIds.value.length === 0) return false
+  const lv = levelFilter.value
+  if (lv === 'Error' || lv === 'Fatal') return true
+  return lv === 'Warning' && searchQuery.value.trim() !== ''
+})
+const alertOnThisHint = computed(() => {
+  if (canAlertOnThis.value) return 'Create an alert from these filters'
+  if (alertProjectIds.value.length === 0) return 'Create a project first'
+  if (levelFilter.value === 'Warning') return 'Add a search — warning alerts need a message match'
+  return 'Set Level to Error or Fatal, or Warning with a search'
+})
+
+function alertOnThis() {
+  const params = new URLSearchParams()
+  params.set('new', '1')
+  params.set('trigger', 'log_count')
+  const lv = levelFilter.value.toLowerCase()
+  if (lv === 'error' || lv === 'fatal' || lv === 'warning') params.set('level', lv)
+  if (envFilter.value !== 'All') params.set('environment', envFilter.value)
+  if (searchQuery.value.trim()) params.set('search', searchQuery.value.trim())
+  for (const id of alertProjectIds.value) params.append('project_id', id)
+  router.push(`/settings/alerts?${params}`)
+}
 
 // The project column only earns its space when the filter leaves more than one
 // project in play — with exactly one selected every row would repeat its name.
@@ -30,7 +99,11 @@ const projectName = computed(() => {
 const queryParams = computed(() => {
   const p = new URLSearchParams()
   for (const id of selectedProjectIds.value) p.append('project_id', id)
-  if (levelFilter.value !== 'All') p.set('level', levelFilter.value.toLowerCase())
+  if (minLevelMode.value && ['Error', 'Fatal', 'Warning'].includes(levelFilter.value)) {
+    p.set('min_level', levelFilter.value.toLowerCase())
+  } else if (levelFilter.value !== 'All') {
+    p.set('level', levelFilter.value.toLowerCase())
+  }
   if (envFilter.value !== 'All') p.set('environment', envFilter.value)
   if (searchQuery.value) p.set('search', searchQuery.value)
   return p.toString()
@@ -61,6 +134,38 @@ function envBadgeClass(env: string) {
 
 watch(queryParams, () => { expandedId.value = null })
 
+let writingQuery = false
+watch([levelFilter, envFilter, searchQuery, selectedProjectIds], () => {
+  writingQuery = true
+  const query: Record<string, string | string[]> = { ...route.query } as Record<string, string | string[]>
+  delete query.level
+  delete query.min_level
+  if (minLevelMode.value && ['Error', 'Fatal', 'Warning'].includes(levelFilter.value)) {
+    query.min_level = levelFilter.value.toLowerCase()
+  } else if (levelFilter.value !== 'All') {
+    query.level = levelFilter.value.toLowerCase()
+  }
+  if (envFilter.value !== 'All') query.environment = envFilter.value
+  else delete query.environment
+  if (searchQuery.value) query.search = searchQuery.value
+  else delete query.search
+  if (selectedProjectIds.value.length) query.project_id = selectedProjectIds.value
+  else delete query.project_id
+  router.replace({ query })
+  queueMicrotask(() => { writingQuery = false })
+})
+
+watch(() => route.query, (q) => {
+  if (writingQuery) return
+  const min = queryParam(q.min_level)
+  minLevelMode.value = !!min
+  levelFilter.value = levelFromQuery(min || queryParam(q.level))
+  envFilter.value = queryParam(q.environment) || 'All'
+  searchQuery.value = queryParam(q.search)
+  const ids = queryParamList(q.project_id)
+  if (ids.length) projects.setSelected(ids)
+})
+
 let debounceTimer: ReturnType<typeof setTimeout>
 function onSearchInput(e: Event) {
   clearTimeout(debounceTimer)
@@ -78,12 +183,12 @@ onUnmounted(() => clearTimeout(debounceTimer))
         label="Level"
         :value="levelFilter"
         :options="['All', 'Fatal', 'Error', 'Warning', 'Info', 'Debug', 'Trace']"
-        @change="levelFilter = $event"
+        @change="levelFilter = $event; minLevelMode = false"
       />
       <FilterChip
         label="Environment"
         :value="envFilter"
-        :options="['All', 'production', 'staging', 'preview', 'development']"
+        :options="envOptions"
         @change="envFilter = $event"
       />
 
@@ -97,6 +202,21 @@ onUnmounted(() => clearTimeout(debounceTimer))
           @input="onSearchInput"
         />
       </div>
+
+      <span
+        v-if="canManageAlerts"
+        class="alert-on-this"
+        v-tooltip="alertOnThisHint"
+        :aria-label="alertOnThisHint"
+      >
+        <button
+          class="btn btn--ghost export-menu__trigger"
+          :disabled="!canAlertOnThis"
+          @click="alertOnThis()"
+        >
+          Alert on this
+        </button>
+      </span>
 
       <button
         class="filterbar__refresh"
