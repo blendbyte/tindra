@@ -1144,6 +1144,110 @@ func TestCreateAlertRule_logCountSearchTooLong(t *testing.T) {
 	}
 }
 
+func TestCreateAlertRule_logCountMissingFilterLevel(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "no level", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5,
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountEmptyFilterLevel(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "empty level", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountWindowZero(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "zero window", "trigger": "log_count",
+		"threshold": 10, "window_mins": 0, "filter_level": "error",
+		"project_ids": []string{testProject.ID},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAlertRule_logCountBlankProjectIDs(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"name": "blank ids", "trigger": "log_count",
+		"threshold": 10, "window_mins": 5, "filter_level": "error",
+		"project_ids": []string{"  ", ""},
+		"channel":     "webhook", "webhook_url": "https://x.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-rules", bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateAlertRule_filterSearchValue(t *testing.T) {
+	truncateAlertRules(t)
+	level := "error"
+	th, win := 10, 5
+	hook := "https://example.com/wh"
+	created, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs:   []string{testProject.ID},
+		Name:         "search rule",
+		Enabled:      true,
+		Trigger:      "log_count",
+		Threshold:    &th,
+		WindowMins:   &win,
+		Channel:      "webhook",
+		WebhookURL:   &hook,
+		CooldownMins: 60,
+		FilterLevel:  &level,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	b, _ := json.Marshal(map[string]any{"filter_search": "  timeout  "})
+	req := httptest.NewRequest(http.MethodPatch, "/api/alert-rules/"+created.ID, bytes.NewBuffer(b))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var rule storage.AlertRule
+	json.NewDecoder(rec.Body).Decode(&rule)
+	if rule.FilterSearch == nil || *rule.FilterSearch != "timeout" {
+		t.Errorf("expected trimmed search, got %v", rule.FilterSearch)
+	}
+}
+
 func createTestAlertRule(t *testing.T) storage.AlertRule {
 	t.Helper()
 	b, _ := json.Marshal(map[string]any{

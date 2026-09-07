@@ -456,3 +456,50 @@ func TestCountLogs_unauthenticated(t *testing.T) {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
 }
+
+func TestCountLogs_timeout(t *testing.T) {
+	ctx := context.Background()
+	conn, err := testPool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "BEGIN"); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer conn.Exec(ctx, "ROLLBACK")
+	if _, err := conn.Exec(ctx, "LOCK TABLE logs IN ACCESS EXCLUSIVE MODE"); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=error", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("expected 504, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCountLogs_invalidProject(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id=not-a-uuid&level=error", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCountLogs_windowTooLarge(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/logs/count?project_id="+testProject.ID+"&level=error&window_mins=61", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	logsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("window 61: got %d", rec.Code)
+	}
+}

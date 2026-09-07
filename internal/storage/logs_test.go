@@ -623,6 +623,28 @@ func TestCountLogs_warnOnlyLevel(t *testing.T) {
 	}
 }
 
+func TestCountLogs_queryError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := storage.CountLogs(ctx, testPool, storage.LogFilter{
+		ProjectIDs: []string{"not-a-uuid"},
+		WindowMins: 5,
+	})
+	if err == nil {
+		t.Fatal("expected count error")
+	}
+}
+
+func TestLogsReachThreshold_queryError(t *testing.T) {
+	_, err := storage.LogsReachThreshold(context.Background(), testPool, storage.LogFilter{
+		ProjectIDs: []string{"not-a-uuid"},
+		WindowMins: 5,
+	}, 1)
+	if err == nil {
+		t.Fatal("expected reach-threshold error")
+	}
+}
+
 func TestLogsReachThreshold_warnSpelling(t *testing.T) {
 	p := setupProjectForLogs(t)
 	now := time.Now().UTC()

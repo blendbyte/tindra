@@ -487,21 +487,58 @@ func TestFireTeams_logCountSamples(t *testing.T) {
 	}
 }
 
+func TestConditionMet_logCount_queryError(t *testing.T) {
+	th, win := 1, 5
+	level := "error"
+	_, _, err := testEvaluator(nil).conditionMet(context.Background(), &storage.AlertRule{
+		ProjectIDs:  []string{"not-a-uuid"},
+		Trigger:     "log_count",
+		Threshold:   &th,
+		WindowMins:  &win,
+		FilterLevel: &level,
+	})
+	if err == nil {
+		t.Fatal("expected log_count query error")
+	}
+}
+
+func TestEnrichPayload_logCount_cancelledNilThreshold(t *testing.T) {
+	win := 5
+	level := "error"
+	rule := &storage.AlertRule{
+		ProjectIDs:  []string{testProject.ID},
+		Trigger:     "log_count",
+		WindowMins:  &win,
+		FilterLevel: &level,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	payload := AlertPayload{Trigger: "log_count"}
+	testEvaluator(nil).enrichPayload(ctx, &payload, rule)
+	if payload.Details["log_count"] != 0 {
+		t.Errorf("expected 0 fallback without threshold, got %v", payload.Details["log_count"])
+	}
+}
+
 func TestFireDiscord_logCountWithIssues(t *testing.T) {
 	var body []byte
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(200)
 	}))
-	e := &Evaluator{pool: testPool, client: srv.Client()}
+	e := &Evaluator{pool: testPool, client: srv.Client(), publicURL: "https://tindra.example.com"}
 	url := srv.URL
 	p := logCountSamplePayload()
 	p.Issues = []*storage.Issue{{ID: "i1", Title: "boom"}}
 	if _, err := e.fireDiscord(context.Background(), &storage.AlertRule{WebhookURL: &url}, p); err != nil {
 		t.Fatalf("fireDiscord: %v", err)
 	}
-	if !strings.Contains(string(body), "boom") || !strings.Contains(string(body), "stripe timeout") {
+	s := string(body)
+	if !strings.Contains(s, "boom") || !strings.Contains(s, "stripe timeout") {
 		t.Error("expected both issue title and log sample")
+	}
+	if !strings.Contains(s, "View logs") {
+		t.Error("expected view logs link after existing description")
 	}
 }
 

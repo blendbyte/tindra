@@ -2568,6 +2568,232 @@ describe('SettingsView', () => {
       expect(wrapper.text()).toContain('Search')
     })
 
+    it('prefills log_count from array query params and fatal level', async () => {
+      currentTab = 'alerts'
+      const { useRoute } = await import('vue-router')
+      vi.mocked(useRoute).mockReturnValueOnce({
+        params: { tab: 'alerts' },
+        query: {
+          new: '1',
+          trigger: ['log_count'],
+          level: ['fatal'],
+          search: ['timeout'],
+          environment: 'staging',
+          project_id: ['p1', ''],
+        },
+      } as any)
+      setupAlerts([], [logCountProj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Create alert rule')
+      expect(wrapper.text()).toContain('Threshold (logs)')
+      const search = wrapper.findAll('input').find(i => i.attributes('placeholder')?.includes('Logs search'))
+      expect((search!.element as HTMLInputElement).value).toBe('timeout')
+    })
+
+    it('create mutation rejects log_count without a project', async () => {
+      setupAlerts([], [logCountProj])
+      const { useMutation } = await import('@tanstack/vue-query')
+      vi.mocked(useMutation).mockImplementation((opts: any) => ({
+        mutate: (arg?: unknown) => opts?.mutationFn?.(arg),
+        isPending: ref(false),
+      }) as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.findAll('.btn').find(b => b.text().includes('New rule'))!.trigger('click')
+      const triggerSelect = wrapper.findAll('select.field__input').find(s =>
+        s.findAll('option').some(o => o.text().includes('Log count')),
+      )
+      await triggerSelect!.setValue('log_count')
+      const createFn = vi.mocked(useMutation).mock.calls
+        .map((c: any) => c[0]?.mutationFn)
+        .find((fn: any) => {
+          try {
+            fn()
+            return false
+          } catch (e: any) {
+            return String(e.message).includes('Pick at least one project')
+          }
+        })
+      expect(createFn).toBeTruthy()
+    })
+
+    it('create mutation sends null filter_search when the box is blank', async () => {
+      const { apiFetch } = await import('@/api/client')
+      vi.mocked(apiFetch).mockClear()
+      vi.mocked(apiFetch).mockResolvedValue({ id: 'new-rule' } as any)
+      setupAlerts([], [logCountProj])
+      const { useMutation } = await import('@tanstack/vue-query')
+      vi.mocked(useMutation).mockImplementation((opts: any) => ({
+        mutate: (arg?: unknown) => opts?.mutationFn?.(arg),
+        isPending: ref(false),
+      }) as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.findAll('.btn').find(b => b.text().includes('New rule'))!.trigger('click')
+      const triggerSelect = wrapper.findAll('select.field__input').find(s =>
+        s.findAll('option').some(o => o.text().includes('Log count')),
+      )
+      await triggerSelect!.setValue('log_count')
+      await wrapper.find('input[placeholder="e.g. High error rate"]').setValue('errors')
+      await wrapper.find('input[type="checkbox"]').setValue(true)
+      await wrapper.findAll('.btn--primary').find(b => b.text().includes('Create rule'))!.trigger('click')
+      const call = vi.mocked(apiFetch).mock.calls.find(c => String(c[0]).includes('/api/alert-rules'))
+      const body = JSON.parse(String(call![1]?.body))
+      expect(body.filter_search).toBeNull()
+    })
+
+    it('edit form coerces window and level when switching to log_count', async () => {
+      const rule = {
+        ...baseRule,
+        trigger: 'event_count' as const,
+        threshold: 50,
+        window_mins: 120,
+        filter_level: 'info',
+        project_ids: ['p1'],
+      }
+      setupAlerts([rule], [logCountProj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.rule__head').trigger('click')
+      await wrapper.findAll('.btn').find(b => b.text().includes('Edit'))!.trigger('click')
+      const triggerSelect = wrapper.findAll('select.field__input').find(s =>
+        s.findAll('option').some(o => o.text().includes('Log count')),
+      )
+      await triggerSelect!.setValue('log_count')
+      expect(wrapper.text()).toContain('Threshold (logs)')
+      const windowInput = wrapper.findAll('input[type="number"]').find(i => i.attributes('max') === '60')
+      expect((windowInput!.element as HTMLInputElement).value).toBe('5')
+    })
+
+    it('edit form fills log_count defaults when threshold and search are null', async () => {
+      const rule = {
+        ...baseRule,
+        trigger: 'log_count' as const,
+        threshold: null,
+        window_mins: null,
+        filter_search: null,
+        filter_level: 'error',
+        project_ids: ['p1'],
+      }
+      setupAlerts([rule], [logCountProj])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.rule__head').trigger('click')
+      await wrapper.findAll('.btn').find(b => b.text().includes('Edit'))!.trigger('click')
+      const windowInput = wrapper.findAll('input[type="number"]').find(i => i.attributes('max') === '60')
+      expect((windowInput!.element as HTMLInputElement).value).toBe('5')
+      const search = wrapper.findAll('input').find(i => i.attributes('placeholder')?.includes('Logs search'))
+      expect((search!.element as HTMLInputElement).value).toBe('')
+    })
+
+    it('save mutation for log_count sends filter_search and window', async () => {
+      const { apiFetch } = await import('@/api/client')
+      vi.mocked(apiFetch).mockClear()
+      vi.mocked(apiFetch).mockResolvedValue({ id: 'r1' } as any)
+      const rule = {
+        ...baseRule,
+        trigger: 'log_count' as const,
+        threshold: 10,
+        window_mins: 5,
+        filter_search: 'old',
+        filter_level: 'error',
+        filter_environment: 'production',
+        project_ids: ['p1'],
+      }
+      setupAlerts([rule], [logCountProj])
+      const { useMutation } = await import('@tanstack/vue-query')
+      vi.mocked(useMutation).mockImplementation((opts: any) => ({
+        mutate: (arg?: unknown) => opts?.mutationFn?.(arg),
+        isPending: ref(false),
+      }) as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.rule__head').trigger('click')
+      await wrapper.findAll('.btn').find(b => b.text().includes('Edit'))!.trigger('click')
+      const search = wrapper.findAll('input').find(i => i.attributes('placeholder')?.includes('Logs search'))
+      await search!.setValue('  stripe  ')
+      await wrapper.findAll('.btn--primary').find(b => b.text().includes('Save'))!.trigger('click')
+      const call = vi.mocked(apiFetch).mock.calls.find(c => String(c[0]).includes('/api/alert-rules/r1'))
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String(call![1]?.body))
+      expect(body.trigger).toBe('log_count')
+      expect(body.filter_search).toBe('stripe')
+      expect(body.window_mins).toBe(5)
+      expect(body.filter_environment).toBe('production')
+    })
+
+    it('save mutation rejects log_count without a project', async () => {
+      const rule = {
+        ...baseRule,
+        trigger: 'log_count' as const,
+        threshold: 10,
+        window_mins: 5,
+        filter_level: 'error',
+        project_ids: ['p1'],
+      }
+      setupAlerts([rule], [logCountProj])
+      const { useMutation } = await import('@tanstack/vue-query')
+      vi.mocked(useMutation).mockImplementation((opts: any) => ({
+        mutate: (arg?: unknown) => opts?.mutationFn?.(arg),
+        isPending: ref(false),
+      }) as any)
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await wrapper.find('.rule__head').trigger('click')
+      await wrapper.findAll('.btn').find(b => b.text().includes('Edit'))!.trigger('click')
+      await wrapper.find('input[type="checkbox"]').setValue(false)
+      const saveFn = vi.mocked(useMutation).mock.calls
+        .map((c: any) => c[0]?.mutationFn)
+        .find((fn: any) => {
+          try {
+            fn({ id: 'r1' })
+            return false
+          } catch (e: any) {
+            return String(e.message).includes('Pick at least one project')
+          }
+        })
+      expect(saveFn).toBeTruthy()
+    })
+
+    it('debounces the log count preview and shows a singular match', async () => {
+      vi.useFakeTimers()
+      try {
+        setupAlerts([], [logCountProj])
+        vi.mocked(useQuery).mockReset()
+        currentTab = 'alerts'
+        vi.mocked(useAuthStore).mockReturnValue({ user: adminUser, setUser: vi.fn() } as any)
+        vi.mocked(useQuery)
+          .mockReturnValueOnce({ data: ref([]) } as any)
+          .mockReturnValueOnce({ data: ref([logCountProj]) } as any)
+          .mockReturnValueOnce({ data: ref([]) } as any)
+          .mockReturnValueOnce({ data: ref([]) } as any)
+          .mockReturnValueOnce({ data: ref(adminUser) } as any)
+          .mockReturnValueOnce({ data: ref([]) } as any)
+          .mockReturnValueOnce({ data: ref([]) } as any)
+          .mockReturnValueOnce({ data: ref(undefined) } as any)
+          .mockReturnValueOnce({ data: ref(undefined) } as any)
+          .mockReturnValueOnce({ data: ref(undefined) } as any)
+          .mockReturnValueOnce({ data: ref(undefined) } as any)
+          .mockReturnValue({ data: ref({ count: 1, window_mins: 5 }) } as any)
+        const wrapper = mount(SettingsView, { global: { stubs } })
+        await wrapper.findAll('.btn').find(b => b.text().includes('New rule'))!.trigger('click')
+        const triggerSelect = wrapper.findAll('select.field__input').find(s =>
+          s.findAll('option').some(o => o.text().includes('Log count')),
+        )
+        await triggerSelect!.setValue('log_count')
+        await wrapper.find('input[type="checkbox"]').setValue(true)
+        const search = wrapper.findAll('input').find(i => i.attributes('placeholder')?.includes('Logs search'))
+        await search!.setValue('stripe')
+        await vi.advanceTimersByTimeAsync(300)
+        expect(wrapper.text()).toContain('1 matching log in the last 5m')
+        const previewCall = vi.mocked(useQuery).mock.calls.find((c: any) => {
+          const key = c[0]?.queryKey
+          const val = key?.value ?? key
+          return Array.isArray(val) && val[0] === 'logs-count'
+        }) as any
+        expect(previewCall).toBeTruthy()
+        previewCall[0].queryFn?.()
+        wrapper.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('new rule form shows event_count fields when trigger changed', async () => {
       setupAlerts([])
       const wrapper = mount(SettingsView, { global: { stubs } })

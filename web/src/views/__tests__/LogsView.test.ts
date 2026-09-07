@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { nextTick, reactive, ref } from 'vue'
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
@@ -16,10 +16,16 @@ vi.mock('@/api/client', () => ({
 
 const pushMock = vi.fn()
 const replaceMock = vi.fn()
-let routeQuery: Record<string, string | string[]> = {}
+const routeState = reactive({ query: {} as Record<string, string | string[]> })
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: pushMock, replace: replaceMock }),
-  useRoute: () => ({ query: routeQuery }),
+  useRouter: () => ({
+    push: pushMock,
+    replace: (arg: { query?: Record<string, string | string[]> }) => {
+      replaceMock(arg)
+      if (arg?.query) routeState.query = arg.query
+    },
+  }),
+  useRoute: () => routeState,
 }))
 
 vi.mock('@/utils/formatters', () => ({
@@ -79,7 +85,7 @@ beforeEach(() => {
   } as any)
   pushMock.mockReset()
   replaceMock.mockReset()
-  routeQuery = {}
+  routeState.query = {}
 })
 
 describe('LogsView', () => {
@@ -477,7 +483,7 @@ describe('LogsView', () => {
     })
 
     it('hydrates min_level and a custom environment from the URL', () => {
-      routeQuery = { min_level: 'error', environment: 'eu-west', search: 'stripe', project_id: 'p1' }
+      routeState.query = { min_level: 'error', environment: 'eu-west', search: 'stripe', project_id: 'p1' }
       setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
       const wrapper = mount(LogsView, { global: { stubs } })
       const chips = wrapper.findAllComponents({ name: 'FilterChip' })
@@ -486,6 +492,48 @@ describe('LogsView', () => {
       expect(levelChip?.props('value')).toBe('Error')
       expect(envChip?.props('value')).toBe('eu-west')
       expect(envChip?.props('options')).toContain('eu-west')
+    })
+
+    it('hydrates warn min_level from an array query param', () => {
+      routeState.query = { min_level: ['warn'], project_id: ['p1', ''] }
+      setupMocks([makeLog('l1', 'warning', 'x')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      expect(chips.find(c => c.props('label') === 'Level')?.props('value')).toBe('Warning')
+    })
+
+    it('writes min_level back to the URL when other filters change', async () => {
+      routeState.query = { min_level: 'error', project_id: 'p1' }
+      setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      const envChip = chips.find(c => c.props('label') === 'Environment')
+      await envChip?.vm.$emit('change', 'production')
+      expect(replaceMock).toHaveBeenCalled()
+      const query = replaceMock.mock.calls.at(-1)?.[0]?.query as Record<string, string>
+      expect(query.min_level).toBe('error')
+      expect(query.environment).toBe('production')
+      expect(query.level).toBeUndefined()
+    })
+
+    it('writes exact level (not min_level) after a chip change', async () => {
+      setupMocks([makeLog('l1', 'info', 'x')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips.find(c => c.props('label') === 'Level')?.vm.$emit('change', 'Info')
+      const query = replaceMock.mock.calls.at(-1)?.[0]?.query as Record<string, string>
+      expect(query.level).toBe('info')
+      expect(query.min_level).toBeUndefined()
+    })
+
+    it('hydrates from a later route query update', async () => {
+      setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      routeState.query = { min_level: 'fatal', environment: 'staging', search: 'db', project_id: 'p1' }
+      await nextTick()
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      expect(chips.find(c => c.props('label') === 'Level')?.props('value')).toBe('Fatal')
+      expect(chips.find(c => c.props('label') === 'Environment')?.props('value')).toBe('staging')
     })
 
     it('navigates to settings with current filters', async () => {
@@ -500,6 +548,33 @@ describe('LogsView', () => {
       expect(dest).toContain('/settings/alerts')
       expect(dest).toContain('trigger=log_count')
       expect(dest).toContain('level=error')
+    })
+
+    it('enables Alert on this for warning plus search and prefills env', async () => {
+      routeState.query = {
+        min_level: 'warning',
+        search: 'stripe',
+        environment: 'production',
+        project_id: 'p1',
+      }
+      setupMocks([makeLog('l1', 'warning', 'stripe')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const btn = wrapper.find('button.export-menu__trigger')
+      expect(btn.attributes('disabled')).toBeUndefined()
+      await btn.trigger('click')
+      const dest = String(pushMock.mock.calls[0][0])
+      expect(dest).toContain('level=warning')
+      expect(dest).toContain('search=stripe')
+      expect(dest).toContain('environment=production')
+    })
+
+    it('prefills fatal from Alert on this', async () => {
+      setupMocks([makeLog('l1', 'fatal', 'dead')], false, ['p1'])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
+      await chips.find(c => c.props('label') === 'Level')?.vm.$emit('change', 'Fatal')
+      await wrapper.find('button.export-menu__trigger').trigger('click')
+      expect(String(pushMock.mock.calls[0][0])).toContain('level=fatal')
     })
   })
 })
