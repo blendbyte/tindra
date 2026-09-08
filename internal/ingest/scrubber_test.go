@@ -151,6 +151,43 @@ func TestScrubTransaction_SpanDescription(t *testing.T) {
 	}
 }
 
+func TestScrubTransaction_userEmailPattern(t *testing.T) {
+	tx := &BufferedTransaction{
+		UserID:       "u-1",
+		UserUsername: "alice",
+		UserEmail:    "alice@example.com",
+		UserName:     "Alice",
+		UserIdentity: "u-1",
+	}
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}},
+	}
+	ScrubTransaction(tx, cfg)
+	if tx.UserEmail != "[Filtered]" {
+		t.Errorf("email: got %q", tx.UserEmail)
+	}
+	if tx.UserIdentity != "u-1" {
+		t.Errorf("identity should stay id, got %q", tx.UserIdentity)
+	}
+	if tx.UserID != "u-1" {
+		t.Errorf("id: got %q", tx.UserID)
+	}
+}
+
+func TestScrubTransaction_userIdentityIsEmail(t *testing.T) {
+	tx := &BufferedTransaction{
+		UserEmail:    "alice@example.com",
+		UserIdentity: "alice@example.com",
+	}
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}},
+	}
+	ScrubTransaction(tx, cfg)
+	if tx.UserIdentity != "" {
+		t.Errorf("identity should be cleared when it was the email, got %q", tx.UserIdentity)
+	}
+}
+
 func TestValidateScrubPatterns_empty(t *testing.T) {
 	if err := ValidateScrubPatterns(nil); err != nil {
 		t.Errorf("expected no error for nil, got %v", err)

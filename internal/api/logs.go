@@ -15,12 +15,13 @@ func (ro *router) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	filter := storage.LogFilter{
-		ProjectIDs:  bearerProjectIDs(r, q["project_id"]),
-		Level:       q.Get("level"),
-		Environment: q.Get("environment"),
-		Search:      q.Get("search"),
-		TraceID:     q.Get("trace_id"),
-		Limit:       100,
+		ProjectIDs:   bearerProjectIDs(r, q["project_id"]),
+		Level:        q.Get("level"),
+		Environment:  q.Get("environment"),
+		Search:       q.Get("search"),
+		TraceID:      q.Get("trace_id"),
+		UserIdentity: q.Get("user"),
+		Limit:        100,
 	}
 	if min := q.Get("min_level"); min != "" {
 		if min == "warn" {

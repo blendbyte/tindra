@@ -45,7 +45,7 @@ const (
 
 // GetWebVitalsSummary returns aggregated p75 and pass-rate for each vital,
 // restricted to browser pageload/navigation transactions in the given window.
-func GetWebVitalsSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string) (WebVitalsSummary, error) {
+func GetWebVitalsSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string, userIdentity string) (WebVitalsSummary, error) {
 	var s WebVitalsSummary
 	if projectIDs == nil {
 		projectIDs = []string{}
@@ -56,6 +56,10 @@ func GetWebVitalsSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []s
 	if env != "" {
 		args = append(args, env)
 		envFilter = fmt.Sprintf(" AND environment = $%d", len(args))
+	}
+	if userIdentity != "" {
+		args = append(args, userIdentity)
+		envFilter += fmt.Sprintf(" AND user_identity = $%d", len(args))
 	}
 
 	row := pool.QueryRow(ctx, `
@@ -101,7 +105,7 @@ func GetWebVitalsSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []s
 }
 
 // GetWebVitalsByPage returns per-route vitals sorted by impact (sessions × CWV fail rate).
-func GetWebVitalsByPage(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string) ([]WebVitalsPage, error) {
+func GetWebVitalsByPage(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string, userIdentity string) ([]WebVitalsPage, error) {
 	if projectIDs == nil {
 		projectIDs = []string{}
 	}
@@ -111,6 +115,10 @@ func GetWebVitalsByPage(ctx context.Context, pool *pgxpool.Pool, projectIDs []st
 	if env != "" {
 		args = append(args, env)
 		envFilter = fmt.Sprintf(" AND environment = $%d", len(args))
+	}
+	if userIdentity != "" {
+		args = append(args, userIdentity)
+		envFilter += fmt.Sprintf(" AND user_identity = $%d", len(args))
 	}
 
 	rows, err := pool.Query(ctx, `

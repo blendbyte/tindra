@@ -30,6 +30,39 @@ func truncSearch(s string) string {
 	return s
 }
 
+func (ro *router) handleListAppUsers(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	projectIDs := bearerProjectIDs(r, q["project_id"])
+	if projectIDs == nil {
+		projectIDs = []string{}
+	}
+	search := truncSearch(q.Get("q"))
+	if ident := q.Get("identity"); ident != "" && search == "" {
+		u, err := storage.GetAppUser(r.Context(), ro.pool, projectIDs, ident)
+		if err != nil {
+			slog.Error("get app user", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		out := []*storage.AppUser{}
+		if u != nil {
+			out = []*storage.AppUser{u}
+		}
+		writeJSON(w, out)
+		return
+	}
+	users, err := storage.ListAppUsers(r.Context(), ro.pool, projectIDs, search, 20)
+	if err != nil {
+		slog.Error("list app users", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if users == nil {
+		users = []*storage.AppUser{}
+	}
+	writeJSON(w, users)
+}
+
 func (ro *router) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"public_url":  ro.publicURL,
@@ -404,15 +437,16 @@ func (ro *router) handleGetProjectStats(w http.ResponseWriter, r *http.Request) 
 func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
 	const pageSize = 50
 	filter := storage.IssueFilter{
-		Status:      r.URL.Query().Get("status"),
-		Level:       r.URL.Query().Get("level"),
-		Environment: r.URL.Query().Get("env"),
-		AssigneeID:  r.URL.Query().Get("assignee_id"),
-		TagKey:      r.URL.Query().Get("tag_key"),
-		TagValue:    r.URL.Query().Get("tag_value"),
-		Title:       truncSearch(r.URL.Query().Get("q")),
-		ProjectIDs:  bearerProjectIDs(r, r.URL.Query()["project_id"]),
-		Limit:       pageSize,
+		Status:       r.URL.Query().Get("status"),
+		Level:        r.URL.Query().Get("level"),
+		Environment:  r.URL.Query().Get("env"),
+		AssigneeID:   r.URL.Query().Get("assignee_id"),
+		TagKey:       r.URL.Query().Get("tag_key"),
+		TagValue:     r.URL.Query().Get("tag_value"),
+		Title:        truncSearch(r.URL.Query().Get("q")),
+		ProjectIDs:   bearerProjectIDs(r, r.URL.Query()["project_id"]),
+		UserIdentity: r.URL.Query().Get("user"),
+		Limit:        pageSize,
 	}
 	if since := r.URL.Query().Get("since"); since != "" {
 		var d time.Duration
@@ -487,14 +521,15 @@ func (ro *router) handleExportIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := storage.IssueFilter{
-		Status:      r.URL.Query().Get("status"),
-		Level:       r.URL.Query().Get("level"),
-		Environment: r.URL.Query().Get("env"),
-		AssigneeID:  r.URL.Query().Get("assignee_id"),
-		TagKey:      r.URL.Query().Get("tag_key"),
-		TagValue:    r.URL.Query().Get("tag_value"),
-		ProjectIDs:  bearerProjectIDs(r, r.URL.Query()["project_id"]),
-		Limit:       maxRows,
+		Status:       r.URL.Query().Get("status"),
+		Level:        r.URL.Query().Get("level"),
+		Environment:  r.URL.Query().Get("env"),
+		AssigneeID:   r.URL.Query().Get("assignee_id"),
+		TagKey:       r.URL.Query().Get("tag_key"),
+		TagValue:     r.URL.Query().Get("tag_value"),
+		ProjectIDs:   bearerProjectIDs(r, r.URL.Query()["project_id"]),
+		UserIdentity: r.URL.Query().Get("user"),
+		Limit:        maxRows,
 	}
 	if since := r.URL.Query().Get("since"); since != "" {
 		var d time.Duration
@@ -966,12 +1001,13 @@ func (ro *router) handleListTransactionSummaries(w http.ResponseWriter, r *http.
 	name := r.URL.Query().Get("name")
 	op := r.URL.Query().Get("op")
 	release := r.URL.Query().Get("release")
+	userIdentity := r.URL.Query().Get("user")
 	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
 	if projectIDs == nil {
 		projectIDs = []string{}
 	}
 
-	summaries, err := storage.ListTransactionSummaries(r.Context(), ro.pool, projectIDs, hours, offsetHours, env, name, op, release)
+	summaries, err := storage.ListTransactionSummaries(r.Context(), ro.pool, projectIDs, hours, offsetHours, env, name, op, release, userIdentity)
 	if err != nil {
 		slog.Error("list transaction summaries", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -994,12 +1030,13 @@ func (ro *router) handleTransactionTimeseries(w http.ResponseWriter, r *http.Req
 	env := r.URL.Query().Get("env")
 	name := r.URL.Query().Get("name")
 	op := r.URL.Query().Get("op")
+	userIdentity := r.URL.Query().Get("user")
 	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
 	if projectIDs == nil {
 		projectIDs = []string{}
 	}
 
-	ts, err := storage.GetTransactionTimeseries(r.Context(), ro.pool, projectIDs, hours, env, name, op)
+	ts, err := storage.GetTransactionTimeseries(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity)
 	if err != nil {
 		slog.Error("get transaction timeseries", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1016,13 +1053,25 @@ func (ro *router) handleListAllTransactions(w http.ResponseWriter, r *http.Reque
 			limit = n
 		}
 	}
+	q := r.URL.Query()
 	filter := storage.TransactionFilter{
-		ProjectIDs:  bearerProjectIDs(r, r.URL.Query()["project_id"]),
-		Op:          r.URL.Query().Get("op"),
-		Status:      r.URL.Query().Get("status"),
-		Environment: r.URL.Query().Get("environment"),
-		Name:        r.URL.Query().Get("name"),
-		Limit:       limit,
+		ProjectIDs:   bearerProjectIDs(r, q["project_id"]),
+		Status:       q.Get("status"),
+		Environment:  q.Get("environment"),
+		Name:         q.Get("name"),
+		UserIdentity: q.Get("user"),
+		Limit:        limit,
+	}
+	if ops := q["op"]; len(ops) > 1 {
+		filter.Ops = ops
+	} else if len(ops) == 1 {
+		filter.Op = ops[0]
+	}
+	if h := q.Get("hours"); h != "" {
+		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 720 {
+			t := time.Now().UTC().Add(-time.Duration(n) * time.Hour)
+			filter.Since = &t
+		}
 	}
 	if ct := r.URL.Query().Get("cursor_time"); ct != "" {
 		if cid := r.URL.Query().Get("cursor_id"); cid != "" {
@@ -1434,11 +1483,12 @@ func (ro *router) handleGetWebVitals(w http.ResponseWriter, r *http.Request) {
 		projectIDs = []string{}
 	}
 	env := r.URL.Query().Get("env")
+	userIdentity := r.URL.Query().Get("user")
 
 	now := time.Now().UTC()
 	from := now.Add(-time.Duration(hours) * time.Hour)
 
-	summary, err := storage.GetWebVitalsSummary(r.Context(), ro.pool, projectIDs, from, now, env)
+	summary, err := storage.GetWebVitalsSummary(r.Context(), ro.pool, projectIDs, from, now, env, userIdentity)
 	if err != nil {
 		slog.Error("get web vitals summary", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1459,11 +1509,12 @@ func (ro *router) handleGetWebVitalsPages(w http.ResponseWriter, r *http.Request
 		projectIDs = []string{}
 	}
 	env := r.URL.Query().Get("env")
+	userIdentity := r.URL.Query().Get("user")
 
 	now := time.Now().UTC()
 	from := now.Add(-time.Duration(hours) * time.Hour)
 
-	pages, err := storage.GetWebVitalsByPage(r.Context(), ro.pool, projectIDs, from, now, env)
+	pages, err := storage.GetWebVitalsByPage(r.Context(), ro.pool, projectIDs, from, now, env, userIdentity)
 	if err != nil {
 		slog.Error("get web vitals pages", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

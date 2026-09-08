@@ -530,7 +530,7 @@ func (ro *router) mcpGetOverview(ctx context.Context, args map[string]any) (stri
 		firingCount++
 	}
 
-	summaries, err := storage.ListTransactionSummaries(ctx, ro.pool, projectIDs, 24, 0, "", "", "", "")
+	summaries, err := storage.ListTransactionSummaries(ctx, ro.pool, projectIDs, 24, 0, "", "", "", "", "")
 	if err != nil {
 		return "", fmt.Errorf("list tx summaries: %w", err)
 	}
@@ -654,7 +654,7 @@ func (ro *router) mcpListTransactions(ctx context.Context, args map[string]any) 
 	hours := min(max(mcpArgInt(args, "hours", 24), 1), 168)
 	limit := mcpArgLimit(args, "limit", 20, 50)
 
-	summaries, err := storage.ListTransactionSummaries(ctx, ro.pool, projectIDs, hours, 0, "", mcpArgString(args, "name"), "", "")
+	summaries, err := storage.ListTransactionSummaries(ctx, ro.pool, projectIDs, hours, 0, "", mcpArgString(args, "name"), "", "", "")
 	if err != nil {
 		return "", fmt.Errorf("list transactions: %w", err)
 	}

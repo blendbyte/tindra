@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn(() => ({ query: {} })),
+  useRouter: vi.fn(() => ({ replace: vi.fn(), push: vi.fn() })),
+  RouterLink: { template: '<a><slot /></a>', props: ['to'] },
+}))
+
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
 }))
@@ -12,6 +18,21 @@ vi.mock('@/stores/projects', () => ({
 
 vi.mock('@/stores/performance', () => ({
   usePerformanceStore: vi.fn(),
+}))
+
+vi.mock('@/stores/appUser', () => ({
+  useAppUserStore: vi.fn(() => ({
+    identity: '',
+    selected: null,
+    label: '',
+    select: vi.fn(),
+    clear: vi.fn(),
+  })),
+  routeUserIdentity: (q: { user?: unknown }) => typeof q?.user === 'string' ? q.user : '',
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(() => ({ user: { timezone: 'UTC' } })),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -28,6 +49,7 @@ const stubs = {
   FilterChip: { template: '<div />' },
   PerformanceSubnav: { template: '<div />' },
   RouterLink: { template: '<a><slot /></a>', props: ['to'] },
+  UserFilter: { template: '<div />' },
 }
 
 const makeSummary = (override = {}) => ({
@@ -59,6 +81,7 @@ function setupMocks(summaryData?: unknown, pagesData?: unknown[], isError = fals
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref(summaryData), isLoading: ref(false), isError: ref(isError), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(pagesData), isLoading: ref(false), isError: ref(isError), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
 }
 
 beforeEach(() => {
@@ -174,6 +197,7 @@ describe('BrowserView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref(makeSummary()), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(true), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
       const wrapper = mount(BrowserView, { global: { stubs } })
       expect(wrapper.find('.perf-table__skel-row').exists()).toBe(true)
     })
@@ -277,6 +301,7 @@ describe('BrowserView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchSummary } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchPages } as any)
+        .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
       const wrapper = mount(BrowserView, { global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')
       expect(refetchSummary).toHaveBeenCalled()
@@ -291,6 +316,7 @@ describe('BrowserView', () => {
       PerformanceSubnav: { template: '<div />' },
       SpanSamplesPanel: { name: 'SpanSamplesPanel', emits: ['close'], template: '<div />' },
       FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
+      UserFilter: { template: '<div />' },
     }
 
     it('updates windowHrs when Window FilterChip changes', async () => {

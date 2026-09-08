@@ -32,10 +32,11 @@ type LogFilter struct {
 	Level      string
 	// Levels, when non-empty, matches any of the given levels (at-or-above
 	// queries). Takes precedence over Level. "warning" also matches "warn".
-	Levels      []string
-	Environment string
-	Search      string
-	TraceID     string
+	Levels       []string
+	Environment  string
+	Search       string
+	TraceID      string
+	UserIdentity string
 	// WindowMins, when > 0, restricts to timestamp in (NOW() - window, NOW() + 2m].
 	WindowMins int
 	CursorTime *time.Time
@@ -179,6 +180,10 @@ func appendLogWhere(filter LogFilter, where string, args []any) (string, []any) 
 	if filter.Search != "" {
 		args = append(args, likeContains(filter.Search))
 		where += fmt.Sprintf(" AND l.body ILIKE $%d ESCAPE E'\\\\'", len(args))
+	}
+	if filter.UserIdentity != "" {
+		args = append(args, filter.UserIdentity)
+		where += fmt.Sprintf(" AND l.user_identity = $%d", len(args))
 	}
 	if filter.WindowMins > 0 {
 		args = append(args, filter.WindowMins)

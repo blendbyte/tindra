@@ -25,6 +25,16 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(),
 }))
 
+vi.mock('@/stores/appUser', () => ({
+  useAppUserStore: vi.fn(() => ({
+    identity: '',
+    select: vi.fn(),
+    clear: vi.fn(),
+  })),
+  appUserLabel: (u: { name?: string | null; username?: string | null; identity?: string }) =>
+    u.name || u.username || u.identity || '',
+}))
+
 import CommandPalette from '../CommandPalette.vue'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
@@ -177,7 +187,7 @@ describe('CommandPalette', () => {
       makeWrapper(true)
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
       await nextTick()
-      expect(pushMock).toHaveBeenCalledWith('/issues')
+      expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: {} })
     })
 
     it('calls closeCmd when Escape is pressed', async () => {
@@ -221,7 +231,7 @@ describe('CommandPalette', () => {
         (i) => i.find('.cmdk__item-text').text() === 'Performance',
       )!
       await perfItem.trigger('click')
-      expect(pushMock).toHaveBeenCalledWith('/performance')
+      expect(pushMock).toHaveBeenCalledWith({ path: '/performance', query: {} })
     })
 
     it('calls closeCmd when the overlay backdrop is clicked', async () => {
@@ -294,14 +304,14 @@ describe('CommandPalette', () => {
       mountWithStore(false)
       document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', metaKey: true }))
       await nextTick()
-      expect(pushMock).toHaveBeenCalledWith('/issues')
+      expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: {} })
     })
 
     it('navigates to /performance on ⌘2', async () => {
       mountWithStore(false)
       document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', metaKey: true }))
       await nextTick()
-      expect(pushMock).toHaveBeenCalledWith('/performance')
+      expect(pushMock).toHaveBeenCalledWith({ path: '/performance', query: {} })
     })
 
     it('navigates to /releases on ⌘3', async () => {

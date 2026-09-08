@@ -36,6 +36,17 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(),
 }))
 
+vi.mock('@/stores/appUser', () => ({
+  useAppUserStore: vi.fn(() => ({
+    identity: '',
+    selected: null,
+    label: '',
+    select: vi.fn(),
+    clear: vi.fn(),
+  })),
+  routeUserIdentity: (q: { user?: unknown }) => typeof q?.user === 'string' ? q.user : '',
+}))
+
 import LogsView from '../LogsView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -45,6 +56,7 @@ const stubs = {
   Icon: { template: '<span />' },
   FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
   RouterLink: { name: 'RouterLink', props: ['to'], template: '<a :href="to"><slot /></a>' },
+  UserFilter: { template: '<div />' },
 }
 
 const makeLog = (id: string, level: string, body: string) => ({

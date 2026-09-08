@@ -12,20 +12,21 @@ import (
 )
 
 type Transaction struct {
-	ID             string    `json:"id"`
-	ProjectID      string    `json:"project_id"`
-	TraceID        string    `json:"trace_id,omitempty"`
-	SpanID         string    `json:"span_id,omitempty"`
-	Transaction    string    `json:"transaction"`
-	Op             string    `json:"op"`
-	Status         string    `json:"status"`
-	DurationMs     int       `json:"duration_ms"`
-	StartTimestamp time.Time `json:"start_timestamp"`
-	Timestamp      time.Time `json:"timestamp"`
-	ReceivedAt     time.Time `json:"received_at"`
-	Environment    string    `json:"environment,omitempty"`
-	Release        string    `json:"release,omitempty"`
-	Platform       string    `json:"platform,omitempty"`
+	ID             string          `json:"id"`
+	ProjectID      string          `json:"project_id"`
+	TraceID        string          `json:"trace_id,omitempty"`
+	SpanID         string          `json:"span_id,omitempty"`
+	Transaction    string          `json:"transaction"`
+	Op             string          `json:"op"`
+	Status         string          `json:"status"`
+	DurationMs     int             `json:"duration_ms"`
+	StartTimestamp time.Time       `json:"start_timestamp"`
+	Timestamp      time.Time       `json:"timestamp"`
+	ReceivedAt     time.Time       `json:"received_at"`
+	Environment    string          `json:"environment,omitempty"`
+	Release        string          `json:"release,omitempty"`
+	Platform       string          `json:"platform,omitempty"`
+	Measurements   json.RawMessage `json:"measurements,omitempty"`
 }
 
 type Span struct {
@@ -55,14 +56,17 @@ type TraceError struct {
 }
 
 type TransactionFilter struct {
-	ProjectIDs  []string
-	Op          string
-	Status      string
-	Environment string
-	Name        string
-	CursorTime  *time.Time
-	CursorID    *string
-	Limit       int
+	ProjectIDs   []string
+	Op           string
+	Ops          []string // when set, op = ANY(...); takes precedence over Op
+	Status       string
+	Environment  string
+	Name         string
+	UserIdentity string
+	Since        *time.Time
+	CursorTime   *time.Time
+	CursorID     *string
+	Limit        int
 }
 
 type TransactionPercentiles struct {
@@ -97,6 +101,7 @@ func ListTransactions(ctx context.Context, pool *pgxpool.Pool, projectID string,
 		args = append(args, filter.Environment)
 		q += fmt.Sprintf(" AND environment = $%d", len(args))
 	}
+	q, args = appendTxUserAndTime(q, args, filter)
 	if filter.CursorTime != nil && filter.CursorID != nil {
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
@@ -129,6 +134,22 @@ func ListTransactions(ctx context.Context, pool *pgxpool.Pool, projectID string,
 	return txns, rows.Err()
 }
 
+func appendTxUserAndTime(q string, args []any, filter TransactionFilter) (string, []any) {
+	if len(filter.Ops) > 0 {
+		args = append(args, filter.Ops)
+		q += fmt.Sprintf(" AND op = ANY($%d::text[])", len(args))
+	}
+	if filter.UserIdentity != "" {
+		args = append(args, filter.UserIdentity)
+		q += fmt.Sprintf(" AND user_identity = $%d", len(args))
+	}
+	if filter.Since != nil {
+		args = append(args, *filter.Since)
+		q += fmt.Sprintf(" AND start_timestamp >= $%d", len(args))
+	}
+	return q, args
+}
+
 func ListAllTransactions(ctx context.Context, pool *pgxpool.Pool, filter TransactionFilter) ([]*Transaction, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
@@ -138,14 +159,15 @@ func ListAllTransactions(ctx context.Context, pool *pgxpool.Pool, filter Transac
 	args := []any{}
 	q := `SELECT id, project_id, COALESCE(trace_id,''), COALESCE(span_id,''), transaction,
 	             op, status, duration_ms, start_timestamp, timestamp, received_at,
-	             COALESCE(environment,''), COALESCE(release,''), COALESCE(platform,'')
+	             COALESCE(environment,''), COALESCE(release,''), COALESCE(platform,''),
+	             measurements
 	      FROM transactions WHERE TRUE`
 
 	if len(filter.ProjectIDs) > 0 {
 		args = append(args, filter.ProjectIDs)
 		q += fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", len(args))
 	}
-	if filter.Op != "" {
+	if len(filter.Ops) == 0 && filter.Op != "" {
 		args = append(args, filter.Op)
 		q += fmt.Sprintf(" AND op = $%d", len(args))
 	}
@@ -161,6 +183,7 @@ func ListAllTransactions(ctx context.Context, pool *pgxpool.Pool, filter Transac
 		args = append(args, filter.Name)
 		q += fmt.Sprintf(" AND transaction = $%d", len(args))
 	}
+	q, args = appendTxUserAndTime(q, args, filter)
 	if filter.CursorTime != nil && filter.CursorID != nil {
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
@@ -184,7 +207,7 @@ func ListAllTransactions(ctx context.Context, pool *pgxpool.Pool, filter Transac
 		if err := rows.Scan(
 			&t.ID, &t.ProjectID, &t.TraceID, &t.SpanID, &t.Transaction,
 			&t.Op, &t.Status, &t.DurationMs, &t.StartTimestamp, &t.Timestamp, &t.ReceivedAt,
-			&t.Environment, &t.Release, &t.Platform,
+			&t.Environment, &t.Release, &t.Platform, &t.Measurements,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
@@ -266,7 +289,7 @@ type TxTimeseries struct {
 	BucketSize string     `json:"bucket_size"`
 }
 
-func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env string, name string, op string) (*TxTimeseries, error) {
+func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env string, name string, op string, userIdentity string) (*TxTimeseries, error) {
 	if hours <= 0 || hours > 720 {
 		hours = 24
 	}
@@ -303,6 +326,10 @@ func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectID
 		args = append(args, op)
 		where += fmt.Sprintf(" AND op = $%d", len(args))
 	}
+	if userIdentity != "" {
+		args = append(args, userIdentity)
+		where += fmt.Sprintf(" AND user_identity = $%d", len(args))
+	}
 
 	q := fmt.Sprintf(`
 		SELECT
@@ -333,7 +360,7 @@ func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectID
 	return ts, rows.Err()
 }
 
-func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, offsetHours int, env string, name string, op string, release string) ([]*TransactionSummary, error) {
+func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, offsetHours int, env string, name string, op string, release string, userIdentity string) ([]*TransactionSummary, error) {
 	if hours <= 0 || hours > 720 {
 		hours = 24
 	}
@@ -368,6 +395,10 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 	if release != "" {
 		args = append(args, release)
 		where += fmt.Sprintf(" AND release = $%d", len(args))
+	}
+	if userIdentity != "" {
+		args = append(args, userIdentity)
+		where += fmt.Sprintf(" AND user_identity = $%d", len(args))
 	}
 
 	rows, err := pool.Query(ctx, `

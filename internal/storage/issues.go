@@ -66,6 +66,7 @@ type IssueFilter struct {
 	Since          *time.Time // first_seen > Since
 	SinceLast      *time.Time // last_seen > SinceLast
 	SinceRegressed *time.Time // regressed_at > SinceRegressed
+	UserIdentity   string     // issues with at least one event from this app user
 }
 
 // issueSelectCols is the canonical SELECT column list for the issues table.
@@ -342,9 +343,21 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 			)
 		}
 	}
+	projIdx := 0
 	if len(filter.ProjectIDs) > 0 {
 		args = append(args, filter.ProjectIDs)
-		q += fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", len(args))
+		projIdx = len(args)
+		q += fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", projIdx)
+	}
+	if filter.UserIdentity != "" {
+		args = append(args, filter.UserIdentity)
+		sub := fmt.Sprintf(` AND id IN (
+			SELECT issue_id FROM events
+			WHERE user_identity = $%d AND issue_id IS NOT NULL`, len(args))
+		if projIdx > 0 {
+			sub += fmt.Sprintf(` AND project_id = ANY($%d::uuid[])`, projIdx)
+		}
+		q += sub + `)`
 	}
 	if filter.SinceLast != nil {
 		args = append(args, *filter.SinceLast)

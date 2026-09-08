@@ -7,12 +7,16 @@ import { useFormatters } from '@/composables/useFormatters'
 import type { Log, LogListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import FilterChip from '@/components/FilterChip.vue'
+import UserFilter from '@/components/UserFilter.vue'
 import { useProjectsStore } from '@/stores/projects'
+import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 import { useAuthStore } from '@/stores/auth'
 
 const projects = useProjectsStore()
+const appUser = useAppUserStore()
 const auth = useAuthStore()
 const route = useRoute()
+const lensIdentity = computed(() => routeUserIdentity(route.query) || appUser.identity)
 const router = useRouter()
 const { formatTs } = useFormatters()
 
@@ -106,6 +110,7 @@ const queryParams = computed(() => {
   }
   if (envFilter.value !== 'All') p.set('environment', envFilter.value)
   if (searchQuery.value) p.set('search', searchQuery.value)
+  if (lensIdentity.value) p.set('user', lensIdentity.value)
   return p.toString()
 })
 
@@ -191,6 +196,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
         :options="envOptions"
         @change="envFilter = $event"
       />
+      <UserFilter />
 
       <div class="filterbar__spacer" />
 
@@ -260,8 +266,8 @@ onUnmounted(() => clearTimeout(debounceTimer))
         </div>
         <h2 class="empty-state__title">No logs found</h2>
         <p class="empty-state__body">
-          {{ searchQuery || levelFilter !== 'All' || envFilter !== 'All'
-            ? 'Try adjusting your filters.'
+          {{ searchQuery || levelFilter !== 'All' || envFilter !== 'All' || lensIdentity
+            ? (lensIdentity ? `No logs for ${appUser.label || lensIdentity} matching these filters.` : 'Try adjusting your filters.')
             : 'Logs will appear here when your SDK sends log envelope items.' }}
         </p>
       </div>

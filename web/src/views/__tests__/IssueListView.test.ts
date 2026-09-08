@@ -49,6 +49,18 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(),
 }))
 
+vi.mock('@/stores/appUser', () => ({
+  useAppUserStore: vi.fn(() => ({
+    identity: '',
+    selected: null,
+    label: '',
+    initial: '?',
+    select: vi.fn(),
+    clear: vi.fn(),
+  })),
+  routeUserIdentity: (q: { user?: unknown }) => typeof q?.user === 'string' ? q.user : '',
+}))
+
 import IssueListView from '../IssueListView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -64,6 +76,7 @@ const stubs = {
   Sparkline: { template: '<span />' },
   BrandMark: { template: '<span />' },
   IgnoreButton: { template: '<div />' },
+  UserFilter: { template: '<div class="user-filter-stub" />' },
 }
 
 function setupMocks({ projects = [], selectedIds = [], issueData = undefined as unknown } = {}) {

@@ -38,6 +38,18 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(),
 }))
 
+vi.mock('@/stores/appUser', () => ({
+  useAppUserStore: vi.fn(() => ({
+    identity: '',
+    selected: null,
+    label: '',
+    select: vi.fn(),
+    clear: vi.fn(),
+  })),
+  appUserIdentity: (u: { id?: string | null; username?: string | null; email?: string | null }) =>
+    (u.id || u.username || u.email || '').toString(),
+}))
+
 import IssueDetailView from '../IssueDetailView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useIssueNavStore } from '@/stores/issueNav'

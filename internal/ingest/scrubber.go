@@ -92,9 +92,39 @@ func ScrubEvent(payload json.RawMessage, cfg ScrubConfig) json.RawMessage {
 // ScrubTransaction applies PII scrubbing to the mutable parts of a transaction:
 // span Data blobs and span Description strings. The transaction is modified in place.
 func ScrubTransaction(tx *BufferedTransaction, cfg ScrubConfig) {
-	_, regexps := buildScrubber(cfg)
-	// Field-path blocking doesn't apply to the already-decomposed transaction
-	// struct, but pattern scrubbing applies to free-text strings and data blobs.
+	fields, regexps := buildScrubber(cfg)
+	if len(fields) > 0 {
+		blocked := func(path string) bool {
+			_, ok := fields[path]
+			return ok
+		}
+		if blocked("user") {
+			tx.UserIdentity, tx.UserID, tx.UserUsername, tx.UserEmail, tx.UserName = "", "", "", "", ""
+		} else {
+			if blocked("user.id") {
+				tx.UserID = ""
+			}
+			if blocked("user.username") {
+				tx.UserUsername = ""
+			}
+			if blocked("user.email") {
+				tx.UserEmail = ""
+			}
+			if blocked("user.name") {
+				tx.UserName = ""
+			}
+		}
+	}
+	if len(regexps) > 0 {
+		tx.UserID = scrubString(tx.UserID, regexps)
+		tx.UserUsername = scrubString(tx.UserUsername, regexps)
+		tx.UserEmail = scrubString(tx.UserEmail, regexps)
+		tx.UserName = scrubString(tx.UserName, regexps)
+	}
+	tx.UserIdentity = UserIdentity(tx.UserID, tx.UserUsername, tx.UserEmail)
+	if tx.UserIdentity == scrubPlaceholder {
+		tx.UserIdentity = ""
+	}
 	if len(regexps) == 0 {
 		return
 	}

@@ -7,6 +7,8 @@ import { apiFetch } from '@/api/client'
 import { useFormatters } from '@/composables/useFormatters'
 import { useTimezone } from '@/composables/useTimezone'
 import { useIssueNavStore } from '@/stores/issueNav'
+import { useAppUserStore, appUserIdentity } from '@/stores/appUser'
+import type { AppUser } from '@/api/types'
 import type { Issue, Event as TindraEvent, Comment, User, TagSummary, IssueHistoryEntry, EventSummary, EventListPage, HistogramBucket } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
@@ -19,6 +21,7 @@ const router = useRouter()
 const { show: showToast } = useToast()
 const qc = useQueryClient()
 const navStore = useIssueNavStore()
+const appUser = useAppUserStore()
 const { formatRel, formatTs } = useFormatters()
 const tz = useTimezone()
 
@@ -533,6 +536,31 @@ const eventUserLabel = computed(() => {
   if (!u) return null
   return u.name || u.username || u.email || u.id
 })
+
+function eventUserAsAppUser(): AppUser | null {
+  const u = eventUser.value
+  if (!u) return null
+  const identity = appUserIdentity({ id: u.id, username: u.username, email: u.email })
+  if (!identity) return null
+  return {
+    identity,
+    user_id: u.id,
+    username: u.username,
+    email: u.email,
+    name: u.name,
+    last_seen: '',
+    project_id: issue.value?.project_id ?? '',
+  }
+}
+
+const lensUser = computed(() => eventUserAsAppUser())
+
+function lensTo(path: string) {
+  const u = lensUser.value
+  if (!u) return
+  appUser.select(u)
+  router.push({ path, query: { user: u.identity } })
+}
 
 const { data: histogram } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'histogram']),
@@ -1304,7 +1332,14 @@ onUnmounted(() => {
         <div class="section__head" style="cursor: default">
           <h2 class="section__title">User</h2>
         </div>
-        <div class="user-card__body">
+        <button v-if="lensUser" class="user-card__body user-card__body--btn" type="button" @click="lensTo('/issues')">
+          <div class="user-card__avatar">{{ eventUserInitial }}</div>
+          <div class="user-card__info">
+            <span class="user-card__name">{{ eventUserLabel }}</span>
+            <span v-if="eventUser.email && eventUser.email !== eventUserLabel" class="user-card__sub">{{ eventUser.email }}</span>
+          </div>
+        </button>
+        <div v-else class="user-card__body">
           <div class="user-card__avatar">{{ eventUserInitial }}</div>
           <div class="user-card__info">
             <span class="user-card__name">{{ eventUserLabel }}</span>
@@ -1324,6 +1359,11 @@ onUnmounted(() => {
             <span class="user-card__key">IP</span>
             <span class="user-card__val mono">{{ eventUser.ip_address }}</span>
           </template>
+        </div>
+        <div v-if="lensUser" class="user-card__links">
+          <button type="button" class="user-card__link" @click="lensTo('/issues')">Issues</button>
+          <button type="button" class="user-card__link" @click="lensTo('/performance/transactions')">Traces</button>
+          <button type="button" class="user-card__link" @click="lensTo('/logs')">Logs</button>
         </div>
       </div>
 

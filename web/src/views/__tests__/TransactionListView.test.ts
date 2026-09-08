@@ -23,6 +23,21 @@ vi.mock('@/stores/performance', () => ({
   usePerformanceStore: vi.fn(),
 }))
 
+vi.mock('@/stores/appUser', () => ({
+  useAppUserStore: vi.fn(() => ({
+    identity: '',
+    selected: null,
+    label: '',
+    select: vi.fn(),
+    clear: vi.fn(),
+  })),
+  routeUserIdentity: (q: { user?: unknown }) => typeof q?.user === 'string' ? q.user : '',
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(() => ({ user: { timezone: 'UTC' } })),
+}))
+
 vi.mock('@/api/client', () => ({
   apiFetch: vi.fn().mockResolvedValue({ buckets: [], bucket_size: 'hour' }),
 }))
@@ -44,6 +59,7 @@ const stubs = {
   TimeseriesChart: { template: '<div />' },
   PerformanceSubnav: { template: '<div />' },
   BrandMark: { template: '<span />' },
+  UserFilter: { template: '<div />' },
 }
 
 const makeSummary = (transaction: string, op = 'http.server') => ({
@@ -72,6 +88,7 @@ function setupMocks(summaries: unknown[] = [], isLoading = false, isError = fals
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
 }
@@ -404,6 +421,7 @@ describe('TransactionListView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref([makeSummary('/api/users')]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(timeseriesData) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
@@ -420,6 +438,7 @@ describe('TransactionListView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })

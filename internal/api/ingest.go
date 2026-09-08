@@ -532,6 +532,7 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 		Environment  string          `json:"environment"`
 		Release      string          `json:"release"`
 		Platform     string          `json:"platform"`
+		User         json.RawMessage `json:"user"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil || p.Transaction == "" {
 		return nil
@@ -568,6 +569,8 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 		})
 	}
 
+	su := ingest.ParseSentryUser(p.User)
+
 	return &ingest.BufferedTransaction{
 		ProjectID:      projectID,
 		EventID:        trunc(p.EventID, maxFieldLen),
@@ -586,6 +589,11 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 		Release:        trunc(p.Release, maxFieldLen),
 		Platform:       trunc(p.Platform, maxFieldLen),
 		Spans:          spans,
+		UserIdentity:   trunc(su.Identity, maxFieldLen),
+		UserID:         trunc(su.ID, maxFieldLen),
+		UserUsername:   trunc(su.Username, maxFieldLen),
+		UserEmail:      trunc(su.Email, maxFieldLen),
+		UserName:       trunc(su.Name, maxFieldLen),
 	}
 }
 
