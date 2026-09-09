@@ -437,3 +437,15 @@ describe('ReleasesView', () => {
     })
   })
 })
+
+it('preserves the next-page cursor when mounting with cached releases', () => {
+  setupMocks()
+  vi.mocked(useQuery).mockReturnValue({
+    data: ref({ releases: [makeRelease('cached', 'v1')], total: 2, has_more: true,
+      next_cursor_time: '2024-01-01T00:00:00Z', next_cursor_id: 'cached-next' }),
+    isFetching: ref(false), isError: ref(false), refetch: vi.fn(),
+  } as any)
+  const wrapper = mount(ReleasesView, { global: { stubs } })
+  expect(wrapper.find('.list-footer button').exists()).toBe(true)
+  wrapper.unmount()
+})

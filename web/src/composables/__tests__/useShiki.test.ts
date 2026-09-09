@@ -1,14 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { langForPlatform, highlightBlock } from '../useShiki'
 
-vi.mock('shiki', () => ({
-  createHighlighter: vi.fn().mockResolvedValue({
-    codeToTokens: vi.fn().mockReturnValue({
-      tokens: [[{ content: 'const', color: { light: '#000066', dark: '#0000cc' } }]],
-    }),
-  }),
-  createJavaScriptRegexEngine: vi.fn().mockReturnValue({}),
-}))
+vi.mock('shiki/core', async importOriginal => {
+ const actual = await importOriginal<typeof import('shiki/core')>()
+ return { ...actual, createHighlighterCore: vi.fn(actual.createHighlighterCore) }
+})
 
 describe('langForPlatform', () => {
   it.each([
@@ -55,27 +51,21 @@ describe('highlightBlock', () => {
     expect(tokens[0][0]).toHaveProperty('content')
   })
 
-  it('calls the highlighter with correct parameters', async () => {
-    const shiki = await import('shiki')
-    const mockHighlighter = await (shiki.createHighlighter as ReturnType<typeof vi.fn>).mock.results[0].value
-
-    await highlightBlock('let y = 2', 'typescript')
-
-    expect(mockHighlighter.codeToTokens).toHaveBeenCalledWith('let y = 2', expect.objectContaining({
-      lang: 'typescript',
-      themes: expect.objectContaining({ light: 'github-light', dark: 'github-dark' }),
-    }))
+  it('loads only requested languages and shares initialization', async () => {
+    const { createHighlighterCore } = await import('shiki/core')
+    const hl = await vi.mocked(createHighlighterCore).mock.results[0].value
+    expect(hl.getLoadedLanguages()).not.toContain('python')
+    await Promise.all([highlightBlock('let y = 2', 'typescript'), highlightBlock('let z = 3', 'typescript')])
+    expect(hl.getLoadedLanguages()).toContain('typescript')
+    expect(hl.getLoadedLanguages()).not.toContain('python')
+    expect(createHighlighterCore).toHaveBeenCalledTimes(1)
   })
 
-  it('reuses the cached highlighter instance across calls', async () => {
-    const shiki = await import('shiki')
-    const createHighlighterSpy = shiki.createHighlighter as ReturnType<typeof vi.fn>
-    const callsBefore = createHighlighterSpy.mock.calls.length
-
-    await highlightBlock('a', 'go')
-    await highlightBlock('b', 'go')
-
-    // createHighlighter should not have been called again (singleton reuse)
-    expect(createHighlighterSpy.mock.calls.length).toBe(callsBefore)
+  it('leaves unknown languages and oversized blocks intact', async () => {
+    expect(await highlightBlock('<hello>\nworld', 'unknown')).toEqual([
+      [{ content: '<hello>', offset: 0 }], [{ content: 'world', offset: 0 }],
+    ])
+    const code = 'x'.repeat(32769)
+    expect((await highlightBlock(code, 'javascript'))[0][0].content).toBe(code)
   })
 })

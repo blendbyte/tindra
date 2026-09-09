@@ -73,7 +73,7 @@ const REFETCH_INTERVAL = 30_000
 
 const { data: me } = useQuery({
   queryKey: ['me'],
-  queryFn: () => apiFetch<User>('/api/me'),
+  queryFn: ({ signal }) => apiFetch<User>('/api/me', { signal }),
 })
 
 // Server-side filter values sent as query params.
@@ -135,29 +135,27 @@ function exportIssues(format: 'csv' | 'json') {
 
 const { data: firstPage, isFetching, isError, refetch } = useQuery({
   queryKey: computed(() => ['issues', serverStatus.value, serverLevel.value, serverEnv.value, serverSince.value, serverAssigneeId.value, tagKey.value, tagValue.value, lensIdentity.value, [...effectiveProjectIds.value].sort().join(',')]),
-  queryFn: () => apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(null)}`),
+  queryFn: ({ signal }) => apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(null)}`, { signal }),
   refetchInterval: REFETCH_INTERVAL,
   refetchOnWindowFocus: false,
 })
 
-// When filters change: discard extra pages. The reactive queryKey triggers a re-fetch automatically.
-watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, lensIdentity, effectiveProjectIds], () => {
-  extraIssues.value = []
-  nextCursor.value = null
-})
+let moreController: AbortController | undefined
+function cancelMore() {
+  moreController?.abort()
+  isFetchingMore.value = false
+}
+onUnmounted(cancelMore)
 
-// When first page changes (initial load, filter change, or auto-refresh),
-// discard extra pages and re-sync the cursor.
-watch(firstPage, (data) => {
+// Initialize from cached data as well as fresh responses and filter changes.
+watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, lensIdentity, effectiveProjectIds, firstPage], () => {
+  cancelMore()
   extraIssues.value = []
-  if (!data || Array.isArray(data)) {
-    nextCursor.value = null
-    return
-  }
-  nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
+  const data = firstPage.value
+  nextCursor.value = data && !Array.isArray(data) && data.has_more && data.next_cursor_time && data.next_cursor_id
     ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
     : null
-})
+}, { immediate: true })
 
 // allIssues handles both IssueListPage (new) and Issue[] (old server format).
 const allIssues = computed<Issue[]>(() => {
@@ -176,23 +174,26 @@ const serverHasMore = computed(() => nextCursor.value !== null)
 
 async function loadMore() {
   if (!nextCursor.value || isFetchingMore.value) return
+  const controller = moreController = new AbortController()
   isFetchingMore.value = true
   try {
-    const data = await apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(nextCursor.value)}`)
+    const data = await apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(nextCursor.value)}`, { signal: controller.signal })
+    if (controller.signal.aborted) return
     if (!data) return
     extraIssues.value = [...extraIssues.value, ...(data.issues ?? [])]
     nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
       ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
       : null
+  } catch (error) {
+    if (!controller.signal.aborted) throw error
   } finally {
-    isFetchingMore.value = false
+    if (moreController === controller) isFetchingMore.value = false
   }
 }
 
-
 const { data: users = [] } = useQuery({
   queryKey: ['users'],
-  queryFn: () => apiFetch<User[]>('/api/users'),
+  queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
 })
 
 function projectName(projectId: string) {
@@ -359,7 +360,6 @@ const { mutate: updateStatus } = useMutation({
     apiFetch(`/api/issues/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   onSuccess: () => qc.invalidateQueries({ queryKey: ['issues'] }),
 })
-
 
 function levelColor(level: string) {
   switch (level) {

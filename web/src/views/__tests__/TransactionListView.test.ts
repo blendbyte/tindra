@@ -635,7 +635,7 @@ describe('TransactionListView', () => {
       expect(tracesCall[0].enabled.value).toBe(true)
       expect(vi.mocked(useQuery).mock.calls[1][0].enabled.value).toBe(false)
       for (const [opts] of vi.mocked(useQuery).mock.calls) {
-        opts.queryFn?.()
+        opts.queryFn?.({ signal: new AbortController().signal })
       }
     })
   })

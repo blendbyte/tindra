@@ -48,19 +48,19 @@ const pageloadParams = computed(() => {
 
 const { data: summary, isLoading: summaryLoading, isError: summaryError, refetch: refetchSummary } = useQuery({
   queryKey: computed(() => ['web-vitals-summary', params.value]),
-  queryFn: () => apiFetch<WebVitalsSummary>(`/api/vitals?${params.value}`),
+  queryFn: ({ signal }) => apiFetch<WebVitalsSummary>(`/api/vitals?${params.value}`, { signal }),
   enabled: computed(() => !userMode.value),
 })
 
 const { data: pages, isLoading: pagesLoading, isError: pagesError, refetch: refetchPages } = useQuery({
   queryKey: computed(() => ['web-vitals-pages', params.value]),
-  queryFn: () => apiFetch<WebVitalsPage[]>(`/api/vitals/pages?${params.value}`),
+  queryFn: ({ signal }) => apiFetch<WebVitalsPage[]>(`/api/vitals/pages?${params.value}`, { signal }),
   enabled: computed(() => !userMode.value),
 })
 
 const { data: pageloadPage, isLoading: pageloadsLoading, isError: pageloadsError, refetch: refetchPageloads } = useQuery({
   queryKey: computed(() => ['user-pageloads', pageloadParams.value]),
-  queryFn: () => apiFetch<TransactionListPage>(`/api/transactions?${pageloadParams.value}`),
+  queryFn: ({ signal }) => apiFetch<TransactionListPage>(`/api/transactions?${pageloadParams.value}`, { signal }),
   enabled: computed(() => userMode.value),
 })
 

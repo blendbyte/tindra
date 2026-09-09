@@ -11,12 +11,13 @@ const router = useRouter()
 
 const { data: settings } = useQuery({
   queryKey: ['settings'],
-  queryFn: () => apiFetch<ServerSettings>('/api/settings'),
+  queryFn: ({ signal }) => apiFetch<ServerSettings>('/api/settings', { signal }),
 })
 
 const { data: projectsData } = useQuery({
-  queryKey: ['projects'],
-  queryFn: () => apiFetch<Project[]>('/api/projects'),
+  queryKey: ['projects', 'usage'],
+  queryFn: ({ signal }) => apiFetch<Project[]>('/api/projects', { signal }),
+  enabled: computed(() => (settings.value?.event_limit ?? 0) > 0),
 })
 
 const projects = computed(() => projectsData.value ?? [])

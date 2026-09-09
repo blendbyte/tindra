@@ -2787,7 +2787,7 @@ describe('SettingsView', () => {
           return Array.isArray(val) && val[0] === 'logs-count'
         }) as any
         expect(previewCall).toBeTruthy()
-        previewCall[0].queryFn?.()
+        previewCall[0].queryFn?.({ signal: new AbortController().signal })
         wrapper.unmount()
       } finally {
         vi.useRealTimers()

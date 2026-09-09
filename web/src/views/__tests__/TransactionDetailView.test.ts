@@ -319,13 +319,13 @@ describe('TransactionDetailView', () => {
   describe('flame graph query', () => {
     function flameQueryFn() {
       const call = vi.mocked(useQuery).mock.calls
-        .map(c => c[0] as { queryKey?: unknown; queryFn?: () => Promise<unknown> })
+        .map(c => c[0] as { queryKey?: unknown; queryFn?: (context: { signal: AbortSignal }) => Promise<unknown> })
         .find(o => {
           const key = (o.queryKey as { value?: unknown })?.value
           return Array.isArray(key) && key.includes('flamegraph')
         })
       expect(call?.queryFn, 'no flamegraph query registered').toBeTruthy()
-      return call!.queryFn!
+      return () => call!.queryFn!({ signal: new AbortController().signal })
     }
 
     it('returns the graph when the endpoint answers', async () => {
@@ -1140,4 +1140,59 @@ describe('TransactionDetailView', () => {
       expect(wrapper.find('.stat__sub').text()).toContain('3 spans')
     })
   })
+})
+
+describe('large waterfalls', () => {
+  function largeSpans(count: number, nested = false) {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `large-${i}`, span_id: `span-${i}`, parent_span_id: nested && i ? `span-${i - 1}` : null,
+      op: i % 2 ? 'db.query' : 'http.client', description: `request ${i}`, status: 'ok',
+      start_offset_ms: i, duration_ms: 1, is_critical: false, data: {},
+    }))
+  }
+
+  it('bounds both columns and keeps later spans reachable', async () => {
+    setupMocks(baseTx, largeSpans(240))
+    const wrapper = mount(TransactionDetailView, { global: { stubs } })
+    expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(200)
+    expect(wrapper.findAll('.timeline__row')).toHaveLength(200)
+    const pages = wrapper.find('[aria-label="Span pages"]')
+    await pages.findAll('button')[1].trigger('click')
+    expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(40)
+    expect(wrapper.text()).toContain('request 239')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(200)
+    expect(wrapper.find('.span-row--focused').text()).toContain('request 199')
+    await pages.findAll('button')[1].trigger('click')
+    await pages.findAll('button')[0].trigger('click')
+    await wrapper.find('.trace-search__input').setValue('request 239')
+    expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('handles deeply nested trees without recursive stack growth', () => {
+    setupMocks(baseTx, largeSpans(12000, true))
+    const wrapper = mount(TransactionDetailView, { global: { stubs } })
+    expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(200)
+    expect(wrapper.find('[aria-label="Span pages"]').text()).toContain('12000')
+    wrapper.unmount()
+  })
+
+  it.skipIf(!process.env.TINDRA_PERF_ROWS)('measures large detail rendering', () => {
+    setupMocks(baseTx, largeSpans(2000))
+    const start = performance.now()
+    const wrapper = mount(TransactionDetailView, { global: { stubs } })
+    process.stdout.write(`2000 spans mount=${(performance.now() - start).toFixed(1)}ms elements=${wrapper.findAll('*').length}\n`)
+    wrapper.unmount()
+  })
+})
+
+it('initializes the timeline extent from cached transaction data', () => {
+  setupMocks(baseTx, [{ id: 'cached-span', span_id: 'cached', parent_span_id: null,
+    op: 'db.query', description: 'cached', status: 'ok', duration_ms: 125, start_offset_ms: 125 }])
+  const wrapper = mount(TransactionDetailView, { global: { stubs } })
+  const bar = wrapper.find('.timeline__bar')
+  expect(bar.attributes('style')).toContain('left: 50%')
+  wrapper.unmount()
 })

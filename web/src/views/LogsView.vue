@@ -116,7 +116,7 @@ const queryParams = computed(() => {
 
 const { data, isLoading, isFetching, refetch } = useQuery({
   queryKey: computed(() => ['logs', queryParams.value]),
-  queryFn: () => apiFetch<LogListPage>(`/api/logs?${queryParams.value}`),
+  queryFn: ({ signal }) => apiFetch<LogListPage>(`/api/logs?${queryParams.value}`, { signal }),
   refetchInterval: 5000,
 })
 

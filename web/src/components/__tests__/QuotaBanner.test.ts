@@ -65,6 +65,21 @@ describe('QuotaBanner', () => {
     expect(wrapper.find('.quota-banner').exists()).toBe(false)
   })
 
+  it('only enables the usage query once a positive event limit is known', () => {
+    vi.mocked(useQuery).mockClear()
+    mountBanner()
+    const options = vi.mocked(useQuery).mock.calls.find(
+      ([opts]: any) => opts.queryKey[0] === 'projects',
+    )?.[0] as any
+    expect(options.enabled.value).toBe(false)
+    settingsData.value = makeSettings(0)
+    expect(options.enabled.value).toBe(false)
+    settingsData.value = makeSettings(1000)
+    expect(options.enabled.value).toBe(true)
+    settingsData.value = makeSettings(0)
+    expect(options.enabled.value).toBe(false)
+  })
+
   it('is hidden when event_limit is 0 (unlimited)', () => {
     settingsData.value = makeSettings(0)
     projectsData.value = [makeProject('a', 9000)]

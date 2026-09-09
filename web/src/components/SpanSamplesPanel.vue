@@ -31,7 +31,7 @@ const queryParams = computed(() => {
 
 const { data: samples, isLoading } = useQuery({
   queryKey: computed(() => ['span-samples', queryParams.value]),
-  queryFn: () => apiFetch<SpanSample[]>(`/api/spans/samples?${queryParams.value}`),
+  queryFn: ({ signal }) => apiFetch<SpanSample[]>(`/api/spans/samples?${queryParams.value}`, { signal }),
 })
 
 

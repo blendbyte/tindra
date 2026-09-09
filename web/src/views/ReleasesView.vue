@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -35,22 +35,25 @@ const queryKey = computed(() => ['releases', [...projects.selectedIds].sort().jo
 
 const { data: firstPage, isFetching, isError, refetch } = useQuery({
   queryKey,
-  queryFn: () => apiFetch<ReleaseListPage>(`/api/releases?${buildParams(null)}`),
+  queryFn: ({ signal }) => apiFetch<ReleaseListPage>(`/api/releases?${buildParams(null)}`, { signal }),
   refetchInterval: 60_000,
 })
 
-watch(firstPage, (data) => {
+let moreController: AbortController | undefined
+function cancelMore() {
+  moreController?.abort()
+  isFetchingMore.value = false
+}
+onUnmounted(cancelMore)
+
+watch([queryKey, firstPage], ([, data]) => {
+  cancelMore()
   extraReleases.value = []
   nextCursor.value = data?.has_more && data.next_cursor_time && data.next_cursor_id
     ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
     : null
-})
+}, { immediate: true })
 
-watch(() => projects.selectedIds, () => {
-  extraReleases.value = []
-  nextCursor.value = null
-  refetch()
-})
 
 const allReleases = computed<Release[]>(() => [
   ...(firstPage.value?.releases ?? []),
@@ -62,15 +65,19 @@ const hasMore = computed(() => nextCursor.value !== null)
 
 async function loadMore() {
   if (!nextCursor.value || isFetchingMore.value) return
+  const controller = moreController = new AbortController()
   isFetchingMore.value = true
   try {
-    const data = await apiFetch<ReleaseListPage>(`/api/releases?${buildParams(nextCursor.value)}`)
+    const data = await apiFetch<ReleaseListPage>(`/api/releases?${buildParams(nextCursor.value)}`, { signal: controller.signal })
+    if (controller.signal.aborted) return
     extraReleases.value = [...extraReleases.value, ...(data.releases ?? [])]
     nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
       ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
       : null
+  } catch (error) {
+    if (!controller.signal.aborted) throw error
   } finally {
-    isFetchingMore.value = false
+    if (moreController === controller) isFetchingMore.value = false
   }
 }
 
@@ -125,7 +132,6 @@ const projectName = computed(() => {
 const showProject = computed(() =>
   new Set(allReleases.value.map((r) => r.project_id)).size > 1
 )
-
 
 function formatCount(n: number) {
   if (n === 0) return '–'

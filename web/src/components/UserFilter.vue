@@ -54,21 +54,24 @@ const listParams = computed(() => {
 
 const { data: users, isFetching } = useQuery({
   queryKey: computed(() => ['app-users', listParams.value]),
-  queryFn: () => apiFetch<AppUser[]>(`/api/app-users?${listParams.value}`),
+  queryFn: ({ signal }) => apiFetch<AppUser[]>(`/api/app-users?${listParams.value}`, { signal }),
   enabled: computed(() => open.value),
 })
 
 const options = computed(() => users.value ?? [])
 
+let hydrationController: AbortController | undefined
 let hydrationVersion = 0
 let active = true
 // Invalidate immediately, including when the selection changes during a fetch.
-watch(() => appUser.selected, () => { hydrationVersion++ }, { flush: 'sync' })
-watch(() => route.query.user, () => { hydrationVersion++ }, { flush: 'sync' })
-watch(projectIds, () => { hydrationVersion++ }, { flush: 'sync' })
-onUnmounted(() => { active = false; hydrationVersion++ })
+watch(() => appUser.selected, () => { hydrationVersion++; hydrationController?.abort() }, { flush: 'sync' })
+watch(() => route.query.user, () => { hydrationVersion++; hydrationController?.abort() }, { flush: 'sync' })
+watch(projectIds, () => { hydrationVersion++; hydrationController?.abort() }, { flush: 'sync' })
+onUnmounted(() => { active = false; hydrationVersion++; hydrationController?.abort() })
 
 async function hydrateFromRoute() {
+  hydrationController?.abort()
+  const controller = hydrationController = new AbortController()
   const version = ++hydrationVersion
   const raw = route.query.user
   const ident = typeof raw === 'string' ? raw : ''
@@ -77,7 +80,7 @@ async function hydrateFromRoute() {
   const p = new URLSearchParams({ identity: ident })
   for (const id of projectIds.value) p.append('project_id', id)
   try {
-    const found = await apiFetch<AppUser[]>(`/api/app-users?${p}`)
+    const found = await apiFetch<AppUser[]>(`/api/app-users?${p}`, { signal: controller.signal })
     if (!active || version !== hydrationVersion) return
     const match = found.find((u) => u.identity === ident) ?? found[0]
     appUser.select(match ?? {

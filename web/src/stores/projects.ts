@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-import type { Project } from '@/api/types'
+import type { ProjectMetadata } from '@/api/types'
 
 export const useProjectsStore = defineStore('projects', () => {
   const selectedIds = ref<string[]>(
@@ -23,9 +23,10 @@ export const useProjectsStore = defineStore('projects', () => {
   })
 
   const { data: projects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => apiFetch<Project[]>('/api/projects'),
+    queryKey: ['projects', 'metadata'],
+    queryFn: ({ signal }) => apiFetch<ProjectMetadata[]>('/api/projects/metadata', { signal }),
     initialData: [],
+    initialDataUpdatedAt: 0,
   })
 
   // Drop stale IDs that no longer correspond to real projects.
