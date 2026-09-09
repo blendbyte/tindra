@@ -38,6 +38,7 @@ type LogFilter struct {
 	TraceID      string
 	UserIdentity string
 	// WindowMins, when > 0, restricts to timestamp in (NOW() - window, NOW() + 2m].
+	Range      *TimeRange
 	WindowMins int
 	CursorTime *time.Time
 	CursorID   *string
@@ -50,6 +51,9 @@ func ListLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) ([]*Log
 		limit = 100
 	}
 
+	if bounds, ok := InvestigationRange(ctx); ok {
+		filter.Range = &bounds
+	}
 	where, args := appendLogWhere(filter, "TRUE", nil)
 	if filter.CursorTime != nil && filter.CursorID != nil {
 		n := len(args) + 1
@@ -112,6 +116,9 @@ func ListLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) ([]*Log
 // CountLogs returns how many logs match filter. Used by the alert preview
 // endpoint and by enrichPayload after a log_count rule fires.
 func CountLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) (int, error) {
+	if bounds, ok := InvestigationRange(ctx); ok {
+		filter.Range = &bounds
+	}
 	where, args := appendLogWhere(filter, "TRUE", nil)
 	q := fmt.Sprintf(`SELECT COUNT(*) FROM logs l WHERE %s`, where)
 	var count int
@@ -127,6 +134,9 @@ func CountLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) (int, 
 func LogsReachThreshold(ctx context.Context, pool *pgxpool.Pool, filter LogFilter, threshold int) (bool, error) {
 	if threshold <= 0 {
 		return false, nil
+	}
+	if bounds, ok := InvestigationRange(ctx); ok {
+		filter.Range = &bounds
 	}
 	where, args := appendLogWhere(filter, "TRUE", nil)
 	args = append(args, threshold)
@@ -184,6 +194,10 @@ func appendLogWhere(filter LogFilter, where string, args []any) (string, []any) 
 	if filter.UserIdentity != "" {
 		args = append(args, filter.UserIdentity)
 		where += fmt.Sprintf(" AND app_user_identity_hash(l.user_identity) = app_user_identity_hash($%[1]d::text) AND l.user_identity = $%[1]d", len(args))
+	}
+	if filter.Range != nil {
+		args = append(args, filter.Range.From, filter.Range.To)
+		where += fmt.Sprintf(" AND l.timestamp >= $%d AND l.timestamp < $%d", len(args)-1, len(args))
 	}
 	if filter.WindowMins > 0 {
 		args = append(args, filter.WindowMins)

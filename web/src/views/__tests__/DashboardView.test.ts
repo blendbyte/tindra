@@ -199,7 +199,7 @@ describe('DashboardView', () => {
 
     it('shows no transaction data state when tx summaries are empty', () => {
       const wrapper = makeWrapper({ txSummaries: [] })
-      expect(wrapper.text()).toContain('No transaction data in the last 24h')
+      expect(wrapper.text()).toContain('No transaction data in the selected range')
     })
   })
 

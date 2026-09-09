@@ -1,3 +1,4 @@
+import { useInvestigationStore } from '@/stores/investigation'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref, computed, reactive, nextTick } from 'vue'
 import type { SpanSummary } from '@/api/types'
@@ -62,6 +63,8 @@ function setupMocks(summaries: SpanSummary[] = [], windowHrs = '24h', envFilter 
     } as any)
     .mockReturnValueOnce({
       data: ref(null),
+      isError: ref(false),
+      refetch: vi.fn(),
     } as any)
 
   return { summariesRef, isLoadingRef, isErrorRef, refetchFn }
@@ -304,10 +307,11 @@ describe('useSpanTable', () => {
       expect(perf).toBeDefined()
     })
 
-    it('exposes refetch function', () => {
+    it('exposes refetch function', async () => {
       const { refetchFn } = setupMocks()
       const { refetch } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
-      expect(refetch).toBe(refetchFn)
+      await refetch()
+      expect(refetchFn).toHaveBeenCalled()
     })
   })
 
@@ -333,8 +337,8 @@ describe('useSpanTable', () => {
       vi.mocked(usePerformanceStore).mockReturnValue(perfMock as any)
       vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
       vi.mocked(useQuery)
-        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
-        .mockReturnValueOnce({ data: ref(null) } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(false), refetch: vi.fn(), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(null), isError: ref(false), refetch: vi.fn() } as any)
 
       const { search } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
       search.value = 'my query'
@@ -343,4 +347,14 @@ describe('useSpanTable', () => {
       expect(search.value).toBe('')
     })
   })
+})
+
+
+it('closes samples when the shared investigation scope changes', async () => {
+  setupMocks([makeSummary()])
+  const table = useSpanTable('db')
+  table.selectedRow.value = makeSummary()
+  useInvestigationStore().environment = 'preview'
+  await nextTick()
+  expect(table.selectedRow.value).toBeNull()
 })

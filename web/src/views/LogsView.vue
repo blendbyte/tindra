@@ -3,6 +3,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api/client'
+import { useInvestigationStore } from '@/stores/investigation'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Log, LogListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
@@ -14,6 +15,7 @@ import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 import { useAuthStore } from '@/stores/auth'
 
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
 const appUser = useAppUserStore()
 const auth = useAuthStore()
 const route = useRoute()
@@ -22,18 +24,11 @@ const router = useRouter()
 const { formatTs } = useFormatters()
 
 const LEVELS = ['Fatal', 'Error', 'Warning', 'Info', 'Debug', 'Trace']
-const ENVS = ['production', 'staging', 'preview', 'development']
 
 function queryParam(v: unknown): string {
   if (Array.isArray(v)) return String(v[0] ?? '')
   return typeof v === 'string' ? v : ''
 }
-function queryParamList(v: unknown): string[] {
-  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string' && x !== '')
-  if (typeof v === 'string' && v) return [v]
-  return []
-}
-
 function levelFromQuery(raw: string): string {
   const lower = raw.toLowerCase()
   if (lower === 'warn') return 'Warning'
@@ -44,19 +39,8 @@ function levelFromQuery(raw: string): string {
 const q = route.query
 const minLevelMode = ref(!!queryParam(q.min_level))
 const levelFilter = ref(levelFromQuery(queryParam(q.min_level) || queryParam(q.level)))
-const envFromQuery = queryParam(q.environment)
-const envFilter = ref(envFromQuery || 'All')
+const envFilter = computed(() => investigation.environment)
 const searchQuery = ref(queryParam(q.search))
-const pids = queryParamList(q.project_id)
-if (pids.length) projects.setSelected(pids)
-
-const envOptions = computed(() => {
-  const base = ['All', ...ENVS]
-  if (envFilter.value !== 'All' && !base.includes(envFilter.value)) {
-    return [...base, envFilter.value]
-  }
-  return base
-})
 
 const canManageAlerts = computed(() => auth.user?.permissions.manage_alerts ?? false)
 const selectedProjectIds = computed(() => projects.selectedIds)
@@ -116,9 +100,8 @@ const queryParams = computed(() => {
 })
 
 const { data, isError, isFetching, fetchStatus, dataUpdatedAt, refetch } = useQuery({
-  queryKey: computed(() => ['logs', queryParams.value]),
-  queryFn: ({ queryKey, signal }) => apiFetch<LogListPage>(`/api/logs?${queryKey[1]}`, { signal }),
-  refetchInterval: 5000,
+  queryKey: computed(() => ['logs', queryParams.value, investigation.scopeKey]),
+  queryFn: ({ signal }) => apiFetch<LogListPage>(investigation.request(`/api/logs?${queryParams.value}`), { signal }),
 })
 
 const logs = computed(() => data.value?.logs ?? [])
@@ -141,7 +124,7 @@ function envBadgeClass(env: string) {
 watch(queryParams, () => { expandedId.value = null })
 
 let writingQuery = false
-watch([levelFilter, envFilter, searchQuery, selectedProjectIds], () => {
+watch([levelFilter, searchQuery], () => {
   writingQuery = true
   const query: Record<string, string | string[]> = { ...route.query } as Record<string, string | string[]>
   delete query.level
@@ -151,12 +134,8 @@ watch([levelFilter, envFilter, searchQuery, selectedProjectIds], () => {
   } else if (levelFilter.value !== 'All') {
     query.level = levelFilter.value.toLowerCase()
   }
-  if (envFilter.value !== 'All') query.environment = envFilter.value
-  else delete query.environment
   if (searchQuery.value) query.search = searchQuery.value
   else delete query.search
-  if (selectedProjectIds.value.length) query.project_id = selectedProjectIds.value
-  else delete query.project_id
   router.replace({ query })
   queueMicrotask(() => { writingQuery = false })
 })
@@ -166,10 +145,7 @@ watch(() => route.query, (q) => {
   const min = queryParam(q.min_level)
   minLevelMode.value = !!min
   levelFilter.value = levelFromQuery(min || queryParam(q.level))
-  envFilter.value = queryParam(q.environment) || 'All'
   searchQuery.value = queryParam(q.search)
-  const ids = queryParamList(q.project_id)
-  if (ids.length) projects.setSelected(ids)
 })
 
 let debounceTimer: ReturnType<typeof setTimeout>
@@ -190,12 +166,6 @@ onUnmounted(() => clearTimeout(debounceTimer))
         :value="levelFilter"
         :options="['All', 'Fatal', 'Error', 'Warning', 'Info', 'Debug', 'Trace']"
         @change="levelFilter = $event; minLevelMode = false"
-      />
-      <FilterChip
-        label="Environment"
-        :value="envFilter"
-        :options="envOptions"
-        @change="envFilter = $event"
       />
       <UserFilter />
 
@@ -229,14 +199,14 @@ onUnmounted(() => clearTimeout(debounceTimer))
         class="filterbar__refresh"
         :class="{ 'filterbar__refresh--fetching': isFetching }"
         title="Refresh"
-        @click="refetch()"
+        @click="investigation.refresh(); refetch()"
       >
         <Icon name="refresh-cw" :size="11" :class="{ 'filterbar__refresh-spin': isFetching }" />
       </button>
     </div>
 
     <QueryFeedback resource="logs" :failed="!!isError" :has-data="data !== undefined"
-      :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="refetch()" />
+      :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="investigation.refresh(); refetch()" />
 
     <!-- Loading skeleton -->
     <div v-if="!data && !isError && fetchStatus !== 'paused'" class="perf-table-wrap" role="status" aria-label="Loading logs">
@@ -309,7 +279,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
                   <RouterLink
                     v-if="log.transaction_id"
                     class="log-trace-link"
-                    :to="`/transactions/${log.transaction_id}`"
+                    :to="investigation.link(`/transactions/${log.transaction_id}`)"
                     v-tooltip="'View trace'"
                     @click.stop
                   >
@@ -338,7 +308,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
                       v-if="log.trace_id && log.transaction_id"
                       class="mono link"
                       style="font-size: var(--text-xs)"
-                      :to="`/transactions/${log.transaction_id}`"
+                      :to="investigation.link(`/transactions/${log.transaction_id}`)"
                     >
                       trace: {{ log.trace_id }}
                     </RouterLink>

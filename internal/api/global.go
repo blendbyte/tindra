@@ -543,7 +543,9 @@ func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
 	if issues == nil {
 		issues = []*storage.Issue{}
 	}
-	attachSparklines(r.Context(), ro.pool, issues)
+	if _, scoped := storage.InvestigationRange(r.Context()); !scoped {
+		attachSparklines(r.Context(), ro.pool, issues)
+	}
 
 	resp := map[string]any{
 		"issues":   issues,
@@ -574,6 +576,7 @@ func (ro *router) handleExportIssues(w http.ResponseWriter, r *http.Request) {
 
 	filter := storage.IssueFilter{
 		Status:       r.URL.Query().Get("status"),
+		Title:        truncSearch(r.URL.Query().Get("q")),
 		Level:        r.URL.Query().Get("level"),
 		Environment:  r.URL.Query().Get("env"),
 		AssigneeID:   r.URL.Query().Get("assignee_id"),
@@ -1106,9 +1109,9 @@ func (ro *router) transactionTimeseries(w http.ResponseWriter, r *http.Request, 
 	var ts any
 	var err error
 	if countsOnly {
-		ts, err = storage.GetTransactionCounts(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity)
+		ts, err = storage.GetTransactionCounts(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity, r.URL.Query().Get("release"))
 	} else {
-		ts, err = storage.GetTransactionTimeseries(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity)
+		ts, err = storage.GetTransactionTimeseries(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity, r.URL.Query().Get("release"))
 	}
 	if err != nil {
 		slog.Error("get transaction timeseries", "err", err)
@@ -1558,8 +1561,8 @@ func (ro *router) handleGetWebVitals(w http.ResponseWriter, r *http.Request) {
 	env := r.URL.Query().Get("env")
 	userIdentity := r.URL.Query().Get("user")
 
-	now := time.Now().UTC()
-	from := now.Add(-time.Duration(hours) * time.Hour)
+	bounds := storage.ResolveTimeRange(r.Context(), hours, 0)
+	from, now := bounds.From, bounds.To
 
 	summary, err := storage.GetWebVitalsSummary(r.Context(), ro.pool, projectIDs, from, now, env, userIdentity)
 	if err != nil {
@@ -1584,8 +1587,8 @@ func (ro *router) handleGetWebVitalsPages(w http.ResponseWriter, r *http.Request
 	env := r.URL.Query().Get("env")
 	userIdentity := r.URL.Query().Get("user")
 
-	now := time.Now().UTC()
-	from := now.Add(-time.Duration(hours) * time.Hour)
+	bounds := storage.ResolveTimeRange(r.Context(), hours, 0)
+	from, now := bounds.From, bounds.To
 
 	pages, err := storage.GetWebVitalsByPage(r.Context(), ro.pool, projectIDs, from, now, env, userIdentity)
 	if err != nil {

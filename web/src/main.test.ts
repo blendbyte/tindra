@@ -1,0 +1,21 @@
+import { expect, it, vi } from 'vitest'
+const mocks = vi.hoisted(() => ({ use: vi.fn(), directive: vi.fn(), mount: vi.fn(), install: vi.fn(), router: {} }))
+vi.mock('vue', async importOriginal => ({ ...await importOriginal<any>(), createApp: () => mocks }))
+vi.mock('./App.vue', () => ({ default: {} }))
+vi.mock('./router', () => ({ router: mocks.router }))
+vi.mock('./router/investigation', () => ({ installInvestigationRouter: mocks.install }))
+it('installs shared investigation routing after Pinia and before mounting the application', async () => {
+  await import('./main')
+  const pinia = mocks.use.mock.calls[0]![0]
+  expect(mocks.install).toHaveBeenCalledWith(mocks.router, pinia)
+  expect(mocks.use).toHaveBeenNthCalledWith(2, mocks.router)
+  expect(mocks.directive).toHaveBeenCalledWith('tooltip', expect.any(Object))
+  expect(mocks.mount).toHaveBeenCalledWith('#app')
+  expect(mocks.install.mock.invocationCallOrder[0]).toBeLessThan(mocks.mount.mock.invocationCallOrder[0]!)
+  const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {})
+  const event = new Event('vite:preloadError', { cancelable: true })
+  window.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(true)
+  expect(reload).toHaveBeenCalledOnce()
+  reload.mockRestore()
+})

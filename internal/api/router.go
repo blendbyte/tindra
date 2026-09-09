@@ -129,6 +129,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	r.Use(ro.securityHeaders)
 	r.Use(slogRequestLogger)
 	r.Use(middleware.Recoverer)
+	r.Use(investigationContext)
 
 	r.Get("/healthz", ro.healthz)
 	r.Get("/metrics", ro.handleIngestionMetrics)
@@ -174,6 +175,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/users", ro.handleListUsers)
 		r.Get("/api/projects", ro.handleListProjects)
 		r.Get("/api/projects/metadata", ro.handleListProjectMetadata)
+		r.Get("/api/environments", ro.handleEnvironments)
 		r.Get("/api/projects/stats", ro.handleGetProjectStats)
 		r.With(ro.requirePerm("manage_projects")).Post("/api/projects", ro.handleCreateProject)
 		r.Get("/api/projects/{projectID}/quota", ro.handleGetProjectQuota)

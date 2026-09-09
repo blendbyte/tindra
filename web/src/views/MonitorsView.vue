@@ -51,7 +51,7 @@ const selectedMonitorId = ref<string | null>(null)
 const { data: monitorsData, isLoading } = useQuery({
   queryKey: computed(() => ['monitors', queryParams.value]),
   queryFn: ({ signal }) => apiFetch<CronMonitor[]>(`/api/monitors?${queryParams.value}`, { signal }),
-  refetchInterval: 60_000,
+
 })
 const monitors = computed(() => monitorsData.value ?? [])
 
@@ -66,7 +66,7 @@ const { data: checkinsData, isLoading: checkinsLoading } = useQuery({
       ? apiFetch<CronCheckin[]>(`/api/monitors/${selectedMonitorId.value}/checkins?limit=50`, { signal })
       : Promise.resolve([]),
   enabled: computed(() => !!selectedMonitorId.value),
-  refetchInterval: computed(() => (selectedMonitorId.value ? 30_000 : false)),
+
 })
 const checkins = computed(() => checkinsData.value ?? [])
 
@@ -185,7 +185,7 @@ const selectedUptimeId = ref<string | null>(null)
 const { data: uptimeData, isLoading: uptimeLoading } = useQuery({
   queryKey: computed(() => ['uptime-monitors', queryParams.value]),
   queryFn: ({ signal }) => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${queryParams.value}`, { signal }),
-  refetchInterval: 60_000,
+
 })
 const uptimeMonitors = computed(() => uptimeData.value ?? [])
 
@@ -196,7 +196,7 @@ const { data: uptimeChecksData, isLoading: uptimeChecksLoading } = useQuery({
       ? apiFetch<UptimeCheck[]>(`/api/uptime-monitors/${selectedUptimeId.value}/checks?limit=50`, { signal })
       : Promise.resolve([]),
   enabled: computed(() => !!selectedUptimeId.value),
-  refetchInterval: computed(() => (selectedUptimeId.value ? 30_000 : false)),
+
 })
 const uptimeChecks = computed(() => uptimeChecksData.value ?? [])
 
@@ -207,7 +207,7 @@ const { data: uptimeStatsData } = useQuery({
       ? apiFetch<UptimeStats>(`/api/uptime-monitors/${selectedUptimeId.value}/stats`, { signal })
       : Promise.resolve(null),
   enabled: computed(() => !!selectedUptimeId.value),
-  refetchInterval: computed(() => (selectedUptimeId.value ? 60_000 : false)),
+
 })
 const uptimeStats = computed(() => uptimeStatsData.value ?? null)
 

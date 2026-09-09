@@ -1,3 +1,4 @@
+import { useInvestigationStore } from '@/stores/investigation'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, reactive, ref } from 'vue'
@@ -391,7 +392,7 @@ describe('LogsView', () => {
       const wrapper = mount(LogsView, { global: { stubs } })
       const link = wrapper.find('.log-trace-link')
       expect(link.exists()).toBe(true)
-      expect(link.attributes('href')).toBe('/transactions/tx-9')
+      expect(link.attributes('href')).toBe('/transactions/tx-9?project_id=all&environment=all&range=24h')
     })
 
     // A log can carry a trace_id whose transaction was never ingested (or was
@@ -417,7 +418,7 @@ describe('LogsView', () => {
       const wrapper = mount(LogsView, { global: { stubs } })
       await wrapper.find('.perf-table__row--clickable').trigger('click')
       const link = wrapper.find('.log-expanded a')
-      expect(link.attributes('href')).toBe('/transactions/tx-9')
+      expect(link.attributes('href')).toBe('/transactions/tx-9?project_id=all&environment=all&range=24h')
       expect(link.text()).toContain('t-abc')
     })
 
@@ -528,6 +529,7 @@ describe('LogsView', () => {
 
     it('is enabled for All projects (empty selection) and prefills every project', async () => {
       routeState.query = { level: 'warning', search: 'disk', environment: 'production' }
+      useInvestigationStore().environment = 'production'
       setupMocks([makeLog('l1', 'warning', 'disk usage')], false, [])
       const wrapper = mount(LogsView, { global: { stubs } })
       const btn = wrapper.find('button.export-menu__trigger')
@@ -543,14 +545,15 @@ describe('LogsView', () => {
 
     it('hydrates min_level and a custom environment from the URL', () => {
       routeState.query = { min_level: 'error', environment: 'eu-west', search: 'stripe', project_id: 'p1' }
+      useInvestigationStore().environment = 'eu-west'
       setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
       const wrapper = mount(LogsView, { global: { stubs } })
       const chips = wrapper.findAllComponents({ name: 'FilterChip' })
       const levelChip = chips.find(c => c.props('label') === 'Level')
       const envChip = chips.find(c => c.props('label') === 'Environment')
       expect(levelChip?.props('value')).toBe('Error')
-      expect(envChip?.props('value')).toBe('eu-west')
-      expect(envChip?.props('options')).toContain('eu-west')
+      expect(useInvestigationStore().environment).toBe('eu-west')
+      expect(envChip).toBeUndefined()
     })
 
     it('hydrates warn min_level from an array query param', () => {
@@ -566,13 +569,11 @@ describe('LogsView', () => {
       setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
       const wrapper = mount(LogsView, { global: { stubs } })
       const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-      const envChip = chips.find(c => c.props('label') === 'Environment')
-      await envChip?.vm.$emit('change', 'production')
+      await chips.find(c => c.props('label') === 'Level')?.vm.$emit('change', 'Info')
       expect(replaceMock).toHaveBeenCalled()
       const query = replaceMock.mock.calls.at(-1)?.[0]?.query as Record<string, string>
-      expect(query.min_level).toBe('error')
-      expect(query.environment).toBe('production')
-      expect(query.level).toBeUndefined()
+      expect(query.min_level).toBeUndefined()
+      expect(query.level).toBe('info')
     })
 
     it('writes exact level (not min_level) after a chip change', async () => {
@@ -589,10 +590,11 @@ describe('LogsView', () => {
       setupMocks([makeLog('l1', 'error', 'x')], false, ['p1'])
       const wrapper = mount(LogsView, { global: { stubs } })
       routeState.query = { min_level: 'fatal', environment: 'staging', search: 'db', project_id: 'p1' }
+      useInvestigationStore().environment = 'staging'
       await nextTick()
       const chips = wrapper.findAllComponents({ name: 'FilterChip' })
       expect(chips.find(c => c.props('label') === 'Level')?.props('value')).toBe('Fatal')
-      expect(chips.find(c => c.props('label') === 'Environment')?.props('value')).toBe('staging')
+      expect(useInvestigationStore().environment).toBe('staging')
     })
 
     it('navigates to settings with current filters', async () => {
@@ -616,6 +618,7 @@ describe('LogsView', () => {
         environment: 'production',
         project_id: 'p1',
       }
+      useInvestigationStore().environment = 'production'
       setupMocks([makeLog('l1', 'warning', 'stripe')], false, ['p1'])
       const wrapper = mount(LogsView, { global: { stubs } })
       const btn = wrapper.find('button.export-menu__trigger')
@@ -639,4 +642,16 @@ describe('LogsView', () => {
       expect(String(pushMock.mock.calls[0][0])).toContain('level=fatal')
     })
   })
+})
+
+it('retries failed logs with fresh bounds', async () => {
+  setupMocks()
+  const refetch = vi.fn()
+  vi.mocked(useQuery).mockReturnValue({ data: ref(undefined), isLoading: ref(false), isFetching: ref(false), isError: ref(true), refetch } as any)
+  const state = useInvestigationStore()
+  state.anchor = 1
+  const wrapper = mount(LogsView, { global: { stubs } })
+  await wrapper.findAll('button').find(b => b.text() === 'Try again')!.trigger('click')
+  expect(refetch).toHaveBeenCalledOnce()
+  expect(state.anchor).toBeGreaterThan(1)
 })

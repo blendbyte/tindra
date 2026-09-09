@@ -63,6 +63,7 @@ type TransactionFilter struct {
 	Environment  string
 	Name         string
 	UserIdentity string
+	Until        *time.Time
 	Since        *time.Time
 	CursorTime   *time.Time
 	CursorID     *string
@@ -143,6 +144,10 @@ func appendTxUserAndTime(q string, args []any, filter TransactionFilter) (string
 		args = append(args, filter.UserIdentity)
 		q += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
+	if filter.Until != nil {
+		args = append(args, *filter.Until)
+		q += fmt.Sprintf(" AND start_timestamp < $%d", len(args))
+	}
 	if filter.Since != nil {
 		args = append(args, *filter.Since)
 		q += fmt.Sprintf(" AND start_timestamp >= $%d", len(args))
@@ -151,6 +156,10 @@ func appendTxUserAndTime(q string, args []any, filter TransactionFilter) (string
 }
 
 func ListAllTransactions(ctx context.Context, pool *pgxpool.Pool, filter TransactionFilter) ([]*Transaction, error) {
+	if bounds, ok := InvestigationRange(ctx); ok {
+		filter.Since = &bounds.From
+		filter.Until = &bounds.To
+	}
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -289,8 +298,8 @@ type TxTimeseries struct {
 	BucketSize string     `json:"bucket_size"`
 }
 
-func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env string, name string, op string, userIdentity string) (*TxTimeseries, error) {
-	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, false)
+func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env string, name string, op string, userIdentity string, release ...string) (*TxTimeseries, error) {
+	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, false, ResolveTimeRange(ctx, hours, 0), release)
 
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
@@ -319,8 +328,8 @@ type TxCountTimeseries struct {
 	BucketSize string          `json:"bucket_size"`
 }
 
-func GetTransactionCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env, name, op, userIdentity string) (*TxCountTimeseries, error) {
-	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, true)
+func GetTransactionCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env, name, op, userIdentity string, release ...string) (*TxCountTimeseries, error) {
+	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, true, ResolveTimeRange(ctx, hours, 0), release)
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
@@ -337,7 +346,7 @@ func GetTransactionCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []
 	return result, rows.Err()
 }
 
-func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, userIdentity string, countsOnly bool) (string, []any, string) {
+func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, userIdentity string, countsOnly bool, window TimeRange, releases []string) (string, []any, string) {
 
 	if hours <= 0 || hours > 720 {
 		hours = 24
@@ -356,12 +365,11 @@ func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, u
 		bucketSize = "day"
 	}
 
-	args := []any{hours}
-	where := `
-		WHERE start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')`
+	args := []any{window.From, window.To}
+	where := `WHERE start_timestamp >= $1 AND start_timestamp < $2`
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
-		where += " AND project_id = ANY($2::uuid[])"
+		where += " AND project_id = ANY($3::uuid[])"
 	}
 	if env != "" {
 		args = append(args, env)
@@ -380,6 +388,10 @@ func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, u
 		where += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
 
+	if len(releases) > 0 && releases[0] != "" {
+		args = append(args, releases[0])
+		where += fmt.Sprintf(" AND release = $%d", len(args))
+	}
 	metrics := ""
 	if !countsOnly {
 		metrics = ", COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms), 0) AS p50, COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 0) AS p95"
@@ -404,10 +416,9 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 	if offsetHours < 0 {
 		offsetHours = 0
 	}
-	minutesInWindow := float64(hours) * 60.0
-	now := time.Now().UTC()
-	since := now.Add(-time.Duration(hours+offsetHours) * time.Hour)
-	until := now.Add(-time.Duration(offsetHours) * time.Hour)
+	window := ResolveTimeRange(ctx, hours, offsetHours)
+	since, until := window.From, window.To
+	minutesInWindow := until.Sub(since).Minutes()
 
 	args := []any{minutesInWindow, since, until}
 	where := `

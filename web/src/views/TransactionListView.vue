@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
+import { investigationQuery } from '@/router/investigation'
+import { useInvestigationStore } from '@/stores/investigation'
 import type { Transaction, TransactionSummary, TxTimeseries, ReleaseMetadata, TransactionListPage } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
@@ -19,32 +21,16 @@ import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 const router = useRouter()
 const route = useRoute()
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
 const perf = usePerformanceStore()
 const appUser = useAppUserStore()
 const { formatRel } = useFormatters()
 const lensIdentity = computed(() => routeUserIdentity(route.query) || appUser.identity)
 const userMode = computed(() => !!lensIdentity.value)
 
-const effectiveProjectIds = computed(() => {
-  const v = route.query.project_id
-  if (typeof v === 'string') return [v]
-  if (Array.isArray(v)) return v as string[]
-  return projects.selectedIds
-})
+const effectiveProjectIds = computed(() => projects.selectedIds)
 
 const WINDOW_MAP: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 }
-const VALID_WINDOWS = Object.keys(WINDOW_MAP)
-
-// URL params take priority (deep-linking), otherwise use the shared store value.
-const rawWindow = route.query['window']
-if (typeof rawWindow === 'string' && VALID_WINDOWS.includes(rawWindow)) {
-  perf.windowHrs = rawWindow
-}
-const rawEnv = route.query['env']
-if (typeof rawEnv === 'string' && rawEnv) {
-  perf.envFilter = rawEnv
-}
-
 function lsGet(key: string): string | null {
   try { return localStorage.getItem('tindra:transactions:' + key) } catch { return null }
 }
@@ -84,10 +70,9 @@ function toggleSort(col: SortCol) {
 }
 
 // Sync filters → URL (restores view on F5)
-watch([() => perf.windowHrs, () => perf.envFilter, opFilter, releaseFilter, sortCol, sortDir, lensIdentity], () => {
-  const query: Record<string, string> = {}
-  if (perf.windowHrs !== '24h') query.window = perf.windowHrs
-  if (perf.envFilter !== 'All') query.env = perf.envFilter
+watch([opFilter, releaseFilter, sortCol, sortDir, lensIdentity], () => {
+  const query = { ...route.query }
+  for (const key of ['op', 'release', 'sort', 'dir', 'user']) delete query[key]
   if (opFilter.value !== 'All' && !userMode.value) query.op = opFilter.value
   if (releaseFilter.value !== 'All' && !userMode.value) query.release = releaseFilter.value
   if (lensIdentity.value) query.user = lensIdentity.value
@@ -151,14 +136,14 @@ const txParamsWithOp = computed(() => {
 
 // Always fetch all summaries - op filtering is client-side for instant feedback
 const { data: rawSummaries, isLoading: summariesLoading, isError: summariesError, refetch: refetchSummaries } = useQuery({
-  queryKey: ['transaction-summaries', txParams],
-  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${txParams.value}`, { signal }),
+  queryKey: computed(() => ['transaction-summaries', investigation.scopeKey, txParams.value]),
+  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(investigation.request(`/api/transactions/summaries?${txParams.value}`), { signal }),
   enabled: computed(() => !userMode.value),
 })
 
 const { data: tracePage, isLoading: tracesLoading, isError: tracesError, refetch: refetchTraces } = useQuery({
-  queryKey: ['user-traces', traceParams],
-  queryFn: ({ signal }) => apiFetch<TransactionListPage>(`/api/transactions?${traceParams.value}`, { signal }),
+  queryKey: computed(() => ['user-traces', investigation.scopeKey, traceParams.value]),
+  queryFn: ({ signal }) => apiFetch<TransactionListPage>(investigation.request(`/api/transactions?${traceParams.value}`), { signal }),
   enabled: computed(() => userMode.value),
 })
 
@@ -172,7 +157,7 @@ function resetPagination() {
   tracesMoreCursor.value = null
   loadingMoreTraces.value = false
 }
-watch(traceParams, resetPagination, { flush: 'sync' })
+watch([traceParams, () => investigation.anchor], resetPagination, { flush: 'sync' })
 onUnmounted(resetPagination)
 const traces = computed(() => [...(tracePage.value?.transactions ?? []), ...extraTraces.value])
 const tracesHasMore = computed(() => extraTraces.value.length === 0
@@ -183,13 +168,14 @@ async function loadMoreTraces() {
     ? { cursor_time: tracePage.value?.next_cursor_time, cursor_id: tracePage.value?.next_cursor_id }
     : tracesMoreCursor.value
   if (!cur?.cursor_time || !cur?.cursor_id || loadingMoreTraces.value) return
+  investigation.browsingHistory = true
   const version = paginationVersion
   loadingMoreTraces.value = true
   try {
     const p = new URLSearchParams(traceParams.value)
     p.set('cursor_time', cur.cursor_time)
     p.set('cursor_id', cur.cursor_id)
-    const page = await apiFetch<TransactionListPage>(`/api/transactions?${p}`)
+    const page = await apiFetch<TransactionListPage>(investigation.request(`/api/transactions?${p}`))
     if (version !== paginationVersion) return
     extraTraces.value = [...extraTraces.value, ...(page.transactions ?? [])]
     tracesMoreCursor.value = page.next_cursor_id && page.next_cursor_time
@@ -204,7 +190,7 @@ const isError = computed(() => userMode.value ? tracesError.value : summariesErr
 function refetch() {
   resetPagination()
   if (userMode.value) refetchTraces()
-  else refetchSummaries()
+  else { refetchSummaries(); refetchComparison(); refetchTimeseries() }
 }
 
 // Previous period - same window shifted back by one window length, for comparison indicators
@@ -214,10 +200,10 @@ const compParams = computed(() => {
   return p.toString()
 })
 
-const { data: compSummaries } = useQuery({
-  queryKey: ['transaction-summaries-comp', compParams],
-  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${compParams.value}`, { signal }),
-  enabled: computed(() => !!rawSummaries.value?.length),
+const { data: compSummaries, refetch: refetchComparison } = useQuery({
+  queryKey: computed(() => ['transaction-summaries-comp', investigation.scopeKey, compParams.value]),
+  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(investigation.request(`/api/transactions/summaries?${compParams.value}`, true), { signal }),
+  enabled: computed(() => !userMode.value && !!rawSummaries.value?.length),
 })
 
 const compMap = computed(() => {
@@ -239,9 +225,10 @@ function getDelta(s: TransactionSummary, metric: 'p50' | 'p95') {
   }
 }
 
-const { data: timeseries } = useQuery({
-  queryKey: ['transaction-timeseries', txParamsWithOp],
-  queryFn: ({ signal }) => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${txParamsWithOp.value}`, { signal }),
+const { data: timeseries, refetch: refetchTimeseries } = useQuery({
+  queryKey: computed(() => ['transaction-timeseries', investigation.scopeKey, txParamsWithOp.value]),
+  enabled: computed(() => !userMode.value),
+  queryFn: ({ signal }) => apiFetch<TxTimeseries>(investigation.request(`/api/transactions/timeseries?${txParamsWithOp.value}`), { signal }),
 })
 
 // Distinct ops and per-op counts, derived live from the full unfiltered dataset
@@ -373,18 +360,6 @@ function apdexClass(score: number): string {
     <template v-else>
       <!-- Filter bar -->
       <div class="filterbar">
-        <FilterChip
-          label="Window"
-          :value="perf.windowHrs"
-          :options="['1h', '24h', '7d', '30d']"
-          @change="perf.windowHrs = $event"
-        />
-        <FilterChip
-          label="Env"
-          :value="perf.envFilter"
-          :options="['All', 'production', 'staging', 'development']"
-          @change="perf.envFilter = $event"
-        />
         <FilterChip
           v-if="releaseOptions.length > 1 && !userMode"
           label="Release"
@@ -521,7 +496,7 @@ function apdexClass(score: number): string {
             v-for="t in traces"
             :key="t.id"
             class="txrow txrow--trace"
-            :to="{ name: 'transaction-detail', params: { id: t.id } }"
+            :to="{ name: 'transaction-detail', params: { id: t.id }, query: investigationQuery(investigation) }"
           >
             <span class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatRel(t.start_timestamp) }}</span>
             <span class="optag" :class="opClass(t.op)">{{ (t.op || 'txn').split('.')[0] }}</span>
@@ -588,7 +563,7 @@ function apdexClass(score: number): string {
             v-for="(s, i) in summaries"
             :key="`${s.transaction}-${s.op}-${s.project_id}-${i}`"
             class="txrow"
-            :to="{ name: 'transaction-profile', query: { name: s.transaction, op: s.op, project_id: s.project_id } }"
+            :to="{ name: 'transaction-profile', query: { ...investigationQuery(investigation), name: s.transaction, op: s.op, project_id: s.project_id } }"
           >
             <span class="optag" :class="opClass(s.op)">{{ s.op.split('.')[0] }}</span>
             <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ s.transaction }}</span>

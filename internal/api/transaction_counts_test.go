@@ -17,7 +17,7 @@ func TestTransactionCountsAuthAndScope(t *testing.T) {
 	p, err := storage.CreateProject(ctx, testPool, "api-counts-scope", "Counts scope")
 	require.NoError(t, err)
 	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM projects WHERE id=$1", p.ID) })
-	_, err = testPool.Exec(ctx, `INSERT INTO transactions(project_id,transaction,duration_ms,start_timestamp,timestamp) VALUES ($1,'/counts',123,NOW(),NOW())`, p.ID)
+	_, err = testPool.Exec(ctx, `INSERT INTO transactions(project_id,transaction,duration_ms,start_timestamp,timestamp) VALUES ($1,'/counts',123,NOW() - INTERVAL '1 minute',NOW() - INTERVAL '1 minute')`, p.ID)
 	require.NoError(t, err)
 	token := bearerToken(t, p.ID)
 	for _, auth := range []bool{false, true} {

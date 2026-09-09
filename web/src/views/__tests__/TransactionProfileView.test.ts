@@ -1,3 +1,4 @@
+import { useInvestigationStore } from '@/stores/investigation'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
@@ -393,16 +394,18 @@ describe('TransactionProfileView', () => {
     it('updates windowHrs when first FilterChip changes', async () => {
       setupMocks([makeSummary()])
       const wrapper = mount(TransactionProfileView, { global: { stubs } })
-      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-      await chips[0].vm.$emit('change', '7d')
+      expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
+      useInvestigationStore().setRange('7d')
+      await wrapper.vm.$nextTick()
       expect(wrapper.find('.txstats').exists()).toBe(true)
     })
 
     it('updates envFilter when second FilterChip changes', async () => {
       setupMocks([makeSummary()])
       const wrapper = mount(TransactionProfileView, { global: { stubs } })
-      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-      await chips[1].vm.$emit('change', 'production')
+      expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
+      useInvestigationStore().environment = 'production'
+      await wrapper.vm.$nextTick()
       expect(wrapper.find('.txstats').exists()).toBe(true)
     })
   })
@@ -728,8 +731,9 @@ describe('TransactionProfileView', () => {
         isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
       } as any)
       const wrapper = mount(TransactionProfileView, { global: { stubs } })
-      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-      await chips[1].vm.$emit('change', 'staging')
+      expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
+      useInvestigationStore().environment = 'staging'
+      await wrapper.vm.$nextTick()
       await wrapper.vm.$nextTick()
       // Access captured queryKeys after env change to trigger profileParams with envFilter !== 'All'
       for (const qk of capturedQueryKeys) {
@@ -749,15 +753,15 @@ describe('TransactionProfileView', () => {
   })
 
   describe('project scoping via route query', () => {
-    it('passes route project_id to API calls when present in URL', () => {
+    it('uses the effective project selection supplied by the router', () => {
       routeQueryOverride = { name: '/api/users', op: 'http.server', project_id: 'route-proj-99' }
       setupMocks([])
       mount(TransactionProfileView, { global: { stubs } })
       const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
-      expect(queryKey[1]).toContain('project_id=route-proj-99')
+      expect(queryKey[2]).not.toContain('project_id=route-proj-99')
     })
 
-    it('does not include store project ids when route has project_id', () => {
+    it('does not hide a different project selection behind a URL override', () => {
       routeQueryOverride = { name: '/api/users', op: 'http.server', project_id: 'route-proj-99' }
       vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: ['store-proj-1'], projects: [] } as any)
       vi.mocked(useQuery)
@@ -769,8 +773,8 @@ describe('TransactionProfileView', () => {
       } as any)
       mount(TransactionProfileView, { global: { stubs } })
       const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
-      expect(queryKey[1]).not.toContain('store-proj-1')
-      expect(queryKey[1]).toContain('route-proj-99')
+      expect(queryKey[2]).toContain('store-proj-1')
+      expect(queryKey[2]).not.toContain('route-proj-99')
     })
 
     it('falls back to store selectedIds when no project_id in route', () => {
@@ -785,7 +789,7 @@ describe('TransactionProfileView', () => {
       } as any)
       mount(TransactionProfileView, { global: { stubs } })
       const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
-      expect(queryKey[1]).toContain('project_id=store-proj-42')
+      expect(queryKey[2]).toContain('project_id=store-proj-42')
     })
 
     it('sends no project_id when neither route nor store provide one', () => {
@@ -793,7 +797,7 @@ describe('TransactionProfileView', () => {
       setupMocks([])
       mount(TransactionProfileView, { global: { stubs } })
       const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
-      expect(queryKey[1]).not.toContain('project_id=')
+      expect(queryKey[2]).not.toContain('project_id=')
     })
   })
 })

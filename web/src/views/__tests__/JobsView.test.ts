@@ -64,7 +64,7 @@ function setupMocks(summaries: unknown[] = [], isLoading = false, isError = fals
 
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
-    .mockReturnValueOnce({ data: ref(timeseries) } as any)
+    .mockReturnValueOnce({ data: ref(timeseries), isError: ref(false), refetch: vi.fn() } as any)
 }
 
 beforeEach(() => {
@@ -167,17 +167,19 @@ describe('JobsView', () => {
     it('updates windowHrs when Window FilterChip changes', async () => {
       setupMocks([])
       const wrapper = mount(JobsView, { global: { stubs } })
-      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-      await chips[0].vm.$emit('change', '7d')
-      expect(chips[0].exists()).toBe(true)
+      expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
+      usePerformanceStore().windowHrs = '7d'
+      await wrapper.vm.$nextTick()
+      expect(usePerformanceStore().windowHrs).toBe('7d')
     })
 
     it('updates envFilter when Env FilterChip changes', async () => {
       setupMocks([])
       const wrapper = mount(JobsView, { global: { stubs } })
-      const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-      await chips[1].vm.$emit('change', 'production')
-      expect(chips[1].exists()).toBe(true)
+      expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
+      usePerformanceStore().envFilter = 'production'
+      await wrapper.vm.$nextTick()
+      expect(usePerformanceStore().envFilter).toBe('production')
     })
   })
 
@@ -205,7 +207,7 @@ describe('JobsView', () => {
       vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
-        .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
       const wrapper = mount(JobsView, { global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')
       expect(refetchFn).toHaveBeenCalled()

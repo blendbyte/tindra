@@ -1,100 +1,35 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { setActivePinia, createPinia } from 'pinia'
+import { describe, it, expect } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
+import { usePerformanceStore } from '../performance'
+import { useInvestigationStore } from '../investigation'
 
-// Same Node 22+ localStorage workaround as ui.test.ts.
-const storage: Record<string, string> = {}
-const mockLocalStorage: Storage = {
-  getItem: (key) => storage[key] ?? null,
-  setItem: (key, val) => { storage[key] = val },
-  removeItem: (key) => { delete storage[key] },
-  clear: () => { Object.keys(storage).forEach((k) => delete storage[k]) },
-  get length() { return Object.keys(storage).length },
-  key: (i) => Object.keys(storage)[i] ?? null,
-}
-
-describe('performance store', () => {
-  beforeEach(() => {
-    mockLocalStorage.clear()
-    vi.stubGlobal('localStorage', mockLocalStorage)
+describe('shared performance context', () => {
+  it('defaults to 24h and all environments', () => {
+    const state = usePerformanceStore()
+    expect(state.windowHrs).toBe('24h'); expect(state.envFilter).toBe('All')
+  })
+  it('shares changes with other investigation views', () => {
+    const perf = usePerformanceStore(), investigation = useInvestigationStore()
+    perf.windowHrs = '7d'; perf.envFilter = 'preview'
+    expect(investigation.range).toBe('7d'); expect(investigation.environment).toBe('preview')
+    investigation.environment = 'eu-west'
+    expect(perf.envFilter).toBe('eu-west')
+  })
+  it('restores custom environments and ranges from this tab session', async () => {
+    const perf = usePerformanceStore()
+    perf.windowHrs = '30d'; perf.envFilter = 'eu-west'
+    await nextTick()
     setActivePinia(createPinia())
-    vi.resetModules()
+    expect(usePerformanceStore().windowHrs).toBe('30d')
+    expect(usePerformanceStore().envFilter).toBe('eu-west')
   })
-
-  it('defaults to 24h window and All env when localStorage is empty', async () => {
-    const { usePerformanceStore } = await import('../performance')
-    const store = usePerformanceStore()
-    expect(store.windowHrs).toBe('24h')
-    expect(store.envFilter).toBe('All')
-  })
-
-  describe('windowHrs hydration', () => {
-    it.each(['1h', '24h', '7d', '30d'])('accepts valid stored window "%s"', async (val) => {
-      mockLocalStorage.setItem('tindra:perf:window', val)
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      expect(store.windowHrs).toBe(val)
-    })
-
-    it('falls back to 24h for an invalid stored window', async () => {
-      mockLocalStorage.setItem('tindra:perf:window', 'bad')
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      expect(store.windowHrs).toBe('24h')
-    })
-  })
-
-  describe('envFilter hydration', () => {
-    it.each(['All', 'production', 'staging', 'development'])('accepts valid stored env "%s"', async (val) => {
-      mockLocalStorage.setItem('tindra:perf:env', val)
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      expect(store.envFilter).toBe(val)
-    })
-
-    it('falls back to All for an invalid stored env', async () => {
-      mockLocalStorage.setItem('tindra:perf:env', 'prod')
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      expect(store.envFilter).toBe('All')
-    })
-  })
-
-  describe('windowHrs persistence', () => {
-    it('writes to localStorage when changed to a non-default value', async () => {
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      store.windowHrs = '7d'
-      await nextTick()
-      expect(mockLocalStorage.getItem('tindra:perf:window')).toBe('7d')
-    })
-
-    it('removes the key from localStorage when reset to the default (24h)', async () => {
-      mockLocalStorage.setItem('tindra:perf:window', '7d')
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      store.windowHrs = '24h'
-      await nextTick()
-      expect(mockLocalStorage.getItem('tindra:perf:window')).toBeNull()
-    })
-  })
-
-  describe('envFilter persistence', () => {
-    it('writes to localStorage when changed to a non-default value', async () => {
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      store.envFilter = 'staging'
-      await nextTick()
-      expect(mockLocalStorage.getItem('tindra:perf:env')).toBe('staging')
-    })
-
-    it('removes the key from localStorage when reset to the default (All)', async () => {
-      mockLocalStorage.setItem('tindra:perf:env', 'staging')
-      const { usePerformanceStore } = await import('../performance')
-      const store = usePerformanceStore()
-      store.envFilter = 'All'
-      await nextTick()
-      expect(mockLocalStorage.getItem('tindra:perf:env')).toBeNull()
-    })
+  it('uses identical bounds until refresh, including comparison intervals', () => {
+    const state = useInvestigationStore()
+    const parse = (comparison = false) => new URL(state.request('/api/transactions?hours=24', comparison), 'http://test').searchParams
+    const a = parse(), b = parse(), previous = parse(true)
+    expect(a.get('to')).toBe(b.get('to'))
+    expect(previous.get('to')).toBe(a.get('from'))
+    expect(Date.parse(a.get('to')!) - Date.parse(a.get('from')!)).toBe(86400000)
   })
 })

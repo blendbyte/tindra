@@ -115,8 +115,8 @@ function setupMocks(
     .mockReturnValueOnce({ data: ref({ releases, total: releases.length, has_more: false }) } as any)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(traces), isLoading: ref(tracesLoading), isError: ref(tracesError), refetch: tracesRefetch } as any)
-    .mockReturnValueOnce({ data: ref(undefined) } as any)
-    .mockReturnValueOnce({ data: ref(undefined) } as any)
+    .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
 }
 
 beforeEach(() => {
@@ -448,7 +448,7 @@ describe('TransactionListView', () => {
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref([makeSummary('/api/users')]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
-        .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(timeseriesData) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
       await flushPromises()
@@ -465,8 +465,8 @@ describe('TransactionListView', () => {
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
         .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
-        .mockReturnValueOnce({ data: ref(undefined) } as any)
-        .mockReturnValueOnce({ data: ref(undefined) } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')
       expect(refetchFn).toHaveBeenCalled()
@@ -488,14 +488,14 @@ describe('TransactionListView', () => {
   describe('project_id URL param', () => {
     afterEach(() => { routeQueryOverride = {} })
 
-    it('includes route project_id in txParams query key', () => {
+    it('uses effective shared projects rather than a hidden URL override', () => {
       routeQueryOverride = { project_id: 'url-proj-id' }
       setupMocks([], false, false, [{ id: 'url-proj-id', name: 'App', slug: 'app' }])
       mount(TransactionListView, { global: { stubs } })
       // rawSummaries useQuery is call index 1; queryKey is ['transaction-summaries', txParams]
       const summariesCall = vi.mocked(useQuery).mock.calls[1]
-      const txParamsRef = summariesCall[0].queryKey[1] as { value: string }
-      expect(txParamsRef.value).toContain('project_id=url-proj-id')
+      const txParamsRef = { value: summariesCall[0].queryKey.value[2] }
+      expect(txParamsRef.value).not.toContain('project_id=url-proj-id')
     })
 
     it('falls back to store selectedIds when no project_id in URL', () => {
@@ -503,7 +503,7 @@ describe('TransactionListView', () => {
       setupMocks([], false, false, [{ id: 'store-proj-id', name: 'App', slug: 'app' }], ['store-proj-id'])
       mount(TransactionListView, { global: { stubs } })
       const summariesCall = vi.mocked(useQuery).mock.calls[1]
-      const txParamsRef = summariesCall[0].queryKey[1] as { value: string }
+      const txParamsRef = { value: summariesCall[0].queryKey.value[2] }
       expect(txParamsRef.value).toContain('project_id=store-proj-id')
     })
 
@@ -546,12 +546,13 @@ describe('TransactionListView', () => {
       )
       const wrapper = mount(TransactionListView, { global: { stubs } })
       expect(wrapper.findAllComponents({ name: 'FilterChip' }).some(c => c.props('label') === 'Release')).toBe(false)
-      const windowChip = wrapper.findAllComponents({ name: 'FilterChip' }).find(c => c.props('label') === 'Window')!
-      await windowChip.vm.$emit('change', '7d')
-      const query = replaceMock.mock.calls.at(-1)?.[0]?.query ?? {}
-      expect(query.user).toBe('u-1')
-      expect(query.op).toBeUndefined()
-      expect(query.release).toBeUndefined()
+      const sortButton = wrapper.find('.col-sort')
+      if (sortButton.exists()) await sortButton.trigger('click')
+      else await wrapper.vm.$nextTick()
+      const params = vi.mocked(useQuery).mock.calls[2][0].queryKey.value[2]
+      expect(params).toContain('user=u-1')
+      expect(params).not.toContain('op=')
+      expect(params).not.toContain('release=')
     })
 
     it('renders this person\'s traces', () => {
@@ -630,7 +631,7 @@ describe('TransactionListView', () => {
       setupMocks()
       mount(TransactionListView, { global: { stubs } })
       const tracesCall = vi.mocked(useQuery).mock.calls[2]
-      const traceParams = tracesCall[0].queryKey[1] as { value: string }
+      const traceParams = { value: tracesCall[0].queryKey.value[2] }
       expect(traceParams.value).toContain('user=u-1')
       expect(tracesCall[0].enabled.value).toBe(true)
       expect(vi.mocked(useQuery).mock.calls[1][0].enabled.value).toBe(false)
@@ -655,3 +656,21 @@ describe('TransactionListView', () => {
    expect(wrapper.text()).not.toContain('/old-production')
    wrapper.unmount()
  })
+
+it('uses shared scope in comparison and chart keys and disables both for user traces', async () => {
+  setupMocks([makeSummary('/checkout')])
+  mount(TransactionListView, { global: { stubs } })
+  const comparison = vi.mocked(useQuery).mock.calls[3]![0] as any
+  const chart = vi.mocked(useQuery).mock.calls[4]![0] as any
+  expect(comparison.queryKey.value[0]).toBe('transaction-summaries-comp')
+  expect(chart.queryKey.value[0]).toBe('transaction-timeseries')
+  expect(comparison.queryKey.value[1]).toBe(chart.queryKey.value[1])
+  expect(comparison.enabled.value).toBe(true)
+  expect(chart.enabled.value).toBe(true)
+  vi.mocked(useQuery).mockClear()
+  routeQueryOverride = { user: 'customer' }
+  setupMocks([makeSummary('/checkout')])
+  mount(TransactionListView, { global: { stubs } })
+  expect((vi.mocked(useQuery).mock.calls[3]![0] as any).enabled.value).toBe(false)
+  expect((vi.mocked(useQuery).mock.calls[4]![0] as any).enabled.value).toBe(false)
+})

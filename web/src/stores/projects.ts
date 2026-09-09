@@ -1,28 +1,15 @@
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
+import { useInvestigationStore } from './investigation'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import type { ProjectMetadata } from '@/api/types'
 
 export const useProjectsStore = defineStore('projects', () => {
-  const selectedIds = ref<string[]>(
-    (() => {
-      try {
-        const raw = sessionStorage.getItem('tindra:projectFilter')
-        return raw ? (JSON.parse(raw) as string[]) : []
-      } catch {
-        return []
-      }
-    })(),
-  )
+  const investigation = useInvestigationStore()
+  const selectedIds = computed({ get: () => investigation.projectIds, set: (ids: string[]) => { investigation.projectIds = [...new Set(ids)].sort() } })
 
-  watch(selectedIds, (ids) => {
-    try {
-      sessionStorage.setItem('tindra:projectFilter', JSON.stringify(ids))
-    } catch {}
-  })
-
-  const { data, isPending, isError, isSuccess, isFetching, fetchStatus, dataUpdatedAt, refetch } = useQuery({
+  const { data, isFetched: metadataReady, isPending, isError, isSuccess, isFetching, fetchStatus, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['projects', 'metadata'],
     queryFn: ({ signal }) => apiFetch<ProjectMetadata[]>('/api/projects/metadata', { signal }),
   })
@@ -31,13 +18,8 @@ export const useProjectsStore = defineStore('projects', () => {
   const projects = computed(() => data.value ?? [])
   const hasLoaded = computed(() => data.value !== undefined)
 
-  // Drop stale IDs that no longer correspond to real projects.
-  watch(data, (ps) => {
-    if (!ps) return
-    const valid = new Set(ps.map((p) => p.id))
-    const cleaned = selectedIds.value.filter((id) => valid.has(id))
-    if (cleaned.length !== selectedIds.value.length) selectedIds.value = cleaned
-  })
+  // Invalid selections stay explicit instead of silently becoming All projects.
+  const invalidIds = computed(() => selectedIds.value.filter(id => !(projects.value ?? []).some(p => p.id === id)))
 
   function setSelected(ids: string[]) {
     selectedIds.value = ids
@@ -51,5 +33,5 @@ export const useProjectsStore = defineStore('projects', () => {
     }
   }
 
-  return { projects, hasLoaded, isPending, isError, isSuccess, isFetching, fetchStatus, dataUpdatedAt, refetch, selectedIds, setSelected, toggleProject }
+  return { projects, metadataReady, invalidIds, hasLoaded, isPending, isError, isSuccess, isFetching, fetchStatus, dataUpdatedAt, refetch, selectedIds, setSelected, toggleProject }
 })

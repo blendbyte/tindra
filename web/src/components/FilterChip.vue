@@ -26,6 +26,9 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
       class="filterchip"
       :class="{ 'filterchip--active': value !== options[0] }"
       @click="open = !open"
+      :aria-expanded="open"
+      aria-haspopup="true"
+      @keydown.esc="open = false"
     >
       <span class="filterchip__label">{{ label }}:</span>
       <span class="filterchip__value">{{ value }}</span>
@@ -37,15 +40,17 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
       style="left: 0; right: auto; min-width: 160px"
     >
       <div class="popover__list">
-        <div
+        <button
           v-for="opt in options"
+          type="button"
+          @keydown.esc="open = false"
           :key="opt"
           class="popover__item"
           :class="{ 'popover__item--active': opt === value }"
           @click="emit('change', opt); open = false"
         >
           <span>{{ opt }}</span>
-        </div>
+        </button>
       </div>
     </div>
   </div>

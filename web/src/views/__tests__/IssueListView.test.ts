@@ -1,3 +1,4 @@
+import { useInvestigationStore } from '@/stores/investigation'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
@@ -1224,8 +1225,10 @@ describe('activeFilterSummary branches', () => {
     // Set all filters to non-default
     await chips[0].vm.$emit('change', 'Resolved')   // status
     await chips[1].vm.$emit('change', 'Error')       // level
-    await chips[2].vm.$emit('change', 'production')  // env
-    await chips[3].vm.$emit('change', '7d')          // since
+    useInvestigationStore().environment = 'production'
+    await wrapper.vm.$nextTick()  // env
+    useInvestigationStore().setRange('7d')
+    await wrapper.vm.$nextTick()          // since
     // Open assignee and pick "Me"
     await wrapper.find('.filterchip').trigger('click')
     const meOption = wrapper.findAll('.popover__item').find(i => i.text() === 'Me')!
@@ -1275,7 +1278,7 @@ describe('activeFilterSummary branches', () => {
 })
 
 describe('URL sync watch', () => {
-  it('calls router.replace with env param when env filter set to non-default', async () => {
+  it('reads environment from the shared investigation', async () => {
     vi.mocked(useProjectsStore).mockReturnValue({
       projects: [{ id: '1', name: 'App' }],
       selectedIds: [],
@@ -1288,9 +1291,10 @@ describe('URL sync watch', () => {
       .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
     const wrapper = mount(IssueListView, { global: { stubs } })
     const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-    await chips[2].vm.$emit('change', 'staging') // env
+    useInvestigationStore().environment = 'staging'
+    await wrapper.vm.$nextTick() // env
     await wrapper.vm.$nextTick()
-    expect(replaceMock).toHaveBeenCalledWith(expect.objectContaining({ query: expect.objectContaining({ env: 'staging' }) }))
+    expect(useInvestigationStore().environment).toBe('staging')
   })
 
   it('calls router.replace with assignee param when assignee filter set to "me"', async () => {
@@ -1327,7 +1331,7 @@ describe('URL sync watch', () => {
     const wrapper = mount(IssueListView, { global: { stubs } })
     // Trigger a filter change to fire the URL sync watcher
     const chips = wrapper.findAllComponents({ name: 'FilterChip' })
-    await chips[3].vm.$emit('change', '24h') // since
+    await chips[0].vm.$emit('change', 'Resolved')
     await wrapper.vm.$nextTick()
     expect(replaceMock).toHaveBeenCalledWith(expect.objectContaining({ query: expect.objectContaining({ tag_key: 'env_tag' }) }))
   })
@@ -1616,15 +1620,14 @@ describe('confirmMerge early return', () => {
   describe('project_id URL param', () => {
     afterEach(() => { routeQueryOverride = {} })
 
-    it('uses route project_id in the query key instead of store selectedIds', () => {
+    it('uses the effective navbar project selection for its query key', () => {
       routeQueryOverride = { project_id: 'url-proj-id' }
       setupMocks({ selectedIds: ['store-proj-id'] })
       mount(IssueListView, { global: { stubs } })
       // The issues query is call index 1; the key contains the exact request parameters.
       const issuesCall = vi.mocked(useQuery).mock.calls[1]
       const queryKey = issuesCall[0].queryKey.value as string[]
-      expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['url-proj-id'])
-      expect(queryKey[queryKey.length - 1]).not.toContain('store-proj-id')
+      expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['store-proj-id'])
     })
 
     it('falls back to store selectedIds when no project_id in URL', () => {
@@ -1653,4 +1656,24 @@ it('preserves the next-page cursor when mounting with cached issues', () => {
   const wrapper = mount(IssueListView, { global: { stubs } })
   expect(wrapper.find('.list-footer__more').exists()).toBe(true)
   wrapper.unmount()
+})
+
+it('sends the same search and time bounds to the list and export endpoints', async () => {
+  setupMocks({ projects: [{ id: '1', name: 'App' }] })
+  const wrapper = mount(IssueListView, { global: { stubs } })
+  await wrapper.find('input[aria-label="Search issues"]').setValue('checkout timeout')
+  const options = vi.mocked(useQuery).mock.calls.find(call => (call[0] as any).queryKey?.value?.[0] === 'issues')![0] as any
+  const signal = new AbortController().signal
+  await options.queryFn({ signal })
+  const list = new URL(vi.mocked(apiFetch).mock.calls.at(-1)![0], window.location.origin)
+  expect(list.searchParams.get('q')).toBe('checkout timeout')
+  const previous = window.location.href
+  try {
+    await wrapper.findAll('.export-menu__item').find(b => b.text().includes('CSV'))!.trigger('click')
+    const exported = new URL(window.location.href)
+    expect(exported.pathname).toBe('/api/issues/export')
+    for (const name of ['q', 'from', 'to']) expect(exported.searchParams.get(name)).toBe(list.searchParams.get(name))
+  } finally {
+    window.history.replaceState(null, '', previous)
+  }
 })

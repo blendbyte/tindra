@@ -74,7 +74,7 @@ describe('projects store', () => {
       const store = useProjectsStore()
       store.setSelected(['p1', 'p2'])
       await nextTick()
-      const stored = JSON.parse(sessionStorage.getItem('tindra:projectFilter') ?? '[]')
+      const stored = JSON.parse(sessionStorage.getItem('tindra:investigation') ?? '{}').projectIds
       expect(stored).toEqual(['p1', 'p2'])
     })
 
@@ -103,22 +103,24 @@ describe('projects store', () => {
   })
 
   describe('stale id cleanup', () => {
-    it('drops selected ids that no longer exist in the project list', async () => {
+    it('keeps unavailable projects explicit instead of broadening scope', async () => {
       sessionStorage.setItem('tindra:projectFilter', JSON.stringify(['a', 'b', 'c']))
       const { useProjectsStore } = await import('../projects')
       const store = useProjectsStore()
       projectsData.value = [makeProject('a'), makeProject('b')]
       await nextTick()
-      expect(store.selectedIds).toEqual(['a', 'b'])
+      expect(store.selectedIds).toEqual(['a', 'b', 'c'])
+      expect(store.invalidIds).toEqual(['c'])
     })
 
-    it('clears selection when project list becomes empty (e.g. new user)', async () => {
+    it('keeps selection when project metadata becomes empty', async () => {
       const { useProjectsStore } = await import('../projects')
       const store = useProjectsStore()
       store.setSelected(['a', 'b'])
       projectsData.value = []
       await nextTick()
-      expect(store.selectedIds).toEqual([])
+      expect(store.selectedIds).toEqual(['a', 'b'])
+      expect(store.invalidIds).toEqual(['a', 'b'])
     })
   })
 })

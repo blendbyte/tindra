@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useSpanTable } from '@/composables/useSpanTable'
 import { formatDuration, formatRate, formatPct } from '@/utils/formatters'
-import FilterChip from '@/components/FilterChip.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
 import SpanSamplesPanel from '@/components/SpanSamplesPanel.vue'
@@ -16,8 +15,6 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
     <PerformanceSubnav />
 
     <div class="filterbar">
-      <FilterChip label="Window" :value="perf.windowHrs" :options="['1h', '24h', '7d', '30d']" @change="perf.windowHrs = $event" />
-      <FilterChip label="Env" :value="perf.envFilter" :options="['All', 'production', 'staging', 'development']" @change="perf.envFilter = $event" />
       <div class="filterbar__spacer" />
       <div class="filterbar__search">
         <Icon name="search" :size="12" style="color: var(--text-3)" />

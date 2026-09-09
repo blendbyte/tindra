@@ -4,28 +4,25 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useInfiniteQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { useInvestigationStore } from '@/stores/investigation'
 import type { TransactionSummary, TxTimeseries, TxListPage } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
 import { useTimezone } from '@/composables/useTimezone'
 import { WINDOW_MAP } from '@/utils/time'
-import FilterChip from '@/components/FilterChip.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
 const router = useRouter()
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
 const tz = useTimezone()
 
 const txName = computed(() => route.query.name as string)
 const txOp = computed(() => route.query.op as string)
-const txProjectId = computed(() => route.query.project_id as string | undefined)
-const activeProjectIds = computed(() =>
-  txProjectId.value ? [txProjectId.value] : projects.selectedIds
-)
-
-const windowHrs = ref('24h')
-const envFilter = ref('All')
+const activeProjectIds = computed(() => projects.selectedIds)
+const windowHrs = computed(() => investigation.range)
+const envFilter = computed(() => investigation.environment)
 const hours = computed(() => WINDOW_MAP[windowHrs.value] ?? 24)
 
 const profileParams = computed(() => {
@@ -43,8 +40,8 @@ const {
   isError: isSummariesError,
   refetch: refetchSummaries,
 } = useQuery({
-  queryKey: computed(() => ['transaction-profile-summaries', profileParams.value]),
-  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${profileParams.value}`, { signal }),
+  queryKey: computed(() => ['transaction-profile-summaries', investigation.scopeKey, profileParams.value]),
+  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(investigation.request(`/api/transactions/summaries?${profileParams.value}`), { signal }),
 })
 
 const {
@@ -52,12 +49,13 @@ const {
   isError: isTimeseriesError,
   refetch: refetchTimeseries,
 } = useQuery({
-  queryKey: computed(() => ['transaction-profile-timeseries', profileParams.value]),
-  queryFn: ({ signal }) => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${profileParams.value}`, { signal }),
+  queryKey: computed(() => ['transaction-profile-timeseries', investigation.scopeKey, profileParams.value]),
+  queryFn: ({ signal }) => apiFetch<TxTimeseries>(investigation.request(`/api/transactions/timeseries?${profileParams.value}`), { signal }),
 })
 
 const samplesParams = computed(() => {
   const p = new URLSearchParams()
+  p.set('hours', String(hours.value))
   p.set('name', txName.value)
   if (txOp.value) p.set('op', txOp.value)
   if (envFilter.value !== 'All') p.set('environment', envFilter.value)
@@ -74,14 +72,14 @@ const {
   isError: isSamplesError,
   refetch: refetchSamples,
 } = useInfiniteQuery({
-  queryKey: computed(() => ['transaction-profile-samples', samplesParams.value]),
+  queryKey: computed(() => ['transaction-profile-samples', investigation.scopeKey, samplesParams.value]),
   queryFn: ({ pageParam, signal }) => {
     const params = new URLSearchParams(samplesParams.value)
     if (pageParam) {
       params.set('cursor_time', pageParam.cursor_time)
       params.set('cursor_id', pageParam.cursor_id)
     }
-    return apiFetch<TxListPage>(`/api/transactions?${params}`, { signal })
+    return apiFetch<TxListPage>(investigation.request(`/api/transactions?${params}`), { signal })
   },
   getNextPageParam: (lastPage) => {
     if (!lastPage.next_cursor_time || !lastPage.next_cursor_id) return undefined
@@ -102,7 +100,7 @@ const sortCol = ref<SortCol>('time')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const selectedIdx = ref<number | null>(null)
 
-watch(samplesParams, () => {
+watch([samplesParams, () => investigation.anchor], () => {
   sortCol.value = 'time'
   sortDir.value = 'desc'
   selectedIdx.value = null
@@ -207,22 +205,6 @@ function projectName(projectId: string) {
       <div class="detail-breadcrumb__actions">
         <span v-if="txOp" class="optag" :class="`optag--${txOp.split('.')[0]}`">{{ txOp.split('.')[0] }}</span>
       </div>
-    </div>
-
-    <!-- Filter bar -->
-    <div class="filterbar" style="border-top: none; padding-top: 0">
-      <FilterChip
-        label="Window"
-        :value="windowHrs"
-        :options="['1h', '24h', '7d', '30d']"
-        @change="windowHrs = $event"
-      />
-      <FilterChip
-        label="Env"
-        :value="envFilter"
-        :options="['All', 'production', 'staging', 'development']"
-        @change="envFilter = $event"
-      />
     </div>
 
     <!-- Stats error -->
@@ -375,7 +357,7 @@ function projectName(projectId: string) {
       </div>
 
       <div v-if="hasNextPage" class="tx-samples__more">
-        <button class="btn btn--ghost" :disabled="isFetchingNextPage" @click="fetchNextPage()">
+        <button class="btn btn--ghost" :disabled="isFetchingNextPage" @click="investigation.browsingHistory = true; fetchNextPage()">
           {{ isFetchingNextPage ? 'Loading…' : 'Load more' }}
         </button>
       </div>

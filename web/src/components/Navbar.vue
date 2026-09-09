@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useInvestigationStore } from '@/stores/investigation'
+import { investigationQuery } from '@/router/investigation'
+const investigation = useInvestigationStore()
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
@@ -54,12 +57,7 @@ const filteredProjects = computed(() => {
   )
 })
 
-const allSelected = computed(
-  () =>
-    projects.selectedIds.length === 0 ||
-    projects.selectedIds.length === projects.projects.length,
-)
-
+const allSelected = computed(() => projects.selectedIds.length === 0)
 const noProjects = computed(() => projects.projects.length === 0)
 
 const filterLabel = computed(() => {
@@ -107,7 +105,7 @@ async function logout() {
 
     <div class="nav__links">
       <RouterLink
-        to="/dashboard"
+        :to="{ path: '/dashboard', query: investigationQuery(investigation) }"
         class="nav__link"
         :aria-current="route.path === '/dashboard' ? 'page' : undefined"
       >
@@ -115,7 +113,7 @@ async function logout() {
         <span class="nav__link-text">Dashboard</span>
       </RouterLink>
       <RouterLink
-        to="/issues"
+        :to="{ path: '/issues', query: investigationQuery(investigation) }"
         class="nav__link"
         :aria-current="route.path.startsWith('/issues') ? 'page' : undefined"
       >
@@ -124,7 +122,7 @@ async function logout() {
       </RouterLink>
       <div class="nav__dropdown-wrap">
         <RouterLink
-          to="/performance"
+          :to="{ path: '/performance', query: investigationQuery(investigation) }"
           class="nav__link"
           :aria-current="route.path.startsWith('/performance') || route.path.startsWith('/transactions') ? 'page' : undefined"
         >
@@ -134,34 +132,34 @@ async function logout() {
         </RouterLink>
         <div class="nav__dropdown">
           <RouterLink
-            to="/performance/transactions"
+            :to="{ path: '/performance/transactions', query: investigationQuery(investigation) }"
             class="nav__dropdown-item"
             :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/transactions') || route.path.startsWith('/transactions') }"
           >Transactions</RouterLink>
           <RouterLink
-            to="/performance/queries"
+            :to="{ path: '/performance/queries', query: investigationQuery(investigation) }"
             class="nav__dropdown-item"
             :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/queries') }"
           >Queries</RouterLink>
           <RouterLink
-            to="/performance/caches"
+            :to="{ path: '/performance/caches', query: investigationQuery(investigation) }"
             class="nav__dropdown-item"
             :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/caches') }"
           >Caches</RouterLink>
           <RouterLink
-            to="/performance/jobs"
+            :to="{ path: '/performance/jobs', query: investigationQuery(investigation) }"
             class="nav__dropdown-item"
             :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/jobs') }"
           >Jobs</RouterLink>
           <RouterLink
-            to="/performance/browser"
+            :to="{ path: '/performance/browser', query: investigationQuery(investigation) }"
             class="nav__dropdown-item"
             :class="{ 'nav__dropdown-item--active': route.path.startsWith('/performance/browser') }"
           >Browser</RouterLink>
         </div>
       </div>
       <RouterLink
-        to="/logs"
+        :to="{ path: '/logs', query: investigationQuery(investigation) }"
         class="nav__link"
         :aria-current="route.path.startsWith('/logs') ? 'page' : undefined"
       >
@@ -178,7 +176,7 @@ async function logout() {
       </RouterLink>
       <div class="nav__dropdown-wrap">
         <RouterLink
-          to="/monitors"
+          :to="{ path: '/monitors', query: investigationQuery(investigation) }"
           class="nav__link"
           :aria-current="route.path.startsWith('/monitors') ? 'page' : undefined"
         >
@@ -188,19 +186,19 @@ async function logout() {
         </RouterLink>
         <div class="nav__dropdown">
           <RouterLink
-            to="/monitors/cron"
+            :to="{ path: '/monitors/cron', query: investigationQuery(investigation) }"
             class="nav__dropdown-item"
             :class="{ 'nav__dropdown-item--active': route.path.startsWith('/monitors/cron') }"
           >Cron</RouterLink>
           <RouterLink
-            to="/monitors/uptime"
+            :to="{ path: '/monitors/uptime', query: investigationQuery(investigation) }"
             class="nav__dropdown-item"
             :class="{ 'nav__dropdown-item--active': route.path.startsWith('/monitors/uptime') }"
           >Uptime</RouterLink>
         </div>
       </div>
       <RouterLink
-        to="/releases"
+        :to="{ path: '/releases', query: investigationQuery(investigation) }"
         class="nav__link"
         :aria-current="route.path.startsWith('/releases') ? 'page' : undefined"
       >
@@ -336,25 +334,25 @@ async function logout() {
   <!-- Mobile nav drawer — teleported to body to escape nav's stacking context -->
   <Teleport to="body">
     <div v-if="menuOpen" id="mobile-navigation" ref="mobileDrawer" class="nav__mobile-drawer" role="navigation" aria-label="Main navigation" @click.self="menuOpen = false">
-      <RouterLink to="/dashboard" class="nav__mobile-link" :aria-current="route.path === '/dashboard' ? 'page' : undefined" @click="menuOpen = false">
+      <RouterLink :to="{ path: '/dashboard', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path === '/dashboard' ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="squares" :size="15" />Dashboard
       </RouterLink>
-      <RouterLink to="/issues" class="nav__mobile-link" :aria-current="route.path.startsWith('/issues') ? 'page' : undefined" @click="menuOpen = false">
+      <RouterLink :to="{ path: '/issues', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/issues') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="alert-circle" :size="15" />Issues
       </RouterLink>
-      <RouterLink to="/performance" class="nav__mobile-link" :aria-current="route.path.startsWith('/performance') || route.path.startsWith('/transactions') ? 'page' : undefined" @click="menuOpen = false">
+      <RouterLink :to="{ path: '/performance', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/performance') || route.path.startsWith('/transactions') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="activity" :size="15" />Performance
       </RouterLink>
-      <RouterLink to="/logs" class="nav__mobile-link" :aria-current="route.path.startsWith('/logs') ? 'page' : undefined" @click="menuOpen = false">
+      <RouterLink :to="{ path: '/logs', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/logs') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="file-text" :size="14" />Logs
       </RouterLink>
       <RouterLink to="/alerts" class="nav__mobile-link" :aria-current="route.path.startsWith('/alerts') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="bell" :size="15" />Alerts
       </RouterLink>
-      <RouterLink to="/monitors" class="nav__mobile-link" :aria-current="route.path.startsWith('/monitors') ? 'page' : undefined" @click="menuOpen = false">
+      <RouterLink :to="{ path: '/monitors', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/monitors') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="clock" :size="15" />Monitors
       </RouterLink>
-      <RouterLink to="/releases" class="nav__mobile-link" :aria-current="route.path.startsWith('/releases') ? 'page' : undefined" @click="menuOpen = false">
+      <RouterLink :to="{ path: '/releases', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/releases') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="package" :size="15" />Releases
       </RouterLink>
       <button class="nav__mobile-link nav__mobile-utility" @click="ui.toggleTheme()">
