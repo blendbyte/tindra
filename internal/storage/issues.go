@@ -66,6 +66,7 @@ type IssueFilter struct {
 	Since          *time.Time // first_seen > Since
 	SinceLast      *time.Time // last_seen > SinceLast
 	SinceRegressed *time.Time // regressed_at > SinceRegressed
+	UserIdentity   string     // issues with at least one event from this app user
 }
 
 // issueSelectCols is the canonical SELECT column list for the issues table.
@@ -271,7 +272,7 @@ func ListIssues(ctx context.Context, pool *pgxpool.Pool, projectID string, filte
 	args = append(args, limit)
 	q += fmt.Sprintf(" ORDER BY last_seen DESC, id DESC LIMIT $%d", len(args))
 
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := pool.Query(ctx, q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -342,9 +343,21 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 			)
 		}
 	}
+	projIdx := 0
 	if len(filter.ProjectIDs) > 0 {
 		args = append(args, filter.ProjectIDs)
-		q += fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", len(args))
+		projIdx = len(args)
+		q += fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", projIdx)
+	}
+	if filter.UserIdentity != "" {
+		args = append(args, filter.UserIdentity)
+		sub := fmt.Sprintf(` AND id IN (
+			SELECT issue_id FROM events
+			WHERE app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d AND issue_id IS NOT NULL`, len(args))
+		if projIdx > 0 {
+			sub += fmt.Sprintf(` AND project_id = ANY($%d::uuid[])`, projIdx)
+		}
+		q += sub + `)`
 	}
 	if filter.SinceLast != nil {
 		args = append(args, *filter.SinceLast)
@@ -361,7 +374,7 @@ func CountAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter)
 	q := `SELECT COUNT(*) FROM issues WHERE TRUE`
 	q, args := addCommonFilters(q, []any{}, filter)
 	var n int
-	if err := pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+	if err := pool.QueryRow(ctx, q, userQueryArgs(filter.UserIdentity, args)...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count issues: %w", err)
 	}
 	return n, nil
@@ -398,7 +411,7 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 	args = append(args, limit)
 	q += fmt.Sprintf(" ORDER BY i.last_seen DESC, i.id DESC LIMIT $%d", len(args))
 
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := pool.Query(ctx, q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

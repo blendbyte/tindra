@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 
 const pushMock = vi.fn()
 const replaceMock = vi.fn()
@@ -23,12 +23,29 @@ vi.mock('@/stores/performance', () => ({
   usePerformanceStore: vi.fn(),
 }))
 
+vi.mock('@/stores/appUser', () => ({
+  useAppUserStore: vi.fn(() => ({
+    identity: '',
+    selected: null,
+    label: '',
+    select: vi.fn(),
+    clear: vi.fn(),
+  })),
+  routeUserIdentity: (q: { user?: unknown }) => typeof q?.user === 'string' ? q.user : '',
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(() => ({ user: { timezone: 'UTC' } })),
+}))
+
 vi.mock('@/api/client', () => ({
   apiFetch: vi.fn().mockResolvedValue({ buckets: [], bucket_size: 'hour' }),
 }))
 
 vi.mock('@/utils/formatters', () => ({
   formatDuration: vi.fn((n: number) => `${n}ms`),
+  formatRel: vi.fn(() => '2m ago'),
+  formatTs: vi.fn((s: string) => s),
 }))
 
 import TransactionListView from '../TransactionListView.vue'
@@ -40,10 +57,11 @@ import { apiFetch } from '@/api/client'
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
   Icon: { template: '<span />' },
-  FilterChip: { template: '<div />' },
+  FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
   TimeseriesChart: { template: '<div />' },
   PerformanceSubnav: { template: '<div />' },
   BrandMark: { template: '<span />' },
+  UserFilter: { template: '<div />' },
 }
 
 const makeSummary = (transaction: string, op = 'http.server') => ({
@@ -59,19 +77,44 @@ const makeSummary = (transaction: string, op = 'http.server') => ({
   time_spent_ms: 12000,
 })
 
-function setupMocks(summaries: unknown[] = [], isLoading = false, isError = false, projects = [{ id: '1', name: 'App', slug: 'app' }], selectedIds: string[] = []) {
+const makeTrace = (id: string, transaction = '/api/users', extra: Record<string, unknown> = {}) => ({
+  id,
+  project_id: '1',
+  trace_id: `tr-${id}`,
+  transaction,
+  op: 'http.server',
+  status: 'ok',
+  duration_ms: 42,
+  start_timestamp: '2024-01-01T00:00:00Z',
+  environment: 'production',
+  ...extra,
+})
+
+function setupMocks(
+  summaries: unknown[] = [],
+  isLoading = false,
+  isError = false,
+  projects = [{ id: '1', name: 'App', slug: 'app' }],
+  selectedIds: string[] = [],
+  traces: { transactions: unknown[]; next_cursor_id?: string; next_cursor_time?: string } = { transactions: [] },
+  tracesLoading = false,
+  tracesError = false,
+  tracesRefetch = vi.fn(),
+  releases: unknown[] = [],
+) {
   vi.mocked(useProjectsStore).mockReturnValue({
     projects,
     selectedIds,
   } as any)
-  vi.mocked(usePerformanceStore).mockReturnValue({
+  vi.mocked(usePerformanceStore).mockReturnValue(reactive({
     windowHrs: '24h',
     envFilter: 'All',
-  } as any)
+  }) as any)
 
   vi.mocked(useQuery)
-    .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
+    .mockReturnValueOnce({ data: ref({ releases, total: releases.length, has_more: false }) } as any)
     .mockReturnValueOnce({ data: ref(summaries), isLoading: ref(isLoading), isError: ref(isError), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref(traces), isLoading: ref(tracesLoading), isError: ref(tracesError), refetch: tracesRefetch } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
 }
@@ -404,6 +447,7 @@ describe('TransactionListView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref([makeSummary('/api/users')]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(timeseriesData) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
@@ -420,6 +464,7 @@ describe('TransactionListView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
+        .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)
       const wrapper = mount(TransactionListView, { global: { stubs } })
@@ -473,4 +518,140 @@ describe('TransactionListView', () => {
       }
     })
   })
+
+  describe('user mode', () => {
+    afterEach(() => { routeQueryOverride = {} })
+
+    it('shows a person-specific empty state', () => {
+      routeQueryOverride = { user: 'u-1' }
+      setupMocks()
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('No traces for u-1 in this window')
+      expect(wrapper.text()).toContain('set_user()')
+    })
+
+    it('hides the release chip and writes ?user= without op or release', async () => {
+      routeQueryOverride = { user: 'u-1', op: 'http.server', release: '1.0.0' }
+      setupMocks(
+        [],
+        false,
+        false,
+        [{ id: '1', name: 'App', slug: 'app' }],
+        [],
+        { transactions: [] },
+        false,
+        false,
+        vi.fn(),
+        [{ version: '1.0.0', project_id: '1' }, { version: '2.0.0', project_id: '1' }],
+      )
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.findAllComponents({ name: 'FilterChip' }).some(c => c.props('label') === 'Release')).toBe(false)
+      const windowChip = wrapper.findAllComponents({ name: 'FilterChip' }).find(c => c.props('label') === 'Window')!
+      await windowChip.vm.$emit('change', '7d')
+      const query = replaceMock.mock.calls.at(-1)?.[0]?.query ?? {}
+      expect(query.user).toBe('u-1')
+      expect(query.op).toBeUndefined()
+      expect(query.release).toBeUndefined()
+    })
+
+    it('renders this person\'s traces', () => {
+      routeQueryOverride = { user: 'u-1' }
+      setupMocks(
+        [],
+        false,
+        false,
+        [{ id: '1', name: 'App', slug: 'app' }],
+        [],
+        { transactions: [makeTrace('t1', '/checkout'), makeTrace('t2', '/pay')] },
+      )
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('/checkout')
+      expect(wrapper.text()).toContain('/pay')
+      expect(wrapper.text()).toContain('2 traces')
+      expect(wrapper.find('.col-sort').exists()).toBe(false)
+    })
+
+    it('shows skeleton rows while traces load', () => {
+      routeQueryOverride = { user: 'u-1' }
+      setupMocks([], false, false, [{ id: '1', name: 'App', slug: 'app' }], [], { transactions: [] }, true)
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.find('.ghost--bar').exists()).toBe(true)
+    })
+
+    it('retries the traces query on error', async () => {
+      routeQueryOverride = { user: 'u-1' }
+      const refetchTraces = vi.fn()
+      setupMocks([], false, false, [{ id: '1', name: 'App', slug: 'app' }], [], { transactions: [] }, false, true, refetchTraces)
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain("Couldn't load transactions")
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(refetchTraces).toHaveBeenCalled()
+    })
+
+    it('loads more traces from the cursor', async () => {
+      routeQueryOverride = { user: 'u-1' }
+      setupMocks(
+        [],
+        false,
+        false,
+        [{ id: '1', name: 'App', slug: 'app' }],
+        [],
+        { transactions: [makeTrace('t1', '/one')], next_cursor_id: 'c2', next_cursor_time: '2024-01-01T01:00:00Z' },
+      )
+      vi.mocked(apiFetch)
+        .mockResolvedValueOnce({
+          transactions: [makeTrace('t2', '/two')],
+          next_cursor_id: 'c3',
+          next_cursor_time: '2024-01-01T02:00:00Z',
+        })
+        .mockResolvedValueOnce({
+          transactions: [makeTrace('t3', '/three')],
+        })
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Load more')
+      await wrapper.find('.list-footer .btn').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('/two')
+      expect(wrapper.text()).toContain('2 traces')
+      expect(String(vi.mocked(apiFetch).mock.calls.at(-1)?.[0])).toContain('cursor_id=c2')
+      await wrapper.find('.list-footer .btn').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('/three')
+      expect(wrapper.text()).toContain('3 traces')
+      expect(String(vi.mocked(apiFetch).mock.calls.at(-1)?.[0])).toContain('cursor_id=c3')
+      const perf = vi.mocked(usePerformanceStore).mock.results.at(-1)?.value as { envFilter: string }
+      perf.envFilter = 'production'
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('/three')
+    })
+
+    it('puts user on the traces query and disables summaries', () => {
+      routeQueryOverride = { user: 'u-1' }
+      setupMocks()
+      mount(TransactionListView, { global: { stubs } })
+      const tracesCall = vi.mocked(useQuery).mock.calls[2]
+      const traceParams = tracesCall[0].queryKey[1] as { value: string }
+      expect(traceParams.value).toContain('user=u-1')
+      expect(tracesCall[0].enabled.value).toBe(true)
+      expect(vi.mocked(useQuery).mock.calls[1][0].enabled.value).toBe(false)
+      for (const [opts] of vi.mocked(useQuery).mock.calls) {
+        opts.queryFn?.()
+      }
+    })
+  })
 })
+
+ it('discards pending pages when the environment changes', async () => {
+   routeQueryOverride = { user: 'u-1' }
+   setupMocks([], false, false, undefined, [], { transactions: [makeTrace('first')], next_cursor_id: 'first', next_cursor_time: '2024-01-01T00:00:00Z' })
+   let resolve!: (value: any) => void
+   vi.mocked(apiFetch).mockReturnValueOnce(new Promise(r => { resolve = r }))
+   const wrapper = mount(TransactionListView, { global: { stubs } })
+   await wrapper.find('.list-footer .btn').trigger('click')
+   usePerformanceStore().envFilter = 'staging'
+   await flushPromises()
+   resolve({ transactions: [makeTrace('old-production', '/old-production')] })
+   await flushPromises()
+   expect(wrapper.text()).not.toContain('/old-production')
+   wrapper.unmount()
+ })

@@ -1,22 +1,29 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
-import type { TransactionSummary, TxTimeseries, ReleaseListPage } from '@/api/types'
+import type { Transaction, TransactionSummary, TxTimeseries, ReleaseListPage, TransactionListPage } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
+import { useFormatters } from '@/composables/useFormatters'
 import FilterChip from '@/components/FilterChip.vue'
 import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
+import UserFilter from '@/components/UserFilter.vue'
+import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 
 const router = useRouter()
 const route = useRoute()
 const projects = useProjectsStore()
 const perf = usePerformanceStore()
+const appUser = useAppUserStore()
+const { formatRel } = useFormatters()
+const lensIdentity = computed(() => routeUserIdentity(route.query) || appUser.identity)
+const userMode = computed(() => !!lensIdentity.value)
 
 const effectiveProjectIds = computed(() => {
   const v = route.query.project_id
@@ -77,18 +84,19 @@ function toggleSort(col: SortCol) {
 }
 
 // Sync filters → URL (restores view on F5)
-watch([() => perf.windowHrs, () => perf.envFilter, opFilter, releaseFilter, sortCol, sortDir], () => {
+watch([() => perf.windowHrs, () => perf.envFilter, opFilter, releaseFilter, sortCol, sortDir, lensIdentity], () => {
   const query: Record<string, string> = {}
   if (perf.windowHrs !== '24h') query.window = perf.windowHrs
   if (perf.envFilter !== 'All') query.env = perf.envFilter
-  if (opFilter.value !== 'All') query.op = opFilter.value
-  if (releaseFilter.value !== 'All') query.release = releaseFilter.value
+  if (opFilter.value !== 'All' && !userMode.value) query.op = opFilter.value
+  if (releaseFilter.value !== 'All' && !userMode.value) query.release = releaseFilter.value
+  if (lensIdentity.value) query.user = lensIdentity.value
   if (sortCol.value !== 'time_spent_ms' || sortDir.value !== 'desc') {
     query.sort = sortCol.value
     query.dir = sortDir.value
   }
   const pid = route.query.project_id
-  router.replace({ query: { ...query, ...(pid ? { project_id: pid } : {}) } })
+  router.replace({ query: { ...query, ...(pid ? { project_id: pid as string } : {}) } })
 })
 
 // Persist op/sort/dir to localStorage (window+env handled by the store)
@@ -117,24 +125,87 @@ const txParams = computed(() => {
   const p = new URLSearchParams()
   p.set('hours', String(hours.value))
   if (perf.envFilter !== 'All') p.set('env', perf.envFilter)
-  if (releaseFilter.value !== 'All') p.set('release', releaseFilter.value)
+  if (!userMode.value && releaseFilter.value !== 'All') p.set('release', releaseFilter.value)
+  if (lensIdentity.value) p.set('user', lensIdentity.value)
+  for (const id of effectiveProjectIds.value) p.append('project_id', id)
+  return p.toString()
+})
+
+const traceParams = computed(() => {
+  const p = new URLSearchParams()
+  p.set('hours', String(hours.value))
+  p.set('user', lensIdentity.value)
+  p.set('limit', '50')
+  if (perf.envFilter !== 'All') p.set('environment', perf.envFilter)
   for (const id of effectiveProjectIds.value) p.append('project_id', id)
   return p.toString()
 })
 
 // Timeseries params include op so the chart tracks the selected op
 const txParamsWithOp = computed(() => {
-  if (opFilter.value === 'All') return txParams.value
+  if (userMode.value || opFilter.value === 'All') return txParams.value
   const p = new URLSearchParams(txParams.value)
   p.set('op', opFilter.value)
   return p.toString()
 })
 
 // Always fetch all summaries - op filtering is client-side for instant feedback
-const { data: rawSummaries, isLoading, isError, refetch } = useQuery({
+const { data: rawSummaries, isLoading: summariesLoading, isError: summariesError, refetch: refetchSummaries } = useQuery({
   queryKey: ['transaction-summaries', txParams],
   queryFn: () => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${txParams.value}`),
+  enabled: computed(() => !userMode.value),
 })
+
+const { data: tracePage, isLoading: tracesLoading, isError: tracesError, refetch: refetchTraces } = useQuery({
+  queryKey: ['user-traces', traceParams],
+  queryFn: () => apiFetch<TransactionListPage>(`/api/transactions?${traceParams.value}`),
+  enabled: computed(() => userMode.value),
+})
+
+const extraTraces = ref<Transaction[]>([])
+const tracesMoreCursor = ref<{ cursor_time: string; cursor_id: string } | null>(null)
+const loadingMoreTraces = ref(false)
+let paginationVersion = 0
+function resetPagination() {
+  paginationVersion++
+  extraTraces.value = []
+  tracesMoreCursor.value = null
+  loadingMoreTraces.value = false
+}
+watch(traceParams, resetPagination, { flush: 'sync' })
+onUnmounted(resetPagination)
+const traces = computed(() => [...(tracePage.value?.transactions ?? []), ...extraTraces.value])
+const tracesHasMore = computed(() => extraTraces.value.length === 0
+  ? !!(tracePage.value?.next_cursor_id && tracePage.value?.next_cursor_time)
+  : tracesMoreCursor.value != null)
+async function loadMoreTraces() {
+  const cur = extraTraces.value.length === 0
+    ? { cursor_time: tracePage.value?.next_cursor_time, cursor_id: tracePage.value?.next_cursor_id }
+    : tracesMoreCursor.value
+  if (!cur?.cursor_time || !cur?.cursor_id || loadingMoreTraces.value) return
+  const version = paginationVersion
+  loadingMoreTraces.value = true
+  try {
+    const p = new URLSearchParams(traceParams.value)
+    p.set('cursor_time', cur.cursor_time)
+    p.set('cursor_id', cur.cursor_id)
+    const page = await apiFetch<TransactionListPage>(`/api/transactions?${p}`)
+    if (version !== paginationVersion) return
+    extraTraces.value = [...extraTraces.value, ...(page.transactions ?? [])]
+    tracesMoreCursor.value = page.next_cursor_id && page.next_cursor_time
+      ? { cursor_time: page.next_cursor_time, cursor_id: page.next_cursor_id }
+      : null
+  } finally {
+    if (version === paginationVersion) loadingMoreTraces.value = false
+  }
+}
+const isLoading = computed(() => userMode.value ? tracesLoading.value : summariesLoading.value)
+const isError = computed(() => userMode.value ? tracesError.value : summariesError.value)
+function refetch() {
+  resetPagination()
+  if (userMode.value) refetchTraces()
+  else refetchSummaries()
+}
 
 // Previous period - same window shifted back by one window length, for comparison indicators
 const compParams = computed(() => {
@@ -238,7 +309,7 @@ function sortIcon(col: SortCol) {
 }
 
 const noProjects = computed(() => !projects.projects?.length)
-const noData = computed(() => !isLoading.value && !isError.value && filteredSummaries.value.length === 0)
+const noData = computed(() => !isLoading.value && !isError.value && (userMode.value ? traces.value.length === 0 : filteredSummaries.value.length === 0))
 
 const stats = computed(() => {
   const list = filteredSummaries.value
@@ -315,12 +386,13 @@ function apdexClass(score: number): string {
           @change="perf.envFilter = $event"
         />
         <FilterChip
-          v-if="releaseOptions.length > 1"
+          v-if="releaseOptions.length > 1 && !userMode"
           label="Release"
           :value="releaseFilter"
           :options="releaseOptions"
           @change="releaseFilter = $event"
         />
+        <UserFilter />
       </div>
 
       <!-- Op tabs - only shown when there are 2+ distinct ops -->
@@ -388,8 +460,8 @@ function apdexClass(score: number): string {
               <path d="M3 8.5l3 3 7-7" />
             </svg>
           </div>
-          <h2 class="empty-state__title">No transactions in this window</h2>
-          <p class="empty-state__body">Try a wider time window or check your SDK configuration.</p>
+          <h2 class="empty-state__title">{{ userMode ? `No traces for ${appUser.label || lensIdentity} in this window` : 'No transactions in this window' }}</h2>
+          <p class="empty-state__body">{{ userMode ? 'Try a wider window, or check that set_user() runs before the transaction starts.' : 'Try a wider time window or check your SDK configuration.' }}</p>
         </div>
       </div>
 
@@ -425,7 +497,49 @@ function apdexClass(score: number): string {
           </div>
         </div>
 
-        <!-- Table -->
+        <!-- This person's traces -->
+        <template v-if="userMode">
+          <div class="txrow txrow--header txrow--trace">
+            <span>Time</span>
+            <span>Op</span>
+            <span>Transaction</span>
+            <span>Project</span>
+            <span>Duration</span>
+            <span>Status</span>
+          </div>
+          <template v-if="isLoading">
+            <div v-for="i in 6" :key="i" class="txrow txrow--trace" aria-hidden="true">
+              <span class="ghost ghost--bar" style="width:70px" />
+              <span class="ghost ghost--pill" style="width:40px;height:20px" />
+              <span class="ghost ghost--bar" :style="{ width: ['72%','55%','83%','61%','78%','68%'][i-1] }" />
+              <span class="ghost ghost--bar" style="width:70px" />
+              <span class="ghost ghost--bar" style="width:40px" />
+              <span class="ghost ghost--pill" style="width:36px" />
+            </div>
+          </template>
+          <RouterLink
+            v-for="t in traces"
+            :key="t.id"
+            class="txrow txrow--trace"
+            :to="{ name: 'transaction-detail', params: { id: t.id } }"
+          >
+            <span class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatRel(t.start_timestamp) }}</span>
+            <span class="optag" :class="opClass(t.op)">{{ (t.op || 'txn').split('.')[0] }}</span>
+            <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ t.transaction }}</span>
+            <span class="projtag">{{ projectName(t.project_id) }}</span>
+            <span class="tx-num-cell">{{ formatDuration(t.duration_ms) }}</span>
+            <span class="statuspill" :class="t.status === 'ok' ? 'statuspill--resolved' : 'statuspill--open'">{{ t.status }}</span>
+          </RouterLink>
+          <div v-if="traces.length > 0" class="list-footer">
+            <span class="list-footer__count">{{ traces.length.toLocaleString() }} trace{{ traces.length === 1 ? '' : 's' }}</span>
+            <button v-if="tracesHasMore" class="btn" :disabled="loadingMoreTraces" @click="loadMoreTraces">
+              {{ loadingMoreTraces ? 'Loading…' : 'Load more' }}
+            </button>
+          </div>
+        </template>
+
+        <!-- Fleet summary table -->
+        <template v-else>
         <div class="txrow txrow--header">
           <span>Op</span>
           <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'transaction' }" @click="toggleSort('transaction')">
@@ -493,6 +607,7 @@ function apdexClass(score: number): string {
             <span class="tx-num-cell" :class="s.failure_rate > 0 ? 'tx-failure' : ''">{{ formatFailureRate(s.failure_rate) }}</span>
             <span class="tx-num-cell tx-num-cell--right">{{ formatTimeSpent(s.time_spent_ms) }}</span>
           </RouterLink>
+        </template>
         </template>
       </template>
     </template>

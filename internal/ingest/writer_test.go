@@ -41,6 +41,36 @@ func TestBuffer_Run_drainOnCancel(t *testing.T) {
 	}
 }
 
+func TestBuffer_upsertsAppUser(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	eventID := "app-user-evt-1"
+	buf := ingest.NewBuffer(10)
+	buf.Push(ingest.BufferedEvent{
+		ProjectID: testProject.ID,
+		EventID:   &eventID,
+		Timestamp: time.Now(),
+		Payload:   json.RawMessage(`{"level":"error","user":{"id":"u-evt","username":"erin"}}`),
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf.Run(ctx, testPool)
+	}()
+	cancel()
+	<-done
+
+	var username string
+	err := testPool.QueryRow(context.Background(), `
+		SELECT COALESCE(username, '') FROM app_users WHERE project_id = $1 AND identity = 'u-evt'
+	`, testProject.ID).Scan(&username)
+	if err != nil {
+		t.Fatalf("app_users: %v", err)
+	}
+	if username != "erin" {
+		t.Errorf("username: got %q", username)
+	}
+}
+
 func TestBuffer_Run_tickerFlush(t *testing.T) {
 	ctx := t.Context()
 

@@ -32,10 +32,11 @@ type LogFilter struct {
 	Level      string
 	// Levels, when non-empty, matches any of the given levels (at-or-above
 	// queries). Takes precedence over Level. "warning" also matches "warn".
-	Levels      []string
-	Environment string
-	Search      string
-	TraceID     string
+	Levels       []string
+	Environment  string
+	Search       string
+	TraceID      string
+	UserIdentity string
 	// WindowMins, when > 0, restricts to timestamp in (NOW() - window, NOW() + 2m].
 	WindowMins int
 	CursorTime *time.Time
@@ -54,8 +55,8 @@ func ListLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) ([]*Log
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
 		where += fmt.Sprintf(
-			" AND (l.timestamp < $%d OR (l.timestamp = $%d AND l.id < $%d::uuid))",
-			n, n, n+1,
+			" AND (l.timestamp, l.id) < ($%d, $%d::uuid)",
+			n, n+1,
 		)
 	}
 
@@ -78,7 +79,7 @@ func ListLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) ([]*Log
 		LIMIT $%d
 	`, where, len(args))
 
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := pool.Query(ctx, q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {
 		return nil, false, fmt.Errorf("query: %w", err)
 	}
@@ -114,7 +115,7 @@ func CountLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) (int, 
 	where, args := appendLogWhere(filter, "TRUE", nil)
 	q := fmt.Sprintf(`SELECT COUNT(*) FROM logs l WHERE %s`, where)
 	var count int
-	if err := pool.QueryRow(ctx, q, args...).Scan(&count); err != nil {
+	if err := pool.QueryRow(ctx, q, userQueryArgs(filter.UserIdentity, args)...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count logs: %w", err)
 	}
 	return count, nil
@@ -135,7 +136,7 @@ func LogsReachThreshold(ctx context.Context, pool *pgxpool.Pool, filter LogFilte
 		) t
 	`, where, len(args))
 	var count int
-	if err := pool.QueryRow(ctx, q, args...).Scan(&count); err != nil {
+	if err := pool.QueryRow(ctx, q, userQueryArgs(filter.UserIdentity, args)...).Scan(&count); err != nil {
 		return false, fmt.Errorf("logs reach threshold: %w", err)
 	}
 	return count >= threshold, nil
@@ -179,6 +180,10 @@ func appendLogWhere(filter LogFilter, where string, args []any) (string, []any) 
 	if filter.Search != "" {
 		args = append(args, likeContains(filter.Search))
 		where += fmt.Sprintf(" AND l.body ILIKE $%d ESCAPE E'\\\\'", len(args))
+	}
+	if filter.UserIdentity != "" {
+		args = append(args, filter.UserIdentity)
+		where += fmt.Sprintf(" AND app_user_identity_hash(l.user_identity) = app_user_identity_hash($%[1]d::text) AND l.user_identity = $%[1]d", len(args))
 	}
 	if filter.WindowMins > 0 {
 		args = append(args, filter.WindowMins)

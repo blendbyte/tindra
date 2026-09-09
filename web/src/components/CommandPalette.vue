@@ -6,13 +6,15 @@ import { useProjectsStore } from '@/stores/projects'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { apiFetch } from '@/api/client'
 import { useFormatters } from '@/composables/useFormatters'
-import type { Issue, IssueListPage } from '@/api/types'
+import type { Issue, IssueListPage, AppUser } from '@/api/types'
+import { useAppUserStore, appUserLabel } from '@/stores/appUser'
 import Icon from './Icon.vue'
 
 const router = useRouter()
 const ui = useUiStore()
 const projects = useProjectsStore()
 const navStore = useIssueNavStore()
+const appUser = useAppUserStore()
 const { formatRel } = useFormatters()
 
 const q = ref('')
@@ -30,6 +32,7 @@ interface CmdItem {
 
 // ── Issue search ──────────────────────────────────────────────────────────────
 const issueResults = ref<Issue[]>([])
+const userResults = ref<AppUser[]>([])
 const isSearching = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -38,6 +41,7 @@ watch(q, (val) => {
   const trimmed = val.trim()
   if (trimmed.length < 2) {
     issueResults.value = []
+    userResults.value = []
     isSearching.value = false
     return
   }
@@ -46,10 +50,17 @@ watch(q, (val) => {
     try {
       const params = new URLSearchParams({ q: trimmed, limit: '8' })
       for (const id of projects.selectedIds) params.append('project_id', id)
-      const data = await apiFetch<IssueListPage>(`/api/issues?${params}`)
+      const userParams = new URLSearchParams({ q: trimmed })
+      for (const id of projects.selectedIds) userParams.append('project_id', id)
+      const [data, people] = await Promise.all([
+        apiFetch<IssueListPage>(`/api/issues?${params}`),
+        apiFetch<AppUser[]>(`/api/app-users?${userParams}`),
+      ])
       issueResults.value = Array.isArray(data) ? data as Issue[] : (data.issues ?? [])
+      userResults.value = Array.isArray(people) ? people : []
     } catch {
       issueResults.value = []
+      userResults.value = []
     } finally {
       isSearching.value = false
     }
@@ -58,10 +69,16 @@ watch(q, (val) => {
 
 
 // ── Items ─────────────────────────────────────────────────────────────────────
+function go(path: string) {
+  const query: Record<string, string> = {}
+  if (appUser.identity) query.user = appUser.identity
+  router.push({ path, query })
+}
+
 const navItems = computed<CmdItem[]>(() => {
   const nav: CmdItem[] = [
-    { id: 'nav:issues',      group: 'Go to', label: 'Issues',      hint: '⌘1', action: () => router.push('/issues') },
-    { id: 'nav:performance', group: 'Go to', label: 'Performance', hint: '⌘2', action: () => router.push('/performance') },
+    { id: 'nav:issues',      group: 'Go to', label: 'Issues',      hint: '⌘1', action: () => go('/issues') },
+    { id: 'nav:performance', group: 'Go to', label: 'Performance', hint: '⌘2', action: () => go('/performance') },
     { id: 'nav:releases',    group: 'Go to', label: 'Releases',    hint: '⌘3', action: () => router.push('/releases') },
     { id: 'nav:settings',    group: 'Go to', label: 'Settings',    hint: '⌘,', action: () => router.push('/settings') },
     { id: 'filter:all', group: 'Projects', label: 'Show all projects', hint: '', action: () => projects.setSelected([]) },
@@ -92,7 +109,20 @@ const issueItems = computed<CmdItem[]>(() =>
   }))
 )
 
-const items = computed<CmdItem[]>(() => [...navItems.value, ...issueItems.value])
+const userItems = computed<CmdItem[]>(() =>
+  userResults.value.map((u) => ({
+    id: 'user:' + u.identity,
+    group: 'People',
+    label: appUserLabel(u),
+    hint: u.email || u.username || u.user_id || u.identity,
+    action: () => {
+      appUser.select(u)
+      router.push({ path: '/issues', query: { user: u.identity } })
+    },
+  }))
+)
+
+const items = computed<CmdItem[]>(() => [...navItems.value, ...userItems.value, ...issueItems.value])
 
 const grouped = computed(() => {
   const map = new Map<string, (CmdItem & { idx: number })[]>()
@@ -115,6 +145,7 @@ watch(
       q.value = ''
       active.value = 0
       issueResults.value = []
+      userResults.value = []
       await nextTick()
       inputRef.value?.focus()
     }
@@ -143,8 +174,8 @@ function onGlobalKey(e: KeyboardEvent) {
     e.preventDefault()
     ui.cmdOpen ? ui.closeCmd() : ui.openCmd()
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); router.push('/issues') }
-  if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); router.push('/performance') }
+  if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); go('/issues') }
+  if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); go('/performance') }
   if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); router.push('/releases') }
   if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); router.push('/settings') }
   if (e.key === '?' && !e.metaKey && !e.ctrlKey && (e.target as HTMLElement).tagName !== 'INPUT' && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
@@ -178,7 +209,7 @@ onUnmounted(() => {
           <input
             ref="inputRef"
             v-model="q"
-            placeholder="Search issues or jump to a page…"
+            placeholder="Search issues, people, or jump to a page…"
             aria-label="Search"
             @input="active = 0"
           />

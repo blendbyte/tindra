@@ -134,3 +134,53 @@ func TestTransactionBuffer_batchFlushOn100(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	cancel()
 }
+
+func TestWriteTxBatch_persistsUser(t *testing.T) {
+	buf := ingest.NewTransactionBuffer(10)
+	now := time.Now().UTC()
+	tx := ingest.BufferedTransaction{
+		ProjectID:      testProject.ID,
+		Transaction:    "/api/user-tx",
+		Op:             "http.server",
+		Status:         "ok",
+		DurationMs:     12,
+		StartTimestamp: now,
+		Timestamp:      now.Add(12 * time.Millisecond),
+		UserIdentity:   "u-42",
+		UserID:         "u-42",
+		UserUsername:   "alice",
+		UserEmail:      "alice@example.com",
+		UserName:       "Alice",
+	}
+	buf.Push(tx)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go buf.Run(ctx, testPool)
+	time.Sleep(400 * time.Millisecond)
+	cancel()
+
+	var identity, username string
+	err := testPool.QueryRow(context.Background(), `
+		SELECT COALESCE(user_identity, ''), COALESCE(user_username, '')
+		FROM transactions WHERE project_id = $1 AND transaction = '/api/user-tx'
+		ORDER BY received_at DESC LIMIT 1
+	`, testProject.ID).Scan(&identity, &username)
+	if err != nil {
+		t.Fatalf("query tx: %v", err)
+	}
+	if identity != "u-42" || username != "alice" {
+		t.Errorf("user columns: identity=%q username=%q", identity, username)
+	}
+
+	var n int
+	err = testPool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM app_users WHERE project_id = $1 AND identity = 'u-42'
+	`, testProject.ID).Scan(&n)
+	if err != nil {
+		t.Fatalf("query app_users: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("app_users: got %d, want 1", n)
+	}
+}

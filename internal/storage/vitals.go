@@ -45,47 +45,51 @@ const (
 
 // GetWebVitalsSummary returns aggregated p75 and pass-rate for each vital,
 // restricted to browser pageload/navigation transactions in the given window.
-func GetWebVitalsSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string) (WebVitalsSummary, error) {
+func GetWebVitalsSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string, userIdentity string) (WebVitalsSummary, error) {
 	var s WebVitalsSummary
-	if projectIDs == nil {
-		projectIDs = []string{}
-	}
 
-	args := []any{projectIDs, from, to, lcpGood, fcpGood, clsGood, inpGood, ttfbGood}
+	args := []any{from, to, lcpGood, fcpGood, clsGood, inpGood, ttfbGood}
 	envFilter := ""
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		envFilter = fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", len(args))
+	}
 	if env != "" {
 		args = append(args, env)
-		envFilter = fmt.Sprintf(" AND environment = $%d", len(args))
+		envFilter += fmt.Sprintf(" AND environment = $%d", len(args))
+	}
+	if userIdentity != "" {
+		args = append(args, userIdentity)
+		envFilter += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
 
 	row := pool.QueryRow(ctx, `
 		SELECT
 			-- LCP
 			COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (measurements->'lcp'->>'value')::float) FILTER (WHERE measurements ? 'lcp'), 0),
-			COALESCE(AVG(CASE WHEN (measurements->'lcp'->>'value')::float <= $4 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'lcp'), 0),
+			COALESCE(AVG(CASE WHEN (measurements->'lcp'->>'value')::float <= $3 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'lcp'), 0),
 			COUNT(*) FILTER (WHERE measurements ? 'lcp'),
 			-- FCP
 			COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (measurements->'fcp'->>'value')::float) FILTER (WHERE measurements ? 'fcp'), 0),
-			COALESCE(AVG(CASE WHEN (measurements->'fcp'->>'value')::float <= $5 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'fcp'), 0),
+			COALESCE(AVG(CASE WHEN (measurements->'fcp'->>'value')::float <= $4 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'fcp'), 0),
 			COUNT(*) FILTER (WHERE measurements ? 'fcp'),
 			-- CLS
 			COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (measurements->'cls'->>'value')::float) FILTER (WHERE measurements ? 'cls'), 0),
-			COALESCE(AVG(CASE WHEN (measurements->'cls'->>'value')::float <= $6 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'cls'), 0),
+			COALESCE(AVG(CASE WHEN (measurements->'cls'->>'value')::float <= $5 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'cls'), 0),
 			COUNT(*) FILTER (WHERE measurements ? 'cls'),
 			-- INP
 			COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (measurements->'inp'->>'value')::float) FILTER (WHERE measurements ? 'inp'), 0),
-			COALESCE(AVG(CASE WHEN (measurements->'inp'->>'value')::float <= $7 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'inp'), 0),
+			COALESCE(AVG(CASE WHEN (measurements->'inp'->>'value')::float <= $6 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'inp'), 0),
 			COUNT(*) FILTER (WHERE measurements ? 'inp'),
 			-- TTFB
 			COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (measurements->'ttfb'->>'value')::float) FILTER (WHERE measurements ? 'ttfb'), 0),
-			COALESCE(AVG(CASE WHEN (measurements->'ttfb'->>'value')::float <= $8 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'ttfb'), 0),
+			COALESCE(AVG(CASE WHEN (measurements->'ttfb'->>'value')::float <= $7 THEN 1.0 ELSE 0.0 END) FILTER (WHERE measurements ? 'ttfb'), 0),
 			COUNT(*) FILTER (WHERE measurements ? 'ttfb')
 		FROM transactions
-		WHERE (CARDINALITY($1::uuid[]) = 0 OR project_id = ANY($1::uuid[]))
-		  AND op IN ('pageload', 'navigation')
-		  AND start_timestamp >= $2 AND start_timestamp < $3
+		WHERE op IN ('pageload', 'navigation')
+		  AND start_timestamp >= $1 AND start_timestamp < $2
 		  AND measurements IS NOT NULL
-	`+envFilter, args...)
+	`+envFilter, userQueryArgs(userIdentity, args)...)
 
 	err := row.Scan(
 		&s.LCP.P75, &s.LCP.PassRate, &s.LCP.Count,
@@ -101,16 +105,21 @@ func GetWebVitalsSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []s
 }
 
 // GetWebVitalsByPage returns per-route vitals sorted by impact (sessions × CWV fail rate).
-func GetWebVitalsByPage(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string) ([]WebVitalsPage, error) {
-	if projectIDs == nil {
-		projectIDs = []string{}
-	}
+func GetWebVitalsByPage(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, env string, userIdentity string) ([]WebVitalsPage, error) {
 
-	args := []any{projectIDs, from, to, lcpGood, inpGood, clsGood}
+	args := []any{from, to, lcpGood, inpGood, clsGood}
 	envFilter := ""
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		envFilter = fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", len(args))
+	}
 	if env != "" {
 		args = append(args, env)
-		envFilter = fmt.Sprintf(" AND environment = $%d", len(args))
+		envFilter += fmt.Sprintf(" AND environment = $%d", len(args))
+	}
+	if userIdentity != "" {
+		args = append(args, userIdentity)
+		envFilter += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
 
 	rows, err := pool.Query(ctx, `
@@ -122,27 +131,26 @@ func GetWebVitalsByPage(ctx context.Context, pool *pgxpool.Pool, projectIDs []st
 			COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (measurements->'cls'->>'value')::float) FILTER (WHERE measurements ? 'cls'), 0) AS cls_p75,
 			COALESCE(AVG(
 				CASE WHEN
-					(NOT measurements ? 'lcp' OR (measurements->'lcp'->>'value')::float <= $4)
-					AND (NOT measurements ? 'inp' OR (measurements->'inp'->>'value')::float <= $5)
-					AND (NOT measurements ? 'cls' OR (measurements->'cls'->>'value')::float <= $6)
+					(NOT measurements ? 'lcp' OR (measurements->'lcp'->>'value')::float <= $3)
+					AND (NOT measurements ? 'inp' OR (measurements->'inp'->>'value')::float <= $4)
+					AND (NOT measurements ? 'cls' OR (measurements->'cls'->>'value')::float <= $5)
 				THEN 1.0 ELSE 0.0 END
 			) FILTER (WHERE measurements IS NOT NULL), 0) AS pass_rate
 		FROM transactions
-		WHERE (CARDINALITY($1::uuid[]) = 0 OR project_id = ANY($1::uuid[]))
-		  AND op IN ('pageload', 'navigation')
-		  AND start_timestamp >= $2 AND start_timestamp < $3
+		WHERE op IN ('pageload', 'navigation')
+		  AND start_timestamp >= $1 AND start_timestamp < $2
 		  AND measurements IS NOT NULL
 	`+envFilter+`
 		GROUP BY transaction
 		ORDER BY COUNT(*) * (1 - COALESCE(AVG(
 			CASE WHEN
-				(NOT measurements ? 'lcp' OR (measurements->'lcp'->>'value')::float <= $4)
-				AND (NOT measurements ? 'inp' OR (measurements->'inp'->>'value')::float <= $5)
-				AND (NOT measurements ? 'cls' OR (measurements->'cls'->>'value')::float <= $6)
+				(NOT measurements ? 'lcp' OR (measurements->'lcp'->>'value')::float <= $3)
+				AND (NOT measurements ? 'inp' OR (measurements->'inp'->>'value')::float <= $4)
+				AND (NOT measurements ? 'cls' OR (measurements->'cls'->>'value')::float <= $5)
 			THEN 1.0 ELSE 0.0 END
 		) FILTER (WHERE measurements IS NOT NULL), 0)) DESC
 		LIMIT 25
-	`, args...)
+	`, userQueryArgs(userIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("web vitals by page: %w", err)
 	}

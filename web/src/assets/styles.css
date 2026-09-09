@@ -2214,6 +2214,80 @@ a { color: inherit; text-decoration: none; }
 .tag-chip__sep { color: var(--text-3); }
 .tag-chip__v { font-family: var(--mono); }
 
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 13px;
+  font-size: var(--text-xs);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 220px;
+  transition: background 100ms;
+}
+.user-chip:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.user-chip__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+.user-chip__avatar--sm {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.user-chip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.user-chip__clear {
+  display: inline-flex;
+  color: var(--text-3);
+  padding: 2px;
+  border-radius: 50%;
+}
+.user-chip__clear:hover { color: var(--text-1); background: var(--surface-2); }
+
+.user-filter__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.user-filter__sub {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.user-filter__empty {
+  padding: 10px 12px 12px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.txrow--trace {
+  grid-template-columns: 110px 80px minmax(0, 1fr) 90px 72px 72px;
+}
+.txrow--pageload {
+  grid-template-columns: 110px minmax(0, 1fr) 72px 72px 72px 72px;
+}
+
 /* Event navigator */
 .eventnav {
   display: flex;
@@ -6512,6 +6586,34 @@ select.field__input {
 .nav__mobile-link[aria-current="page"] { color: var(--accent); }
 
 /* User card in issue sidebar */
+.user-card__body--btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.user-card__body--btn:hover .user-card__name { color: var(--accent); }
+.user-card__links {
+  display: flex;
+  gap: 12px;
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.user-card__link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: var(--text-xs);
+  color: var(--accent);
+  cursor: pointer;
+}
+.user-card__link:hover { text-decoration: underline; }
 .user-card__body {
   display: flex;
   align-items: center;

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestScrubEvent_NoConfig(t *testing.T) {
@@ -148,6 +150,43 @@ func TestScrubTransaction_SpanDescription(t *testing.T) {
 	}
 	if tx.Spans[1].Description != "GET /health" {
 		t.Errorf("expected second span description unchanged, got %q", tx.Spans[1].Description)
+	}
+}
+
+func TestScrubTransaction_userEmailPattern(t *testing.T) {
+	tx := &BufferedTransaction{
+		UserID:       "u-1",
+		UserUsername: "alice",
+		UserEmail:    "alice@example.com",
+		UserName:     "Alice",
+		UserIdentity: "u-1",
+	}
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}},
+	}
+	ScrubTransaction(tx, cfg)
+	if tx.UserEmail != "[Filtered]" {
+		t.Errorf("email: got %q", tx.UserEmail)
+	}
+	if tx.UserIdentity != "u-1" {
+		t.Errorf("identity should stay id, got %q", tx.UserIdentity)
+	}
+	if tx.UserID != "u-1" {
+		t.Errorf("id: got %q", tx.UserID)
+	}
+}
+
+func TestScrubTransaction_userIdentityIsEmail(t *testing.T) {
+	tx := &BufferedTransaction{
+		UserEmail:    "alice@example.com",
+		UserIdentity: "alice@example.com",
+	}
+	cfg := ScrubConfig{
+		Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}},
+	}
+	ScrubTransaction(tx, cfg)
+	if tx.UserIdentity != "" {
+		t.Errorf("identity should be cleared when it was the email, got %q", tx.UserIdentity)
 	}
 }
 
@@ -350,5 +389,26 @@ func TestScrubLog_DisabledPatternIgnored(t *testing.T) {
 
 	if l.Body != "reach me at alice@example.com" {
 		t.Errorf("disabled pattern must not scrub, got %q", l.Body)
+	}
+}
+
+func TestScrubTransaction_blockedUserFields(t *testing.T) {
+	original := BufferedTransaction{UserIdentity: "u-1", UserID: "u-1", UserUsername: "alice", UserEmail: "alice@example.com", UserName: "Alice"}
+	for _, tc := range []struct {
+		name   string
+		fields []string
+		want   BufferedTransaction
+	}{
+		{"whole user", []string{"user"}, BufferedTransaction{}},
+		{"ID fallback", []string{"USER.ID"}, BufferedTransaction{UserIdentity: "alice", UserUsername: "alice", UserEmail: "alice@example.com", UserName: "Alice"}},
+		{"username fallback", []string{"user.id", "user.username"}, BufferedTransaction{UserIdentity: "alice@example.com", UserEmail: "alice@example.com", UserName: "Alice"}},
+		{"email and name", []string{"user.email", "user.name"}, BufferedTransaction{UserIdentity: "u-1", UserID: "u-1", UserUsername: "alice"}},
+		{"all identity fields", []string{"user.id", "user.username", "user.email"}, BufferedTransaction{UserName: "Alice"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := original
+			ScrubTransaction(&tx, ScrubConfig{Fields: tc.fields})
+			require.Equal(t, tc.want, tx)
+		})
 	}
 }

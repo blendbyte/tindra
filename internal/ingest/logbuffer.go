@@ -109,6 +109,20 @@ func writeLogBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedLog)
 	if err := results.Close(); err != nil {
 		slog.Error("log batch flush", "err", err)
 	}
+
+	var appUsers []AppUserRow
+	for _, l := range batch {
+		var attrs map[string]any
+		if len(l.Attributes) > 0 {
+			_ = json.Unmarshal(l.Attributes, &attrs)
+		}
+		u := ParseSentryUserFromAttrs(attrs)
+		if u.Identity == "" {
+			continue
+		}
+		appUsers = append(appUsers, AppUserRow{ProjectID: l.ProjectID, User: u, LastSeen: l.Timestamp})
+	}
+	UpsertAppUsers(ctx, pool, appUsers)
 }
 
 func nilJSONDefault(b json.RawMessage) any {

@@ -456,7 +456,7 @@ func TestGetTransactionByTraceID_notFound(t *testing.T) {
 func TestGetTransactionTimeseries_empty(t *testing.T) {
 	p := setupProjectForTxns(t)
 
-	ts, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "")
+	ts, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestGetTransactionTimeseries_withData(t *testing.T) {
 	seedTransaction(t, p.ID, "/api/ts", 100, now)
 	seedTransaction(t, p.ID, "/api/ts", 200, now.Add(-30*time.Minute))
 
-	ts, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "")
+	ts, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestGetTransactionTimeseries_bucketSizes(t *testing.T) {
 	p := setupProjectForTxns(t)
 
 	// <= 1 hour: 5min buckets
-	ts1, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 1, "", "", "")
+	ts1, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 1, "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestGetTransactionTimeseries_bucketSizes(t *testing.T) {
 	}
 
 	// > 168 hours: day buckets
-	ts2, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 200, "", "", "")
+	ts2, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 200, "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestGetTransactionTimeseries_bucketSizes(t *testing.T) {
 func TestListTransactionSummaries_empty(t *testing.T) {
 	p := setupProjectForTxns(t)
 
-	summaries, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "")
+	summaries, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -531,7 +531,7 @@ func TestListTransactionSummaries_withData(t *testing.T) {
 	seedTransaction(t, p.ID, "/api/summary", 200, now.Add(-5*time.Minute))
 	seedTransaction(t, p.ID, "/api/other", 50, now.Add(-3*time.Minute))
 
-	summaries, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "")
+	summaries, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -606,7 +606,7 @@ func TestListTransactionSummaries_withFilters(t *testing.T) {
 	}
 
 	// Filter by op - should find the transaction
-	got, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "http.server", "")
+	got, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "http.server", "", "")
 	if err != nil {
 		t.Fatalf("op filter: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestListTransactionSummaries_withFilters(t *testing.T) {
 	}
 
 	// Filter by name
-	byName, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "/api/filtered", "", "")
+	byName, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "/api/filtered", "", "", "")
 	if err != nil {
 		t.Fatalf("name filter: %v", err)
 	}
@@ -630,7 +630,7 @@ func TestListTransactionSummaries_withFilters(t *testing.T) {
 	}
 
 	// Filter by environment
-	byEnv, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "production", "", "", "")
+	byEnv, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "production", "", "", "", "")
 	if err != nil {
 		t.Fatalf("env filter: %v", err)
 	}
@@ -639,7 +639,7 @@ func TestListTransactionSummaries_withFilters(t *testing.T) {
 	}
 
 	// Filter by release
-	byRel, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "v1.0.0")
+	byRel, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 0, "", "", "", "v1.0.0", "")
 	if err != nil {
 		t.Fatalf("release filter: %v", err)
 	}
@@ -648,7 +648,7 @@ func TestListTransactionSummaries_withFilters(t *testing.T) {
 	}
 
 	// Test with offsetHours > 0 (the offset window should not include recent transactions)
-	withOffset, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 1, "", "", "", "")
+	withOffset, err := storage.ListTransactionSummaries(context.Background(), testPool, []string{p.ID}, 24, 1, "", "", "", "", "")
 	if err != nil {
 		t.Fatalf("offset: %v", err)
 	}
@@ -669,7 +669,7 @@ func TestGetTransactionTimeseries_withFilters(t *testing.T) {
 	}
 
 	// Filter by env
-	ts1, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "production", "", "")
+	ts1, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "production", "", "", "")
 	if err != nil {
 		t.Fatalf("env filter: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestGetTransactionTimeseries_withFilters(t *testing.T) {
 	}
 
 	// Filter by name
-	ts2, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "/api/ts-filt", "")
+	ts2, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "/api/ts-filt", "", "")
 	if err != nil {
 		t.Fatalf("name filter: %v", err)
 	}
@@ -687,7 +687,7 @@ func TestGetTransactionTimeseries_withFilters(t *testing.T) {
 	}
 
 	// Filter by op
-	ts3, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "http.server")
+	ts3, err := storage.GetTransactionTimeseries(context.Background(), testPool, []string{p.ID}, 24, "", "", "http.server", "")
 	if err != nil {
 		t.Fatalf("op filter: %v", err)
 	}

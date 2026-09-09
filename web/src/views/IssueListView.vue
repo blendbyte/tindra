@@ -15,11 +15,15 @@ import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import IgnoreButton from '@/components/IgnoreButton.vue'
 import type { IgnorePayload } from '@/components/IgnoreButton.vue'
+import UserFilter from '@/components/UserFilter.vue'
+import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 
 const router = useRouter()
 const route = useRoute()
 const projects = useProjectsStore()
 const navStore = useIssueNavStore()
+const appUser = useAppUserStore()
+const lensIdentity = computed(() => routeUserIdentity(route.query) || appUser.identity)
 
 const effectiveProjectIds = computed(() => {
   const v = route.query.project_id
@@ -105,6 +109,7 @@ function buildIssueParams(cursor: Cursor) {
   if (serverAssigneeId.value) params.set('assignee_id', serverAssigneeId.value)
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
+  if (lensIdentity.value) params.set('user', lensIdentity.value)
   for (const id of effectiveProjectIds.value) params.append('project_id', id)
   if (cursor) {
     params.set('cursor_time', cursor.cursor_time)
@@ -122,20 +127,21 @@ function exportIssues(format: 'csv' | 'json') {
   if (serverAssigneeId.value) params.set('assignee_id', serverAssigneeId.value)
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
+  if (lensIdentity.value) params.set('user', lensIdentity.value)
   for (const id of effectiveProjectIds.value) params.append('project_id', id)
   params.set('format', format)
   window.location.href = `/api/issues/export?${params.toString()}`
 }
 
 const { data: firstPage, isFetching, isError, refetch } = useQuery({
-  queryKey: computed(() => ['issues', serverStatus.value, serverLevel.value, serverEnv.value, serverSince.value, serverAssigneeId.value, tagKey.value, tagValue.value, [...effectiveProjectIds.value].sort().join(',')]),
+  queryKey: computed(() => ['issues', serverStatus.value, serverLevel.value, serverEnv.value, serverSince.value, serverAssigneeId.value, tagKey.value, tagValue.value, lensIdentity.value, [...effectiveProjectIds.value].sort().join(',')]),
   queryFn: () => apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(null)}`),
   refetchInterval: REFETCH_INTERVAL,
   refetchOnWindowFocus: false,
 })
 
 // When filters change: discard extra pages. The reactive queryKey triggers a re-fetch automatically.
-watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, effectiveProjectIds], () => {
+watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, lensIdentity, effectiveProjectIds], () => {
   extraIssues.value = []
   nextCursor.value = null
 })
@@ -433,6 +439,7 @@ function clearFilters() {
   tagKey.value = ''
   tagValue.value = ''
   search.value = ''
+  appUser.clear()
 }
 
 const isFiltered = computed(
@@ -443,7 +450,8 @@ const isFiltered = computed(
     envFilter.value !== 'All' ||
     sinceFilter.value !== 'All' ||
     assigneeFilter.value !== 'All' ||
-    tagKey.value !== '',
+    tagKey.value !== '' ||
+    !!lensIdentity.value,
 )
 
 // True when only a client-side search/project filter is narrowing the results.
@@ -457,6 +465,7 @@ const activeFilterSummary = computed(() => {
   if (sinceFilter.value !== 'All') parts.push(`Last seen: ${sinceFilter.value}`)
   if (assigneeFilter.value !== 'All') parts.push(assigneeFilter.value === 'me' ? 'Assigned to me' : `Assignee: ${(users.value as User[]).find(u => u.id === assigneeFilter.value)?.name || 'someone'}`)
   if (tagKey.value) parts.push(`${tagKey.value}${tagValue.value ? ': ' + tagValue.value : ''}`)
+  if (lensIdentity.value) parts.push(`User: ${appUser.label || lensIdentity.value}`)
   if (search.value.trim()) parts.push(`"${search.value.trim()}"`)
   return parts.join(' · ')
 })
@@ -467,7 +476,7 @@ const noOpenIssues = computed(() => !noIssues.value && filtered.value.length ===
 
 // Sync filter/sort state → URL so F5 restores the same view.
 watch(
-  [statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, tagKey, tagValue, search, sortCol, sortDir],
+  [statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, tagKey, tagValue, search, sortCol, sortDir, lensIdentity],
   () => {
     const query: Record<string, string> = {}
     if (statusFilter.value !== 'Open') query.status = statusFilter.value
@@ -477,6 +486,7 @@ watch(
     if (assigneeFilter.value !== 'All') query.assignee = assigneeFilter.value
     if (tagKey.value) query.tag_key = tagKey.value
     if (tagValue.value) query.tag_value = tagValue.value
+    if (lensIdentity.value) query.user = lensIdentity.value
     if (search.value) query.q = search.value
     if (sortCol.value !== 'last_seen' || sortDir.value !== 'desc') {
       query.sort = sortCol.value
@@ -559,6 +569,7 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
           </div>
         </div>
       </div>
+      <UserFilter />
       <button v-if="tagKey" class="tag-chip" @click="tagKey = ''; tagValue = ''">
         <span class="tag-chip__k">{{ tagKey }}</span>
         <template v-if="tagValue">

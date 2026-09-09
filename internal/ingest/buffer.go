@@ -106,6 +106,16 @@ func writeBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedEvent) 
 		slog.Error("batch flush", "err", err)
 	}
 
+	var appUsers []AppUserRow
+	for _, e := range batch {
+		u := ParseSentryUserFromPayload(e.Payload)
+		if u.Identity == "" {
+			continue
+		}
+		appUsers = append(appUsers, AppUserRow{ProjectID: e.ProjectID, User: u, LastSeen: e.Timestamp})
+	}
+	UpsertAppUsers(ctx, pool, appUsers)
+
 	// Upsert releases for any event that carries a release field.
 	type releaseKey struct{ projectID, version string }
 	seen := map[releaseKey]struct{}{}

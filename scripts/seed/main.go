@@ -164,6 +164,41 @@ var seedUsers = []seedUser{
 	{"601", "anon_user", "", "", "198.51.100.200"},
 	{"718", "saraht", "sarah.thornton@bigco.com", "Sarah Thornton", "203.0.113.34"},
 	{"825", "devraj_m", "devraj@saas.app", "Devraj Mehta", "198.51.100.77"},
+	{"890", "nina_ok", "nina@ok.dev", "Nina Okonkwo", "203.0.113.19"},
+	{"912", "guest", "", "", "198.51.100.9"},
+}
+
+// sentryUserMap is the event/transaction `user` object from set_user().
+func sentryUserMap(u seedUser) map[string]any {
+	user := map[string]any{"id": u.id}
+	if u.username != "" {
+		user["username"] = u.username
+	}
+	if u.email != "" {
+		user["email"] = u.email
+	}
+	if u.name != "" {
+		user["name"] = u.name
+	}
+	if u.ip != "" {
+		user["ip_address"] = u.ip
+	}
+	return user
+}
+
+// sentryUserAttrs is the same identity as log attributes (user.id, …).
+func sentryUserAttrs(u seedUser) map[string]any {
+	attrs := map[string]any{"user.id": u.id}
+	if u.username != "" {
+		attrs["user.username"] = u.username
+	}
+	if u.email != "" {
+		attrs["user.email"] = u.email
+	}
+	if u.name != "" {
+		attrs["user.name"] = u.name
+	}
+	return attrs
 }
 
 func weightedChoice(choices []string, weights []int) string {
@@ -2064,21 +2099,7 @@ func buildErrorEvent(tmpl issueTemplate, ts time.Time, releases, envs []string) 
 	}
 
 	if tmpl.hasUser {
-		u := seedUsers[rand.Intn(len(seedUsers))] //nolint:gosec
-		user := map[string]any{"id": u.id}
-		if u.username != "" {
-			user["username"] = u.username
-		}
-		if u.email != "" {
-			user["email"] = u.email
-		}
-		if u.name != "" {
-			user["name"] = u.name
-		}
-		if u.ip != "" {
-			user["ip_address"] = u.ip
-		}
-		evt["user"] = user
+		evt["user"] = sentryUserMap(randomChoice(seedUsers))
 	}
 
 	return evt
@@ -2171,6 +2192,9 @@ func buildTransaction(tmpl txTemplate, ts time.Time, releases, envs []string) ma
 	if tmpl.op == "pageload" || tmpl.op == "navigation" {
 		tx["measurements"] = seedWebVitals()
 	}
+
+	// Always attach a user so the User lens has traces and page loads to show.
+	tx["user"] = sentryUserMap(randomChoice(seedUsers))
 
 	return tx
 }
@@ -3335,6 +3359,9 @@ func buildLogRecord(level string, ts time.Time, releases, environments []string)
 		"sentry.environment": env,
 		"sentry.release":     release,
 	}
+	for k, v := range sentryUserAttrs(randomChoice(seedUsers)) {
+		attrs[k] = v
+	}
 
 	// Attach a few extra structured attributes for variety.
 	switch level {
@@ -3346,7 +3373,6 @@ func buildLogRecord(level string, ts time.Time, releases, environments []string)
 		attrs["http.status_code"] = 200
 		attrs["http.method"] = "GET"
 		attrs["http.route"] = randomChoice(logRoutes)
-		attrs["user.id"] = randomChoice(seedUsers).id
 	case "warning":
 		attrs["duration_ms"] = rand.Intn(4000) + 500 //nolint:gosec
 	}
@@ -3733,6 +3759,7 @@ func buildV1Profile(tmpl profileTemplate, ts time.Time, releases, envs []string)
 			},
 		},
 		"spans": buildSpanNodes(tmpl.spans, spanID, ts),
+		"user":  sentryUserMap(randomChoice(seedUsers)),
 	}
 
 	profile = map[string]any{
@@ -3838,6 +3865,7 @@ func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases
 				"profile": map[string]any{"profiler_id": profilerID},
 			},
 			"spans": buildSpanNodes(tmpl.spans, newEventID()[:16], txStart),
+			"user":  sentryUserMap(randomChoice(seedUsers)),
 		})
 	}
 	return chunk, txs

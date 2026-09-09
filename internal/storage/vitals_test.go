@@ -40,7 +40,7 @@ func TestGetWebVitalsSummary_noData(t *testing.T) {
 	from := now.Add(-24 * time.Hour)
 	to := now.Add(time.Hour)
 
-	summary, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "")
+	summary, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestGetWebVitalsSummary_withData(t *testing.T) {
 	measurements := `{"lcp":{"value":1200},"fcp":{"value":900},"cls":{"value":0.05},"inp":{"value":150},"ttfb":{"value":400}}`
 	seedPageloadTx(t, p.ID, "/home", measurements, now.Add(-1*time.Hour))
 
-	summary, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "")
+	summary, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestGetWebVitalsSummary_environmentFilter(t *testing.T) {
 	}
 
 	// Query for staging should yield count=0.
-	staging, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "staging")
+	staging, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "staging", "")
 	if err != nil {
 		t.Fatalf("staging query: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestGetWebVitalsSummary_environmentFilter(t *testing.T) {
 	}
 
 	// Query for production should find the row.
-	prod, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "production")
+	prod, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "production", "")
 	if err != nil {
 		t.Fatalf("production query: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestGetWebVitalsSummary_nonPageloadExcluded(t *testing.T) {
 		t.Fatalf("insert server tx: %v", err)
 	}
 
-	summary, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "")
+	summary, err := storage.GetWebVitalsSummary(context.Background(), testPool, []string{p.ID}, from, to, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestGetWebVitalsByPage_noData(t *testing.T) {
 	from := now.Add(-24 * time.Hour)
 	to := now.Add(time.Hour)
 
-	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, []string{p.ID}, from, to, "")
+	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, []string{p.ID}, from, to, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGetWebVitalsByPage_groupsByTransaction(t *testing.T) {
 	seedPageloadTx(t, p.ID, "/home", m, now.Add(-1*time.Hour))
 	seedPageloadTx(t, p.ID, "/about", m, now.Add(-30*time.Minute))
 
-	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, []string{p.ID}, from, to, "")
+	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, []string{p.ID}, from, to, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestGetWebVitalsByPage_timeRange(t *testing.T) {
 	from := now.Add(-24 * time.Hour)
 	to := now.Add(time.Hour)
 
-	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, []string{p.ID}, from, to, "")
+	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, []string{p.ID}, from, to, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestGetWebVitalsByPage_allProjectsWhenNoIDs(t *testing.T) {
 	seedPageloadTx(t, p2.ID, "/p2-page", m, now.Add(-1*time.Hour))
 
 	// Passing nil projectIDs should include both projects.
-	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, nil, from, to, "")
+	pages, err := storage.GetWebVitalsByPage(context.Background(), testPool, nil, from, to, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

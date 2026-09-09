@@ -5,6 +5,17 @@ export interface UserPermissions {
   manage_issues: boolean
 }
 
+/** End-user of the instrumented app, from sentry_sdk.set_user(). */
+export interface AppUser {
+  identity: string
+  user_id: string | null
+  username: string | null
+  email: string | null
+  name: string | null
+  last_seen: string
+  project_id: string
+}
+
 export interface User {
   id: string
   email: string
@@ -170,6 +181,13 @@ export interface Transaction {
   duration_ms: number
   start_timestamp: string
   environment: string | null
+  measurements?: Record<string, { value?: number } | number> | null
+}
+
+export interface TransactionListPage {
+  transactions: Transaction[]
+  next_cursor_time?: string
+  next_cursor_id?: string
 }
 
 export interface TransactionSummary {
