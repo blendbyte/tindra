@@ -18,6 +18,39 @@ import (
 
 // --- handleListProjects ---
 
+func TestListProjectMetadata(t *testing.T) {
+	h := globalHandler()
+	for _, authenticated := range []bool{false, true} {
+		req := httptest.NewRequest(http.MethodGet, "/api/projects/metadata", nil)
+		if authenticated {
+			req.AddCookie(authCookie())
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if !authenticated {
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated metadata: %d", rec.Code)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("metadata: %d %s", rec.Code, rec.Body.String())
+		}
+		var projects []map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &projects); err != nil {
+			t.Fatal(err)
+		}
+		if len(projects) == 0 {
+			t.Fatal("expected seeded projects")
+		}
+		for _, p := range projects {
+			if len(p) != 4 || p["id"] == nil || p["slug"] == nil || p["name"] == nil || p["public_key"] == nil {
+				t.Fatalf("unexpected metadata fields: %v", p)
+			}
+		}
+	}
+}
+
 func TestListProjects_success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
 	req.AddCookie(authCookie())

@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/ingest"
@@ -181,13 +182,33 @@ func (ro *router) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListProjects returns all projects. Single-tenant - every session user sees all projects.
+// handleListProjectMetadata serves navigation without computing usage.
+func (ro *router) handleListProjectMetadata(w http.ResponseWriter, r *http.Request) {
+	projects, err := storage.ListProjectMetadata(r.Context(), ro.pool, bearerProjectIDs(r, nil)...)
+	if err != nil {
+		slog.Error("list project metadata", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, projects)
+}
+
+// handleListProjects retains the full project response for existing clients.
 func (ro *router) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	projects, err := storage.ListProjects(r.Context(), ro.pool)
 	if err != nil {
 		slog.Error("list projects", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	if scope := bearerProjectIDs(r, nil); len(scope) > 0 {
+		scoped := []*storage.Project{}
+		for _, project := range projects {
+			if project.ID == scope[0] {
+				scoped = append(scoped, project)
+			}
+		}
+		projects = scoped
 	}
 	if projects == nil {
 		projects = []*storage.Project{}
@@ -409,7 +430,7 @@ func (ro *router) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 func (ro *router) handleGetProjectStats(w http.ResponseWriter, r *http.Request) {
 	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
 	if len(projectIDs) == 0 {
-		projs, err := storage.ListProjects(r.Context(), ro.pool)
+		projs, err := storage.ListProjectMetadata(r.Context(), ro.pool)
 		if err != nil {
 			slog.Error("project stats: list projects", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -430,6 +451,37 @@ func (ro *router) handleGetProjectStats(w http.ResponseWriter, r *http.Request) 
 		counts = []*storage.ProjectIssueCount{}
 	}
 	writeJSON(w, counts)
+}
+
+func (ro *router) handleDashboardIssues(w http.ResponseWriter, r *http.Request) {
+	projects := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	total, err := storage.CountAllIssues(r.Context(), ro.pool, storage.IssueFilter{Status: "open", ProjectIDs: projects})
+	if err != nil {
+		slog.Error("count dashboard issues", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	issues, err := storage.ListDashboardIssues(r.Context(), ro.pool, projects)
+	if err != nil {
+		slog.Error("list dashboard issues", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if len(issues) > 0 {
+		ids := make([]string, len(issues))
+		for i, issue := range issues {
+			ids[i] = issue.ID
+		}
+		sparklines, err := storage.GetIssueSparklines(r.Context(), ro.pool, ids)
+		if err != nil {
+			slog.Warn("get dashboard sparklines", "err", err)
+		} else {
+			for i := range issues {
+				issues[i].Sparkline = sparklines[issues[i].ID]
+			}
+		}
+	}
+	writeJSON(w, map[string]any{"issues": issues, "total": total})
 }
 
 // handleListAllIssues returns a paginated issue list across all projects.
@@ -822,7 +874,7 @@ func (ro *router) handleGetIssueTags(w http.ResponseWriter, r *http.Request) {
 // offset (?offset=0 is newest, ?offset=1 is second newest, etc.).
 func (ro *router) handleGetLatestEventGlobal(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "issueID")
-	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(r.Context(), ro.pool, issueID)
 	if err != nil {
 		slog.Error("get issue for event", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -878,7 +930,7 @@ func (ro *router) handleGetLatestEventGlobal(w http.ResponseWriter, r *http.Requ
 
 func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "issueID")
-	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(r.Context(), ro.pool, issueID)
 	if err != nil {
 		slog.Error("get issue for trace", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -921,7 +973,7 @@ func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 
 func (ro *router) handleGetIssueHistogram(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "issueID")
-	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(r.Context(), ro.pool, issueID)
 	if err != nil {
 		slog.Error("get issue for histogram", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -957,6 +1009,13 @@ func (ro *router) handleListEventsForIssue(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if ci := r.URL.Query().Get("cursor_id"); ci != "" {
+		if cursorTime != nil {
+			var id pgtype.UUID
+			if err := id.Scan(ci); err != nil {
+				http.Error(w, "invalid cursor_id", http.StatusBadRequest)
+				return
+			}
+		}
 		cursorID = &ci
 	}
 
@@ -1021,6 +1080,14 @@ func (ro *router) handleListTransactionSummaries(w http.ResponseWriter, r *http.
 
 // handleTransactionTimeseries returns bucketed request counts and latency percentiles.
 func (ro *router) handleTransactionTimeseries(w http.ResponseWriter, r *http.Request) {
+	ro.transactionTimeseries(w, r, false)
+}
+
+func (ro *router) handleTransactionCounts(w http.ResponseWriter, r *http.Request) {
+	ro.transactionTimeseries(w, r, true)
+}
+
+func (ro *router) transactionTimeseries(w http.ResponseWriter, r *http.Request, countsOnly bool) {
 	hours := 24
 	if h := r.URL.Query().Get("hours"); h != "" {
 		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 720 {
@@ -1036,7 +1103,13 @@ func (ro *router) handleTransactionTimeseries(w http.ResponseWriter, r *http.Req
 		projectIDs = []string{}
 	}
 
-	ts, err := storage.GetTransactionTimeseries(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity)
+	var ts any
+	var err error
+	if countsOnly {
+		ts, err = storage.GetTransactionCounts(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity)
+	} else {
+		ts, err = storage.GetTransactionTimeseries(r.Context(), ro.pool, projectIDs, hours, env, name, op, userIdentity)
+	}
 	if err != nil {
 		slog.Error("get transaction timeseries", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

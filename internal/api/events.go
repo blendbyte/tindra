@@ -18,7 +18,7 @@ func (ro *router) handleGetLatestEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issueID := chi.URLParam(r, "issueID")
-	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(r.Context(), ro.pool, issueID)
 	if err != nil {
 		slog.Error("get issue for event", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

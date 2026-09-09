@@ -119,7 +119,7 @@ func (ro *router) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := storage.GetIssue(r.Context(), ro.pool, id)
+	existing, err := storage.GetIssueMetadata(r.Context(), ro.pool, id)
 	if err != nil {
 		slog.Error("get issue for update", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -182,7 +182,7 @@ func (ro *router) handleGetIssueFingerprints(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	issueID := chi.URLParam(r, "issueID")
-	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(r.Context(), ro.pool, issueID)
 	if err != nil {
 		slog.Error("get issue", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -217,7 +217,7 @@ func (ro *router) handleMergeIssues(w http.ResponseWriter, r *http.Request) {
 
 	// Validate all issues belong to this project.
 	for _, id := range req.IssueIDs {
-		iss, err := storage.GetIssue(r.Context(), ro.pool, id)
+		iss, err := storage.GetIssueMetadata(r.Context(), ro.pool, id)
 		if err != nil {
 			slog.Error("get issue for merge", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -280,7 +280,7 @@ func (ro *router) handleUnmergeIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	issueID := chi.URLParam(r, "issueID")
 
-	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(r.Context(), ro.pool, issueID)
 	if err != nil {
 		slog.Error("get issue", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

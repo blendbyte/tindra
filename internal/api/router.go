@@ -2,12 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	"io"
-	"io/fs"
 	"mime"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +16,6 @@ import (
 	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/ingest"
 	"github.com/blendbyte/tindra/internal/sourcemaps"
-	"github.com/blendbyte/tindra/internal/ui"
 )
 
 func init() {
@@ -40,6 +36,8 @@ func init() {
 }
 
 type router struct {
+	tokenTouchMu           sync.Mutex
+	tokenTouches           map[string]struct{}
 	pool                   *pgxpool.Pool
 	buf                    *ingest.Buffer
 	txBuf                  *ingest.TransactionBuffer
@@ -174,6 +172,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Patch("/api/me", ro.handleUpdateMe)
 		r.Get("/api/users", ro.handleListUsers)
 		r.Get("/api/projects", ro.handleListProjects)
+		r.Get("/api/projects/metadata", ro.handleListProjectMetadata)
 		r.Get("/api/projects/stats", ro.handleGetProjectStats)
 		r.With(ro.requirePerm("manage_projects")).Post("/api/projects", ro.handleCreateProject)
 		r.Get("/api/projects/{projectID}/quota", ro.handleGetProjectQuota)
@@ -182,6 +181,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.With(ro.requirePerm("manage_projects")).Delete("/api/projects/{projectID}", ro.handleDeleteProject)
 		r.Get("/api/app-users", ro.handleListAppUsers)
 		r.Get("/api/issues", ro.handleListAllIssues)
+		r.Get("/api/issues/overview", ro.handleDashboardIssues)
 		r.Get("/api/issues/export", ro.handleExportIssues)
 		r.Get("/api/issues/{issueID}", ro.handleGetIssueGlobal)
 		r.Get("/api/issues/{issueID}/events/histogram", ro.handleGetIssueHistogram)
@@ -195,6 +195,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/transactions", ro.handleListAllTransactions)
 		r.Get("/api/transactions/summaries", ro.handleListTransactionSummaries)
 		r.Get("/api/transactions/timeseries", ro.handleTransactionTimeseries)
+		r.Get("/api/transactions/counts", ro.handleTransactionCounts)
 		r.Get("/api/transactions/{txID}", ro.handleGetTransactionGlobal)
 		r.Get("/api/transactions/{txID}/spans", ro.handleGetSpansGlobal)
 		r.Get("/api/transactions/{txID}/errors", ro.handleGetTransactionErrors)
@@ -218,6 +219,8 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/logs/count", ro.handleCountLogs)
 		r.Get("/api/logs", ro.handleListLogs)
 		r.Get("/api/releases", ro.handleListReleases)
+		r.Get("/api/releases/metadata", ro.handleListReleaseMetadata)
+		r.Get("/api/releases/health", ro.handleRecentReleaseHealth)
 		r.Get("/api/releases/{releaseID}", ro.handleGetRelease)
 		r.Get("/api/releases/{releaseID}/issues", ro.handleGetReleaseIssues)
 		r.Get("/api/releases/{releaseID}/transactions", ro.handleGetReleaseTransactions)
@@ -341,26 +344,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	// GET /mcp for clients probing SSE support — we only support POST; return 405 JSON.
 	r.Get("/mcp", ro.handleMCPGet)
 
-	// Serve the embedded Vue SPA. If a file exists in dist, serve it
-	// directly; otherwise fall back to index.html for client-side routing.
-	dist, _ := fs.Sub(ui.FS, "dist")
-	fileServer := http.FileServer(http.FS(dist))
-	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if f, err := dist.Open(path); err == nil {
-			f.Close()
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		f, err := dist.Open("index.html")
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		defer f.Close()
-		stat, _ := f.Stat()
-		http.ServeContent(w, r, "index.html", stat.ModTime(), f.(io.ReadSeeker))
-	})
+	r.NotFound(embeddedAssets().ServeHTTP)
 
 	return &Handle{Handler: r, ro: ro}
 }

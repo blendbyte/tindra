@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -25,6 +27,46 @@ func bearerToken(t *testing.T, projectID string) string {
 }
 
 // --- bearerProjectIDs: list endpoints restrict to the token's project ---
+
+func TestIssueScopeChecksDoNotReadEventHistory(t *testing.T) {
+	ctx := context.Background()
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, testProject.ID, "scope-no-history", "Scope without history", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM issues WHERE id=$1", issue.ID) })
+	other, err := storage.CreateProject(ctx, testPool, "scope-no-history-other", "Other")
+	require.NoError(t, err)
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM projects WHERE id=$1", other.ID) })
+	correct, wrong := bearerToken(t, testProject.ID), bearerToken(t, other.ID)
+	lock, err := testPool.Begin(ctx)
+	require.NoError(t, err)
+	defer lock.Rollback(ctx)
+	_, err = lock.Exec(ctx, `LOCK TABLE events, releases IN ACCESS EXCLUSIVE MODE`)
+	require.NoError(t, err)
+	base := "/api/issues/" + issue.ID
+	for _, c := range []struct {
+		path, token string
+		status      int
+	}{
+		{base + "/comments", correct, http.StatusOK},
+		{base + "/history", correct, http.StatusOK},
+		{"/api/projects/" + testProject.Slug + "/issues/" + issue.ID + "/fingerprints", correct, http.StatusOK},
+		{base + "/comments", wrong, http.StatusNotFound},
+		{base + "/events", wrong, http.StatusNotFound},
+		{base + "/events/latest", wrong, http.StatusNotFound},
+		{base + "/events/histogram", wrong, http.StatusNotFound},
+		{"/api/issues/00000000-0000-0000-0000-000000000000/comments", correct, http.StatusNotFound},
+	} {
+		t.Run(c.path+"/"+fmt.Sprint(c.status), func(t *testing.T) {
+			readCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			req := httptest.NewRequest(http.MethodGet, c.path, nil).WithContext(readCtx)
+			req.Header.Set("Authorization", "Bearer "+c.token)
+			rec := httptest.NewRecorder()
+			globalHandler().ServeHTTP(rec, req)
+			require.Equal(t, c.status, rec.Code, rec.Body.String())
+		})
+	}
+}
 
 func TestBearerProjectIDs_restrictsIssueList(t *testing.T) {
 	truncateIssues(t)
