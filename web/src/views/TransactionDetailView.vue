@@ -2,7 +2,7 @@
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
-import { apiFetch } from '@/api/client'
+import { ApiError, apiFetch } from '@/api/client'
 import type { Transaction, Span, TraceError, Log, LogListPage, FlameGraph } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
 import { useTimezone } from '@/composables/useTimezone'
@@ -579,13 +579,14 @@ const traceErrorList = computed(() => traceErrorsData.value ?? [])
 // Most transactions carry no profile: the SDK samples them out, or profiling
 // is off. The endpoint answers 404 for that, so it is treated as "nothing to
 // show" rather than retried as a failure.
-const { data: flameGraph } = useQuery({
+const { data: flameGraph, isPending: profileLoading, isError: profileError, refetch: refetchProfile } = useQuery({
   queryKey: computed(() => ['transactions', txId.value, 'flamegraph']),
   queryFn: async ({ signal }) => {
     try {
       return await apiFetch<FlameGraph>(`/api/transactions/${txId.value}/flamegraph`, { signal })
-    } catch {
-      return null
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null
+      throw error
     }
   },
   enabled: computed(() => !!txId.value),
@@ -1094,6 +1095,12 @@ function traceErrorOffset(e: TraceError): string {
     <div v-if="flameGraph" class="trace-logs--flame">
       <FlameGraphView :graph="flameGraph" />
     </div>
+
+    <p v-if="tx && !flameGraph && !profileLoading" class="trace-logs" style="padding: 16px">
+      {{ profileError ? 'Could not load the profile.' : 'No profile available for this transaction.' }}
+      <button v-if="profileError" class="btn" @click="refetchProfile()">Try again</button>
+      <a class="btn" :href="`/setup?project_id=${tx.project_id}&check=profiles`">Check profiling setup</a>
+    </p>
 
     <!-- Trace error correlation -->
     <div v-if="traceErrorList.length > 0" class="trace-logs">

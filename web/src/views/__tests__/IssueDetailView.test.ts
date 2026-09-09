@@ -3,10 +3,11 @@ import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
 const pushMock = vi.fn()
+const replaceMock = vi.fn()
 
 vi.mock('vue-router', () => ({
   useRoute: vi.fn(() => ({ params: { id: 'iss-123' } })),
-  useRouter: vi.fn(() => ({ push: pushMock })),
+  useRouter: vi.fn(() => ({ push: pushMock, replace: replaceMock })),
   RouterLink: { template: '<a><slot /></a>' },
 }))
 
@@ -57,6 +58,7 @@ import { apiFetch } from '@/api/client'
 import { flushPromises } from '@vue/test-utils'
 import { useAuthStore } from '@/stores/auth'
 import { useAppUserStore } from '@/stores/appUser'
+import { useRoute } from 'vue-router'
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -1955,4 +1957,22 @@ describe('IssueDetailView', () => {
       wrapper.unmount()
     })
   })
+})
+
+describe('linked setup events', () => {
+ it('changes the pinned event when selecting an occurrence and returns to latest on request', async () => {
+  vi.mocked(useRoute).mockReturnValueOnce({ params: { id: 'iss-123' }, query: { event_id: 'original', check: 'keep' } } as any)
+  setupQueries(baseIssue)
+  vi.mocked(apiFetch).mockResolvedValue({ events: [{ id: 'another', received_at: '2024-01-01T00:00:00Z', level: 'error', environment: '', release: null, tags: {} }], has_more: false, total: 1 })
+  const wrapper = mount(IssueDetailView, { global: { stubs } })
+  const showAll = wrapper.findAll('button').find(b => b.text().includes('Show all'))!
+  expect(showAll).toBeDefined()
+  await showAll.trigger('click')
+  await flushPromises()
+  await wrapper.find('.evttable__row').trigger('click')
+  expect(replaceMock).toHaveBeenCalledWith({ query: { event_id: 'another', check: 'keep' } })
+  await wrapper.findAll('button').find(b => b.text() === 'View latest event')!.trigger('click')
+  expect(replaceMock).toHaveBeenCalledWith({ query: { event_id: undefined, check: 'keep' } })
+  wrapper.unmount()
+ })
 })

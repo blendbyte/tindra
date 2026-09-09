@@ -180,6 +180,16 @@ func GetLatestEventForIssue(ctx context.Context, pool *pgxpool.Pool, issueID str
 	return GetEventForIssueAtOffset(ctx, pool, issueID, 0)
 }
 
+// GetEventForIssueByID preserves an exact event link as new events arrive.
+func GetEventForIssueByID(ctx context.Context, pool *pgxpool.Pool, issueID, eventID string) (*EventRow, error) {
+	var ev EventRow
+	err := pool.QueryRow(ctx, `SELECT id, release, trace_id, received_at, payload FROM events WHERE issue_id=$1 AND id=$2`, issueID, eventID).Scan(&ev.ID, &ev.Release, &ev.TraceID, &ev.ReceivedAt, &ev.Payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return &ev, err
+}
+
 // GetEventForIssueAtOffset returns the event at position offset (0 = newest) for an issue.
 func GetEventForIssueAtOffset(ctx context.Context, pool *pgxpool.Pool, issueID string, offset int) (*EventRow, error) {
 	if offset < 0 {

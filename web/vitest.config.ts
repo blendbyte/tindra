@@ -19,7 +19,6 @@ export default defineConfig({
       reportsDirectory: 'coverage',
       exclude: [
         'node_modules/',
-        'src/router/index.ts',
         '**/*.d.ts',
         'e2e/',
       ],

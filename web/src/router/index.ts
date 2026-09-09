@@ -20,6 +20,18 @@ export const router = createRouter({
       meta: { requiresAuth: true, title: 'Dashboard' },
     },
     {
+      path: '/setup',
+      name: 'project-setup-picker',
+      component: () => import('@/views/ProjectSetupView.vue'),
+      meta: { requiresAuth: true, title: 'Project setup' },
+    },
+    {
+      path: '/projects/:projectSlug/setup',
+      name: 'project-setup',
+      component: () => import('@/views/ProjectSetupView.vue'),
+      meta: { requiresAuth: true, title: 'Project setup' },
+    },
+    {
       path: '/issues',
       name: 'issues',
       component: () => import('@/views/IssueListView.vue'),

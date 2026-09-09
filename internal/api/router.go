@@ -43,6 +43,7 @@ type router struct {
 	txBuf                  *ingest.TransactionBuffer
 	logBuf                 *ingest.LogBuffer
 	profBuf                *ingest.ProfileBuffer
+	encodeProfile          func(string, *ingest.Profile) (ingest.BufferedProfile, error)
 	smStore                *sourcemaps.Store
 	oauthProviders         []oauthProvider
 	cookieSecure           bool
@@ -104,6 +105,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		corsOrigin:             corsOrigin,
 		publicURL:              publicURL,
 		profBuf:                profBuf,
+		encodeProfile:          ingest.NewBufferedProfile,
 		statsAPIKey:            statsAPIKey,
 		billingURL:             billingURL,
 		retentionDays:          retentionDays,
@@ -177,6 +179,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/projects/metadata", ro.handleListProjectMetadata)
 		r.Get("/api/environments", ro.handleEnvironments)
 		r.Get("/api/projects/stats", ro.handleGetProjectStats)
+		r.Get("/api/setup-status", ro.handleSetupProjects)
 		r.With(ro.requirePerm("manage_projects")).Post("/api/projects", ro.handleCreateProject)
 		r.Get("/api/projects/{projectID}/quota", ro.handleGetProjectQuota)
 		r.With(ro.requirePerm("manage_projects")).Patch("/api/projects/{projectID}", ro.handleUpdateProject)
@@ -242,6 +245,9 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/projects/{projectSlug}/transactions/{txID}", ro.handleGetTransaction)
 
 		r.Get("/api/projects/{projectSlug}/sourcemaps", ro.handleListSourcemaps)
+		r.Get("/api/projects/{projectSlug}/setup-status", ro.handleSetupStatus)
+		r.Post("/api/projects/{projectSlug}/setup-checks", ro.handleStartSetupCheck)
+		r.Get("/api/projects/{projectSlug}/setup-sourcemaps", ro.handleVerifySetupSourcemaps)
 
 		// Comments are open to all authenticated users.
 		r.Post("/api/issues/{issueID}/comments", ro.handleCreateComment)

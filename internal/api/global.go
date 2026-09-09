@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -898,7 +899,16 @@ func (ro *router) handleGetLatestEventGlobal(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	ev, err := storage.GetEventForIssueAtOffset(r.Context(), ro.pool, issueID, offset)
+	var ev *storage.EventRow
+	if eventID := r.URL.Query().Get("event_id"); eventID != "" {
+		if _, parseErr := uuid.Parse(eventID); parseErr != nil {
+			http.Error(w, "invalid event id", http.StatusBadRequest)
+			return
+		}
+		ev, err = storage.GetEventForIssueByID(r.Context(), ro.pool, issueID, eventID)
+	} else {
+		ev, err = storage.GetEventForIssueAtOffset(r.Context(), ro.pool, issueID, offset)
+	}
 	if err != nil {
 		slog.Error("get latest event", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -954,7 +964,16 @@ func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ev, err := storage.GetEventForIssueAtOffset(r.Context(), ro.pool, issueID, offset)
+	var ev *storage.EventRow
+	if eventID := r.URL.Query().Get("event_id"); eventID != "" {
+		if _, parseErr := uuid.Parse(eventID); parseErr != nil {
+			http.Error(w, "invalid event id", http.StatusBadRequest)
+			return
+		}
+		ev, err = storage.GetEventForIssueByID(r.Context(), ro.pool, issueID, eventID)
+	} else {
+		ev, err = storage.GetEventForIssueAtOffset(r.Context(), ro.pool, issueID, offset)
+	}
 	if err != nil {
 		slog.Error("get event for issue", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

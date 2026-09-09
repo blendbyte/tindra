@@ -1,7 +1,9 @@
 package ingest
 
 import (
+	"cmp"
 	"context"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,15 +31,26 @@ func (b *ProfileBuffer) QueuedBytes() int64 { return b.Stats().PendingBytes }
 // Run flushes bounded batches and drains on cancellation. Stop producers first.
 func (b *ProfileBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 	b.run(ctx, 20, func(ctx context.Context, batch []BufferedProfile) error {
-		return atomicWrite(ctx, pool, func(db batchSender) error { return writeProfileBatch(ctx, db, batch) })
+		err := atomicWrite(ctx, pool, func(db batchSender) error { return writeProfileBatch(ctx, db, batch) })
+		if err != nil {
+			ids := make([]string, 0, len(batch))
+			for _, profile := range batch {
+				ids = append(ids, profile.ProjectID)
+			}
+			recordSetupWriteFailure(ctx, pool, "profile_chunks", ids, err)
+		}
+		return err
 	})
 }
 
 func writeProfileBatch(ctx context.Context, pool batchSender, batch []BufferedProfile) error {
+	// Keep project milestone locks in a consistent order across concurrent writers.
+	ordered := slices.Clone(batch)
+	slices.SortStableFunc(ordered, func(a, b BufferedProfile) int { return cmp.Compare(a.ProjectID, b.ProjectID) })
 	// ON CONFLICT DO NOTHING below leans on the partial unique indexes: a
 	// retried envelope must not fold into the graph twice.
 	pb := &pgx.Batch{}
-	for _, p := range batch {
+	for _, p := range ordered {
 		pb.Queue(`
 			INSERT INTO profile_chunks
 				(project_id, format, transaction_event_id, trace_id, profiler_id, chunk_id,

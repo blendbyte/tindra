@@ -96,8 +96,8 @@ describe('view request lifecycle', () => {
   it('cancels issue reads, including dependent event and trace requests', async () => {
     await open(IssueDetailView, '/issues/issue-1', [
       [['issues', 'issue-1'], { id: 'issue-1', title: 'Failure', kind: 'error', event_count: 1, status: 'open', first_seen: '2026-01-01', last_seen: '2026-01-01' }],
-      [['issues', 'issue-1', 'events', 0], { payload: { contexts: { trace: { trace_id: 'trace-1' } } } }],
-      [['issues', 'issue-1', 'trace', 0], { id: 'tx-1' }],
+      [['issues', 'issue-1', 'events', 0, ''], { payload: { contexts: { trace: { trace_id: 'trace-1' } } } }],
+      [['issues', 'issue-1', 'trace', 0, ''], { id: 'tx-1' }],
     ])
     await expectCancelled(['/api/me', '/api/issues/issue-1', '/api/issues/issue-1/events/latest?offset=0',
       '/api/issues/issue-1/comments', '/api/issues/issue-1/history', '/api/users',
@@ -126,7 +126,7 @@ describe('view request lifecycle', () => {
 
   it('cancels dashboard reads and uses lightweight overview endpoints', async () => {
     await open(DashboardView, '/')
-    await expectCancelled(['/api/me', '/api/config', '/api/projects', '/api/issues/overview?',
+    await expectCancelled(['/api/me', '/api/setup-status', '/api/issues/overview?',
       '/api/transactions/summaries?hours=24', '/api/transactions/counts?hours=168',
       '/api/releases/health?', '/api/alert-rules', '/api/uptime-monitors?', '/api/monitors?', '/api/projects/stats'])
   })
