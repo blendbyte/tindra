@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -53,8 +55,9 @@ type BufferedTransaction struct {
 }
 
 type TransactionBuffer struct {
-	ch   chan BufferedTransaction
-	Hook func(ctx context.Context, pool *pgxpool.Pool, txs []BufferedTransaction, txIDs []string)
+	counters bufferCounters
+	ch       chan BufferedTransaction
+	Hook     func(ctx context.Context, pool *pgxpool.Pool, txs []BufferedTransaction, txIDs []string)
 }
 
 func NewTransactionBuffer(size int) *TransactionBuffer {
@@ -64,8 +67,10 @@ func NewTransactionBuffer(size int) *TransactionBuffer {
 func (b *TransactionBuffer) Push(tx BufferedTransaction) bool {
 	select {
 	case b.ch <- tx:
+		b.counters.accepted.Add(1)
 		return true
 	default:
+		b.counters.rejected.Add(1)
 		return false
 	}
 }
@@ -81,10 +86,14 @@ func (b *TransactionBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 		if len(batch) == 0 {
 			return
 		}
+		start := time.Now()
 		txIDs := writeTxBatch(ctx, pool, batch)
+		writtenAt := time.Now()
 		if b.Hook != nil {
 			b.Hook(ctx, pool, batch, txIDs)
 		}
+		stats := b.Stats()
+		slog.Debug("transaction flush", "attempted", len(batch), "write_ms", writtenAt.Sub(start).Milliseconds(), "hook_ms", time.Since(writtenAt).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
 		batch = batch[:0]
 	}
 
@@ -114,37 +123,40 @@ func (b *TransactionBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 }
 
 func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTransaction) []string {
-	// Phase 1: insert transactions, collect generated IDs
+	// Phase 1: explicit IDs preserve input-to-span linkage across grouped inserts.
 	txBatch := &pgx.Batch{}
-	for _, tx := range batch {
-		txBatch.Queue(`
-			INSERT INTO transactions
-				(project_id, trace_id, span_id, transaction, op, status, duration_ms,
-				 start_timestamp, timestamp, environment, release, platform, measurements,
-				 event_id, profiler_id, thread_id,
-				 user_identity, user_id, user_username, user_email, user_name)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-			RETURNING id
-		`,
-			tx.ProjectID, nilStr(tx.TraceID), nilStr(tx.SpanID), tx.Transaction,
-			tx.Op, tx.Status, tx.DurationMs, tx.StartTimestamp, tx.Timestamp,
-			nilStr(tx.Environment), nilStr(tx.Release), nilStr(tx.Platform),
-			nilJSON(tx.Measurements),
-			nilStr(tx.EventID), nilStr(tx.ProfilerID), nilStr(tx.ThreadID),
-			nilStr(tx.UserIdentity), nilStr(tx.UserID), nilStr(tx.UserUsername),
-			nilStr(tx.UserEmail), nilStr(tx.UserName),
-		)
-	}
-
-	txResults := pool.SendBatch(ctx, txBatch)
 	txIDs := make([]string, len(batch))
-	for i := range batch {
-		if err := txResults.QueryRow().Scan(&txIDs[i]); err != nil {
+	rows := make([][]any, 0, len(batch))
+	for i, tx := range batch {
+		var id [16]byte
+		_, _ = rand.Read(id[:])
+		id[6] = (id[6] & 0x0f) | 0x40
+		id[8] = (id[8] & 0x3f) | 0x80
+		txIDs[i] = fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16])
+		rows = append(rows, []any{txIDs[i], tx.ProjectID, nilStr(tx.TraceID), nilStr(tx.SpanID), tx.Transaction,
+			tx.Op, tx.Status, tx.DurationMs, tx.StartTimestamp, tx.Timestamp,
+			nilStr(tx.Environment), nilStr(tx.Release), nilStr(tx.Platform), nilJSON(tx.Measurements),
+			nilStr(tx.EventID), nilStr(tx.ProfilerID), nilStr(tx.ThreadID),
+			nilStr(tx.UserIdentity), nilStr(tx.UserID), nilStr(tx.UserUsername), nilStr(tx.UserEmail), nilStr(tx.UserName)})
+	}
+	statements := queueInserts(txBatch, `INSERT INTO transactions
+		(id,project_id,trace_id,span_id,transaction,op,status,duration_ms,start_timestamp,timestamp,
+		 environment,release,platform,measurements,event_id,profiler_id,thread_id,
+		 user_identity,user_id,user_username,user_email,user_name) VALUES `, "", rows, 1)
+	txResults := pool.SendBatch(ctx, txBatch)
+	failed := false
+	for range statements {
+		if _, err := txResults.Exec(); err != nil {
 			slog.Error("transaction insert", "err", err)
+			failed = true
 		}
 	}
 	if err := txResults.Close(); err != nil {
 		slog.Error("transaction batch close", "err", err)
+		failed = true
+	}
+	if failed {
+		return make([]string, len(batch))
 	}
 
 	var appUsers []AppUserRow

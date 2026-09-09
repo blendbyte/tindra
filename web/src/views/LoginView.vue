@@ -23,7 +23,7 @@ const mfaLoading = ref(false)
 
 const { data: providersData } = useQuery({
   queryKey: ['auth-providers'],
-  queryFn: () => apiFetch<{ providers: string[] }>('/api/auth/providers'),
+  queryFn: ({ signal }) => apiFetch<{ providers: string[] }>('/api/auth/providers', { signal }),
   staleTime: Infinity,
 })
 

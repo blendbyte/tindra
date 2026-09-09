@@ -290,6 +290,55 @@ type TxTimeseries struct {
 }
 
 func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env string, name string, op string, userIdentity string) (*TxTimeseries, error) {
+	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, false)
+
+	rows, err := pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	ts := &TxTimeseries{BucketSize: bucketSize, Buckets: []TxBucket{}}
+	for rows.Next() {
+		var b TxBucket
+		if err := rows.Scan(&b.Time, &b.Count, &b.P50, &b.P95); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		ts.Buckets = append(ts.Buckets, b)
+	}
+	return ts, rows.Err()
+}
+
+type TxCountBucket struct {
+	Time  time.Time `json:"time"`
+	Count int64     `json:"count"`
+}
+
+type TxCountTimeseries struct {
+	Buckets    []TxCountBucket `json:"buckets"`
+	BucketSize string          `json:"bucket_size"`
+}
+
+func GetTransactionCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env, name, op, userIdentity string) (*TxCountTimeseries, error) {
+	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, true)
+	rows, err := pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+	result := &TxCountTimeseries{BucketSize: bucketSize, Buckets: []TxCountBucket{}}
+	for rows.Next() {
+		var b TxCountBucket
+		if err := rows.Scan(&b.Time, &b.Count); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		result.Buckets = append(result.Buckets, b)
+	}
+	return result, rows.Err()
+}
+
+func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, userIdentity string, countsOnly bool) (string, []any, string) {
+
 	if hours <= 0 || hours > 720 {
 		hours = 24
 	}
@@ -331,33 +380,21 @@ func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectID
 		where += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
 
+	metrics := ""
+	if !countsOnly {
+		metrics = ", COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms), 0) AS p50, COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 0) AS p95"
+	}
 	q := fmt.Sprintf(`
 		SELECT
 			%s AS bucket,
-			COUNT(*) AS count,
-			COALESCE(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY duration_ms), 0) AS p50,
-			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 0) AS p95
+			COUNT(*) AS count%s
 		FROM transactions
 		%s
 		GROUP BY bucket
 		ORDER BY bucket ASC
-	`, bucketExpr, where)
+	`, bucketExpr, metrics, where)
 
-	rows, err := pool.Query(ctx, q, userQueryArgs(userIdentity, args)...)
-	if err != nil {
-		return nil, fmt.Errorf("query: %w", err)
-	}
-	defer rows.Close()
-
-	ts := &TxTimeseries{BucketSize: bucketSize, Buckets: []TxBucket{}}
-	for rows.Next() {
-		var b TxBucket
-		if err := rows.Scan(&b.Time, &b.Count, &b.P50, &b.P95); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-		ts.Buckets = append(ts.Buckets, b)
-	}
-	return ts, rows.Err()
+	return q, userQueryArgs(userIdentity, args), bucketSize
 }
 
 func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, offsetHours int, env string, name string, op string, release string, userIdentity string) ([]*TransactionSummary, error) {

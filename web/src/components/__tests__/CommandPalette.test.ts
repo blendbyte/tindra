@@ -100,6 +100,38 @@ afterEach(() => {
 })
 
 describe('CommandPalette', () => {
+  it('cancels replaced searches, ignores late results, and cancels on close', async () => {
+    vi.useFakeTimers()
+    const pending: { signal: AbortSignal; resolve: (data: any) => void }[] = []
+    vi.mocked(apiFetch).mockImplementation((_path, init) => new Promise(resolve => {
+      pending.push({ signal: init!.signal as AbortSignal, resolve })
+    }))
+    const wrapper = makeWrapper()
+    const input = wrapper.find('input[aria-label="Search"]')
+    await input.setValue('first')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(pending).toHaveLength(2)
+    await input.setValue('second')
+    expect(pending[0]!.signal.aborted).toBe(true)
+    expect(pending[1]!.signal.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(200)
+    pending[2]!.resolve({ issues: [{ id: 'new', title: 'second result' }] })
+    pending[3]!.resolve([])
+    await flushPromises()
+    pending[0]!.resolve({ issues: [{ id: 'old', title: 'obsolete result' }] })
+    pending[1]!.resolve([])
+    await flushPromises()
+    expect(wrapper.text()).toContain('second result')
+    expect(wrapper.text()).not.toContain('obsolete result')
+    await input.setValue('third')
+    await vi.advanceTimersByTimeAsync(200)
+    useUiStore().cmdOpen = false
+    await nextTick()
+    expect(pending[4]!.signal.aborted).toBe(true)
+    expect(pending[5]!.signal.aborted).toBe(true)
+    wrapper.unmount()
+  })
+
   describe('visibility', () => {
     it('is not rendered when cmdOpen is false', () => {
       const wrapper = makeWrapper(false)

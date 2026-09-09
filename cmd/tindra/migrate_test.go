@@ -142,6 +142,38 @@ func TestMigrateCmd_noChange(t *testing.T) {
 	}
 }
 
+// Exercise concurrent index builds through the production migration driver,
+// which must execute their batches separately and outside a transaction.
+func TestMigratePerformanceIndexes(t *testing.T) {
+	ctx := context.Background()
+	for _, name := range []string{"transactions_start_id", "logs_timestamp_id", "transactions_project_release", "events_issue_received_id", "perf_events_transaction", "transactions_received_id", "logs_received_id", "events_received_id", "uptime_checks_checked_id"} {
+		if _, err := testUserPool.Exec(ctx, "DROP INDEX "+name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setupSchemaMigrations(t, 15)
+	m, err := newMigrator(inviteCfg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if err := m.Steps(4); err != nil {
+		t.Fatalf("apply performance indexes: %v", err)
+	}
+	v, dirty, err := m.Version()
+	if err != nil || v != 19 || dirty {
+		t.Fatalf("migration state: version=%d dirty=%v err=%v", v, dirty, err)
+	}
+	for _, name := range []string{"transactions_start_id", "logs_timestamp_id", "transactions_project_release", "events_issue_received_id", "perf_events_transaction", "transactions_received_id", "logs_received_id", "events_received_id", "uptime_checks_checked_id"} {
+		var valid bool
+		if err := testUserPool.QueryRow(ctx,
+			`SELECT indisvalid FROM pg_index WHERE indexrelid = $1::regclass`, name,
+		).Scan(&valid); err != nil || !valid {
+			t.Fatalf("index %s: valid=%v err=%v", name, valid, err)
+		}
+	}
+}
+
 func TestMigrateForceCmd_success(t *testing.T) {
 	// Ensure schema_migrations exists with a known version, then force it to 1.
 	// Force() sets the recorded version without running any SQL migrations,
@@ -152,5 +184,58 @@ func TestMigrateForceCmd_success(t *testing.T) {
 	cmd.SetArgs([]string{"1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
+	}
+}
+
+func TestMigrateUsageBackfill(t *testing.T) {
+	ctx := context.Background()
+	// Recreate only this migration's objects in the disposable migrated test DB.
+	for _, table := range []string{"events", "transactions", "logs"} {
+		for _, trigger := range []string{"usage_insert", "usage_delete", "usage_update", "usage_truncate"} {
+			if _, err := testUserPool.Exec(ctx, "DROP TRIGGER "+trigger+" ON "+table); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := testUserPool.Exec(ctx, `DROP FUNCTION telemetry_usage_since(timestamptz,boolean,uuid[]); DROP FUNCTION track_telemetry_usage(); DROP FUNCTION adjust_telemetry_usage(text,uuid,timestamptz,bigint); DROP TABLE telemetry_usage`); err != nil {
+		t.Fatal(err)
+	}
+	var project string
+	if err := testUserPool.QueryRow(ctx, `INSERT INTO projects(slug,name,public_key) VALUES('usage-backfill','Usage','usage-backfill-key') RETURNING id`).Scan(&project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testUserPool.Exec(ctx, `INSERT INTO events(project_id,timestamp,payload) SELECT $1,now(),'{}' FROM generate_series(1,7)`, project); err != nil {
+		t.Fatal(err)
+	}
+	setupSchemaMigrations(t, 19)
+	m, err := newMigrator(inviteCfg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if err = m.Steps(1); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = testUserPool.QueryRow(ctx, "SELECT sum(n) FROM telemetry_usage WHERE project_id=$1", project).Scan(&count); err != nil || count != 7 {
+		t.Fatalf("backfill count=%d err=%v", count, err)
+	}
+	if _, err = testUserPool.Exec(ctx, `INSERT INTO events(project_id,timestamp,payload) VALUES($1,now(),'{}')`, project); err != nil {
+		t.Fatal(err)
+	}
+	if err = testUserPool.QueryRow(ctx, "SELECT sum(n) FROM telemetry_usage WHERE project_id=$1", project).Scan(&count); err != nil || count != 8 {
+		t.Fatalf("post-cutover count=%d err=%v", count, err)
+	}
+	if _, err = testUserPool.Exec(ctx, "DELETE FROM projects WHERE id=$1", project); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewMigratorRejectsUnsupportedDatabaseDriver(t *testing.T) {
+	cfg := inviteCfg()
+	cfg.databaseURL = "unsupported://localhost/tindra"
+	m, err := newMigrator(cfg)
+	if m != nil || err == nil || !strings.Contains(err.Error(), "open migration database") {
+		t.Fatalf("migrator=%v err=%v", m, err)
 	}
 }

@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
-import type { Transaction, TransactionSummary, TxTimeseries, ReleaseListPage, TransactionListPage } from '@/api/types'
+import type { Transaction, TransactionSummary, TxTimeseries, ReleaseMetadata, TransactionListPage } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
 import FilterChip from '@/components/FilterChip.vue'
@@ -108,8 +108,8 @@ watch([opFilter, sortCol, sortDir], () => {
 
 // Fetch available releases for the release filter chip
 const { data: releasesPage } = useQuery({
-  queryKey: ['releases'],
-  queryFn: () => apiFetch<ReleaseListPage>('/api/releases'),
+  queryKey: ['releases', 'metadata'],
+  queryFn: ({ signal }) => apiFetch<{ releases: ReleaseMetadata[] }>('/api/releases/metadata', { signal }),
 })
 
 const releaseOptions = computed(() => {
@@ -152,13 +152,13 @@ const txParamsWithOp = computed(() => {
 // Always fetch all summaries - op filtering is client-side for instant feedback
 const { data: rawSummaries, isLoading: summariesLoading, isError: summariesError, refetch: refetchSummaries } = useQuery({
   queryKey: ['transaction-summaries', txParams],
-  queryFn: () => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${txParams.value}`),
+  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${txParams.value}`, { signal }),
   enabled: computed(() => !userMode.value),
 })
 
 const { data: tracePage, isLoading: tracesLoading, isError: tracesError, refetch: refetchTraces } = useQuery({
   queryKey: ['user-traces', traceParams],
-  queryFn: () => apiFetch<TransactionListPage>(`/api/transactions?${traceParams.value}`),
+  queryFn: ({ signal }) => apiFetch<TransactionListPage>(`/api/transactions?${traceParams.value}`, { signal }),
   enabled: computed(() => userMode.value),
 })
 
@@ -216,7 +216,7 @@ const compParams = computed(() => {
 
 const { data: compSummaries } = useQuery({
   queryKey: ['transaction-summaries-comp', compParams],
-  queryFn: () => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${compParams.value}`),
+  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${compParams.value}`, { signal }),
   enabled: computed(() => !!rawSummaries.value?.length),
 })
 
@@ -241,7 +241,7 @@ function getDelta(s: TransactionSummary, metric: 'p50' | 'p95') {
 
 const { data: timeseries } = useQuery({
   queryKey: ['transaction-timeseries', txParamsWithOp],
-  queryFn: () => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${txParamsWithOp.value}`),
+  queryFn: ({ signal }) => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${txParamsWithOp.value}`, { signal }),
 })
 
 // Distinct ops and per-op counts, derived live from the full unfiltered dataset

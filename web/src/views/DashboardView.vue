@@ -8,10 +8,11 @@ import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
 import { useTimezone } from '@/composables/useTimezone'
 import type {
-  IssueListPage,
+  Project,
+  DashboardIssuePage,
   TransactionSummary,
-  TxTimeseries,
-  ReleaseListPage,
+  TxCountTimeseries,
+  ReleaseHealthPage,
   AlertRule,
   User,
   UptimeMonitor,
@@ -46,7 +47,7 @@ const { show: showToast } = useToast()
 
 const { data: me } = useQuery({
   queryKey: ['me'],
-  queryFn: () => apiFetch<User>('/api/me'),
+  queryFn: ({ signal }) => apiFetch<User>('/api/me', { signal }),
 })
 const canManageAlerts = computed(() => me.value?.permissions.manage_alerts ?? false)
 
@@ -64,65 +65,72 @@ function tzHour(date: Date, tz: string): number {
 
 function buildQs(extra: Record<string, string> = {}) {
   const p = new URLSearchParams()
-  for (const id of projects.selectedIds) p.append('project_id', id)
+  for (const id of [...projects.selectedIds].sort()) p.append('project_id', id)
   for (const [k, v] of Object.entries(extra)) p.set(k, v)
   return p.toString()
 }
 
 const pKey = computed(() => [...projects.selectedIds].sort().join(','))
 
+// Usage remains separate from navigation metadata. Share it with quota/settings
+// readers, and wait for it before deciding whether to show onboarding.
+const { data: projectUsage } = useQuery({
+  queryKey: ['projects', 'usage'],
+  queryFn: ({ signal }) => apiFetch<Project[]>('/api/projects', { signal }),
+})
+
 // ── Queries ───────────────────────────────────────────────────────────────────
 
 const { data: issuesPage, isFetching: issuesFetching } = useQuery({
-  queryKey: computed(() => ['dash-issues', pKey.value]),
-  queryFn: () => apiFetch<IssueListPage>(`/api/issues?${buildQs({ status: 'open' })}`),
+  queryKey: computed(() => ['issues', 'overview', pKey.value]),
+  queryFn: ({ signal }) => apiFetch<DashboardIssuePage>(`/api/issues/overview?${buildQs()}`, { signal }),
   refetchInterval: 30_000,
 })
 
 const { data: txSummaries, isFetching: txFetching } = useQuery({
   queryKey: computed(() => ['dash-tx', pKey.value]),
-  queryFn: () =>
-    apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${buildQs({ hours: '24' })}`),
+  queryFn: ({ signal }) =>
+    apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${buildQs({ hours: '24' })}`, { signal }),
   refetchInterval: 60_000,
 })
 
 const { data: txTs } = useQuery({
-  queryKey: computed(() => ['dash-ts', pKey.value]),
-  queryFn: () =>
-    apiFetch<TxTimeseries>(`/api/transactions/timeseries?${buildQs({ hours: '168' })}`),
+  queryKey: computed(() => ['dash-tx-counts', pKey.value]),
+  queryFn: ({ signal }) =>
+    apiFetch<TxCountTimeseries>(`/api/transactions/counts?${buildQs({ hours: '168' })}`, { signal }),
   refetchInterval: 120_000,
 })
 
 const { data: releasesPage, isFetching: releasesFetching } = useQuery({
-  queryKey: computed(() => ['dash-releases', pKey.value]),
-  queryFn: () => apiFetch<ReleaseListPage>(`/api/releases?${buildQs()}`),
+  queryKey: computed(() => ['releases', 'health', pKey.value]),
+  queryFn: ({ signal }) => apiFetch<ReleaseHealthPage>(`/api/releases/health?${buildQs()}`, { signal }),
   refetchInterval: 60_000,
 })
 
 const { data: alertRules, isLoading: alertsLoading } = useQuery({
-  queryKey: computed(() => ['dash-alerts', pKey.value]),
-  queryFn: async () => {
-    const res = await apiFetch<{ rules: AlertRule[] }>('/api/alert-rules')
+  queryKey: ['alert-rules'],
+  queryFn: async ({ signal }) => {
+    const res = await apiFetch<{ rules: AlertRule[] }>('/api/alert-rules', { signal })
     return res?.rules ?? []
   },
   refetchInterval: 120_000,
 })
 
 const { data: uptimeMonitors } = useQuery({
-  queryKey: computed(() => ['dash-uptime', pKey.value]),
-  queryFn: () => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${buildQs()}`),
+  queryKey: computed(() => ['uptime-monitors', buildQs()]),
+  queryFn: ({ signal }) => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${buildQs()}`, { signal }),
   refetchInterval: 30_000,
 })
 
 const { data: cronMonitors } = useQuery({
-  queryKey: computed(() => ['dash-cron', pKey.value]),
-  queryFn: () => apiFetch<CronMonitor[]>(`/api/monitors?${buildQs()}`),
+  queryKey: computed(() => ['monitors', buildQs()]),
+  queryFn: ({ signal }) => apiFetch<CronMonitor[]>(`/api/monitors?${buildQs()}`, { signal }),
   refetchInterval: 30_000,
 })
 
 const { data: projectIssueCounts, isFetching: projStatsFetching } = useQuery({
-  queryKey: computed(() => ['dash-proj-stats', [...projects.selectedIds].sort().join(',')]),
-  queryFn: () => apiFetch<ProjectIssueCount[]>('/api/projects/stats'),
+  queryKey: ['projects', 'stats'],
+  queryFn: ({ signal }) => apiFetch<ProjectIssueCount[]>('/api/projects/stats', { signal }),
   enabled: computed(() => projects.projects.length >= 2),
   refetchInterval: 30_000,
 })
@@ -441,14 +449,14 @@ const firstDsn = computed(() => {
 
 const visibleProjects = computed(() =>
   projects.selectedIds.length > 0
-    ? projects.projects.filter(p => projects.selectedIds.includes(p.id))
-    : projects.projects,
+    ? projectUsage.value?.filter(p => projects.selectedIds.includes(p.id))
+    : projectUsage.value,
 )
 
 const isFirstRun = computed(() => {
   if (loading.value) return false
   if (noProjects.value) return true
-  return visibleProjects.value.every(p => (p.event_count ?? 0) === 0)
+  return visibleProjects.value?.every(p => p.event_count === 0) ?? false
 })
 
 function copyDsn() {

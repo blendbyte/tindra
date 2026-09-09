@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
-import type { CronMonitor, CronCheckin, Project, UptimeMonitor, UptimeCheck, UptimeStats } from '@/api/types'
+import type { CronMonitor, CronCheckin, ProjectMetadata, UptimeMonitor, UptimeCheck, UptimeStats } from '@/api/types'
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/Icon.vue'
@@ -32,13 +32,13 @@ const activeTab = computed(() => route.path.startsWith('/monitors/uptime') ? 'up
 
 // ---- project list (for create dialogs) ----
 const { data: projectList } = useQuery({
-  queryKey: ['projects'],
-  queryFn: () => apiFetch<Project[]>('/api/projects'),
+  queryKey: ['projects', 'metadata'],
+  queryFn: ({ signal }) => apiFetch<ProjectMetadata[]>('/api/projects/metadata', { signal }),
 })
 
 const queryParams = computed(() => {
   const p = new URLSearchParams()
-  for (const id of projects.selectedIds) p.append('project_id', id)
+  for (const id of [...projects.selectedIds].sort()) p.append('project_id', id)
   return p.toString()
 })
 
@@ -50,7 +50,7 @@ const selectedMonitorId = ref<string | null>(null)
 
 const { data: monitorsData, isLoading } = useQuery({
   queryKey: computed(() => ['monitors', queryParams.value]),
-  queryFn: () => apiFetch<CronMonitor[]>(`/api/monitors?${queryParams.value}`),
+  queryFn: ({ signal }) => apiFetch<CronMonitor[]>(`/api/monitors?${queryParams.value}`, { signal }),
   refetchInterval: 60_000,
 })
 const monitors = computed(() => monitorsData.value ?? [])
@@ -61,9 +61,9 @@ const selectedMonitor = computed(() =>
 
 const { data: checkinsData, isLoading: checkinsLoading } = useQuery({
   queryKey: computed(() => ['checkins', selectedMonitorId.value]),
-  queryFn: () =>
+  queryFn: ({ signal }) =>
     selectedMonitorId.value
-      ? apiFetch<CronCheckin[]>(`/api/monitors/${selectedMonitorId.value}/checkins?limit=50`)
+      ? apiFetch<CronCheckin[]>(`/api/monitors/${selectedMonitorId.value}/checkins?limit=50`, { signal })
       : Promise.resolve([]),
   enabled: computed(() => !!selectedMonitorId.value),
   refetchInterval: computed(() => (selectedMonitorId.value ? 30_000 : false)),
@@ -184,16 +184,16 @@ const selectedUptimeId = ref<string | null>(null)
 
 const { data: uptimeData, isLoading: uptimeLoading } = useQuery({
   queryKey: computed(() => ['uptime-monitors', queryParams.value]),
-  queryFn: () => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${queryParams.value}`),
+  queryFn: ({ signal }) => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${queryParams.value}`, { signal }),
   refetchInterval: 60_000,
 })
 const uptimeMonitors = computed(() => uptimeData.value ?? [])
 
 const { data: uptimeChecksData, isLoading: uptimeChecksLoading } = useQuery({
   queryKey: computed(() => ['uptime-checks', selectedUptimeId.value]),
-  queryFn: () =>
+  queryFn: ({ signal }) =>
     selectedUptimeId.value
-      ? apiFetch<UptimeCheck[]>(`/api/uptime-monitors/${selectedUptimeId.value}/checks?limit=50`)
+      ? apiFetch<UptimeCheck[]>(`/api/uptime-monitors/${selectedUptimeId.value}/checks?limit=50`, { signal })
       : Promise.resolve([]),
   enabled: computed(() => !!selectedUptimeId.value),
   refetchInterval: computed(() => (selectedUptimeId.value ? 30_000 : false)),
@@ -202,9 +202,9 @@ const uptimeChecks = computed(() => uptimeChecksData.value ?? [])
 
 const { data: uptimeStatsData } = useQuery({
   queryKey: computed(() => ['uptime-stats', selectedUptimeId.value]),
-  queryFn: () =>
+  queryFn: ({ signal }) =>
     selectedUptimeId.value
-      ? apiFetch<UptimeStats>(`/api/uptime-monitors/${selectedUptimeId.value}/stats`)
+      ? apiFetch<UptimeStats>(`/api/uptime-monitors/${selectedUptimeId.value}/stats`, { signal })
       : Promise.resolve(null),
   enabled: computed(() => !!selectedUptimeId.value),
   refetchInterval: computed(() => (selectedUptimeId.value ? 60_000 : false)),

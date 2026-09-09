@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/blendbyte/tindra/internal/ingest"
 )
 
@@ -154,11 +156,31 @@ func TestWriteTxBatch_persistsUser(t *testing.T) {
 	}
 	buf.Push(tx)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	go buf.Run(ctx, testPool)
-	time.Sleep(400 * time.Millisecond)
-	cancel()
+	// A transaction becomes visible before its app_users upsert finishes.
+	// Wait for the complete flush instead of cancelling it after a fixed sleep.
+	flushed := make(chan struct{})
+	buf.Hook = func(context.Context, *pgxpool.Pool, []ingest.BufferedTransaction, []string) {
+		close(flushed)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf.Run(ctx, testPool)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("transaction buffer did not stop")
+		}
+	})
+	select {
+	case <-flushed:
+	case <-time.After(30 * time.Second):
+		t.Fatal("transaction flush did not finish")
+	}
 
 	var identity, username string
 	err := testPool.QueryRow(context.Background(), `

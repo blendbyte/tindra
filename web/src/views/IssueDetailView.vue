@@ -27,7 +27,7 @@ const tz = useTimezone()
 
 const { data: me } = useQuery({
   queryKey: ['me'],
-  queryFn: () => apiFetch<User>('/api/me'),
+  queryFn: ({ signal }) => apiFetch<User>('/api/me', { signal }),
 })
 
 const issueId = computed(() => route.params.id as string)
@@ -87,7 +87,7 @@ const evtSortDir = ref<'asc' | 'desc'>('desc')
 
 const { data: issue, isError: issueError, refetch: refetchIssue } = useQuery({
   queryKey: computed(() => ['issues', issueId.value]),
-  queryFn: () => apiFetch<Issue>(`/api/issues/${issueId.value}`),
+  queryFn: ({ signal }) => apiFetch<Issue>(`/api/issues/${issueId.value}`, { signal }),
 })
 
 watchEffect(() => {
@@ -96,32 +96,32 @@ watchEffect(() => {
 
 const { data: currentEvent } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'events', eventIndex.value]),
-  queryFn: () => apiFetch<TindraEvent>(`/api/issues/${issueId.value}/events/latest?offset=${eventIndex.value}`),
+  queryFn: ({ signal }) => apiFetch<TindraEvent>(`/api/issues/${issueId.value}/events/latest?offset=${eventIndex.value}`, { signal }),
   enabled: computed(() => !!issueId.value && !!issue.value && issue.value.kind !== 'n1_query'),
   placeholderData: keepPreviousData,
 })
 
 const { data: perfEvents, isLoading: perfEventsLoading } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'perf-events']),
-  queryFn: () => apiFetch<import('@/api/types').PerfEvent[]>(`/api/issues/${issueId.value}/perf-events`),
+  queryFn: ({ signal }) => apiFetch<import('@/api/types').PerfEvent[]>(`/api/issues/${issueId.value}/perf-events`, { signal }),
   enabled: computed(() => !!issueId.value && issue.value?.kind === 'n1_query'),
 })
 
 const { data: comments = [] } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'comments']),
-  queryFn: () => apiFetch<Comment[]>(`/api/issues/${issueId.value}/comments`),
+  queryFn: ({ signal }) => apiFetch<Comment[]>(`/api/issues/${issueId.value}/comments`, { signal }),
   enabled: computed(() => !!issueId.value),
 })
 
 const { data: history = [] } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'history']),
-  queryFn: () => apiFetch<IssueHistoryEntry[]>(`/api/issues/${issueId.value}/history`),
+  queryFn: ({ signal }) => apiFetch<IssueHistoryEntry[]>(`/api/issues/${issueId.value}/history`, { signal }),
   enabled: computed(() => !!issueId.value),
 })
 
 const { data: users = [] } = useQuery({
   queryKey: ['users'],
-  queryFn: () => apiFetch<User[]>('/api/users'),
+  queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
 })
 
 const { mutate: updateStatus, isPending: updatingStatus } = useMutation({
@@ -477,13 +477,13 @@ const traceId = computed(() => {
 
 const { data: linkedTransaction } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'trace', eventIndex.value]),
-  queryFn: () => apiFetch<import('@/api/types').Transaction | null>(`/api/issues/${issueId.value}/trace?offset=${eventIndex.value}`),
+  queryFn: ({ signal }) => apiFetch<import('@/api/types').Transaction | null>(`/api/issues/${issueId.value}/trace?offset=${eventIndex.value}`, { signal }),
   enabled: computed(() => !!issueId.value && !!traceId.value),
 })
 
 const { data: traceSpans } = useQuery({
   queryKey: computed(() => ['transactions', linkedTransaction.value?.id, 'spans']),
-  queryFn: () => apiFetch<import('@/api/types').Span[]>(`/api/transactions/${linkedTransaction.value!.id}/spans`),
+  queryFn: ({ signal }) => apiFetch<import('@/api/types').Span[]>(`/api/transactions/${linkedTransaction.value!.id}/spans`, { signal }),
   enabled: computed(() => !!linkedTransaction.value?.id),
 })
 
@@ -508,7 +508,7 @@ const tracePreviewRows = computed(() => {
 
 const { data: issueTags } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'tags']),
-  queryFn: () => apiFetch<TagSummary[]>(`/api/issues/${issueId.value}/tags`),
+  queryFn: ({ signal }) => apiFetch<TagSummary[]>(`/api/issues/${issueId.value}/tags`, { signal }),
   enabled: computed(() => !!issueId.value),
 })
 
@@ -564,7 +564,7 @@ function lensTo(path: string) {
 
 const { data: histogram } = useQuery({
   queryKey: computed(() => ['issues', issueId.value, 'histogram']),
-  queryFn: () => apiFetch<{ buckets: HistogramBucket[]; bucket_size: 'hour' | 'day' | 'week' }>(`/api/issues/${issueId.value}/events/histogram`),
+  queryFn: ({ signal }) => apiFetch<{ buckets: HistogramBucket[]; bucket_size: 'hour' | 'day' | 'week' }>(`/api/issues/${issueId.value}/events/histogram`, { signal }),
   enabled: computed(() => !!issueId.value),
 })
 

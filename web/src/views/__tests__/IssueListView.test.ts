@@ -1016,7 +1016,7 @@ describe('load more pagination', () => {
     await wrapper.vm.$nextTick()
     await wrapper.find('.list-footer__more').trigger('click')
     await flushPromises()
-    expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/api/issues'))
+    expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/api/issues'), { signal: expect.any(AbortSignal) })
   })
 
   it('shows list-footer counter text when sorted has items', async () => {
@@ -1656,4 +1656,12 @@ describe('confirmMerge early return', () => {
       expect(queryKey[queryKey.length - 1]).toBe('')
     })
   })
+})
+
+it('preserves the next-page cursor when mounting with cached issues', () => {
+  setupMocks({ issueData: { issues: [virtualIssue], total: 2, has_more: true,
+    next_cursor_time: '2024-01-01T00:00:00Z', next_cursor_id: 'cached-next' } })
+  const wrapper = mount(IssueListView, { global: { stubs } })
+  expect(wrapper.find('.list-footer__more').exists()).toBe(true)
+  wrapper.unmount()
 })

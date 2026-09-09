@@ -10,7 +10,7 @@ interface AppConfig {
 export function useConfig() {
   const { data } = useQuery({
     queryKey: ['config'],
-    queryFn: () => apiFetch<AppConfig>('/api/config'),
+    queryFn: ({ signal }) => apiFetch<AppConfig>('/api/config', { signal }),
     staleTime: Infinity,
   })
 

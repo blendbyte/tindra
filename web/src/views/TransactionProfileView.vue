@@ -44,7 +44,7 @@ const {
   refetch: refetchSummaries,
 } = useQuery({
   queryKey: computed(() => ['transaction-profile-summaries', profileParams.value]),
-  queryFn: () => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${profileParams.value}`),
+  queryFn: ({ signal }) => apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${profileParams.value}`, { signal }),
 })
 
 const {
@@ -53,7 +53,7 @@ const {
   refetch: refetchTimeseries,
 } = useQuery({
   queryKey: computed(() => ['transaction-profile-timeseries', profileParams.value]),
-  queryFn: () => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${profileParams.value}`),
+  queryFn: ({ signal }) => apiFetch<TxTimeseries>(`/api/transactions/timeseries?${profileParams.value}`, { signal }),
 })
 
 const samplesParams = computed(() => {
@@ -75,13 +75,13 @@ const {
   refetch: refetchSamples,
 } = useInfiniteQuery({
   queryKey: computed(() => ['transaction-profile-samples', samplesParams.value]),
-  queryFn: ({ pageParam }) => {
+  queryFn: ({ pageParam, signal }) => {
     const params = new URLSearchParams(samplesParams.value)
     if (pageParam) {
       params.set('cursor_time', pageParam.cursor_time)
       params.set('cursor_id', pageParam.cursor_id)
     }
-    return apiFetch<TxListPage>(`/api/transactions?${params}`)
+    return apiFetch<TxListPage>(`/api/transactions?${params}`, { signal })
   },
   getNextPageParam: (lastPage) => {
     if (!lastPage.next_cursor_time || !lastPage.next_cursor_id) return undefined

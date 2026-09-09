@@ -47,16 +47,13 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 	if hours <= 0 || hours > 720 {
 		hours = 24
 	}
-	if projectIDs == nil {
-		projectIDs = []string{}
-	}
 
-	args := []any{hours, projectIDs}
-	where := fmt.Sprintf(`
-		WHERE %s
-		  AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')
-		  AND (CARDINALITY($2::uuid[]) = 0 OR s.project_id = ANY($2::uuid[]))`,
-		spanOpFilter(category))
+	args := []any{hours}
+	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')`, spanOpFilter(category))
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		where += " AND s.project_id = ANY($2::uuid[])"
+	}
 
 	if env != "" {
 		args = append(args, env)
@@ -133,9 +130,6 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 	if hours <= 0 || hours > 720 {
 		hours = 24
 	}
-	if projectIDs == nil {
-		projectIDs = []string{}
-	}
 
 	var bucketExpr, bucketSize string
 	switch {
@@ -150,12 +144,12 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 		bucketSize = "day"
 	}
 
-	args := []any{hours, projectIDs}
-	where := fmt.Sprintf(`
-		WHERE %s
-		  AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')
-		  AND (CARDINALITY($2::uuid[]) = 0 OR s.project_id = ANY($2::uuid[]))`,
-		spanOpFilter(category))
+	args := []any{hours}
+	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')`, spanOpFilter(category))
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		where += " AND s.project_id = ANY($2::uuid[])"
+	}
 
 	if env != "" {
 		args = append(args, env)

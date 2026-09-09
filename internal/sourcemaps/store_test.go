@@ -606,3 +606,39 @@ func TestStore_fetchContextLine_colnoNearEnd(t *testing.T) {
 		t.Errorf("expected non-empty context_line for near-end colno, got empty")
 	}
 }
+
+func TestStore_ParsedCacheReplacementAndDeletion(t *testing.T) {
+	ctx := context.Background()
+	store := sourcemaps.NewStore(t.TempDir(), testPool)
+	makeMap := func(line string) string {
+		data, _ := json.Marshal(map[string]any{"version": 3, "sources": []string{"src/app.js"}, "sourcesContent": []string{line}, "mappings": "AAAA"})
+		return string(data)
+	}
+	payload := json.RawMessage(`{"exception":{"values":[{"stacktrace":{"frames":[{"filename":"~/cached.js","lineno":1,"colno":0}]}}]}}`)
+	first, err := store.Upload(ctx, testProject.ID, "cache-lifecycle", "~/cached.js", strings.NewReader(makeMap("original")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if got := store.ResolveEventPayload(ctx, testProject.ID, "cache-lifecycle", payload); !strings.Contains(string(got), `"context_line":"original"`) {
+			t.Fatalf("missing original context: %s", got)
+		}
+	}
+	replacement, err := store.Upload(ctx, testProject.ID, "cache-lifecycle", "~/cached.js", strings.NewReader(makeMap("replacement")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ContentHash == first.ContentHash {
+		t.Fatal("hash did not change")
+	}
+	if got := store.ResolveEventPayload(ctx, testProject.ID, "cache-lifecycle", payload); !strings.Contains(string(got), `"context_line":"replacement"`) {
+		t.Fatalf("stale replacement: %s", got)
+	}
+	deleted, err := store.Delete(ctx, replacement.ID, testProject.ID)
+	if err != nil || !deleted {
+		t.Fatalf("delete: %v %v", deleted, err)
+	}
+	if got := store.ResolveEventPayload(ctx, testProject.ID, "cache-lifecycle", payload); strings.Contains(string(got), "context_line") {
+		t.Fatalf("deleted map still visible: %s", got)
+	}
+}

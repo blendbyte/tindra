@@ -90,3 +90,25 @@ describe('CodeContext', () => {
     expect(wrapper.find('.stack__source').exists()).toBe(true)
   })
 })
+
+describe('highlighting failures', () => {
+  it('keeps readable source and line numbers after a chunk fails, then recovers on new source', async () => {
+    const { highlightBlock } = await import('@/composables/useShiki')
+    const { flushPromises } = await import('@vue/test-utils')
+    vi.mocked(highlightBlock).mockRejectedValueOnce(new Error('Failed to fetch grammar chunk'))
+    const wrapper = mount(CodeContext, { props: { ...defaultProps, platform: 'python' } })
+    await flushPromises()
+    expect(wrapper.findAll('.stack__source-code').map(line => line.text())).toEqual([
+      'def foo():', 'x = 1', 'return x', '', 'foo()',
+    ])
+    expect(wrapper.get('.stack__source-line--hi .stack__source-ln').text()).toBe('10')
+    expect(wrapper.get('.stack__source-line--hi .stack__source-code').findAll('span')).toHaveLength(0)
+
+    vi.mocked(highlightBlock).mockResolvedValueOnce([[{ content: 'return 42', offset: 0 }]])
+    await wrapper.setProps({ preContext: [], contextLine: 'return 42', postContext: [] })
+    await flushPromises()
+    expect(wrapper.get('.stack__source-code span').text()).toBe('return 42')
+    expect(wrapper.get('.stack__source-ln').text()).toBe('10')
+    wrapper.unmount()
+  })
+})

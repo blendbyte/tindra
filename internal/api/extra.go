@@ -301,6 +301,30 @@ func (ro *router) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleListReleaseMetadata supplies the same first-page identities for pickers.
+func (ro *router) handleListReleaseMetadata(w http.ResponseWriter, r *http.Request) {
+	releases, err := storage.ListReleaseMetadata(r.Context(), ro.pool, storage.ReleaseFilter{
+		ProjectIDs: bearerProjectIDs(r, r.URL.Query()["project_id"]),
+		Limit:      50,
+	})
+	if err != nil {
+		slog.Error("list release metadata", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"releases": releases})
+}
+
+func (ro *router) handleRecentReleaseHealth(w http.ResponseWriter, r *http.Request) {
+	releases, err := storage.ListRecentReleaseHealth(r.Context(), ro.pool, bearerProjectIDs(r, r.URL.Query()["project_id"]))
+	if err != nil {
+		slog.Error("release health", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"releases": releases})
+}
+
 // handleListReleases returns a paginated release list filtered by project.
 func (ro *router) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	const pageSize = 50

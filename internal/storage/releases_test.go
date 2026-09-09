@@ -37,6 +37,69 @@ func TestListReleases_empty(t *testing.T) {
 	}
 }
 
+func TestReleasePagePreservesMetricsAndTimestampTies(t *testing.T) {
+	truncateProjects(t)
+	ctx := context.Background()
+	p, err := storage.CreateProject(ctx, testPool, "release-page", "Page")
+	require.NoError(t, err)
+	other, err := storage.CreateProject(ctx, testPool, "release-other", "Other")
+	require.NoError(t, err)
+	for _, project := range []string{p.ID, other.ID} {
+		for _, version := range []string{"v1", "v2", "v3"} {
+			insertRelease(t, project, version)
+		}
+	}
+	_, err = testPool.Exec(ctx, `UPDATE releases SET deployed_at = '2026-01-01'`)
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `INSERT INTO transactions(project_id, transaction, release, duration_ms, status, start_timestamp, timestamp)
+	 VALUES ($1, 'request', 'v1', 100, 'ok', NOW(), NOW()),
+	 ($1, 'request', 'v1', 300, 'internal_error', NOW(), NOW()),
+	 ($2, 'request', 'v1', 900, 'ok', NOW(), NOW())`, p.ID, other.ID)
+	require.NoError(t, err)
+	all, err := storage.ListReleases(ctx, testPool, storage.ReleaseFilter{ProjectIDs: []string{p.ID}})
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	var paged []*storage.Release
+	filter := storage.ReleaseFilter{ProjectIDs: []string{p.ID}, Limit: 1}
+	for range 3 {
+		page, err := storage.ListReleases(ctx, testPool, filter)
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		paged = append(paged, page[0])
+		filter.CursorTime, filter.CursorID = &page[0].DeployedAt, &page[0].ID
+		detail, err := storage.GetRelease(ctx, testPool, page[0].ID)
+		require.NoError(t, err)
+		require.Equal(t, detail, page[0])
+		if page[0].Version == "v1" {
+			require.EqualValues(t, 2, page[0].TxCount)
+			require.Equal(t, 200.0, page[0].TxP50)
+			require.Equal(t, 50.0, page[0].TxErrorRate)
+		} else {
+			require.Zero(t, page[0].TxCount)
+			require.Zero(t, page[0].TxP50)
+		}
+	}
+	require.Equal(t, all, paged)
+	empty, err := storage.ListReleases(ctx, testPool, filter)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+
+	lock, err := testPool.Begin(ctx)
+	require.NoError(t, err)
+	defer lock.Rollback(ctx)
+	_, err = lock.Exec(ctx, `LOCK TABLE transactions, events, issues IN ACCESS EXCLUSIVE MODE`)
+	require.NoError(t, err)
+	metadataCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	metadata, err := storage.ListReleaseMetadata(metadataCtx, testPool, storage.ReleaseFilter{ProjectIDs: []string{p.ID}})
+	require.NoError(t, err, "picker must not read telemetry")
+	require.Len(t, metadata, 3)
+	for i, r := range metadata {
+		require.Equal(t, all[i].ID, r.ID)
+		require.Equal(t, all[i].Version, r.Version)
+	}
+}
+
 func TestListReleases_filteredByProject(t *testing.T) {
 	truncateProjects(t)
 	p1, _ := storage.CreateProject(context.Background(), testPool, "rel-p1", "Project 1")

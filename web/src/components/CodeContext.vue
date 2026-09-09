@@ -23,7 +23,7 @@ watchEffect((onCleanup) => {
   const lang = langForPlatform(props.platform)
   highlightBlock(allLines.value.join('\n'), lang).then(tokens => {
     if (!cancelled) { tokenLines.value = tokens; ready.value = true }
-  })
+  }).catch(() => { /* Keep the plain source visible when a deferred chunk fails. */ })
 })
 
 function lineNo(idx: number): number {

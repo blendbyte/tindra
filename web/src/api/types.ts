@@ -52,6 +52,8 @@ export interface Project {
   tx_count: number
 }
 
+export type ProjectMetadata = Pick<Project, 'id' | 'slug' | 'name' | 'public_key'>
+
 export interface ProjectQuota {
   events_this_month: number
   /** Monthly event limit (errors + transactions). 0 = unlimited. */
@@ -113,6 +115,11 @@ export interface InstanceHealth {
 
 export type IssueStatus = 'open' | 'resolved' | 'ignored' | 'regressed'
 export type IssueLevel = 'fatal' | 'error' | 'warning' | 'info'
+
+export interface DashboardIssuePage {
+  issues: Pick<Issue, 'id' | 'project_id' | 'title' | 'level' | 'event_count' | 'sparkline'>[]
+  total: number
+}
 
 export interface IssueListPage {
   issues: Issue[]
@@ -260,6 +267,12 @@ export interface ReleaseIssue {
   last_seen: string
   event_count: number
   category: 'new' | 'regressed' | 'ongoing'
+}
+
+export type ReleaseMetadata = Pick<Release, 'id' | 'project_id' | 'version' | 'deployed_at' | 'created_at'>
+
+export interface ReleaseHealthPage {
+  releases: (ReleaseMetadata & Pick<Release, 'new_issues' | 'regressed_issues'>)[]
 }
 
 export interface ReleaseListPage {
@@ -509,6 +522,11 @@ export interface TxBucket {
   count: number
   p50: number
   p95: number
+}
+
+export interface TxCountTimeseries {
+  buckets: Pick<TxBucket, 'time' | 'count'>[]
+  bucket_size: '5min' | 'hour' | 'day'
 }
 
 export interface TxTimeseries {

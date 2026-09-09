@@ -388,6 +388,30 @@ func CreateSession(ctx context.Context, pool *pgxpool.Pool, userID string) (*Ses
 	return &s, nil
 }
 
+// SessionIdentity contains only the fields required by authentication middleware.
+type SessionIdentity struct {
+	UserID      string
+	Permissions UserPermissions
+}
+
+func GetSessionIdentity(ctx context.Context, pool *pgxpool.Pool, token string) (*SessionIdentity, error) {
+	var identity SessionIdentity
+	err := pool.QueryRow(ctx, `
+		SELECT s.user_id, u.perm_manage_projects, u.perm_manage_users,
+			u.perm_manage_alerts, u.perm_manage_issues
+		FROM sessions s JOIN users u ON u.id = s.user_id
+		WHERE s.token_hash = $1 AND s.expires_at > NOW()
+	`, tokenHash(token)).Scan(&identity.UserID, &identity.Permissions.ManageProjects,
+		&identity.Permissions.ManageUsers, &identity.Permissions.ManageAlerts, &identity.Permissions.ManageIssues)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query session identity: %w", err)
+	}
+	return &identity, nil
+}
+
 func GetSession(ctx context.Context, pool *pgxpool.Pool, token string) (*Session, error) {
 	s := Session{Token: token}
 	err := pool.QueryRow(ctx, `

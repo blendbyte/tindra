@@ -218,6 +218,51 @@ func TestListEventsForIssue_pagination(t *testing.T) {
 	}
 }
 
+func TestEventNavigationUsesReceiptTimeAndUUIDTies(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "receipt-order", "Receipt order", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	ids := []string{
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000002",
+		"00000000-0000-0000-0000-000000000003",
+	}
+	for i, id := range ids {
+		_, err := testPool.Exec(ctx, `INSERT INTO events(id, project_id, issue_id, timestamp, received_at, payload)
+		 VALUES ($1, $2, $3, NOW() - ($4 * INTERVAL '1 day'), '2026-01-01', '{"level":"error"}')`, id, project.ID, issue.ID, i)
+		require.NoError(t, err)
+		require.NoError(t, storage.InsertEventTags(ctx, testPool, id, issue.ID, project.ID, [][2]string{{"event", id}}))
+	}
+	page, more, err := storage.ListEventsForIssue(ctx, testPool, issue.ID, nil, nil, 2)
+	require.NoError(t, err)
+	require.True(t, more)
+	require.Len(t, page, 2)
+	require.Equal(t, ids[2], page[0].ID)
+	require.Equal(t, ids[1], page[1].ID)
+	for i, e := range page {
+		require.Equal(t, map[string]string{"event": e.ID}, e.Tags)
+		detail, err := storage.GetEventForIssueAtOffset(ctx, testPool, issue.ID, i)
+		require.NoError(t, err)
+		require.Equal(t, e.ID, detail.ID)
+	}
+	latest, err := storage.GetLatestEventForIssue(ctx, testPool, issue.ID)
+	require.NoError(t, err)
+	require.Equal(t, page[0].ID, latest.ID)
+	last := page[1]
+	page, more, err = storage.ListEventsForIssue(ctx, testPool, issue.ID, &last.ReceivedAt, &last.ID, 2)
+	require.NoError(t, err)
+	require.False(t, more)
+	require.Len(t, page, 1)
+	require.Equal(t, ids[0], page[0].ID)
+	require.Equal(t, ids[0], page[0].Tags["event"])
+	last = page[0]
+	page, more, err = storage.ListEventsForIssue(ctx, testPool, issue.ID, &last.ReceivedAt, &last.ID, 2)
+	require.NoError(t, err)
+	require.Empty(t, page)
+	require.False(t, more)
+}
+
 func TestGetIssueHistogram(t *testing.T) {
 	project, _ := setupProjectAndEvent(t)
 	ctx := context.Background()

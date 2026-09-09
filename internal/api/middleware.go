@@ -154,11 +154,9 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 				return
 			}
 			if tok != nil {
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					defer cancel()
-					storage.TouchAPIToken(ctx, ro.pool, tok.ID)
-				}()
+				if tok.TouchDue {
+					ro.touchAPIToken(tok.ID)
+				}
 				ctx := context.WithValue(r.Context(), ctxTokenProjID, tok.ProjectID)
 				ctx = context.WithValue(ctx, ctxTokenWritable, tok.Writable)
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -172,7 +170,7 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		session, err := storage.GetSession(r.Context(), ro.pool, cookie.Value)
+		session, err := storage.GetSessionIdentity(r.Context(), ro.pool, cookie.Value)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -183,11 +181,7 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUserID, session.UserID)
-		// Fetch permissions so requirePerm can check them without an extra DB call.
-		u, err := storage.GetUserByID(ctx, ro.pool, session.UserID)
-		if err == nil && u != nil {
-			ctx = context.WithValue(ctx, ctxUserPerms, &u.Permissions)
-		}
+		ctx = context.WithValue(ctx, ctxUserPerms, &session.Permissions)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -201,7 +195,7 @@ func (ro *router) requireSessionAuth(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		session, err := storage.GetSession(r.Context(), ro.pool, cookie.Value)
+		session, err := storage.GetSessionIdentity(r.Context(), ro.pool, cookie.Value)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -211,10 +205,7 @@ func (ro *router) requireSessionAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUserID, session.UserID)
-		u, err := storage.GetUserByID(ctx, ro.pool, session.UserID)
-		if err == nil && u != nil {
-			ctx = context.WithValue(ctx, ctxUserPerms, &u.Permissions)
-		}
+		ctx = context.WithValue(ctx, ctxUserPerms, &session.Permissions)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -256,4 +247,25 @@ func (ro *router) requirePerm(perm string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// Last-use writes are best effort. Keep at most four in flight per router and
+// one per token; saturated or failed touches can retry on a later request.
+func (ro *router) touchAPIToken(id string) {
+	ro.tokenTouchMu.Lock()
+	if _, active := ro.tokenTouches[id]; active || len(ro.tokenTouches) >= 4 {
+		ro.tokenTouchMu.Unlock()
+		return
+	}
+	if ro.tokenTouches == nil {
+		ro.tokenTouches = make(map[string]struct{})
+	}
+	ro.tokenTouches[id] = struct{}{}
+	ro.tokenTouchMu.Unlock()
+	go func() {
+		defer func() { ro.tokenTouchMu.Lock(); delete(ro.tokenTouches, id); ro.tokenTouchMu.Unlock() }()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		storage.TouchAPIToken(ctx, ro.pool, id)
+	}()
 }

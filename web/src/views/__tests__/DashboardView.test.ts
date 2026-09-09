@@ -49,6 +49,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: vi.fn(() => ({ show: vi.fn() })),
 }))
 
+import { apiFetch } from '@/api/client'
 import DashboardView from '../DashboardView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -74,12 +75,14 @@ function setupQueries({
   uptimeMonitors = [] as unknown[],
   cronMonitors = [] as unknown[],
   projects = [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 1 }] as Array<{ id: string; name: string; slug: string; public_key?: string; event_count?: number }>,
+  projectUsage = projects as typeof projects | null,
   projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
   projStatsFetching = false,
 } = {}) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects } as any)
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: manageAlerts } }) } as any)
+    .mockReturnValueOnce({ data: ref(projectUsage ?? undefined) } as any)
     .mockReturnValueOnce({ data: ref(issues), isFetching: ref(issuesFetching) } as any)
     .mockReturnValueOnce({ data: ref(txSummaries), isFetching: ref(txFetching) } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
@@ -109,6 +112,33 @@ afterEach(() => {
 })
 
 describe('DashboardView', () => {
+  it('requests the lightweight issue overview', async () => {
+    setupQueries()
+    const wrapper = mount(DashboardView, { global: { stubs } })
+    const query = vi.mocked(useQuery).mock.calls[2]?.[0] as any
+    expect(query.queryKey.value).toEqual(['issues', 'overview', ''])
+    await query.queryFn({ signal: new AbortController().signal })
+    expect(apiFetch).toHaveBeenCalledWith('/api/issues/overview?', { signal: expect.any(AbortSignal) })
+    wrapper.unmount()
+  })
+  it('requests only recent release health for the dashboard', async () => {
+    setupQueries()
+    const wrapper = mount(DashboardView, { global: { stubs } })
+    const query = vi.mocked(useQuery).mock.calls[5]?.[0] as any
+    expect(query.queryKey.value).toEqual(['releases', 'health', ''])
+    await query.queryFn({ signal: new AbortController().signal })
+    expect(apiFetch).toHaveBeenCalledWith('/api/releases/health?', { signal: expect.any(AbortSignal) })
+    wrapper.unmount()
+  })
+  it('requests count-only buckets for the weekly heatmap', async () => {
+    setupQueries()
+    const wrapper = mount(DashboardView, { global: { stubs } })
+    const query = vi.mocked(useQuery).mock.calls[4]?.[0] as any
+    expect(query.queryKey.value[0]).toBe('dash-tx-counts')
+    await query.queryFn({ signal: new AbortController().signal })
+    expect(apiFetch).toHaveBeenCalledWith('/api/transactions/counts?hours=168', { signal: expect.any(AbortSignal) })
+    wrapper.unmount()
+  })
   describe('KPI strip', () => {
     it('renders all five KPI labels', () => {
       const wrapper = makeWrapper()
@@ -439,6 +469,7 @@ describe('DashboardView', () => {
       vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'App', slug: 'app', event_count: 1 }] } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
+        .mockReturnValueOnce({ data: ref([{ id: 'p1', event_count: 1 }]) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
         .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
         .mockReturnValueOnce({ data: ref({ buckets: [bucket] }) } as any)
@@ -715,6 +746,15 @@ describe('DashboardView', () => {
       expect(wrapper.find('.db-kpis').exists()).toBe(false)
     })
 
+    it('does not mistake loaded metadata for zero usage while usage is pending', () => {
+      const wrapper = makeWrapper({
+        projects: [{ id: 'p1', name: 'App', slug: 'app', public_key: 'key1' }],
+        projectUsage: null,
+      })
+      expect(wrapper.text()).not.toContain('Waiting for your first event')
+      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+    })
+
     it('shows the DSN in the waiting card', () => {
       const wrapper = makeWrapper({
         projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
@@ -786,6 +826,7 @@ describe('DashboardView', () => {
       } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
+        .mockReturnValueOnce({ data: ref([{ id: 'p1', event_count: 0 }]) } as any)
         .mockReturnValueOnce({ data: ref({ issues: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
         .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
         .mockReturnValueOnce({ data: ref(undefined) } as any)

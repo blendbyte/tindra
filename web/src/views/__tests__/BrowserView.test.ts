@@ -468,7 +468,7 @@ describe('BrowserView', () => {
       expect(pageloadsCall[0].enabled.value).toBe(true)
       for (const [opts] of vi.mocked(useQuery).mock.calls) {
         opts.queryKey?.value
-        opts.queryFn?.()
+        opts.queryFn?.({ signal: new AbortController().signal })
       }
     })
   })

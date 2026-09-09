@@ -36,7 +36,7 @@ func (ro *router) enforceIssueProject(w http.ResponseWriter, r *http.Request, is
 	if !isBearer || tokenProjID == "" {
 		return true
 	}
-	issue, err := storage.GetIssue(r.Context(), ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(r.Context(), ro.pool, issueID)
 	if err != nil {
 		slog.Error("get issue for project scope check", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

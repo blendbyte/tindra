@@ -1,7 +1,9 @@
 package ingest
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,19 +62,45 @@ func EncodeProfile(p *Profile) (data []byte, encoding int16, err error) {
 }
 
 // DecodeProfile reverses EncodeProfile.
+// ErrProfileDecodeBudget means the next chunk would exceed the request budget.
+var ErrProfileDecodeBudget = errors.New("profile decode budget exceeded")
+
 func DecodeProfile(encoding int16, data []byte) (*Profile, error) {
+	p, _, err := DecodeProfileLimited(context.Background(), encoding, data, maxDecodedProfileBytes)
+	return p, err
+}
+
+// DecodeProfileLimited charges all decompressed JSON, including frames and stacks,
+// before allocating the decoded object. The decoder also caps any transient raw
+// buffer at 64 MiB. Cancellation is checked between decompression and JSON parsing.
+func DecodeProfileLimited(ctx context.Context, encoding int16, data []byte, remaining int) (*Profile, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if remaining <= 0 {
+		return nil, 0, ErrProfileDecodeBudget
+	}
 	if encoding != ProfileEncodingZstdJSON {
-		return nil, fmt.Errorf("unknown profile encoding %d", encoding)
+		return nil, 0, fmt.Errorf("unknown profile encoding %d", encoding)
 	}
 	raw, err := profileDecoder.DecodeAll(data, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decompress profile: %w", err)
+		return nil, 0, fmt.Errorf("decompress profile: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(raw) > remaining {
+		return nil, 0, ErrProfileDecodeBudget
 	}
 	var p Profile
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, fmt.Errorf("unmarshal profile: %w", err)
+		return nil, 0, fmt.Errorf("unmarshal profile: %w", err)
 	}
-	return &p, nil
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	return &p, len(raw), nil
 }
 
 // BufferedProfile is a profile on its way to Postgres: metadata as columns,

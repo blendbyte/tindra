@@ -56,7 +56,10 @@ func NewN1Detector(pool *pgxpool.Pool) *N1Detector {
 // ProcessBatch is the hook called by TransactionBuffer after each write batch.
 func (d *N1Detector) ProcessBatch(ctx context.Context, pool *pgxpool.Pool, txs []ingest.BufferedTransaction, txIDs []string) {
 	for i, tx := range txs {
-		if txIDs[i] == "" {
+		if ctx.Err() != nil {
+			return
+		}
+		if i >= len(txIDs) || txIDs[i] == "" {
 			continue
 		}
 		d.detectTx(ctx, tx, txIDs[i])
@@ -64,13 +67,20 @@ func (d *N1Detector) ProcessBatch(ctx context.Context, pool *pgxpool.Pool, txs [
 }
 
 func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction, txID string) {
+	if len(tx.Spans) < n1Threshold {
+		return
+	}
 	type group struct {
 		count       int
 		totalMs     int
 		exampleDesc string // un-normalized form for the issue title
 	}
 	groups := make(map[string]*group)
-	for _, sp := range tx.Spans {
+	normalized := make(map[string]string)
+	for i, sp := range tx.Spans {
+		if i%128 == 0 && ctx.Err() != nil {
+			return
+		}
 		if !strings.HasPrefix(sp.Op, "db") {
 			continue
 		}
@@ -78,7 +88,13 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 		if desc == "" {
 			continue
 		}
-		key := normalizeSQL(desc)
+		key, exists := normalized[desc]
+		if !exists {
+			key = normalizeSQL(desc)
+			if len(normalized) < 256 {
+				normalized[desc] = key
+			}
+		}
 		if g, ok := groups[key]; ok {
 			g.count++
 			g.totalMs += sp.DurationMs
@@ -87,7 +103,10 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 		}
 	}
 
-	for _, g := range groups {
+	for key, g := range groups {
+		if ctx.Err() != nil {
+			return
+		}
 		if g.count < n1Threshold {
 			continue
 		}
@@ -95,7 +114,7 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 			continue
 		}
 
-		fp := n1Fingerprint(tx.ProjectID, tx.Transaction, g.exampleDesc)
+		fp := n1NormalizedFingerprint(tx.ProjectID, tx.Transaction, key)
 		title := fmt.Sprintf("N+1 Query: %s in %s", truncate(g.exampleDesc, 120), truncate(tx.Transaction, 80))
 
 		issue, _, _, err := storage.UpsertIssue(ctx, d.pool,
@@ -112,8 +131,8 @@ func (d *N1Detector) detectTx(ctx context.Context, tx ingest.BufferedTransaction
 	}
 }
 
-func n1Fingerprint(projectID, transactionName, queryDesc string) string {
-	h := sha256.Sum256([]byte("n1:" + projectID + ":" + transactionName + ":" + normalizeSQL(queryDesc)))
+func n1NormalizedFingerprint(projectID, transactionName, normalized string) string {
+	h := sha256.Sum256([]byte("n1:" + projectID + ":" + transactionName + ":" + normalized))
 	return hex.EncodeToString(h[:])
 }
 

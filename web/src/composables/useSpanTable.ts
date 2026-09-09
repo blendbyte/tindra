@@ -26,12 +26,14 @@ export function useSpanTable(config: {
 
   const { data: summaries, isLoading, isError, refetch } = useQuery({
     queryKey: computed(() => [`${config.queryKeyPrefix}-summaries`, spanParams.value]),
-    queryFn: () => apiFetch<SpanSummary[]>(`/api/spans/${config.endpoint}?${spanParams.value}`),
+    staleTime: 5_000,
+    queryFn: ({ signal }) => apiFetch<SpanSummary[]>(`/api/spans/${config.endpoint}?${spanParams.value}`, { signal }),
   })
 
   const { data: timeseries } = useQuery({
     queryKey: computed(() => [`${config.queryKeyPrefix}-timeseries`, spanParams.value]),
-    queryFn: () => apiFetch<SpanTimeseries>(`/api/spans/${config.endpoint}/timeseries?${spanParams.value}`),
+    staleTime: 5_000,
+    queryFn: ({ signal }) => apiFetch<SpanTimeseries>(`/api/spans/${config.endpoint}/timeseries?${spanParams.value}`, { signal }),
   })
 
   const sortCol = ref('time_pct')

@@ -72,6 +72,31 @@ func TestCreateProject_duplicateSlug(t *testing.T) {
 	}
 }
 
+func TestListProjectMetadataDoesNotReadTelemetry(t *testing.T) {
+	truncateProjects(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	empty, err := storage.ListProjectMetadata(ctx, testPool)
+	require.NoError(t, err)
+	require.NotNil(t, empty)
+	require.Empty(t, empty)
+	z, err := storage.CreateProject(ctx, testPool, "metadata-z", "Zebra")
+	require.NoError(t, err)
+	a, err := storage.CreateProject(ctx, testPool, "metadata-a", "Alpha")
+	require.NoError(t, err)
+	tx, err := testPool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(context.Background())
+	_, err = tx.Exec(ctx, `LOCK TABLE events, transactions, logs, profile_chunks IN ACCESS EXCLUSIVE MODE`)
+	require.NoError(t, err)
+	projects, err := storage.ListProjectMetadata(ctx, testPool)
+	require.NoError(t, err, "metadata must not wait on telemetry tables")
+	require.Equal(t, []*storage.ProjectMetadata{
+		{ID: a.ID, Slug: a.Slug, Name: a.Name, PublicKey: a.PublicKey},
+		{ID: z.ID, Slug: z.Slug, Name: z.Name, PublicKey: z.PublicKey},
+	}, projects)
+}
+
 func TestListProjects(t *testing.T) {
 	truncateProjects(t)
 

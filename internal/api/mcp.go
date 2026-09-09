@@ -835,7 +835,7 @@ func (ro *router) mcpListIssueEvents(ctx context.Context, args map[string]any) (
 		return "", mcpToolError{"issue_id is required"}
 	}
 	// Verify issue exists and enforce project scope.
-	issue, err := storage.GetIssue(ctx, ro.pool, issueID)
+	issue, err := storage.GetIssueMetadata(ctx, ro.pool, issueID)
 	if err != nil {
 		return "", fmt.Errorf("get issue: %w", err)
 	}
@@ -912,7 +912,7 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 	if id == "" {
 		return "", mcpToolError{"id is required"}
 	}
-	issue, err := storage.GetIssue(ctx, ro.pool, id)
+	issue, err := storage.GetIssueMetadata(ctx, ro.pool, id)
 	if err != nil {
 		return "", fmt.Errorf("get issue: %w", err)
 	}

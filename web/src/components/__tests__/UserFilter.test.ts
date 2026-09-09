@@ -231,14 +231,14 @@ describe('UserFilter', () => {
     const w = mountFilter()
     await w.find('[aria-label="Filter by user"]').trigger('click')
     const opts = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as {
-      queryFn: () => unknown
+      queryFn: (context: { signal: AbortSignal }) => unknown
       queryKey: unknown
       enabled: unknown
     }
-    opts.queryFn()
+    opts.queryFn({ signal: new AbortController().signal })
     expect(unref(opts.enabled)).toBe(true)
     expect(unref(opts.queryKey)?.[0]).toBe('app-users')
-    expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/api/app-users?'))
+    expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/api/app-users?'), { signal: expect.any(AbortSignal) })
   })
 
   it('debounces search before putting q on the query key', async () => {

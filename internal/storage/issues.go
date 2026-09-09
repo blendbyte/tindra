@@ -84,8 +84,20 @@ func scanIssue(row pgx.Row, iss *Issue) error {
 // UpsertIssue finds an existing issue by fingerprint (via issue_fingerprints) or creates one.
 // Returns the issue, whether it was newly created, and whether it just regressed.
 func UpsertIssue(ctx context.Context, pool *pgxpool.Pool, projectID, fingerprint, title, level, kind, environment, release string, ts time.Time) (*Issue, bool, bool, error) {
+	return upsertIssue(ctx, pool, projectID, fingerprint, title, level, kind, environment, release, ts)
+}
+
+// issueDB permits the same issue update to run within an event transaction.
+// Begin creates a savepoint when the caller is already using a pgx transaction.
+type issueDB interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Begin(context.Context) (pgx.Tx, error)
+}
+
+func upsertIssue(ctx context.Context, db issueDB, projectID, fingerprint, title, level, kind, environment, release string, ts time.Time) (*Issue, bool, bool, error) {
 	for range 2 {
-		iss, created, regressed, err := upsertIssueOnce(ctx, pool, projectID, fingerprint, title, level, kind, environment, release, ts)
+		iss, created, regressed, err := upsertIssueOnce(ctx, db, projectID, fingerprint, title, level, kind, environment, release, ts)
 		if err == nil {
 			return iss, created, regressed, nil
 		}
@@ -99,7 +111,7 @@ func UpsertIssue(ctx context.Context, pool *pgxpool.Pool, projectID, fingerprint
 
 var errFingerprintConflict = errors.New("fingerprint conflict")
 
-func upsertIssueOnce(ctx context.Context, pool *pgxpool.Pool, projectID, fingerprint, title, level, kind, environment, release string, ts time.Time) (*Issue, bool, bool, error) {
+func upsertIssueOnce(ctx context.Context, pool issueDB, projectID, fingerprint, title, level, kind, environment, release string, ts time.Time) (*Issue, bool, bool, error) {
 	// Fast path: fingerprint already mapped to an issue.
 	var existingID string
 	err := pool.QueryRow(ctx, `
@@ -203,6 +215,56 @@ func upsertIssueOnce(ctx context.Context, pool *pgxpool.Pool, projectID, fingerp
 		return nil, false, false, fmt.Errorf("commit: %w", err)
 	}
 	return &iss, true, false, nil
+}
+
+// LockIssueMembership coordinates event grouping/retention with merge and
+// unmerge. Readers may run concurrently; membership moves take the exclusive
+// transaction lock before reading statistics or moving rows.
+func LockIssueMembership(ctx context.Context, tx pgx.Tx, exclusive bool) error {
+	query := "SELECT pg_advisory_xact_lock_shared(1953066596, 1)"
+	if exclusive {
+		query = "SELECT pg_advisory_xact_lock(1953066596, 1)"
+	}
+	_, err := tx.Exec(ctx, query)
+	return err
+}
+
+// GroupEvent increments an issue and links its event in one transaction.
+// A nil issue means the event was deleted or another worker already grouped it.
+func GroupEvent(ctx context.Context, pool *pgxpool.Pool, eventID, fingerprint, title, level, environment, release string) (*Issue, bool, bool, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("begin grouping: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if err := LockIssueMembership(ctx, tx, false); err != nil {
+		return nil, false, false, fmt.Errorf("lock issue membership: %w", err)
+	}
+
+	var projectID string
+	var timestamp time.Time
+	var existingIssue *string
+	err = tx.QueryRow(ctx, `SELECT project_id, timestamp, issue_id FROM events WHERE id = $1 FOR UPDATE`, eventID).Scan(&projectID, &timestamp, &existingIssue)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, false, nil
+	}
+	if err != nil {
+		return nil, false, false, fmt.Errorf("lock event: %w", err)
+	}
+	if existingIssue != nil {
+		return nil, false, false, nil
+	}
+	issue, created, regressed, err := upsertIssue(ctx, tx, projectID, fingerprint, title, level, "error", environment, release, timestamp)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE events SET fingerprint = $1, issue_id = $2 WHERE id = $3`, fingerprint, issue.ID, eventID); err != nil {
+		return nil, false, false, fmt.Errorf("link grouped event: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, false, fmt.Errorf("commit grouping: %w", err)
+	}
+	return issue, created, regressed, nil
 }
 
 // LinkEventToIssue sets fingerprint and issue_id on an event row.
@@ -386,17 +448,14 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 		limit = 50
 	}
 
+	// Group first so PostgreSQL can hash identities instead of sorting every event.
+	// COUNT(identity) excludes the NULL group, matching COUNT(DISTINCT ...).
 	q := `SELECT i.id, i.project_id, i.fingerprint, i.title, i.level, i.kind,
 		i.first_seen, i.last_seen, i.event_count, i.status,
 		i.assignee_id, i.environment,
 		i.ignore_until, i.ignore_count_limit, i.ignore_count,
-		(SELECT COUNT(DISTINCT COALESCE(
-		     payload->'user'->>'id',
-		     payload->'user'->>'username',
-		     payload->'user'->>'email',
-		     payload->'user'->>'ip_address'
-		 )) FROM events
-		 WHERE issue_id = i.id AND payload->>'user' IS NOT NULL) AS user_count
+		(SELECT COUNT(identity) FROM (SELECT COALESCE(payload->'user'->>'id',payload->'user'->>'username',payload->'user'->>'email',payload->'user'->>'ip_address') AS identity FROM events
+		 WHERE issue_id = i.id GROUP BY 1) identities) AS user_count
 	FROM issues i WHERE TRUE`
 	q, args := addCommonFilters(q, []any{}, filter)
 
@@ -434,6 +493,60 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 	return issues, rows.Err()
 }
 
+// DashboardIssue contains the fields used by the dashboard's hot-issue list.
+type DashboardIssue struct {
+	ID         string `json:"id"`
+	ProjectID  string `json:"project_id"`
+	Title      string `json:"title"`
+	Level      string `json:"level"`
+	EventCount int64  `json:"event_count"`
+	Sparkline  []int  `json:"sparkline,omitempty"`
+}
+
+// ListDashboardIssues preserves the dashboard's stable client-side selection:
+// choose the five highest counts within the 50 most recently seen open issues.
+func ListDashboardIssues(ctx context.Context, pool *pgxpool.Pool, projectIDs []string) ([]DashboardIssue, error) {
+	page, args := addCommonFilters(`SELECT id,project_id,title,level,event_count,last_seen FROM issues WHERE TRUE`, nil, IssueFilter{Status: "open", ProjectIDs: projectIDs})
+	page += " ORDER BY last_seen DESC,id DESC LIMIT 50"
+	rows, err := pool.Query(ctx, "WITH recent AS MATERIALIZED ("+page+`) SELECT id,project_id,title,level,event_count
+ FROM recent ORDER BY event_count DESC,last_seen DESC,id DESC LIMIT 5`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard issues: %w", err)
+	}
+	defer rows.Close()
+	result := []DashboardIssue{}
+	for rows.Next() {
+		var issue DashboardIssue
+		if err := rows.Scan(&issue.ID, &issue.ProjectID, &issue.Title, &issue.Level, &issue.EventCount); err != nil {
+			return nil, fmt.Errorf("scan dashboard issue: %w", err)
+		}
+		result = append(result, issue)
+	}
+	return result, rows.Err()
+}
+
+// IssueMetadata contains only the issue-row fields needed by scope checks,
+// history updates and histogram bounds. It is not an enriched API response.
+type IssueMetadata struct {
+	ID        string
+	ProjectID string
+	FirstSeen time.Time
+	Status    string
+}
+
+func GetIssueMetadata(ctx context.Context, pool *pgxpool.Pool, id string) (*IssueMetadata, error) {
+	var issue IssueMetadata
+	err := pool.QueryRow(ctx, `SELECT id, project_id, first_seen, status FROM issues WHERE id = $1`, id).
+		Scan(&issue.ID, &issue.ProjectID, &issue.FirstSeen, &issue.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query issue metadata: %w", err)
+	}
+	return &issue, nil
+}
+
 func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error) {
 	var iss Issue
 	err := pool.QueryRow(ctx, `
@@ -451,14 +564,10 @@ func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error
 		) e ON TRUE
 		LEFT JOIN releases r ON r.project_id = i.project_id AND r.version = e.release
 		LEFT JOIN LATERAL (
-		    SELECT COUNT(DISTINCT COALESCE(
-		        payload->'user'->>'id',
-		        payload->'user'->>'username',
-		        payload->'user'->>'email',
-		        payload->'user'->>'ip_address'
-		    )) AS cnt
-		    FROM events
-		    WHERE issue_id = i.id AND payload->>'user' IS NOT NULL
+		    SELECT COUNT(identity) AS cnt FROM (
+		      SELECT COALESCE(payload->'user'->>'id',payload->'user'->>'username',payload->'user'->>'email',payload->'user'->>'ip_address') AS identity FROM events
+		      WHERE issue_id = i.id GROUP BY 1
+		    ) identities
 		) u ON TRUE
 		WHERE i.id = $1
 	`, id).Scan(
@@ -542,6 +651,9 @@ func MergeIssues(ctx context.Context, pool *pgxpool.Pool, primaryID string, merg
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	if err := LockIssueMembership(ctx, tx, true); err != nil {
+		return nil, fmt.Errorf("lock issue membership: %w", err)
+	}
 
 	// Reassign all fingerprint mappings from the merged issues to the primary.
 	if _, err := tx.Exec(ctx, `
@@ -608,6 +720,9 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	if err := LockIssueMembership(ctx, tx, true); err != nil {
+		return nil, fmt.Errorf("lock issue membership: %w", err)
+	}
 
 	// Guard: issue must have more fingerprints than we're removing.
 	var totalFPs int

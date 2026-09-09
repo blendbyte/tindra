@@ -178,33 +178,18 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 		if rule.LastFiredAt != nil {
 			since = *rule.LastFiredAt
 		}
-		var newArgs, regArgs []any
-		var newClauses, regClauses []string
-
+		args := []any{since}
+		where := "(first_seen > $1 OR regressed_at > $1)"
 		if len(rule.ProjectIDs) > 0 {
-			newArgs = append(newArgs, rule.ProjectIDs)
-			newClauses = append(newClauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(newArgs)))
-			regArgs = append(regArgs, rule.ProjectIDs)
-			regClauses = append(regClauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(regArgs)))
+			args = append(args, rule.ProjectIDs)
+			where += " AND project_id = ANY($2::uuid[])"
 		}
-		newArgs = append(newArgs, since)
-		newClauses = append(newClauses, fmt.Sprintf("first_seen > $%d", len(newArgs)))
-		regArgs = append(regArgs, since)
-		regClauses = append(regClauses, fmt.Sprintf("regressed_at > $%d", len(regArgs)))
-
-		newWhere, newArgs := appendIssueFilters(rule, strings.Join(newClauses, " AND "), newArgs)
-		regWhere, regArgs := appendIssueFilters(rule, strings.Join(regClauses, " AND "), regArgs)
-
+		where, args = appendIssueFilters(rule, where, args)
 		var newCount, regressedCount int
 		if err := e.pool.QueryRow(ctx,
-			"SELECT COUNT(*) FROM issues WHERE "+newWhere, newArgs...,
-		).Scan(&newCount); err != nil {
-			return false, nil, fmt.Errorf("new_or_regressed new count: %w", err)
-		}
-		if err := e.pool.QueryRow(ctx,
-			"SELECT COUNT(*) FROM issues WHERE "+regWhere, regArgs...,
-		).Scan(&regressedCount); err != nil {
-			return false, nil, fmt.Errorf("new_or_regressed regressed count: %w", err)
+			"SELECT COUNT(*) FILTER (WHERE first_seen > $1), COUNT(*) FILTER (WHERE regressed_at > $1) FROM issues WHERE "+where, args...,
+		).Scan(&newCount, &regressedCount); err != nil {
+			return false, nil, fmt.Errorf("new_or_regressed count: %w", err)
 		}
 		if newCount == 0 && regressedCount == 0 {
 			return false, nil, nil

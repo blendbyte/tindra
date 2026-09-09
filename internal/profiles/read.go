@@ -24,15 +24,14 @@ const maxChunkDuration = 70 * time.Second
 // which is far past anything worth drawing a flame graph of.
 const maxChunksPerTransaction = 16
 
-// maxDecodedBytesPerRequest bounds the decompressed total, not just the count.
-// Each chunk is individually capped, so without an aggregate one authenticated
-// request could hold a gigabyte of samples in memory at once.
+// maxDecodedBytesPerRequest bounds the total decompressed JSON admitted for
+// parsing, including frames and stacks. This is not an exact Go heap limit:
+// decoded objects and a transient raw chunk also occupy memory.
 const maxDecodedBytesPerRequest = 96 << 20
 
-// approxBytesPerSample is a rough per-sample cost used only to bound how much
-// one request decodes. Samples dominate a decoded profile, and the exact figure
-// matters less than having any ceiling at all.
-const approxBytesPerSample = 64
+// Bound simultaneous profile decoding/folding independently of request count.
+// Waiting requests do not hold a database connection and honor cancellation.
+var profileReadSlots = make(chan struct{}, 2)
 
 // ErrNoProfile means the transaction has no profile: either none was sent, or
 // it aged out, or profiling is off for the project.
@@ -56,6 +55,16 @@ type transactionRef struct {
 // chunks that were running while it ran, and the samples are then cut down to
 // the transaction's own slice of them.
 func FlameGraphForTransaction(ctx context.Context, pool *pgxpool.Pool, txID string) (*FlameGraph, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case profileReadSlots <- struct{}{}:
+		defer func() { <-profileReadSlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	ref, err := loadTransactionRef(ctx, pool, txID)
 	if err != nil {
 		return nil, err
@@ -112,7 +121,7 @@ func foldV1(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 	if err != nil {
 		return nil, fmt.Errorf("query v1 profile: %w", err)
 	}
-	profs, err := decodeRows(rows)
+	profs, err := decodeRows(ctx, rows, maxDecodedBytesPerRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +134,9 @@ func foldV1(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 	threadID := profs[0].ActiveThreadID
 	if threadID != "" && !hasThread(profs[0], threadID) {
 		threadID = ""
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return Fold(profs, FoldOptions{ThreadID: threadID}), nil
 }
@@ -147,7 +159,7 @@ func foldV2(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 	if err != nil {
 		return nil, fmt.Errorf("query profile chunks: %w", err)
 	}
-	profs, err := decodeRows(rows)
+	profs, err := decodeRows(ctx, rows, maxDecodedBytesPerRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +167,9 @@ func foldV2(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 		return nil, ErrNoProfile
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	g := Fold(profs, FoldOptions{
 		ThreadID: ref.ThreadID,
 		StartNs:  ref.Start.UnixNano(),
@@ -170,12 +185,12 @@ func foldV2(ctx context.Context, pool *pgxpool.Pool, ref transactionRef) (*Flame
 	return g, nil
 }
 
-func decodeRows(rows pgx.Rows) ([]*ingest.Profile, error) {
+func decodeRows(ctx context.Context, rows pgx.Rows, budget int) ([]*ingest.Profile, error) {
 	defer rows.Close()
 
 	var (
-		profs   []*ingest.Profile
-		samples int
+		profs        []*ingest.Profile
+		decodedBytes int
 	)
 	for rows.Next() {
 		var (
@@ -185,17 +200,17 @@ func decodeRows(rows pgx.Rows) ([]*ingest.Profile, error) {
 		if err := rows.Scan(&encoding, &data); err != nil {
 			return nil, fmt.Errorf("scan profile row: %w", err)
 		}
-		p, err := ingest.DecodeProfile(encoding, data)
+		p, size, err := ingest.DecodeProfileLimited(ctx, encoding, data, budget-decodedBytes)
+		if errors.Is(err, ingest.ErrProfileDecodeBudget) {
+			break
+		}
 		if err != nil {
 			return nil, fmt.Errorf("decode profile: %w", err)
 		}
 		profs = append(profs, p)
 
-		// Stop accumulating rather than fail: the chunks are ordered by time,
-		// so what has been decoded already is the start of the window and still
-		// draws a usable graph.
-		samples += len(p.Samples)
-		if samples*approxBytesPerSample > maxDecodedBytesPerRequest {
+		decodedBytes += size
+		if decodedBytes >= budget {
 			break
 		}
 	}

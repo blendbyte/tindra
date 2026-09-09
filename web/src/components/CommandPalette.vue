@@ -36,10 +36,15 @@ const userResults = ref<AppUser[]>([])
 const isSearching = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
-watch(q, (val) => {
+watch([q, () => [...projects.selectedIds].sort().join(','), () => ui.cmdOpen], ([val, , open], _previous, onCleanup) => {
+  const controller = new AbortController()
+  onCleanup(() => {
+    controller.abort()
+    if (searchTimer) clearTimeout(searchTimer)
+  })
   if (searchTimer) clearTimeout(searchTimer)
   const trimmed = val.trim()
-  if (trimmed.length < 2) {
+  if (!open || trimmed.length < 2) {
     issueResults.value = []
     userResults.value = []
     isSearching.value = false
@@ -53,16 +58,18 @@ watch(q, (val) => {
       const userParams = new URLSearchParams({ q: trimmed })
       for (const id of projects.selectedIds) userParams.append('project_id', id)
       const [data, people] = await Promise.all([
-        apiFetch<IssueListPage>(`/api/issues?${params}`),
-        apiFetch<AppUser[]>(`/api/app-users?${userParams}`),
+        apiFetch<IssueListPage>(`/api/issues?${params}`, { signal: controller.signal }),
+        apiFetch<AppUser[]>(`/api/app-users?${userParams}`, { signal: controller.signal }),
       ])
+      if (controller.signal.aborted) return
       issueResults.value = Array.isArray(data) ? data as Issue[] : (data.issues ?? [])
       userResults.value = Array.isArray(people) ? people : []
     } catch {
+      if (controller.signal.aborted) return
       issueResults.value = []
       userResults.value = []
     } finally {
-      isSearching.value = false
+      if (!controller.signal.aborted) isSearching.value = false
     }
   }, 200)
 })

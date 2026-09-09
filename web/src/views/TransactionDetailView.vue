@@ -52,7 +52,7 @@ const {
   refetch: refetchTx,
 } = useQuery({
   queryKey: computed(() => ['transactions', txId.value]),
-  queryFn: () => apiFetch<Transaction>(`/api/transactions/${txId.value}`),
+  queryFn: ({ signal }) => apiFetch<Transaction>(`/api/transactions/${txId.value}`, { signal }),
 })
 
 const {
@@ -62,7 +62,7 @@ const {
   refetch: refetchSpans,
 } = useQuery({
   queryKey: computed(() => ['transactions', txId.value, 'spans']),
-  queryFn: () => apiFetch<Span[]>(`/api/transactions/${txId.value}/spans`),
+  queryFn: ({ signal }) => apiFetch<Span[]>(`/api/transactions/${txId.value}/spans`, { signal }),
   enabled: computed(() => !!txId.value),
 })
 
@@ -88,21 +88,21 @@ watchEffect(() => {
 const total = computed(() => {
   const txMs = tx.value?.duration_ms ?? 1
   if (!spanList.value.length) return txMs
-  const maxSpanEnd = Math.max(...spanList.value.map(s => s.start_offset_ms + s.duration_ms))
+  const maxSpanEnd = spanList.value.reduce((end, s) => Math.max(end, s.start_offset_ms + s.duration_ms), 0)
   return Math.max(txMs, maxSpanEnd)
 })
 
 watch(total, (t) => {
   viewStart.value = 0
   viewEnd.value = t
-})
+}, { immediate: true })
 
 const criticalSpanCount = computed(() => spanList.value.filter(s => s.is_critical).length)
 
 const critPathEndMs = computed(() => {
   const critical = spanList.value.filter(s => s.is_critical)
   if (critical.length === 0) return 0
-  return Math.max(...critical.map(s => s.start_offset_ms + s.duration_ms))
+  return critical.reduce((end, s) => Math.max(end, s.start_offset_ms + s.duration_ms), 0)
 })
 
 const hasCriticalPath = computed(() => criticalSpanCount.value > 0 && spanList.value.length > 1)
@@ -141,17 +141,27 @@ const childCounts = computed((): Map<string, number> => {
   return m
 })
 
+const childrenByParent = computed(() => {
+  const children = new Map<string, Span[]>()
+  for (const span of spanList.value) {
+    if (!span.parent_span_id) continue
+    const siblings = children.get(span.parent_span_id)
+    if (siblings) siblings.push(span)
+    else children.set(span.parent_span_id, [span])
+  }
+  return children
+})
+
 // Self time = span's own duration minus the wall-clock coverage of its direct children.
 // Children may overlap, so we merge intervals rather than naively summing durations.
 function selfTimeMs(span: Span): number {
-  const kids = spanList.value.filter(s => s.parent_span_id === span.span_id)
+  const kids = childrenByParent.value.get(span.span_id) ?? []
   if (!kids.length) return span.duration_ms
   const intervals = kids
     .map(k => [k.start_offset_ms, k.start_offset_ms + k.duration_ms] as [number, number])
     .sort((a, b) => a[0] - b[0])
   let childMs = 0
   let [cur0, cur1] = intervals[0]
-  const spanEnd = span.start_offset_ms + span.duration_ms
   for (let i = 1; i < intervals.length; i++) {
     const [s, e] = intervals[i]
     if (s <= cur1) { cur1 = Math.max(cur1, e) }
@@ -254,78 +264,69 @@ const spanTree = computed((): DisplayRow[] => {
     }
   }
 
-  function walkChildren(s: Span, depth: number): DisplayRow[] {
-    const kids = children.get(s.span_id) ?? []
-    return processLevel(kids, depth)
-  }
-
-  function buildChain(head: Span): Span[] | null {
-    const headBase = head.op.split('.')[0]
-    const chain: Span[] = [head]
-    let cur = head
-    for (;;) {
-      const kids = children.get(cur.span_id) ?? []
-      if (kids.length !== 1) break
-      const child = kids[0]
-      if (child.op.split('.')[0] !== headBase) break
-      chain.push(child)
-      cur = child
+  const rows: DisplayRow[] = []
+  const visited = new Set<Span>()
+  type Work = { siblings: Span[]; index: number; depth: number } | { span: Span; depth: number }
+  const work: Work[] = [{ siblings: roots, index: 0, depth: 0 }]
+  const descend = (span: Span, depth: number) => {
+    if (!collapsedBranches.value.has(span.span_id)) {
+      work.push({ siblings: children.get(span.span_id) ?? [], index: 0, depth })
     }
-    return chain.length >= 3 ? chain : null
   }
-
-  // Groups consecutive siblings sharing the same op base into a single collapsible row
-  // when there are AUTO_GROUP_THRESHOLD or more of them.
-  function processLevel(siblings: Span[], depth: number): DisplayRow[] {
-    const rows: DisplayRow[] = []
-    let i = 0
-    while (i < siblings.length) {
-      const s = siblings[i]
-      const base = s.op.split('.')[0]
-      let j = i + 1
-      while (j < siblings.length && siblings[j].op.split('.')[0] === base) j++
-      const runLen = j - i
-
-      if (runLen >= AUTO_GROUP_THRESHOLD) {
-        const groupSpans = siblings.slice(i, j)
-        const key = `grp:${groupSpans[0].span_id}:${groupSpans[groupSpans.length - 1].span_id}`
-        rows.push({ kind: 'group', key, op: base, count: runLen, depth, spans: groupSpans })
-        if (expandAllFlag.value || expandedGroups.value.has(key)) {
-          for (const gs of groupSpans) {
-            rows.push({ kind: 'span', span: gs, depth })
-            if (!collapsedBranches.value.has(gs.span_id)) {
-              rows.push(...walkChildren(gs, depth + 1))
-            }
-          }
-        }
-        i = j
-      } else {
-        const chain = buildChain(s)
-        if (chain) {
-          const key = `chain:${chain[0].span_id}:${chain[chain.length - 1].span_id}`
-          const tail = chain[chain.length - 1]
-          rows.push({ kind: 'chain', key, op: base, count: chain.length, depth, head: chain[0], tail, spans: chain })
-          if (expandAllFlag.value || expandedGroups.value.has(key)) {
-            for (const cs of chain) {
-              rows.push({ kind: 'span', span: cs, depth })
-            }
-            if (!collapsedBranches.value.has(tail.span_id)) {
-              rows.push(...walkChildren(tail, depth + 1))
-            }
-          }
-        } else {
-          rows.push({ kind: 'span', span: s, depth })
-          if (!collapsedBranches.value.has(s.span_id)) {
-            rows.push(...walkChildren(s, depth + 1))
-          }
-        }
-        i++
+  while (work.length) {
+    const item = work.pop()!
+    const depth = item.depth
+    if ('span' in item) {
+      if (visited.has(item.span)) continue
+      visited.add(item.span)
+      rows.push({ kind: 'span', span: item.span, depth })
+      descend(item.span, depth + 1)
+      continue
+    }
+    const { siblings, index: i } = item
+    if (i >= siblings.length) continue
+    const s = siblings[i]
+    if (visited.has(s)) { work.push({ siblings, index: i + 1, depth }); continue }
+    const base = s.op.split('.')[0]
+    let j = i + 1
+    while (j < siblings.length && siblings[j].op.split('.')[0] === base) j++
+    if (j - i >= AUTO_GROUP_THRESHOLD) {
+      const groupSpans = siblings.slice(i, j)
+      const key = `grp:${s.span_id}:${groupSpans[groupSpans.length - 1].span_id}`
+      rows.push({ kind: 'group', key, op: base, count: groupSpans.length, depth, spans: groupSpans })
+      work.push({ siblings, index: j, depth })
+      if (expandAllFlag.value || expandedGroups.value.has(key)) {
+        for (let k = groupSpans.length - 1; k >= 0; k--) work.push({ span: groupSpans[k], depth })
       }
+      continue
     }
-    return rows
+    work.push({ siblings, index: i + 1, depth })
+    const chain = [s]
+    const chainSeen = new Set([s])
+    let current = s
+    for (;;) {
+      const kids = children.get(current.span_id) ?? []
+      if (kids.length !== 1 || kids[0].op.split('.')[0] !== base || chainSeen.has(kids[0]) || visited.has(kids[0])) break
+      current = kids[0]
+      chain.push(current)
+      chainSeen.add(current)
+    }
+    if (chain.length >= 3) {
+      const tail = chain[chain.length - 1]
+      const key = `chain:${s.span_id}:${tail.span_id}`
+      rows.push({ kind: 'chain', key, op: base, count: chain.length, depth, head: s, tail, spans: chain })
+      for (const span of chain) visited.add(span)
+      if (expandAllFlag.value || expandedGroups.value.has(key)) {
+        for (const span of chain) rows.push({ kind: 'span', span, depth })
+        descend(tail, depth + 1)
+      }
+    } else {
+      visited.add(s)
+      rows.push({ kind: 'span', span: s, depth })
+      descend(s, depth + 1)
+    }
   }
-
-  return processLevel(roots, 0)
+  return rows
 })
 
 // displayRows: hierarchical (with grouping) when no search active, flat filtered list during search.
@@ -335,6 +336,18 @@ const displayRows = computed((): DisplayRow[] => {
   }
   return spanTree.value
 })
+
+// Keep both waterfall columns bounded, including after Expand all or search.
+const ROWS_PER_PAGE = 200
+const rowPage = ref(0)
+const rowOffset = computed(() => rowPage.value * ROWS_PER_PAGE)
+const renderedRows = computed(() => displayRows.value.slice(rowOffset.value, rowOffset.value + ROWS_PER_PAGE))
+watch(displayRows, () => { rowPage.value = 0; focusedIdx.value = null })
+watch(focusedIdx, index => { if (index !== null) rowPage.value = Math.floor(index / ROWS_PER_PAGE) })
+function changeRowPage(delta: number) {
+  rowPage.value += delta
+  focusedIdx.value = rowOffset.value
+}
 
 function toggleBranch(spanId: string) {
   const s = new Set(collapsedBranches.value)
@@ -544,11 +557,11 @@ const traceId = computed(() => tx.value?.trace_id ?? '')
 const projectId = computed(() => tx.value?.project_id ?? '')
 
 const { data: traceLogs } = useQuery({
-  queryKey: computed(() => ['trace-logs', traceId.value]),
-  queryFn: () => {
+  queryKey: computed(() => ['trace-logs', projectId.value, traceId.value]),
+  queryFn: ({ signal }) => {
     const params = new URLSearchParams({ trace_id: traceId.value, limit: '50' } as Record<string, string>)
     if (projectId.value) params.append('project_id', projectId.value)
-    return apiFetch<LogListPage>(`/api/logs?${params}`)
+    return apiFetch<LogListPage>(`/api/logs?${params}`, { signal })
   },
   enabled: computed(() => !!traceId.value),
 })
@@ -558,7 +571,7 @@ const traceLogList = computed(() => traceLogs.value?.logs ?? [])
 // Trace error correlation - errors sharing this transaction's trace_id.
 const { data: traceErrorsData } = useQuery({
   queryKey: computed(() => ['transactions', txId.value, 'errors']),
-  queryFn: () => apiFetch<TraceError[]>(`/api/transactions/${txId.value}/errors`),
+  queryFn: ({ signal }) => apiFetch<TraceError[]>(`/api/transactions/${txId.value}/errors`, { signal }),
   enabled: computed(() => !!txId.value),
 })
 const traceErrorList = computed(() => traceErrorsData.value ?? [])
@@ -568,9 +581,9 @@ const traceErrorList = computed(() => traceErrorsData.value ?? [])
 // show" rather than retried as a failure.
 const { data: flameGraph } = useQuery({
   queryKey: computed(() => ['transactions', txId.value, 'flamegraph']),
-  queryFn: async () => {
+  queryFn: async ({ signal }) => {
     try {
-      return await apiFetch<FlameGraph>(`/api/transactions/${txId.value}/flamegraph`)
+      return await apiFetch<FlameGraph>(`/api/transactions/${txId.value}/flamegraph`, { signal })
     } catch {
       return null
     }
@@ -777,6 +790,11 @@ function traceErrorOffset(e: TraceError): string {
     </div>
 
     <!-- Waterfall -->
+    <div v-if="displayRows.length > ROWS_PER_PAGE" class="trace-search" aria-label="Span pages">
+      <button class="btn btn--ghost" :disabled="rowPage === 0" @click="changeRowPage(-1)">Previous</button>
+      <span aria-live="polite">Rows {{ rowOffset + 1 }}–{{ Math.min(rowOffset + ROWS_PER_PAGE, displayRows.length) }} of {{ displayRows.length }}</span>
+      <button class="btn btn--ghost" :disabled="rowOffset + ROWS_PER_PAGE >= displayRows.length" @click="changeRowPage(1)">Next</button>
+    </div>
     <div v-if="!isSpansError" ref="waterfallRef" class="waterfall-grid" :style="{ gridTemplateColumns: leftPct + '% 4px 1fr' }">
 
       <!-- Left: span tree -->
@@ -815,13 +833,13 @@ function traceErrorOffset(e: TraceError): string {
         </div>
 
         <template v-else>
-          <template v-for="(row, i) in displayRows" :key="row.kind === 'span' ? row.span.id : row.key">
+          <template v-for="(row, i) in renderedRows" :key="row.kind === 'span' ? row.span.id : row.key">
 
             <!-- Group row: collapsed set of repeated op spans -->
             <div
               v-if="row.kind === 'group'"
               class="span-row span-row--group"
-              :class="{ 'span-row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
+              :class="{ 'span-row--focused': focusedIdx === rowOffset + i, 'is-hovered': hoveredRowKey === rowKey(row) }"
               @click="handleRowClick(row)"
               @mouseenter="hoveredRowKey = rowKey(row)"
               @mouseleave="hoveredRowKey = null"
@@ -841,7 +859,7 @@ function traceErrorOffset(e: TraceError): string {
             <div
               v-else-if="row.kind === 'chain'"
               class="span-row span-row--group"
-              :class="{ 'span-row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
+              :class="{ 'span-row--focused': focusedIdx === rowOffset + i, 'is-hovered': hoveredRowKey === rowKey(row) }"
               @click="handleRowClick(row)"
               @mouseenter="hoveredRowKey = rowKey(row)"
               @mouseleave="hoveredRowKey = null"
@@ -863,7 +881,7 @@ function traceErrorOffset(e: TraceError): string {
                 class="span-row"
                 :class="{
                   'span-row--open': openDetails.has(row.span.id),
-                  'span-row--focused': focusedIdx === i,
+                  'span-row--focused': focusedIdx === rowOffset + i,
                   'span-row--critical': row.span.is_critical,
                   'is-hovered': hoveredRowKey === rowKey(row),
                 }"
@@ -1004,10 +1022,10 @@ function traceErrorOffset(e: TraceError): string {
         </div>
 
         <div
-          v-for="(row, i) in displayRows"
+          v-for="(row, i) in renderedRows"
           :key="row.kind === 'span' ? row.span.id : row.key"
           class="timeline__row"
-          :class="{ 'timeline__row--focused': focusedIdx === i, 'is-hovered': hoveredRowKey === rowKey(row) }"
+          :class="{ 'timeline__row--focused': focusedIdx === rowOffset + i, 'is-hovered': hoveredRowKey === rowKey(row) }"
           @click="handleRowClick(row)"
           @mouseenter="hoveredRowKey = rowKey(row)"
           @mouseleave="hoveredRowKey = null"
@@ -1017,8 +1035,8 @@ function traceErrorOffset(e: TraceError): string {
             <div
               class="timeline__bar"
               :style="{
-                left: toPct(Math.min(...row.spans.map(s => s.start_offset_ms))),
-                width: `max(4px, ${toWidthPct(Math.max(...row.spans.map(s => s.start_offset_ms + s.duration_ms)) - Math.min(...row.spans.map(s => s.start_offset_ms)))})`,
+                left: toPct(row.spans.reduce((min, s) => Math.min(min, s.start_offset_ms), Infinity)),
+                width: `max(4px, ${toWidthPct(row.spans.reduce((max, s) => Math.max(max, s.start_offset_ms + s.duration_ms), -Infinity) - row.spans.reduce((min, s) => Math.min(min, s.start_offset_ms), Infinity))})`,
                 background: opColor(row.op),
                 opacity: 0.45,
               }"

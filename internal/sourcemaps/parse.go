@@ -1,6 +1,7 @@
 package sourcemaps
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -35,6 +36,14 @@ type ResolvedFrame struct {
 
 // Parse decodes raw source map JSON and builds the segment index.
 func Parse(data []byte) (*SourceMap, error) {
+	return ParseContext(context.Background(), data)
+}
+
+// ParseContext checks cancellation before decoding and while indexing mappings.
+func ParseContext(ctx context.Context, data []byte) (*SourceMap, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var sm SourceMap
 	if err := json.Unmarshal(data, &sm); err != nil {
 		return nil, fmt.Errorf("json: %w", err)
@@ -42,7 +51,7 @@ func Parse(data []byte) (*SourceMap, error) {
 	if sm.Version != 3 {
 		return nil, fmt.Errorf("unsupported source map version %d (only v3 supported)", sm.Version)
 	}
-	if err := sm.parseMappings(); err != nil {
+	if err := sm.parseMappings(ctx); err != nil {
 		return nil, fmt.Errorf("mappings: %w", err)
 	}
 	return &sm, nil
@@ -77,15 +86,19 @@ func (sm *SourceMap) Resolve(line, col int) (*ResolvedFrame, bool) {
 
 	seg := segs[found]
 	source := ""
-	if seg.sourceIdx < len(sm.Sources) {
+	if seg.sourceIdx >= 0 && seg.sourceIdx < len(sm.Sources) {
 		source = sm.Sources[seg.sourceIdx]
 	}
 
 	ctxLine := ""
-	if seg.sourceIdx < len(sm.SourcesContent) {
-		lines := strings.Split(sm.SourcesContent[seg.sourceIdx], "\n")
-		if seg.origLine < len(lines) {
-			ctxLine = strings.TrimRight(lines[seg.origLine], "\r")
+	if seg.sourceIdx >= 0 && seg.sourceIdx < len(sm.SourcesContent) {
+		lineIndex := 0
+		for line := range strings.SplitSeq(sm.SourcesContent[seg.sourceIdx], "\n") {
+			if lineIndex == seg.origLine {
+				ctxLine = strings.TrimRight(line, "\r")
+				break
+			}
+			lineIndex++
 		}
 	}
 
@@ -97,7 +110,7 @@ func (sm *SourceMap) Resolve(line, col int) (*ResolvedFrame, bool) {
 	}, true
 }
 
-func (sm *SourceMap) parseMappings() error {
+func (sm *SourceMap) parseMappings(ctx context.Context) error {
 	rawLines := strings.Split(sm.Mappings, ";")
 	sm.lines = make([][]segment, len(rawLines))
 
@@ -105,11 +118,17 @@ func (sm *SourceMap) parseMappings() error {
 	srcIdx, origLine, origCol := 0, 0, 0
 
 	for li, rawLine := range rawLines {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if rawLine == "" {
 			continue
 		}
 		genCol := 0 // resets at each new generated line
 		for rawSeg := range strings.SplitSeq(rawLine, ",") {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if rawSeg == "" {
 				continue
 			}

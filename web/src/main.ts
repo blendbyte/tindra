@@ -9,6 +9,7 @@ window.addEventListener('vite:preloadError', (event) => {
 import { createPinia } from 'pinia'
 import { VueQueryPlugin } from '@tanstack/vue-query'
 import App from './App.vue'
+import { createQueryClient } from './api/queryClient'
 import { router } from './router'
 import { vTooltip } from './directives/tooltip'
 import './assets/styles.css'
@@ -16,6 +17,6 @@ import './assets/styles.css'
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
-app.use(VueQueryPlugin)
+app.use(VueQueryPlugin, { queryClient: createQueryClient() })
 app.directive('tooltip', vTooltip)
 app.mount('#app')

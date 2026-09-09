@@ -330,6 +330,8 @@ func serveCmd(cfg config) *cobra.Command {
 				}
 			}
 
+			go storage.MonitorPool(ctx, pool)
+
 			buf := ingest.NewBuffer(cfg.ingestBufferSize)
 			bufDone := make(chan struct{})
 			go func() {

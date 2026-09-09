@@ -18,18 +18,18 @@ const releaseId = computed(() => route.params.id as string)
 
 const { data: release, isError, isLoading } = useQuery({
   queryKey: computed(() => ['releases', releaseId.value]),
-  queryFn: () => apiFetch<Release>(`/api/releases/${releaseId.value}`),
+  queryFn: ({ signal }) => apiFetch<Release>(`/api/releases/${releaseId.value}`, { signal }),
 })
 
 const { data: issues } = useQuery({
   queryKey: computed(() => ['release-issues', releaseId.value]),
-  queryFn: () => apiFetch<ReleaseIssue[]>(`/api/releases/${releaseId.value}/issues`),
+  queryFn: ({ signal }) => apiFetch<ReleaseIssue[]>(`/api/releases/${releaseId.value}/issues`, { signal }),
   enabled: computed(() => !!releaseId.value),
 })
 
 const { data: transactions } = useQuery({
   queryKey: computed(() => ['release-transactions', releaseId.value]),
-  queryFn: () => apiFetch<ReleaseTxSummary[]>(`/api/releases/${releaseId.value}/transactions`),
+  queryFn: ({ signal }) => apiFetch<ReleaseTxSummary[]>(`/api/releases/${releaseId.value}/transactions`, { signal }),
   enabled: computed(() => !!releaseId.value),
 })
 

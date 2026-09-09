@@ -168,8 +168,10 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) {
 		if err != nil {
 			log.Fatalf("testutil: read migration %s: %v", name, err)
 		}
-		if _, err := pool.Exec(ctx, string(sql)); err != nil {
-			log.Fatalf("testutil: apply migration %s: %v", name, err)
+		for i, batch := range migrations.Batches(string(sql)) {
+			if _, err := pool.Exec(ctx, batch); err != nil {
+				log.Fatalf("testutil: apply migration %s batch %d: %v", name, i+1, err)
+			}
 		}
 	}
 }

@@ -58,40 +58,67 @@ func CountProjects(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	return n, nil
 }
 
+// ProjectMetadata is the small project identity used by navigation and pickers.
+// Usage and settings remain available through ListProjects.
+type ProjectMetadata struct {
+	ID        string `json:"id"`
+	Slug      string `json:"slug"`
+	Name      string `json:"name"`
+	PublicKey string `json:"public_key"`
+}
+
+func ListProjectMetadata(ctx context.Context, pool *pgxpool.Pool, projectIDs ...string) ([]*ProjectMetadata, error) {
+	query := `SELECT id, slug, name, public_key FROM projects`
+	var args []any
+	if len(projectIDs) > 0 {
+		query += ` WHERE id=ANY($1::uuid[])`
+		args = append(args, projectIDs)
+	}
+	rows, err := pool.Query(ctx, query+` ORDER BY name ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query project metadata: %w", err)
+	}
+	defer rows.Close()
+	projects := []*ProjectMetadata{}
+	for rows.Next() {
+		var p ProjectMetadata
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey); err != nil {
+			return nil, fmt.Errorf("scan project metadata: %w", err)
+		}
+		projects = append(projects, &p)
+	}
+	return projects, rows.Err()
+}
+
 func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 	rows, err := pool.Query(ctx, `
 		WITH
-		  sizes AS (
-		    SELECT
-		      GREATEST(1, (SELECT COUNT(*) FROM events))       AS total_ev,
-		      GREATEST(1, (SELECT COUNT(*) FROM transactions)) AS total_tx,
-		      GREATEST(1, (SELECT COUNT(*) FROM logs))         AS total_log,
-		      pg_total_relation_size('events') + pg_total_relation_size('event_tags')                                      AS ev_bytes,
-		      pg_total_relation_size('transactions') + pg_total_relation_size('spans') + pg_total_relation_size('perf_events') AS tx_bytes,
-		      pg_total_relation_size('logs')                                                                                AS log_bytes
-		  ),
+		  totals AS MATERIALIZED (SELECT * FROM telemetry_usage_since()),
+		  monthly AS MATERIALIZED (SELECT * FROM telemetry_usage_since(date_trunc('month', now()))),
+		  daily AS MATERIALIZED (SELECT * FROM telemetry_usage_since(now() - interval '24 hours', false)),
 		  ev AS (
-		    SELECT project_id,
-		      COUNT(*) FILTER (WHERE received_at >= date_trunc('month', now()))        AS month_cnt,
-		      COUNT(*) FILTER (WHERE received_at > now() - INTERVAL '24 hours')        AS day_cnt,
-		      COUNT(*)                                                                  AS total
-		    FROM events GROUP BY project_id
+		    SELECT t.project_id, t.n AS total, COALESCE(m.n,0) AS month_cnt, COALESCE(d.n,0) AS day_cnt
+		    FROM totals t LEFT JOIN monthly m USING(project_id,kind) LEFT JOIN daily d USING(project_id,kind) WHERE t.kind='events'
 		  ),
 		  tx AS (
-		    SELECT project_id,
-		      COUNT(*) FILTER (WHERE received_at >= date_trunc('month', now()))        AS month_cnt,
-		      COUNT(*) FILTER (WHERE received_at > now() - INTERVAL '24 hours')        AS day_cnt,
-		      COUNT(*)                                                                  AS total
-		    FROM transactions GROUP BY project_id
+		    SELECT t.project_id, t.n AS total, COALESCE(m.n,0) AS month_cnt, COALESCE(d.n,0) AS day_cnt
+		    FROM totals t LEFT JOIN monthly m USING(project_id,kind) LEFT JOIN daily d USING(project_id,kind) WHERE t.kind='transactions'
 		  ),
-		  lg AS (
-		    SELECT project_id, COUNT(*) AS total FROM logs GROUP BY project_id
-		  ),
+		  lg AS (SELECT project_id, n AS total FROM totals WHERE kind='logs'),
 		  -- Profiles are the largest thing stored, and unlike the other tables
 		  -- every row already carries its own compressed size, so this is summed
 		  -- outright rather than apportioned from a table total by row count.
 		  pr AS (
 		    SELECT project_id, SUM(size_bytes)::float8 AS bytes FROM profile_chunks GROUP BY project_id
+		  ),
+		  sizes AS (
+		    SELECT
+		      GREATEST(1, (SELECT SUM(total) FROM ev)) AS total_ev,
+		      GREATEST(1, (SELECT SUM(total) FROM tx)) AS total_tx,
+		      GREATEST(1, (SELECT SUM(total) FROM lg)) AS total_log,
+		      pg_total_relation_size('events') + pg_total_relation_size('event_tags')                                      AS ev_bytes,
+		      pg_total_relation_size('transactions') + pg_total_relation_size('spans') + pg_total_relation_size('perf_events') AS tx_bytes,
+		      pg_total_relation_size('logs')                                                                                AS log_bytes
 		  )
 		SELECT
 		  p.id, p.slug, p.name, p.public_key, p.passthrough_dsn, p.scrub_fields, p.scrub_patterns, p.profiling_enabled, p.created_at,
@@ -163,9 +190,7 @@ func DeleteProjectByID(ctx context.Context, pool *pgxpool.Pool, id string) (bool
 func CountProjectEvents(ctx context.Context, pool *pgxpool.Pool, projectID string) (int64, error) {
 	var n int64
 	err := pool.QueryRow(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM events WHERE project_id = $1 AND received_at >= date_trunc('month', now())) +
-			(SELECT COUNT(*) FROM transactions WHERE project_id = $1 AND received_at >= date_trunc('month', now()))
+		SELECT COALESCE(SUM(n),0)::bigint FROM telemetry_usage_since(date_trunc('month',now()), true, ARRAY[$1::uuid]) WHERE kind IN ('events','transactions')
 	`, projectID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count: %w", err)
@@ -176,9 +201,7 @@ func CountProjectEvents(ctx context.Context, pool *pgxpool.Pool, projectID strin
 func CountMonthlyEvents(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	var n int64
 	err := pool.QueryRow(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM events WHERE received_at >= date_trunc('month', now())) +
-			(SELECT COUNT(*) FROM transactions WHERE received_at >= date_trunc('month', now()))
+		SELECT COALESCE(SUM(n),0)::bigint FROM telemetry_usage_since(date_trunc('month',now())) WHERE kind IN ('events','transactions')
 	`).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count: %w", err)
@@ -189,13 +212,7 @@ func CountMonthlyEvents(ctx context.Context, pool *pgxpool.Pool) (int64, error) 
 func CountLastMonthEvents(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	var n int64
 	err := pool.QueryRow(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM events
-				WHERE received_at >= date_trunc('month', now()) - interval '1 month'
-				  AND received_at <  date_trunc('month', now())) +
-			(SELECT COUNT(*) FROM transactions
-				WHERE received_at >= date_trunc('month', now()) - interval '1 month'
-				  AND received_at <  date_trunc('month', now()))
+		SELECT (SELECT COALESCE(SUM(n),0)::bigint FROM telemetry_usage_since(date_trunc('month',now()) - interval '1 month') WHERE kind IN ('events','transactions')) - (SELECT COALESCE(SUM(n),0)::bigint FROM telemetry_usage_since(date_trunc('month',now())) WHERE kind IN ('events','transactions'))
 	`).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count: %w", err)
@@ -207,24 +224,10 @@ func CountLastMonthEvents(ctx context.Context, pool *pgxpool.Pool) (int64, error
 // ordered oldest-first. Days with no activity are included as zero.
 func DailyEventVolume(ctx context.Context, pool *pgxpool.Pool, projectID string) ([]int64, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT d.day, COALESCE(SUM(c.n), 0)::bigint
-		FROM generate_series(
-			current_date - interval '29 days',
-			current_date,
-			interval '1 day'
-		) AS d(day)
-		LEFT JOIN (
-			SELECT date_trunc('day', received_at)::date AS day, COUNT(*) AS n
-			FROM events
-			WHERE project_id = $1 AND received_at >= current_date - interval '29 days'
-			GROUP BY 1
-			UNION ALL
-			SELECT date_trunc('day', received_at)::date AS day, COUNT(*) AS n
-			FROM transactions
-			WHERE project_id = $1 AND received_at >= current_date - interval '29 days'
-			GROUP BY 1
-		) AS c ON d.day = c.day
-		GROUP BY d.day
+		SELECT d.day,
+		 (SELECT COALESCE(SUM(n),0)::bigint FROM telemetry_usage_since(d.day, true, ARRAY[$1::uuid]) WHERE kind IN ('events','transactions')) -
+		 (SELECT COALESCE(SUM(n),0)::bigint FROM telemetry_usage_since(d.day + interval '1 day', true, ARRAY[$1::uuid]) WHERE kind IN ('events','transactions'))
+		FROM generate_series(current_date - interval '29 days', current_date, interval '1 day') AS d(day)
 		ORDER BY d.day
 	`, projectID)
 	if err != nil {

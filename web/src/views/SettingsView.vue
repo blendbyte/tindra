@@ -64,13 +64,13 @@ function closeTokenForm() {
 // Tokens
 const { data: tokensData } = useQuery({
   queryKey: ['tokens'],
-  queryFn: () => apiFetch<ApiToken[]>('/api/tokens'),
+  queryFn: ({ signal }) => apiFetch<ApiToken[]>('/api/tokens', { signal }),
 })
 const tokens = computed(() => tokensData.value ?? [])
 
 const { data: projectsData } = useQuery({
-  queryKey: ['projects'],
-  queryFn: () => apiFetch<Project[]>('/api/projects'),
+  queryKey: ['projects', 'usage'],
+  queryFn: ({ signal }) => apiFetch<Project[]>('/api/projects', { signal }),
 })
 const projects = computed(() => projectsData.value ?? [])
 
@@ -210,7 +210,7 @@ function revoke(id: string, name: string) {
 // Team
 const { data: usersData } = useQuery({
   queryKey: ['users'],
-  queryFn: () => apiFetch<User[]>('/api/users'),
+  queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
 })
 const users = computed(() => usersData.value ?? [])
 
@@ -373,8 +373,8 @@ const auditKinds = ['All', 'auth', 'alert', 'issue', 'release', 'token', 'projec
 
 const { data: auditLogData } = useQuery({
   queryKey: computed(() => ['audit', auditKindFilter.value, auditSearch.value]),
-  queryFn: () =>
-    apiFetch<AuditRow[]>(`/api/audit?kind=${auditKindFilter.value === 'All' ? '' : auditKindFilter.value}&q=${auditSearch.value}`),
+  queryFn: ({ signal }) =>
+    apiFetch<AuditRow[]>(`/api/audit?kind=${auditKindFilter.value === 'All' ? '' : auditKindFilter.value}&q=${auditSearch.value}`, { signal }),
   enabled: computed(() => tab.value === 'audit'),
 })
 const auditLog = computed(() => auditLogData.value ?? [])
@@ -382,7 +382,7 @@ const auditLog = computed(() => auditLogData.value ?? [])
 // Profile
 const { data: me } = useQuery({
   queryKey: ['me'],
-  queryFn: () => apiFetch<User>('/api/me'),
+  queryFn: ({ signal }) => apiFetch<User>('/api/me', { signal }),
 })
 
 // Redirect away from gated tabs if the user loses / never had the required permission.
@@ -411,7 +411,7 @@ const inviteResult = ref<{ invite_url: string; email_sent: boolean; email_config
 
 const { data: invitesData } = useQuery({
   queryKey: ['invites'],
-  queryFn: () => apiFetch<Invite[]>('/api/invites'),
+  queryFn: ({ signal }) => apiFetch<Invite[]>('/api/invites', { signal }),
   enabled: () => !!me.value?.permissions.manage_users,
 })
 const invites = computed(() => invitesData.value ?? [])
@@ -614,7 +614,7 @@ const projectByID = computed(() => {
 
 const { data: alertRulesData } = useQuery({
   queryKey: ['alert-rules'],
-  queryFn: () => apiFetch<{ rules: AlertRule[] }>('/api/alert-rules').then(r => r.rules ?? []),
+  queryFn: ({ signal }) => apiFetch<{ rules: AlertRule[] }>('/api/alert-rules', { signal }).then(r => r.rules ?? []),
   enabled: computed(() => tab.value === 'alerts'),
 })
 
@@ -853,7 +853,7 @@ const { mutate: saveAlertRule, isPending: savingRule } = useMutation({
 // Server limits
 const { data: settings } = useQuery({
   queryKey: ['settings'],
-  queryFn: () => apiFetch<ServerSettings>('/api/settings'),
+  queryFn: ({ signal }) => apiFetch<ServerSettings>('/api/settings', { signal }),
 })
 
 const canManageProjects = computed(() => me.value?.permissions.manage_projects ?? false)
@@ -868,7 +868,7 @@ const visibleTabs = computed(() => ALL_TABS.filter((t) => {
 
 const { data: healthData } = useQuery({
   queryKey: ['instance-health'],
-  queryFn: () => apiFetch<InstanceHealth>('/api/instance/health'),
+  queryFn: ({ signal }) => apiFetch<InstanceHealth>('/api/instance/health', { signal }),
   enabled: computed(() => tab.value === 'overview' && canManageProjects.value),
   staleTime: 60_000,
 })
@@ -924,14 +924,14 @@ const expandedProject = ref<string | null>(null)
 // One query, keyed to expandedProject - reruns automatically when a different card opens.
 const { data: quotaData } = useQuery({
   queryKey: computed(() => ['quota', expandedProject.value]),
-  queryFn: () => apiFetch<ProjectQuota>(`/api/projects/${expandedProject.value}/quota`),
+  queryFn: ({ signal }) => apiFetch<ProjectQuota>(`/api/projects/${expandedProject.value}/quota`, { signal }),
   enabled: computed(() => expandedProject.value !== null && tab.value === 'projects'),
   staleTime: 30_000,
 })
 
 const { data: expandedRuleFiringsData } = useQuery({
   queryKey: computed(() => ['alert-firings', expandedRule.value]),
-  queryFn: () => apiFetch<{ firings: AlertFiring[] }>(`/api/alert-rules/${expandedRule.value}/firings`).then(r => r.firings ?? []),
+  queryFn: ({ signal }) => apiFetch<{ firings: AlertFiring[] }>(`/api/alert-rules/${expandedRule.value}/firings`, { signal }).then(r => r.firings ?? []),
   enabled: computed(() => expandedRule.value !== null && tab.value === 'alerts'),
 })
 const expandedRuleFirings = computed(() => expandedRuleFiringsData.value ?? [])
@@ -959,7 +959,7 @@ onUnmounted(() => clearTimeout(previewTimer))
 
 const { data: logPreview } = useQuery({
   queryKey: computed(() => ['logs-count', logPreviewKey.value]),
-  queryFn: () => apiFetch<{ count: number; window_mins: number }>(`/api/logs/count?${logPreviewKey.value}`),
+  queryFn: ({ signal }) => apiFetch<{ count: number; window_mins: number }>(`/api/logs/count?${logPreviewKey.value}`, { signal }),
   enabled: computed(() => logPreviewKey.value !== ''),
 })
 

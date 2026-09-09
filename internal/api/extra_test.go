@@ -468,6 +468,49 @@ func TestListReleases_api_withProjectFilter(t *testing.T) {
 	}
 }
 
+func TestReleaseMetadataRequiresAuthAndEnforcesTokenScope(t *testing.T) {
+	ctx := context.Background()
+	other, err := storage.CreateProject(ctx, testPool, "release-picker-scope", "Release Picker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM projects WHERE id = $1", other.ID) })
+	if _, err := testPool.Exec(ctx, `INSERT INTO releases (project_id, version) VALUES ($1, 'picker-scope')`, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	token := bearerToken(t, other.ID)
+	for _, authenticated := range []bool{false, true} {
+		req := httptest.NewRequest(http.MethodGet, "/api/releases/metadata?project_id="+testProject.ID, nil)
+		if authenticated {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		globalHandler().ServeHTTP(rec, req)
+		if !authenticated {
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated status: %d", rec.Code)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("metadata: %d %s", rec.Code, rec.Body.String())
+		}
+		var response struct {
+			Releases []map[string]any `json:"releases"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Releases) != 1 {
+			t.Fatalf("expected token's release: %v", response.Releases)
+		}
+		r := response.Releases[0]
+		if r["project_id"] != other.ID || r["version"] != "picker-scope" || len(r) != 5 {
+			t.Fatalf("unexpected metadata: %v", r)
+		}
+	}
+}
+
 func TestGetRelease_api_notFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/releases/00000000-0000-0000-0000-000000000000", nil)
@@ -541,6 +584,24 @@ func TestListAuditLog_api_unauthenticated(t *testing.T) {
 }
 
 // --- handleListEventsForIssue ---
+
+func TestListEventsForIssue_rejectsInvalidCursorID(t *testing.T) {
+	ctx := context.Background()
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, testProject.ID,
+		"invalid-event-cursor", "Invalid cursor", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM issues WHERE id=$1", issue.ID) })
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/issues/%s/events?cursor_time=2026-01-01T00:00:00Z&cursor_id=invalid", issue.ID), nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor: %d %s", rec.Code, rec.Body.String())
+	}
+}
 
 func TestListEventsForIssue_empty(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE events, issues CASCADE")

@@ -26,14 +26,16 @@ type InstanceHealth struct {
 func GetInstanceHealth(ctx context.Context, pool *pgxpool.Pool) (*InstanceHealth, error) {
 	var h InstanceHealth
 	err := pool.QueryRow(ctx, `
+		WITH totals AS MATERIALIZED (SELECT * FROM telemetry_usage_since()),
+		daily AS MATERIALIZED (SELECT * FROM telemetry_usage_since(now() - interval '24 hours', false))
 		SELECT
 			pg_database_size(current_database()),
-			(SELECT COUNT(*) FROM events),
-			(SELECT COUNT(*) FROM transactions),
-			(SELECT COUNT(*) FROM logs),
-			(SELECT COUNT(*) FROM events      WHERE received_at > NOW() - INTERVAL '24 hours'),
-			(SELECT COUNT(*) FROM transactions WHERE received_at > NOW() - INTERVAL '24 hours'),
-			(SELECT COUNT(*) FROM logs         WHERE received_at > NOW() - INTERVAL '24 hours'),
+			(SELECT COALESCE(SUM(n),0)::bigint FROM totals WHERE kind='events'),
+			(SELECT COALESCE(SUM(n),0)::bigint FROM totals WHERE kind='transactions'),
+			(SELECT COALESCE(SUM(n),0)::bigint FROM totals WHERE kind='logs'),
+			(SELECT COALESCE(SUM(n),0)::bigint FROM daily WHERE kind='events'),
+			(SELECT COALESCE(SUM(n),0)::bigint FROM daily WHERE kind='transactions'),
+			(SELECT COALESCE(SUM(n),0)::bigint FROM daily WHERE kind='logs'),
 			(SELECT MIN(received_at) FROM events),
 			(SELECT MIN(received_at) FROM transactions),
 			(SELECT MIN(received_at) FROM logs),
