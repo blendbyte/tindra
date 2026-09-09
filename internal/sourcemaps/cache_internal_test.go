@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -200,4 +201,123 @@ func TestEnrichmentBudgetPreservesCompletedFrames(t *testing.T) {
 	if line, _ := frame["context_line"].(string); !strings.Contains(line, "answer") {
 		t.Fatalf("completed frame enrichment was discarded: %s", got)
 	}
+}
+
+func TestOversizedFileDoesNotDisplaceCachedSource(t *testing.T) {
+	store := NewStore("", nil)
+	store.cacheLines("small", []string{"keep"})
+	before := store.fileBytes
+	store.cacheLines("large", []string{strings.Repeat("x", cacheBytesMax)})
+	if store.fileBytes != before || len(store.fileCache) != 1 || store.fileCache["small"].lines[0] != "keep" {
+		t.Fatal("oversized source displaced cache")
+	}
+}
+
+func TestParsedCacheRejectsMissingInvalidAndCancelledReads(t *testing.T) {
+	store := NewStore(t.TempDir(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if store.parsedSourceMap(ctx, "p", "hash") != nil {
+		t.Fatal("cancelled read returned a map")
+	}
+	if store.parsedSourceMap(context.Background(), "p", "hash") != nil {
+		t.Fatal("missing map accepted")
+	}
+	dir := filepath.Join(store.dataDir, "sourcemaps", "p")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(dir, "hash.map")
+	if err := os.WriteFile(name, []byte(`{"version":3,"mappings":"!"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if store.parsedSourceMap(context.Background(), "p", "hash") != nil {
+		t.Fatal("invalid map accepted")
+	}
+	if err := os.WriteFile(name, []byte(`{"version":3,"sources":["app.js"],"mappings":"AAAA"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if store.parsedSourceMap(context.Background(), "p", "hash") == nil {
+		t.Fatal("failed read prevented later recovery")
+	}
+}
+
+func TestParsedCacheEvictsOldestAndReparses(t *testing.T) {
+	store := NewStore(t.TempDir(), nil)
+	dir := filepath.Join(store.dataDir, "sourcemaps", "p")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var first *SourceMap
+	for i := 0; i < 65; i++ {
+		hash := fmt.Sprint(i)
+		if err := os.WriteFile(filepath.Join(dir, hash+".map"), []byte(`{"version":3,"sources":["app.js"],"mappings":"AAAA"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		sm := store.parsedSourceMap(context.Background(), "p", hash)
+		if sm == nil {
+			t.Fatal("map not parsed")
+		}
+		if i == 0 {
+			first = sm
+		}
+	}
+	if len(store.parsed) != 64 || store.parsed["p/0"] != nil {
+		t.Fatal("cache did not evict oldest map")
+	}
+	if got := store.parsedSourceMap(context.Background(), "p", "0"); got == nil || got == first {
+		t.Fatal("evicted map not reparsed")
+	}
+	size := 0
+	for key, sm := range store.parsed {
+		size += len(key) + sm.cacheSize()
+	}
+	if size != store.parsedBytes {
+		t.Fatalf("accounted=%d actual=%d", store.parsedBytes, size)
+	}
+}
+
+func TestOversizedParsedMapRemainsUsableWithoutCaching(t *testing.T) {
+	store := NewStore(t.TempDir(), nil)
+	dir := filepath.Join(store.dataDir, "sourcemaps", "p")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(map[string]any{"version": 3, "sources": []string{"app.js"}, "sourcesContent": []string{strings.Repeat("x", cacheBytesMax)}, "mappings": "AAAA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "large.map"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sm := store.parsedSourceMap(context.Background(), "p", "large")
+	if sm == nil {
+		t.Fatal("oversized map unavailable")
+	}
+	if len(store.parsed) != 0 || store.parsedBytes != 0 {
+		t.Fatal("oversized map retained in cache")
+	}
+}
+
+func TestSharedSourceWaiterReceivesOwnersResult(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := NewStore("", nil)
+		flight := &fileFlight{done: make(chan struct{})}
+		store.flights["source.js"] = flight
+		result := make(chan []string, 1)
+		go func() { result <- store.sharedLines(context.Background(), "source.js") }()
+		synctest.Wait()
+		select {
+		case <-result:
+			t.Fatal("waiter returned before the owner")
+		default:
+		}
+		flight.lines = []string{"const answer = 42"}
+		close(flight.done)
+		synctest.Wait()
+		got := <-result
+		if len(got) != 1 || got[0] != "const answer = 42" {
+			t.Fatalf("got %v", got)
+		}
+	})
 }

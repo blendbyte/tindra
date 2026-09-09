@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/jackc/pgx/v5"
 
@@ -61,4 +62,34 @@ func TestProfileAggregateBudgetStopsBeforeNextObject(t *testing.T) {
 	if err != nil || len(got) != 1 || !rows.closed {
 		t.Fatalf("profiles=%d closed=%v err=%v", len(got), rows.closed, err)
 	}
+}
+
+func TestWaitingProfileReadCancelsWithoutTakingASlot(t *testing.T) {
+	original := profileReadSlots
+	defer func() { profileReadSlots = original }()
+	synctest.Test(t, func(t *testing.T) {
+		// Channels must belong to this clock bubble for Wait to observe blocking.
+		profileReadSlots = make(chan struct{}, cap(original))
+		for range cap(profileReadSlots) {
+			profileReadSlots <- struct{}{}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := FlameGraphForTransaction(ctx, nil, "unused"); done <- err }()
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("reader did not wait for admission")
+		default:
+		}
+		cancel()
+		synctest.Wait()
+		if err := <-done; err != context.Canceled {
+			t.Fatalf("got %v", err)
+		}
+		if len(profileReadSlots) != cap(profileReadSlots) {
+			t.Fatal("waiting request consumed another reader's slot")
+		}
+	})
 }

@@ -230,3 +230,12 @@ func TestMigrateUsageBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNewMigratorRejectsUnsupportedDatabaseDriver(t *testing.T) {
+	cfg := inviteCfg()
+	cfg.databaseURL = "unsupported://localhost/tindra"
+	m, err := newMigrator(cfg)
+	if m != nil || err == nil || !strings.Contains(err.Error(), "open migration database") {
+		t.Fatalf("migrator=%v err=%v", m, err)
+	}
+}

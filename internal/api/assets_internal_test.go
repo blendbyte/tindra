@@ -137,3 +137,35 @@ func TestEmbeddedAssetSizes(t *testing.T) {
 	}
 	t.Logf("all emitted JS/CSS, including deferred assets: files=%d identity=%d gzip=%d preparation=%s", files, plainBytes, gzipBytes, prepare)
 }
+
+// A file can be listed successfully but fail when its contents are read.
+type unreadableAssetFS struct{ fstest.MapFS }
+
+func (f unreadableAssetFS) ReadFile(name string) ([]byte, error) {
+	return nil, &fs.PathError{Op: "read", Path: name, Err: fs.ErrPermission}
+}
+
+func TestMissingAndUnreadableAssetBundles(t *testing.T) {
+	for name, bundle := range map[string]fs.FS{
+		"missing index":    fstest.MapFS{},
+		"unreadable index": unreadableAssetFS{fstest.MapFS{"index.html": {Data: []byte("hidden")}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler := newAssetHandler(bundle)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest("GET", "/issues", nil))
+			if rec.Code != 404 {
+				t.Fatalf("status=%d", rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), "hidden") {
+				t.Fatal("unreadable data was served")
+			}
+		})
+	}
+	handler := newAssetHandler(fstest.MapFS{"download.tindraunknown": {Data: []byte("plain source")}})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/download.tindraunknown", nil))
+	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") || rec.Body.String() != "plain source" {
+		t.Fatalf("response=%+v", rec)
+	}
+}

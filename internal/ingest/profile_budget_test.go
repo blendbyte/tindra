@@ -61,3 +61,12 @@ func BenchmarkProfileDecodeBudget(b *testing.B) {
 		})
 	}
 }
+
+func TestExhaustedProfileBudgetRejectsBeforeDecoding(t *testing.T) {
+	for _, budget := range []int{0, -1} {
+		profile, size, err := ingest.DecodeProfileLimited(context.Background(), ingest.ProfileEncodingZstdJSON, []byte("invalid compressed data"), budget)
+		require.ErrorIs(t, err, ingest.ErrProfileDecodeBudget)
+		require.Nil(t, profile)
+		require.Zero(t, size)
+	}
+}

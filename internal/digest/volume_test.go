@@ -98,3 +98,28 @@ func TestReportVolumePerformance(t *testing.T) {
 		t.Logf("%d events + %d transactions shared=%v median=%s", n, n, shared, times[1])
 	}
 }
+
+func TestReportVolumeErrorsAndStableTies(t *testing.T) {
+	ctx := context.Background()
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	e, tx, p, err := reportVolume(ctx, testPool, []string{"invalid-uuid"}, from, to)
+	require.Error(t, err)
+	require.Nil(t, e)
+	require.Nil(t, tx)
+	require.Nil(t, p)
+	truncateAll(t)
+	a := seedProject(t, "tie-a", "Same")
+	b := seedProject(t, "tie-b", "Same")
+	busy := seedProject(t, "busy", "Same")
+	for _, id := range []string{a.ID, b.ID, busy.ID} {
+		seedEvent(t, id, from.Add(time.Hour))
+	}
+	seedTransaction(t, busy.ID, "busy", 10, from.Add(time.Hour))
+	_, _, p, err = reportVolume(ctx, testPool, []string{b.ID, busy.ID, a.ID}, from, to)
+	require.NoError(t, err)
+	require.Len(t, p, 3)
+	require.Equal(t, busy.ID, p[0].ProjectID)
+	require.Equal(t, min(a.ID, b.ID), p[1].ProjectID)
+	require.Equal(t, max(a.ID, b.ID), p[2].ProjectID)
+}
