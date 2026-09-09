@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	migrate "github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/spf13/cobra"
@@ -17,8 +18,15 @@ func newMigrator(cfg config) (*migrate.Migrate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open migrations: %w", err)
 	}
-	m, err := migrate.NewWithSourceInstance("iofs", src, cfg.databaseURL)
+	driver, err := database.Open(cfg.databaseURL)
 	if err != nil {
+		_ = src.Close()
+		return nil, fmt.Errorf("open migration database: %w", err)
+	}
+	m, err := migrate.NewWithInstance("iofs", src, "postgres", migrations.BatchedDriver{Driver: driver})
+	if err != nil {
+		_ = driver.Close()
+		_ = src.Close()
 		return nil, fmt.Errorf("init migrate: %w", err)
 	}
 	return m, nil
