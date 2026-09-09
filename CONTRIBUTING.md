@@ -22,6 +22,22 @@ license) cannot be accepted.
    dependencies without discussion, tests ship with the code.
 4. Check the PR template - the CLA checkbox must be ticked before a PR can be merged.
 
+## Dependency updates and workflow security
+
+Renovate handles routine dependency updates and preserves full commit SHA pins
+for GitHub Actions. Dependabot handles security updates; its version update PR
+limit is zero to avoid duplicate routine updates. Repository administrators must
+install or enable Renovate for this repository and enable Dependabot alerts and
+security updates in GitHub's repository settings.
+
+Pin remote GitHub Actions, including reusable workflows, to a full 40-character
+commit SHA with the version in a comment. Pin Docker actions to a SHA-256 digest.
+Run `bun scripts/check-action-pins.ts` to check workflows locally. CI runs this
+check on every pull request to `main`; administrators can require the
+`Check action SHA pins` check in the branch rules.
+
+For vulnerability reports, follow [the security policy](SECURITY.md).
+
 ## Questions
 
 Open a GitHub Discussion or email daniel@blendbyte.com.
