@@ -260,3 +260,23 @@ describe('pagination cancellation', () => {
     await expectCancelled([next.url])
   })
 })
+
+describe('monitor project metadata refresh', () => {
+  it('shares the initial metadata request and refetches it through the monitor observer', async () => {
+    await open(MonitorsView, '/monitors/cron')
+    const url = '/api/projects/metadata'
+    expect(requests.filter(r => r.url === url)).toHaveLength(1)
+    request(url).resolve(projects)
+    await flushPromises()
+
+    const refresh = client.invalidateQueries({ queryKey: ['projects', 'metadata'], exact: true })
+    await flushPromises()
+    const metadataRequests = requests.filter(r => r.url === url)
+    expect(metadataRequests).toHaveLength(2)
+    expect(metadataRequests[1].signal.aborted).toBe(false)
+    const updated = [...projects, { id: 'p3', name: 'Worker', slug: 'worker', public_key: 'key3', event_count: 0 }]
+    metadataRequests[1].resolve(updated)
+    await refresh
+    expect(client.getQueryData(['projects', 'metadata'])).toEqual(updated)
+  })
+})

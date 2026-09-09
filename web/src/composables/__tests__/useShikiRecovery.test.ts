@@ -48,3 +48,15 @@ describe('highlighter recovery', () => {
     expect(mocks.create).not.toHaveBeenCalled()
   })
 })
+
+describe('independent language loading', () => {
+  it('loads Java when no other grammar has registered it as a dependency', async () => {
+    const { highlightBlock } = await import('../useShiki')
+    await highlightBlock('class App {}', 'java')
+    expect(mocks.load).toHaveBeenCalledTimes(1)
+    expect(mocks.load.mock.calls[0][0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'java' }),
+    ]))
+    expect(mocks.tokens).toHaveBeenCalledWith('class App {}', expect.objectContaining({ lang: 'java' }))
+  })
+})
