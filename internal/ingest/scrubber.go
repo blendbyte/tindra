@@ -122,9 +122,6 @@ func ScrubTransaction(tx *BufferedTransaction, cfg ScrubConfig) {
 		tx.UserName = scrubString(tx.UserName, regexps)
 	}
 	tx.UserIdentity = UserIdentity(tx.UserID, tx.UserUsername, tx.UserEmail)
-	if tx.UserIdentity == scrubPlaceholder {
-		tx.UserIdentity = ""
-	}
 	if len(regexps) == 0 {
 		return
 	}

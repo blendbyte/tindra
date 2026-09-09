@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, reactive } from 'vue'
 import type { Project } from '@/api/types'
 
 const pushMock = vi.fn()
@@ -54,14 +54,14 @@ function makeWrapper(cmdOpen = true, projects: Project[] = []) {
   const closeCmd = vi.fn()
   const openCmd = vi.fn()
 
-  vi.mocked(useUiStore).mockReturnValue({
+  vi.mocked(useUiStore).mockReturnValue(reactive({
     cmdOpen,
     closeCmd,
     openCmd,
     toggleTheme: vi.fn(),
     resolvedTheme: 'light',
     theme: null,
-  } as any)
+  }) as any)
 
   vi.mocked(useProjectsStore).mockReturnValue({
     projects,
@@ -443,5 +443,43 @@ describe('CommandPalette', () => {
       await vi.advanceTimersByTimeAsync(200)
       expect(apiFetch).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('search context', () => {
+  it('scopes both issue and people requests to the selected projects', async () => {
+    vi.useFakeTimers()
+    const wrapper = makeWrapper(true)
+    useProjectsStore().selectedIds = ['project-a', 'project-b']
+    await wrapper.find('input[aria-label="Search"]').setValue('alice')
+    await vi.advanceTimersByTimeAsync(200)
+    await flushPromises()
+    const urls = vi.mocked(apiFetch).mock.calls.map(([path]) => new URL(path, 'http://localhost'))
+    expect(urls.map(u => u.pathname)).toEqual(['/api/issues', '/api/app-users'])
+    for (const url of urls) {
+      expect(url.searchParams.getAll('project_id')).toEqual(['project-a', 'project-b'])
+      expect(url.searchParams.get('q')).toBe('alice')
+    }
+    wrapper.unmount()
+  })
+
+  it('starts a fresh search when the palette reopens', async () => {
+    vi.useFakeTimers()
+    vi.mocked(apiFetch).mockImplementation(async (path: string) =>
+      path.includes('/api/app-users') ? [{ identity: 'alice', name: 'Alice Picker' }] : { issues: [] },
+    )
+    const wrapper = makeWrapper(true)
+    await wrapper.find('input[aria-label="Search"]').setValue('alice')
+    await vi.advanceTimersByTimeAsync(200)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Alice Picker')
+    useUiStore().cmdOpen = false
+    await nextTick()
+    useUiStore().cmdOpen = true
+    await flushPromises()
+    expect((wrapper.find('input[aria-label="Search"]').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.text()).not.toContain('Alice Picker')
+    expect(wrapper.text()).toContain('Performance')
+    wrapper.unmount()
   })
 })

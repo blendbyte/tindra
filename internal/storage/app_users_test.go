@@ -204,3 +204,28 @@ func TestListAppUsers_searchMatchesReference(t *testing.T) {
 		}
 	}
 }
+
+func TestAppUserQueries_limitsAndCancellation(t *testing.T) {
+	p := setupProjectForTxns(t)
+	ctx := context.Background()
+	_, err := testPool.Exec(ctx, `INSERT INTO app_users(project_id,identity,last_seen)
+ SELECT $1,'limit-user-'||i,NOW()-i*interval '1 second' FROM generate_series(1,25)i`, p.ID)
+	require.NoError(t, err)
+	for _, limit := range []int{0, -1, 51} {
+		users, err := storage.ListAppUsers(ctx, testPool, []string{p.ID}, "", limit)
+		require.NoError(t, err)
+		require.Len(t, users, 20)
+	}
+	users, err := storage.ListAppUsers(ctx, testPool, []string{p.ID}, "", 50)
+	require.NoError(t, err)
+	require.Len(t, users, 25)
+	user, err := storage.GetAppUser(ctx, testPool, nil, "")
+	require.NoError(t, err)
+	require.Nil(t, user)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = storage.ListAppUsers(cancelled, testPool, nil, "alice", 20)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = storage.GetAppUser(cancelled, testPool, nil, "alice")
+	require.ErrorIs(t, err, context.Canceled)
+}

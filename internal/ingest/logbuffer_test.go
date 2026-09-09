@@ -77,3 +77,25 @@ func TestLogBuffer_Run_flushesOnShutdown(t *testing.T) {
 		t.Errorf("expected 3 logs flushed on shutdown, got %d", count)
 	}
 }
+
+func TestLogBuffer_persistsAppUser(t *testing.T) {
+	log := stubLog()
+	log.Attributes = []byte(`{"user.id":42,"user.username":"alice","user.email":"alice@example.com"}`)
+	log.Timestamp = time.Now().UTC().Truncate(time.Microsecond)
+	buf := ingest.NewLogBuffer(10)
+	if !buf.Push(log) {
+		t.Fatal("push failed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	buf.Run(ctx, testPool)
+	var identity, username, email string
+	var lastSeen time.Time
+	err := testPool.QueryRow(context.Background(), `SELECT identity,username,email,last_seen FROM app_users WHERE project_id=$1 AND identity='42'`, testProject.ID).Scan(&identity, &username, &email, &lastSeen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != "42" || username != "alice" || email != "alice@example.com" || !lastSeen.Equal(log.Timestamp) {
+		t.Fatalf("unexpected user: %q %q %q %v", identity, username, email, lastSeen)
+	}
+}
