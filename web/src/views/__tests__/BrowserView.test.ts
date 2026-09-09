@@ -473,3 +473,18 @@ describe('BrowserView', () => {
     })
   })
 })
+
+ it('discards pending pages when the environment changes', async () => {
+   routeState.query = { user: 'u-1' }
+   setupMocks(undefined, undefined, false, { data: { transactions: [makePageload('first')], next_cursor_id: 'first', next_cursor_time: '2024-01-01T00:00:00Z' } })
+   let resolve!: (value: any) => void
+   vi.mocked(apiFetch).mockReturnValueOnce(new Promise(r => { resolve = r }))
+   const wrapper = mount(BrowserView, { global: { stubs } })
+   await wrapper.find('.list-footer .btn').trigger('click')
+   usePerformanceStore().envFilter = 'staging'
+   await flushPromises()
+   resolve({ transactions: [makePageload('old-production', '/old-production')] })
+   await flushPromises()
+   expect(wrapper.text()).not.toContain('/old-production')
+   wrapper.unmount()
+ })

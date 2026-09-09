@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -165,10 +165,15 @@ const { data: tracePage, isLoading: tracesLoading, isError: tracesError, refetch
 const extraTraces = ref<Transaction[]>([])
 const tracesMoreCursor = ref<{ cursor_time: string; cursor_id: string } | null>(null)
 const loadingMoreTraces = ref(false)
-watch(traceParams, () => {
+let paginationVersion = 0
+function resetPagination() {
+  paginationVersion++
   extraTraces.value = []
   tracesMoreCursor.value = null
-})
+  loadingMoreTraces.value = false
+}
+watch(traceParams, resetPagination, { flush: 'sync' })
+onUnmounted(resetPagination)
 const traces = computed(() => [...(tracePage.value?.transactions ?? []), ...extraTraces.value])
 const tracesHasMore = computed(() => extraTraces.value.length === 0
   ? !!(tracePage.value?.next_cursor_id && tracePage.value?.next_cursor_time)
@@ -178,25 +183,26 @@ async function loadMoreTraces() {
     ? { cursor_time: tracePage.value?.next_cursor_time, cursor_id: tracePage.value?.next_cursor_id }
     : tracesMoreCursor.value
   if (!cur?.cursor_time || !cur?.cursor_id || loadingMoreTraces.value) return
+  const version = paginationVersion
   loadingMoreTraces.value = true
   try {
     const p = new URLSearchParams(traceParams.value)
     p.set('cursor_time', cur.cursor_time)
     p.set('cursor_id', cur.cursor_id)
     const page = await apiFetch<TransactionListPage>(`/api/transactions?${p}`)
+    if (version !== paginationVersion) return
     extraTraces.value = [...extraTraces.value, ...(page.transactions ?? [])]
     tracesMoreCursor.value = page.next_cursor_id && page.next_cursor_time
       ? { cursor_time: page.next_cursor_time, cursor_id: page.next_cursor_id }
       : null
   } finally {
-    loadingMoreTraces.value = false
+    if (version === paginationVersion) loadingMoreTraces.value = false
   }
 }
 const isLoading = computed(() => userMode.value ? tracesLoading.value : summariesLoading.value)
 const isError = computed(() => userMode.value ? tracesError.value : summariesError.value)
 function refetch() {
-  extraTraces.value = []
-  tracesMoreCursor.value = null
+  resetPagination()
   if (userMode.value) refetchTraces()
   else refetchSummaries()
 }

@@ -151,3 +151,8 @@ describe('appUser store', () => {
     expect(() => store.clear()).not.toThrow()
   })
 })
+
+it('falls back past scrubbed identity fields', () => {
+  expect(appUserIdentity({ id: '[Filtered]', username: ' alice ' })).toBe('alice')
+  expect(appUserIdentity({ id: '[Filtered]', email: '[Filtered]' })).toBe('')
+})

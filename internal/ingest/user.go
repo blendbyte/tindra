@@ -26,7 +26,7 @@ type SentryUser struct {
 // UserIdentity returns COALESCE(id, username, email), trimmed. Empty if none.
 func UserIdentity(id, username, email string) string {
 	for _, s := range []string{id, username, email} {
-		if t := strings.TrimSpace(s); t != "" {
+		if t := strings.TrimSpace(s); t != "" && t != scrubPlaceholder {
 			return t
 		}
 	}
@@ -178,7 +178,7 @@ func UpsertAppUsers(ctx context.Context, pool *pgxpool.Pool, rows []AppUserRow) 
 		b.Queue(`
 			INSERT INTO app_users (project_id, identity, user_id, username, email, name, last_seen)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (project_id, identity) DO UPDATE SET
+			ON CONFLICT (project_id, app_user_identity_hash(identity)) DO UPDATE SET
 				user_id   = COALESCE(EXCLUDED.user_id, app_users.user_id),
 				username  = COALESCE(EXCLUDED.username, app_users.username),
 				email     = COALESCE(EXCLUDED.email, app_users.email),

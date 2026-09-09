@@ -1299,3 +1299,32 @@ func TestHandleEnvelope_decompressedCapIsScopedToProfilingProjects(t *testing.T)
 		t.Errorf("profiling off: expected 413 at the smaller cap, got %d", code)
 	}
 }
+
+func TestHandleEnvelope_longTransactionUserIdentity(t *testing.T) {
+	identity := strings.Repeat("long-user-", 100)
+	buf := ingest.NewBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); txBuf.Run(ctx, testPool) }()
+	defer func() { cancel(); <-done }()
+	payload := fmt.Sprintf(`{"transaction":"/long-user-review","user":{"id":%q},"start_timestamp":1704067200,"timestamp":1704067201}`, identity)
+	body := "{}\n{\"type\":\"transaction\"}\n" + payload + "\n"
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", strings.NewReader(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body.String())
+	}
+	cancel()
+	<-done
+	var got string
+	if err := testPool.QueryRow(context.Background(), `SELECT user_identity FROM transactions WHERE project_id=$1 AND transaction='/long-user-review'`, testProject.ID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != identity {
+		t.Fatalf("identity truncated: got %d bytes, want %d", len(got), len(identity))
+	}
+}

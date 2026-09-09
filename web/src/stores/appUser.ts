@@ -30,10 +30,11 @@ export function appUserIdentity(u: {
   email?: string | null
 }): string {
   const id = u.id != null ? String(u.id).trim() : ''
-  if (id) return id
+  if (id && id !== '[Filtered]') return id
   const username = (u.username ?? '').trim()
-  if (username) return username
-  return (u.email ?? '').trim()
+  if (username && username !== '[Filtered]') return username
+  const email = (u.email ?? '').trim()
+  return email === '[Filtered]' ? '' : email
 }
 
 export function appUserLabel(u: AppUser | null | undefined): string {

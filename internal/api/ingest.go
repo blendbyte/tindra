@@ -589,10 +589,10 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 		Release:        trunc(p.Release, maxFieldLen),
 		Platform:       trunc(p.Platform, maxFieldLen),
 		Spans:          spans,
-		UserIdentity:   trunc(su.Identity, maxFieldLen),
-		UserID:         trunc(su.ID, maxFieldLen),
-		UserUsername:   trunc(su.Username, maxFieldLen),
-		UserEmail:      trunc(su.Email, maxFieldLen),
+		UserIdentity:   su.Identity,
+		UserID:         su.ID,
+		UserUsername:   su.Username,
+		UserEmail:      su.Email,
 		UserName:       trunc(su.Name, maxFieldLen),
 	}
 }

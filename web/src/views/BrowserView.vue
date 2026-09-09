@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { RouterLink, useRoute } from 'vue-router'
 import { useProjectsStore } from '@/stores/projects'
@@ -67,10 +67,15 @@ const { data: pageloadPage, isLoading: pageloadsLoading, isError: pageloadsError
 const extraPageloads = ref<Transaction[]>([])
 const pageloadsMoreCursor = ref<{ cursor_time: string; cursor_id: string } | null>(null)
 const loadingMorePageloads = ref(false)
-watch(pageloadParams, () => {
+let paginationVersion = 0
+function resetPagination() {
+  paginationVersion++
   extraPageloads.value = []
   pageloadsMoreCursor.value = null
-})
+  loadingMorePageloads.value = false
+}
+watch(pageloadParams, resetPagination, { flush: 'sync' })
+onUnmounted(resetPagination)
 const pageloads = computed(() => [...(pageloadPage.value?.transactions ?? []), ...extraPageloads.value])
 const pageloadsHasMore = computed(() => extraPageloads.value.length === 0
   ? !!(pageloadPage.value?.next_cursor_id && pageloadPage.value?.next_cursor_time)
@@ -80,24 +85,25 @@ async function loadMorePageloads() {
     ? { cursor_time: pageloadPage.value?.next_cursor_time, cursor_id: pageloadPage.value?.next_cursor_id }
     : pageloadsMoreCursor.value
   if (!cur?.cursor_time || !cur?.cursor_id || loadingMorePageloads.value) return
+  const version = paginationVersion
   loadingMorePageloads.value = true
   try {
     const p = new URLSearchParams(pageloadParams.value)
     p.set('cursor_time', cur.cursor_time)
     p.set('cursor_id', cur.cursor_id)
     const page = await apiFetch<TransactionListPage>(`/api/transactions?${p}`)
+    if (version !== paginationVersion) return
     extraPageloads.value = [...extraPageloads.value, ...(page.transactions ?? [])]
     pageloadsMoreCursor.value = page.next_cursor_id && page.next_cursor_time
       ? { cursor_time: page.next_cursor_time, cursor_id: page.next_cursor_id }
       : null
   } finally {
-    loadingMorePageloads.value = false
+    if (version === paginationVersion) loadingMorePageloads.value = false
   }
 }
 const isError = computed(() => userMode.value ? pageloadsError.value : (summaryError.value || pagesError.value))
 function refetch() {
-  extraPageloads.value = []
-  pageloadsMoreCursor.value = null
+  resetPagination()
   if (userMode.value) refetchPageloads()
   else { refetchSummary(); refetchPages() }
 }

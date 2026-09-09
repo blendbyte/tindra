@@ -60,7 +60,16 @@ const { data: users, isFetching } = useQuery({
 
 const options = computed(() => users.value ?? [])
 
+let hydrationVersion = 0
+let active = true
+// Invalidate immediately, including when the selection changes during a fetch.
+watch(() => appUser.selected, () => { hydrationVersion++ }, { flush: 'sync' })
+watch(() => route.query.user, () => { hydrationVersion++ }, { flush: 'sync' })
+watch(projectIds, () => { hydrationVersion++ }, { flush: 'sync' })
+onUnmounted(() => { active = false; hydrationVersion++ })
+
 async function hydrateFromRoute() {
+  const version = ++hydrationVersion
   const raw = route.query.user
   const ident = typeof raw === 'string' ? raw : ''
   if (!ident) return
@@ -69,6 +78,7 @@ async function hydrateFromRoute() {
   for (const id of projectIds.value) p.append('project_id', id)
   try {
     const found = await apiFetch<AppUser[]>(`/api/app-users?${p}`)
+    if (!active || version !== hydrationVersion) return
     const match = found.find((u) => u.identity === ident) ?? found[0]
     appUser.select(match ?? {
       identity: ident,
@@ -80,6 +90,7 @@ async function hydrateFromRoute() {
       project_id: '',
     })
   } catch {
+    if (!active || version !== hydrationVersion) return
     appUser.select({
       identity: ident,
       user_id: ident,
@@ -103,7 +114,7 @@ function syncUrl() {
 
 onMounted(() => {
   hydrateFromRoute().then(() => {
-    if (!route.query.user && appUser.identity) syncUrl()
+    if (active && !route.query.user && appUser.identity) syncUrl()
   })
 })
 

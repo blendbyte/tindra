@@ -106,14 +106,14 @@ func ListTransactions(ctx context.Context, pool *pgxpool.Pool, projectID string,
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
 		q += fmt.Sprintf(
-			" AND (start_timestamp < $%d OR (start_timestamp = $%d AND id < $%d::uuid))",
-			n, n, n+1,
+			" AND (start_timestamp, id) < ($%d, $%d::uuid)",
+			n, n+1,
 		)
 	}
 	args = append(args, limit)
 	q += fmt.Sprintf(" ORDER BY start_timestamp DESC, id DESC LIMIT $%d", len(args))
 
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := pool.Query(ctx, q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -141,7 +141,7 @@ func appendTxUserAndTime(q string, args []any, filter TransactionFilter) (string
 	}
 	if filter.UserIdentity != "" {
 		args = append(args, filter.UserIdentity)
-		q += fmt.Sprintf(" AND user_identity = $%d", len(args))
+		q += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
 	if filter.Since != nil {
 		args = append(args, *filter.Since)
@@ -188,14 +188,14 @@ func ListAllTransactions(ctx context.Context, pool *pgxpool.Pool, filter Transac
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
 		q += fmt.Sprintf(
-			" AND (start_timestamp < $%d OR (start_timestamp = $%d AND id < $%d::uuid))",
-			n, n, n+1,
+			" AND (start_timestamp, id) < ($%d, $%d::uuid)",
+			n, n+1,
 		)
 	}
 	args = append(args, limit)
 	q += fmt.Sprintf(" ORDER BY start_timestamp DESC, id DESC LIMIT $%d", len(args))
 
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := pool.Query(ctx, q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -293,9 +293,6 @@ func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectID
 	if hours <= 0 || hours > 720 {
 		hours = 24
 	}
-	if projectIDs == nil {
-		projectIDs = []string{}
-	}
 
 	var bucketExpr, bucketSize string
 	switch {
@@ -310,10 +307,13 @@ func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectID
 		bucketSize = "day"
 	}
 
-	args := []any{hours, projectIDs}
+	args := []any{hours}
 	where := `
-		WHERE start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')
-		  AND (CARDINALITY($2::uuid[]) = 0 OR project_id = ANY($2::uuid[]))`
+		WHERE start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')`
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		where += " AND project_id = ANY($2::uuid[])"
+	}
 	if env != "" {
 		args = append(args, env)
 		where += fmt.Sprintf(" AND environment = $%d", len(args))
@@ -328,7 +328,7 @@ func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectID
 	}
 	if userIdentity != "" {
 		args = append(args, userIdentity)
-		where += fmt.Sprintf(" AND user_identity = $%d", len(args))
+		where += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
 
 	q := fmt.Sprintf(`
@@ -343,7 +343,7 @@ func GetTransactionTimeseries(ctx context.Context, pool *pgxpool.Pool, projectID
 		ORDER BY bucket ASC
 	`, bucketExpr, where)
 
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := pool.Query(ctx, q, userQueryArgs(userIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -367,19 +367,19 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 	if offsetHours < 0 {
 		offsetHours = 0
 	}
-	if projectIDs == nil {
-		projectIDs = []string{}
-	}
 	minutesInWindow := float64(hours) * 60.0
 	now := time.Now().UTC()
 	since := now.Add(-time.Duration(hours+offsetHours) * time.Hour)
 	until := now.Add(-time.Duration(offsetHours) * time.Hour)
 
-	args := []any{minutesInWindow, since, until, projectIDs}
+	args := []any{minutesInWindow, since, until}
 	where := `
 		WHERE start_timestamp >= $2
-		  AND start_timestamp < $3
-		  AND (CARDINALITY($4::uuid[]) = 0 OR project_id = ANY($4::uuid[]))`
+		  AND start_timestamp < $3`
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		where += " AND project_id = ANY($4::uuid[])"
+	}
 	if env != "" {
 		args = append(args, env)
 		where += fmt.Sprintf(" AND environment = $%d", len(args))
@@ -398,7 +398,7 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 	}
 	if userIdentity != "" {
 		args = append(args, userIdentity)
-		where += fmt.Sprintf(" AND user_identity = $%d", len(args))
+		where += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
 	}
 
 	rows, err := pool.Query(ctx, `
@@ -423,7 +423,7 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 		GROUP BY transaction, op, project_id
 		ORDER BY time_spent_ms DESC
 		LIMIT 1000
-	`, args...)
+	`, userQueryArgs(userIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

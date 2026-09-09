@@ -363,3 +363,31 @@ describe('UserFilter', () => {
     document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
   })
 })
+
+describe('pending user hydration', () => {
+  it.each(['resolve', 'reject'] as const)('ignores stale lookup %s after selecting another user', async (outcome) => {
+    routeState.query = { user: 'u-1' }
+    let resolve!: (users: AppUser[]) => void
+    let reject!: (reason: Error) => void
+    vi.mocked(apiFetch).mockReturnValueOnce(new Promise((yes, no) => { resolve = yes; reject = no }))
+    mountFilter()
+    useAppUserStore().select({ ...alice, identity: 'u-2', user_id: 'u-2', name: 'Bob' })
+    await nextTick()
+    if (outcome === 'resolve') resolve([alice])
+    else reject(new Error('offline'))
+    await flushPromises()
+    expect(useAppUserStore().identity).toBe('u-2')
+    expect(routeState.query.user).toBe('u-2')
+  })
+
+  it('ignores lookup results after unmount', async () => {
+    routeState.query = { user: 'u-1' }
+    let resolve!: (users: AppUser[]) => void
+    vi.mocked(apiFetch).mockReturnValueOnce(new Promise(r => { resolve = r }))
+    mountFilter().unmount()
+    resolve([alice])
+    await flushPromises()
+    expect(useAppUserStore().identity).toBe('')
+    expect(replaceMock).not.toHaveBeenCalled()
+  })
+})
