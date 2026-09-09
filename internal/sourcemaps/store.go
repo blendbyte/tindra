@@ -21,16 +21,20 @@ import (
 )
 
 const (
-	fileCacheMax = 64              // max cached JS files (LRU eviction)
-	fileCacheTTL = 5 * time.Minute // re-fetch after this duration
-	fetchTimeout = 5 * time.Second
-	fetchMaxSize = 5 << 20 // 5 MB per file
-	ctxLineMax   = 140     // chars visible in context_line window
+	fileCacheMax      = 64              // max cached JS files (FIFO eviction)
+	fileCacheTTL      = 5 * time.Minute // re-fetch after this duration
+	fetchTimeout      = 5 * time.Second
+	enrichmentTimeout = 750 * time.Millisecond
+	failureCacheTTL   = 15 * time.Second
+	cacheBytesMax     = 32 << 20
+	fetchMaxSize      = 5 << 20 // 5 MB per file
+	ctxLineMax        = 140     // chars visible in context_line window
 )
 
 type cachedFile struct {
 	lines []string
 	at    time.Time
+	bytes int
 }
 
 // Store manages sourcemap files on the filesystem with metadata in Postgres.
@@ -39,9 +43,16 @@ type Store struct {
 	pool       *pgxpool.Pool
 	httpClient *http.Client
 
-	fileMu    sync.Mutex
-	fileCache map[string]cachedFile // URL → cached line split; evict LRU on fileCacheMax
-	fileOrder []string              // insertion order for simple LRU
+	fileMu      sync.Mutex
+	fileCache   map[string]cachedFile // URL → cached line split; FIFO eviction at fileCacheMax
+	fileBytes   int
+	flights     map[string]*fileFlight
+	parsedMu    sync.Mutex
+	parsed      map[string]*SourceMap
+	parseGate   chan struct{}
+	parsedOrder []string
+	parsedBytes int
+	fileOrder   []string // insertion order for bounded FIFO eviction
 }
 
 func NewStore(dataDir string, pool *pgxpool.Pool) *Store {
@@ -50,6 +61,9 @@ func NewStore(dataDir string, pool *pgxpool.Pool) *Store {
 		pool:       pool,
 		httpClient: &http.Client{Timeout: fetchTimeout},
 		fileCache:  make(map[string]cachedFile, fileCacheMax),
+		flights:    make(map[string]*fileFlight),
+		parsed:     make(map[string]*SourceMap),
+		parseGate:  make(chan struct{}, 1),
 	}
 }
 
@@ -135,6 +149,8 @@ func (s *Store) Delete(ctx context.Context, id, projectID string) (bool, error) 
 // an abs_path https:// URL) and context_line is extracted around the error column
 // with {snip} markers, matching Sentry's fallback behaviour.
 func (s *Store) ResolveEventPayload(ctx context.Context, projectID, release string, payload json.RawMessage) json.RawMessage {
+	ctx, cancel := context.WithTimeout(ctx, enrichmentTimeout)
+	defer cancel()
 	var data map[string]any
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return payload
@@ -149,6 +165,7 @@ func (s *Store) ResolveEventPayload(ctx context.Context, projectID, release stri
 	// Cache parsed source maps per URL so each .map file is read+parsed once.
 	smCache := map[string]*SourceMap{}
 
+enrichFrames:
 	for _, v := range values {
 		val, _ := v.(map[string]any)
 		if val == nil {
@@ -163,6 +180,9 @@ func (s *Store) ResolveEventPayload(ctx context.Context, projectID, release stri
 			frame, _ := f.(map[string]any)
 			if frame == nil {
 				continue
+			}
+			if ctx.Err() != nil {
+				break enrichFrames // Preserve frames resolved before the shared deadline.
 			}
 			s.resolveFrame(ctx, projectID, release, frame, smCache)
 		}
@@ -228,16 +248,7 @@ func (s *Store) loadSourceMap(ctx context.Context, projectID, release, normURL s
 	if err != nil || meta == nil {
 		return nil
 	}
-	path := filepath.Join(s.dataDir, "sourcemaps", projectID, meta.ContentHash+".map")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	sm, err := Parse(data)
-	if err != nil {
-		return nil
-	}
-	return sm
+	return s.parsedSourceMap(ctx, projectID, meta.ContentHash)
 }
 
 // fetchContextLine fetches the JS file at rawURL (must be https?://) and
@@ -248,14 +259,7 @@ func (s *Store) fetchContextLine(ctx context.Context, rawURL string, lineno, col
 		return ""
 	}
 
-	lines := s.getCachedLines(rawURL)
-	if lines == nil {
-		lines = s.fetchLines(ctx, rawURL)
-		if lines == nil {
-			return ""
-		}
-		s.setCachedLines(rawURL, lines)
-	}
+	lines := s.sharedLines(ctx, rawURL)
 
 	if lineno < 1 || lineno > len(lines) {
 		return ""
@@ -302,34 +306,9 @@ func (s *Store) fetchLines(ctx context.Context, rawURL string) []string {
 	if resp.StatusCode != http.StatusOK {
 		return nil
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, fetchMaxSize))
-	if err != nil {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, fetchMaxSize+1))
+	if err != nil || len(data) > fetchMaxSize {
 		return nil
 	}
 	return strings.Split(string(data), "\n")
-}
-
-func (s *Store) getCachedLines(url string) []string {
-	s.fileMu.Lock()
-	defer s.fileMu.Unlock()
-	entry, ok := s.fileCache[url]
-	if !ok || time.Since(entry.at) > fileCacheTTL {
-		return nil
-	}
-	return entry.lines
-}
-
-func (s *Store) setCachedLines(url string, lines []string) {
-	s.fileMu.Lock()
-	defer s.fileMu.Unlock()
-	// Simple LRU: evict oldest entry when at capacity.
-	if _, exists := s.fileCache[url]; !exists {
-		if len(s.fileOrder) >= fileCacheMax {
-			oldest := s.fileOrder[0]
-			s.fileOrder = s.fileOrder[1:]
-			delete(s.fileCache, oldest)
-		}
-		s.fileOrder = append(s.fileOrder, url)
-	}
-	s.fileCache[url] = cachedFile{lines: lines, at: time.Now()}
 }
