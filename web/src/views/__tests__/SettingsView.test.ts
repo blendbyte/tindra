@@ -214,13 +214,19 @@ describe('SettingsView', () => {
     })
   })
 
-  describe('alerts tab content', () => {
-    it('renders alerts section when alerts tab is active', async () => {
+  describe('dedicated alerts page', () => {
+    it('renders rules without the settings navigation', () => {
+      setupMocks()
+      const wrapper = mount(SettingsView, { props: { alertsPage: true }, global: { stubs } })
+      expect(wrapper.find('h1').text()).toBe('Alerts')
+      expect(wrapper.text()).toContain('Alert rules')
+      expect(wrapper.find('.settings__nav').exists()).toBe(false)
+    })
+
+    it('removes Alerts from the settings tabs', () => {
       setupMocks()
       const wrapper = mount(SettingsView, { global: { stubs } })
-      const alertsTab = wrapper.findAll('.settings__nav button').find(t => t.text() === 'Alerts')!
-      await alertsTab.trigger('click')
-      expect(wrapper.text()).toContain('Alerts')
+      expect(wrapper.findAll('.settings__nav button').map(t => t.text())).not.toContain('Alerts')
     })
   })
 
@@ -6170,5 +6176,34 @@ describe('SettingsView project profiling toggle', () => {
 
     const box = wrapper.findAll('input[type="checkbox"]').at(-1)
     expect((box?.element as HTMLInputElement).checked).toBe(false)
+  })
+})
+
+
+describe('switching between Settings and the dedicated Alerts page', () => {
+  it('updates the page and query eligibility when the route props change', async () => {
+    setupMocks()
+    const wrapper = mount(SettingsView, { global: { stubs } })
+    const queries = vi.mocked(useQuery).mock.calls.map(([options]) => options as any)
+    const enabled = (key: string) => {
+      const value = queries.find(options => options.queryKey[0] === key).enabled
+      return typeof value === 'function' ? value() : value.value
+    }
+    expect(wrapper.find('h1').text()).toBe('Settings')
+    for (const key of ['tokens', 'users', 'settings', 'invites']) expect(enabled(key)).toBe(true)
+    expect(enabled('alert-rules')).toBe(false)
+
+    await wrapper.setProps({ alertsPage: true })
+    expect(wrapper.find('h1').text()).toBe('Alerts')
+    expect(wrapper.find('.settings__nav').exists()).toBe(false)
+    for (const key of ['tokens', 'users', 'settings', 'invites']) expect(enabled(key)).toBe(false)
+    expect(enabled('alert-rules')).toBe(true)
+
+    await wrapper.setProps({ alertsPage: false })
+    expect(wrapper.find('h1').text()).toBe('Settings')
+    expect(wrapper.find('.settings__nav').exists()).toBe(true)
+    for (const key of ['tokens', 'users', 'settings', 'invites']) expect(enabled(key)).toBe(true)
+    expect(enabled('alert-rules')).toBe(false)
+    wrapper.unmount()
   })
 })

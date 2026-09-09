@@ -88,7 +88,7 @@ function alertOnThis() {
   if (envFilter.value !== 'All') params.set('environment', envFilter.value)
   if (searchQuery.value.trim()) params.set('search', searchQuery.value.trim())
   for (const id of alertProjectIds.value) params.append('project_id', id)
-  router.push(`/settings/alerts?${params}`)
+  router.push(`/alerts?${params}`)
 }
 
 // The project column only earns its space when the filter leaves more than one

@@ -87,6 +87,7 @@ const navItems = computed<CmdItem[]>(() => {
     { id: 'nav:issues',      group: 'Go to', label: 'Issues',      hint: '⌘1', action: () => go('/issues') },
     { id: 'nav:performance', group: 'Go to', label: 'Performance', hint: '⌘2', action: () => go('/performance') },
     { id: 'nav:releases',    group: 'Go to', label: 'Releases',    hint: '⌘3', action: () => router.push('/releases') },
+    { id: 'nav:alerts',      group: 'Go to', label: 'Alerts',      hint: '', action: () => router.push('/alerts') },
     { id: 'nav:settings',    group: 'Go to', label: 'Settings',    hint: '⌘,', action: () => router.push('/settings') },
     { id: 'filter:all', group: 'Projects', label: 'Show all projects', hint: '', action: () => projects.setSelected([]) },
     ...projects.projects.map((p) => ({

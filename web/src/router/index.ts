@@ -112,6 +112,17 @@ export const router = createRouter({
       meta: { requiresAuth: true, title: 'Release' },
     },
     {
+      path: '/alerts',
+      name: 'alerts',
+      component: () => import('@/views/SettingsView.vue'),
+      props: { alertsPage: true },
+      meta: { requiresAuth: true, title: 'Alerts' },
+    },
+    {
+      path: '/settings/alerts',
+      redirect: to => ({ name: 'alerts', query: to.query, hash: to.hash }),
+    },
+    {
       path: '/settings/:tab?',
       name: 'settings',
       component: () => import('@/views/SettingsView.vue'),

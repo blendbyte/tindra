@@ -1,10 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, enableAutoUnmount } from '@vue/test-utils'
+import { nextTick, reactive } from 'vue'
 import type { Project } from '@/api/types'
 
 const pushMock = vi.fn()
-const routePath = { path: '/issues' }
+const routePath = reactive({ path: '/issues' })
+
+enableAutoUnmount(afterEach)
+afterEach(() => vi.unstubAllGlobals())
 
 // Stub that passes attrs through so aria-current is testable
 const globalStubsWithAttrs = {
@@ -43,13 +46,13 @@ function makeProject(id: string, name: string, slug = id): Project {
 
 const globalStubs = {
   stubs: {
-    RouterLink: { template: '<a><slot /></a>' },
+    RouterLink: { template: '<a :href="$attrs.to"><slot /></a>' },
     BrandMark: { template: '<span />' },
     Icon: { template: '<span />' },
   },
 }
 
-function makeWrapper(projects: Project[] = [], selectedIds: string[] = []) {
+function makeWrapper(projects: Project[] = [], selectedIds: string[] = [], options: { attachTo?: HTMLElement; theme?: 'light' | 'dark' } = {}) {
   const toggleProject = vi.fn()
   const setSelected = vi.fn()
   const toggleTheme = vi.fn()
@@ -58,7 +61,7 @@ function makeWrapper(projects: Project[] = [], selectedIds: string[] = []) {
   vi.mocked(useUiStore).mockReturnValue({
     cmdOpen: false,
     theme: null,
-    resolvedTheme: 'light',
+    resolvedTheme: options.theme ?? 'light',
     toggleTheme,
     openCmd,
     closeCmd: vi.fn(),
@@ -71,7 +74,7 @@ function makeWrapper(projects: Project[] = [], selectedIds: string[] = []) {
     toggleProject,
   } as any)
 
-  return mount(Navbar, { global: globalStubs })
+  return mount(Navbar, { attachTo: options.attachTo, global: globalStubs })
 }
 
 beforeEach(() => {
@@ -420,7 +423,7 @@ describe('Navbar', () => {
         const labels = settingsWrap.findAll('.nav__dropdown-item').map(i => i.text())
         expect(labels).toContain('Overview')
         expect(labels).toContain('Projects')
-        expect(labels).toContain('Alerts')
+        expect(labels).not.toContain('Alerts')
         expect(labels).toContain('Users')
         expect(labels).toContain('Audit')
         expect(labels).toContain('Tokens')
@@ -429,7 +432,6 @@ describe('Navbar', () => {
 
       it.each([
         ['/settings/projects', 'Projects'],
-        ['/settings/alerts', 'Alerts'],
         ['/settings/users', 'Users'],
         ['/settings/audit', 'Audit'],
         ['/settings/tokens', 'Tokens'],
@@ -505,5 +507,120 @@ describe('Navbar', () => {
       const dashLink = wrapper.findAll('a').find(l => l.text().includes('Dashboard'))
       expect(dashLink?.attributes('aria-current')).toBeUndefined()
     })
+  })
+})
+
+
+describe('responsive navigation interactions', () => {
+  it('focuses the first link on opening and returns focus on Escape', async () => {
+    const wrapper = makeWrapper([], [], { attachTo: document.body })
+    await wrapper.find('.nav__hamburger').trigger('click')
+    await nextTick()
+    expect(document.activeElement).toBe(document.querySelector('.nav__mobile-link'))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+    await nextTick()
+    expect(wrapper.find('.nav__hamburger').attributes('aria-expanded')).toBe('true')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(document.querySelector('.nav__mobile-drawer')).toBeNull()
+    expect(document.activeElement).toBe(wrapper.find('.nav__hamburger').element)
+  })
+
+  it('dismisses the project filter with Escape when the menu is closed', async () => {
+    const wrapper = makeWrapper()
+    await wrapper.find('.nav__projects-trigger').trigger('click')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(wrapper.find('.popover').exists()).toBe(false)
+  })
+
+  it('keeps the menu open below the desktop breakpoint and closes at 1200px', async () => {
+    const wrapper = makeWrapper()
+    await wrapper.find('.nav__hamburger').trigger('click')
+    vi.stubGlobal('innerWidth', 1199)
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+    expect(document.querySelector('.nav__mobile-drawer')).not.toBeNull()
+    vi.stubGlobal('innerWidth', 1200)
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+    expect(document.querySelector('.nav__mobile-drawer')).toBeNull()
+  })
+
+  it('ignores presses inside the menu and its trigger, but dismisses outside', async () => {
+    const wrapper = makeWrapper([], [], { attachTo: document.body })
+    const trigger = wrapper.find('.nav__hamburger')
+    await trigger.trigger('click')
+    document.querySelector('.nav__mobile-link')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await nextTick()
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    await trigger.trigger('mousedown')
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await nextTick()
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('marks Alerts active in both navigation layouts and closes on selection', async () => {
+    routePath.path = '/alerts'
+    const wrapper = makeWrapper()
+    const desktop = wrapper.findAll('.nav__link').find(link => link.text() === 'Alerts')!
+    expect(desktop.attributes('href')).toBe('/alerts')
+    expect(desktop.attributes('aria-current')).toBe('page')
+    await wrapper.find('.nav__hamburger').trigger('click')
+    const mobile = document.querySelector<HTMLAnchorElement>('.nav__mobile-link[href="/alerts"]')!
+    expect(mobile.getAttribute('aria-current')).toBe('page')
+    mobile.click()
+    await nextTick()
+    expect(document.querySelector('.nav__mobile-drawer')).toBeNull()
+  })
+
+  it('closes the menu when navigation happens elsewhere', async () => {
+    const wrapper = makeWrapper()
+    await wrapper.find('.nav__hamburger').trigger('click')
+    routePath.path = '/alerts'
+    await nextTick()
+    expect(document.querySelector('.nav__mobile-drawer')).toBeNull()
+  })
+
+  it('shows only one of the project filter and navigation menu at a time', async () => {
+    const wrapper = makeWrapper()
+    await wrapper.find('.nav__projects-trigger').trigger('click')
+    await wrapper.find('.nav__hamburger').trigger('click')
+    expect(wrapper.find('.popover').exists()).toBe(false)
+    await wrapper.find('.nav__projects-trigger').trigger('click')
+    expect(document.querySelector('.nav__mobile-drawer')).toBeNull()
+    expect(wrapper.find('.popover').exists()).toBe(true)
+  })
+
+  it.each(['light', 'dark'] as const)('offers the opposite theme in the %s mobile menu', async theme => {
+    const wrapper = makeWrapper([], [], { theme })
+    await wrapper.find('.nav__hamburger').trigger('click')
+    const button = document.querySelector<HTMLButtonElement>('.nav__mobile-utility')!
+    expect(button.textContent).toContain(theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme')
+    button.click()
+    expect(vi.mocked(useUiStore).mock.results[0].value.toggleTheme).toHaveBeenCalledOnce()
+  })
+
+  it('logs out through the phone menu', async () => {
+    const wrapper = makeWrapper()
+    await wrapper.find('.nav__hamburger').trigger('click')
+    const button = [...document.querySelectorAll<HTMLButtonElement>('.nav__mobile-utility')].find(button => button.textContent?.includes('Log out'))!
+    button.click()
+    await nextTick()
+    expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' })
+    expect(window.location.href).toBe('/login')
+  })
+
+  it('removes global listeners when the navigation is unmounted', () => {
+    const documentRemove = vi.spyOn(document, 'removeEventListener')
+    const windowRemove = vi.spyOn(window, 'removeEventListener')
+    const wrapper = makeWrapper()
+    wrapper.unmount()
+    expect(documentRemove).toHaveBeenCalledWith('mousedown', expect.any(Function))
+    expect(documentRemove).toHaveBeenCalledWith('keydown', expect.any(Function))
+    expect(windowRemove).toHaveBeenCalledWith('resize', expect.any(Function))
+    documentRemove.mockRestore()
+    windowRemove.mockRestore()
   })
 })

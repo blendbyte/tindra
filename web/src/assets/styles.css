@@ -448,7 +448,8 @@ a { color: inherit; text-decoration: none; }
   gap: 1px;
 }
 
-.nav__dropdown-wrap:hover .nav__dropdown {
+.nav__dropdown-wrap:hover .nav__dropdown,
+.nav__dropdown-wrap:focus-within .nav__dropdown {
   display: flex;
 }
 
@@ -6381,13 +6382,6 @@ select.field__input {
 
 /* 768px — tablet portrait + phones */
 @media (max-width: 768px) {
-  /* Navbar: collapse Search text + keyboard hint + project label */
-  .nav__btn-text { display: none; }
-  .nav__btn .nav__kbd { display: none; }
-  .nav__btn { padding: 0 8px; gap: 0; }
-  .nav__projects-label { display: none; }
-  .nav__projects-trigger { padding: 0 8px; min-width: 28px; justify-content: center; }
-  .nav__brand { padding-right: 12px; margin-right: 0; }
 
   /* Filter bar: horizontal scroll */
   .filterbar {
@@ -6535,13 +6529,11 @@ select.field__input {
   .nav__hamburger { display: inline-flex; }
   .nav__links { display: none; }
 
-  /* Tighten right-side buttons so they fit alongside hamburger */
-  .nav__icon-btn { padding: 0 8px; }
-  .nav__btn { padding: 0 8px; gap: 0; }
-  .nav__btn-text { display: none; }
-  .nav__btn .nav__kbd { display: none; }
-  .nav__projects-label { display: none; }
-  .nav__projects-trigger { padding: 0 8px; min-width: 28px; justify-content: center; }
+  /* Keep project context visible while giving compact navigation touch targets. */
+  .nav__right { gap: 4px; }
+  .nav__icon-btn, .nav__btn, .nav__hamburger { min-width: 44px; height: 44px; }
+  .nav__projects-trigger { min-width: 44px; height: 44px; }
+  .nav__btn { justify-content: center; }
 
   /* Bulk action bar: wrap on very small screens */
   .bulkbar {
@@ -6569,9 +6561,15 @@ select.field__input {
   display: flex;
   flex-direction: column;
   padding: 4px 0;
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .nav__mobile-link {
   display: flex;
+  min-height: 44px;
+  flex-shrink: 0;
+  text-align: left;
   align-items: center;
   gap: 12px;
   padding: 13px 20px;
@@ -6584,6 +6582,56 @@ select.field__input {
 .nav__mobile-link:last-child { border-bottom: none; }
 .nav__mobile-link:hover { color: var(--text-1); background: var(--surface); }
 .nav__mobile-link[aria-current="page"] { color: var(--accent); }
+
+/* Bound long project names so they cannot squeeze the primary navigation. */
+.nav__links, .nav__right { flex-shrink: 0; }
+.nav__link { white-space: nowrap; }
+.nav__projects-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.nav__projects .popover { width: 300px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 64px); overflow-y: auto; }
+.nav__mobile-utility { display: none; }
+
+/* Compact utility controls before the full navigation runs out of room. */
+@media (min-width: 1200px) and (max-width: 1399px) {
+  .nav__link { padding-inline: 10px; }
+  .nav__brand { padding-right: 12px; margin-right: 0; }
+  .nav__btn-text, .nav__btn .nav__kbd { display: none; }
+}
+
+@media (max-width: 639px) {
+  .nav__secondary-action { display: none; }
+  .nav__mobile-utility { display: flex; }
+  .nav { padding-inline: 8px; }
+  .nav__btn-text, .nav__btn .nav__kbd { display: none; }
+  .nav__projects-label { max-width: 100px; }
+  .nav__btn { padding-inline: 0; gap: 0; }
+}
+
+@media (max-width: 479px) {
+  .nav__projects-label { display: none; }
+  .nav__projects-trigger { padding-inline: 8px; justify-content: center; }
+  .nav__projects-count { margin-left: 0; }
+  .alerts-page .rule__head { flex-wrap: wrap; }
+  .alerts-page .rule__main { flex-basis: calc(100% - 54px); }
+  .alerts-page .rule__stats { margin-left: auto; }
+  .alerts-page .rule__actions { flex-wrap: wrap; }
+  .alerts-page .rule__detail-grid { grid-template-columns: 1fr; gap: 4px; }
+  .alerts-page .rule__detail-v { margin-bottom: 8px; }
+  .alerts-page .rule__history-row { flex-wrap: wrap; }
+}
+
+@media (max-width: 768px) {
+  .alerts-page .btn, .alerts-page .field__input, .alerts-page .field__select,
+  .alerts-page .rule__toggle, .alerts-page .rule__project-check { min-height: 44px; }
+  .alerts-page .rule__toggle { min-width: 44px; }
+}
+
+@media (min-width: 1200px) {
+  .nav__mobile-drawer { display: none; }
+}
+
+.alerts-page .field { min-width: 0; }
+.alerts-page .rule__name, .alerts-page .rule__cond, .alerts-page .rule__detail-v,
+.alerts-page .rule__project-check { overflow-wrap: anywhere; }
 
 /* User card in issue sidebar */
 .user-card__body--btn {

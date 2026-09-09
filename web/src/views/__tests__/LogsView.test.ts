@@ -604,7 +604,7 @@ describe('LogsView', () => {
       await wrapper.find('button.export-menu__trigger').trigger('click')
       expect(pushMock).toHaveBeenCalled()
       const dest = String(pushMock.mock.calls[0][0])
-      expect(dest).toContain('/settings/alerts')
+      expect(dest).toContain('/alerts')
       expect(dest).toContain('trigger=log_count')
       expect(dest).toContain('level=error')
     })
