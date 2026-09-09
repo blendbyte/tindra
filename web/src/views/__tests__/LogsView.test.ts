@@ -126,6 +126,13 @@ describe('LogsView', () => {
       const wrapper = mount(LogsView, { global: { stubs } })
       expect(wrapper.text()).toContain('SDK')
     })
+
+    it('shows a person-specific empty hint when a user is selected', () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks([])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      expect(wrapper.text()).toContain('No logs for u-1 matching these filters.')
+    })
   })
 
   describe('log table', () => {

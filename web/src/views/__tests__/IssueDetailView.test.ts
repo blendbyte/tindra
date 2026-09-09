@@ -56,6 +56,7 @@ import { useIssueNavStore } from '@/stores/issueNav'
 import { apiFetch } from '@/api/client'
 import { flushPromises } from '@vue/test-utils'
 import { useAuthStore } from '@/stores/auth'
+import { useAppUserStore } from '@/stores/appUser'
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -274,6 +275,45 @@ describe('IssueDetailView', () => {
       setupQueries(baseIssue, [{}, {}, { data: ref(eventWithUser) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('10.0.0.1')
+    })
+
+    it('lenses into issues, traces, and logs from the user card', async () => {
+      const eventWithUser = {
+        id: 'evt-1',
+        payload: {
+          user: { id: 'u-1', name: 'Alice', email: 'alice@example.com' },
+        },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithUser) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.user-card__body--btn').exists()).toBe(true)
+      expect(wrapper.find('.user-card__links').exists()).toBe(true)
+
+      await wrapper.find('.user-card__body--btn').trigger('click')
+      const select = vi.mocked(useAppUserStore).mock.results.at(-1)?.value.select
+      expect(select).toHaveBeenCalledWith(expect.objectContaining({ identity: 'u-1', name: 'Alice' }))
+      expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: { user: 'u-1' } })
+
+      await wrapper.findAll('.user-card__link')[1].trigger('click')
+      expect(pushMock).toHaveBeenCalledWith({ path: '/performance/transactions', query: { user: 'u-1' } })
+
+      await wrapper.findAll('.user-card__link')[2].trigger('click')
+      expect(pushMock).toHaveBeenCalledWith({ path: '/logs', query: { user: 'u-1' } })
+    })
+
+    it('keeps an IP-only user as a static card', () => {
+      const eventWithUser = {
+        id: 'evt-1',
+        payload: {
+          user: { ip_address: '203.0.113.9' },
+        },
+      }
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithUser) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.user-card').exists()).toBe(true)
+      expect(wrapper.text()).toContain('203.0.113.9')
+      expect(wrapper.find('.user-card__body--btn').exists()).toBe(false)
+      expect(wrapper.find('.user-card__links').exists()).toBe(false)
     })
   })
 

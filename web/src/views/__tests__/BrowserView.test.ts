@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
+import { reactive, ref } from 'vue'
+
+const routeState = { query: {} as Record<string, unknown> }
 
 vi.mock('vue-router', () => ({
-  useRoute: vi.fn(() => ({ query: {} })),
+  useRoute: vi.fn(() => routeState),
   useRouter: vi.fn(() => ({ replace: vi.fn(), push: vi.fn() })),
   RouterLink: { template: '<a><slot /></a>', props: ['to'] },
 }))
@@ -43,6 +45,7 @@ import BrowserView from '../BrowserView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
+import { apiFetch } from '@/api/client'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -71,23 +74,56 @@ const makePage = (transaction: string, override = {}) => ({
   ...override,
 })
 
-function setupMocks(summaryData?: unknown, pagesData?: unknown[], isError = false) {
+const makePageload = (id: string, transaction = '/home', measurements: Record<string, { value?: number } | number> | null = {
+  lcp: { value: 2100 },
+  inp: 180,
+  cls: { value: 0.05 },
+}) => ({
+  id,
+  project_id: 'p1',
+  trace_id: `tr-${id}`,
+  transaction,
+  op: 'pageload',
+  status: 'ok',
+  duration_ms: 1200,
+  start_timestamp: '2024-01-01T00:00:00Z',
+  environment: 'production',
+  measurements,
+})
+
+function setupMocks(
+  summaryData?: unknown,
+  pagesData?: unknown[],
+  isError = false,
+  pageloads: {
+    data?: { transactions: unknown[]; next_cursor_id?: string; next_cursor_time?: string }
+    isLoading?: boolean
+    isError?: boolean
+    refetch?: ReturnType<typeof vi.fn>
+  } = {},
+) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
-  vi.mocked(usePerformanceStore).mockReturnValue({
+  vi.mocked(usePerformanceStore).mockReturnValue(reactive({
     windowHrs: '24h',
     envFilter: 'All',
-  } as any)
+  }) as any)
 
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref(summaryData), isLoading: ref(false), isError: ref(isError), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(pagesData), isLoading: ref(false), isError: ref(isError), refetch: vi.fn() } as any)
-    .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({
+      data: ref(pageloads.data ?? { transactions: [] }),
+      isLoading: ref(pageloads.isLoading ?? false),
+      isError: ref(pageloads.isError ?? false),
+      refetch: pageloads.refetch ?? vi.fn(),
+    } as any)
 }
 
 beforeEach(() => {
   vi.mocked(useQuery).mockReset()
   vi.mocked(useProjectsStore).mockReset()
   vi.mocked(usePerformanceStore).mockReset()
+  routeState.query = {}
 })
 
 describe('BrowserView', () => {
@@ -336,6 +372,103 @@ describe('BrowserView', () => {
       if (chips.length > 1) {
         await chips[1].vm.$emit('change', 'production')
         expect(chips[1].exists()).toBe(true)
+      }
+    })
+  })
+
+  describe('user mode', () => {
+    it('shows a person-specific empty state', () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks()
+      const wrapper = mount(BrowserView, { global: { stubs } })
+      expect(wrapper.text()).toContain('No page loads for u-1 in this window')
+      expect(wrapper.text()).toContain('set_user()')
+    })
+
+    it('renders page loads with LCP/INP/CLS from measurements', () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks(undefined, undefined, false, {
+        data: { transactions: [makePageload('t1', '/checkout')] },
+      })
+      const wrapper = mount(BrowserView, { global: { stubs } })
+      expect(wrapper.text()).toContain('/checkout')
+      expect(wrapper.text()).toContain('2.10s')
+      expect(wrapper.text()).toContain('180ms')
+      expect(wrapper.text()).toContain('0.050')
+      expect(wrapper.text()).toContain('1 page load')
+    })
+
+    it('shows a dash when a measurement is missing', () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks(undefined, undefined, false, {
+        data: { transactions: [makePageload('t1', '/home', null)] },
+      })
+      const wrapper = mount(BrowserView, { global: { stubs } })
+      expect(wrapper.text()).toContain('–')
+    })
+
+    it('shows skeleton rows while page loads fetch', () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks(undefined, undefined, false, { isLoading: true })
+      const wrapper = mount(BrowserView, { global: { stubs } })
+      expect(wrapper.find('.ghost--bar').exists()).toBe(true)
+    })
+
+    it('retries the pageloads query on error', async () => {
+      routeState.query = { user: 'u-1' }
+      const refetchPageloads = vi.fn()
+      setupMocks(undefined, undefined, false, { isError: true, refetch: refetchPageloads })
+      const wrapper = mount(BrowserView, { global: { stubs } })
+      expect(wrapper.text()).toContain("Couldn't load Web Vitals")
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(refetchPageloads).toHaveBeenCalled()
+    })
+
+    it('loads more page loads from the cursor', async () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks(undefined, undefined, false, {
+        data: {
+          transactions: [makePageload('t1', '/one')],
+          next_cursor_id: 'c2',
+          next_cursor_time: '2024-01-01T01:00:00Z',
+        },
+      })
+      vi.mocked(apiFetch)
+        .mockResolvedValueOnce({
+          transactions: [makePageload('t2', '/two')],
+          next_cursor_id: 'c3',
+          next_cursor_time: '2024-01-01T02:00:00Z',
+        })
+        .mockResolvedValueOnce({
+          transactions: [makePageload('t3', '/three')],
+        })
+      const wrapper = mount(BrowserView, { global: { stubs } })
+      expect(wrapper.text()).toContain('Load more')
+      await wrapper.find('.list-footer .btn').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('/two')
+      expect(wrapper.text()).toContain('2 page loads')
+      expect(String(vi.mocked(apiFetch).mock.calls.at(-1)?.[0])).toContain('cursor_id=c2')
+      await wrapper.find('.list-footer .btn').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('/three')
+      const perf = vi.mocked(usePerformanceStore).mock.results.at(-1)?.value as { envFilter: string }
+      perf.envFilter = 'production'
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('/three')
+    })
+
+    it('enables the pageloads query and disables fleet vitals', () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks()
+      mount(BrowserView, { global: { stubs } })
+      const [summaryCall, pagesCall, pageloadsCall] = vi.mocked(useQuery).mock.calls
+      expect(summaryCall[0].enabled.value).toBe(false)
+      expect(pagesCall[0].enabled.value).toBe(false)
+      expect(pageloadsCall[0].enabled.value).toBe(true)
+      for (const [opts] of vi.mocked(useQuery).mock.calls) {
+        opts.queryKey?.value
+        opts.queryFn?.()
       }
     })
   })

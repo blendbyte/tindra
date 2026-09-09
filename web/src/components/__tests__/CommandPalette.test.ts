@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { Project } from '@/api/types'
 
@@ -25,6 +25,10 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(),
 }))
 
+vi.mock('@/api/client', () => ({
+  apiFetch: vi.fn().mockResolvedValue({ issues: [] }),
+}))
+
 vi.mock('@/stores/appUser', () => ({
   useAppUserStore: vi.fn(() => ({
     identity: '',
@@ -39,6 +43,8 @@ import CommandPalette from '../CommandPalette.vue'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
+import { useAppUserStore } from '@/stores/appUser'
+import { apiFetch } from '@/api/client'
 
 function makeProject(id: string, name: string, slug = id): Project {
   return { id, name, public_key: id, slug, created_at: '', platform: 'javascript' } as Project
@@ -80,6 +86,17 @@ beforeEach(() => {
   vi.mocked(useProjectsStore).mockReset()
   vi.mocked(useAuthStore).mockReset()
   vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
+  vi.mocked(apiFetch).mockReset()
+  vi.mocked(apiFetch).mockResolvedValue({ issues: [] })
+  vi.mocked(useAppUserStore).mockReturnValue({
+    identity: '',
+    select: vi.fn(),
+    clear: vi.fn(),
+  } as any)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('CommandPalette', () => {
@@ -326,6 +343,105 @@ describe('CommandPalette', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true }))
       await nextTick()
       expect(pushMock).toHaveBeenCalledWith('/settings')
+    })
+
+    it('keeps the selected user on ⌘1 and ⌘2', async () => {
+      vi.mocked(useAppUserStore).mockReturnValue({
+        identity: 'u-1',
+        select: vi.fn(),
+        clear: vi.fn(),
+      } as any)
+      mountWithStore(false)
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', metaKey: true }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', metaKey: true }))
+      await nextTick()
+      expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: { user: 'u-1' } })
+      expect(pushMock).toHaveBeenCalledWith({ path: '/performance', query: { user: 'u-1' } })
+    })
+  })
+
+  describe('people search', () => {
+    const alice = {
+      identity: 'u-1',
+      user_id: 'u-1',
+      username: 'alice',
+      email: 'alice@example.com',
+      name: 'Alice',
+      last_seen: '2024-01-01T00:00:00Z',
+      project_id: 'p1',
+    }
+
+    it('lists matching people and selects one', async () => {
+      vi.useFakeTimers()
+      const select = vi.fn()
+      vi.mocked(useAppUserStore).mockReturnValue({
+        identity: '',
+        select,
+        clear: vi.fn(),
+      } as any)
+      vi.mocked(apiFetch).mockImplementation(async (url: string) => {
+        if (String(url).includes('/api/app-users')) return [alice]
+        return { issues: [] }
+      })
+      const wrapper = makeWrapper(true)
+      await wrapper.find('input[aria-label="Search"]').setValue('ali')
+      await vi.advanceTimersByTimeAsync(200)
+      await flushPromises()
+      expect(wrapper.text()).toContain('People')
+      expect(wrapper.text()).toContain('Alice')
+      const person = wrapper.findAll('.cmdk__item').find((i) => i.find('.cmdk__item-text').text() === 'Alice')!
+      await person.trigger('click')
+      expect(select).toHaveBeenCalledWith(alice)
+      expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: { user: 'u-1' } })
+    })
+
+    it('clears people results when the search is too short', async () => {
+      vi.useFakeTimers()
+      vi.mocked(apiFetch).mockImplementation(async (url: string) => {
+        if (String(url).includes('/api/app-users')) return [alice]
+        return { issues: [] }
+      })
+      const wrapper = makeWrapper(true)
+      await wrapper.find('input[aria-label="Search"]').setValue('ali')
+      await vi.advanceTimersByTimeAsync(200)
+      await flushPromises()
+      expect(wrapper.text()).toContain('Alice')
+      await wrapper.find('input[aria-label="Search"]').setValue('a')
+      await nextTick()
+      expect(wrapper.text()).not.toContain('Alice')
+    })
+
+    it('swallows search errors', async () => {
+      vi.useFakeTimers()
+      vi.mocked(apiFetch).mockRejectedValue(new Error('nope'))
+      const wrapper = makeWrapper(true)
+      await wrapper.find('input[aria-label="Search"]').setValue('alice')
+      await vi.advanceTimersByTimeAsync(200)
+      await flushPromises()
+      expect(wrapper.text()).toContain('No results')
+    })
+
+    it('keeps the selected user when jumping to Issues from the palette', async () => {
+      vi.mocked(useAppUserStore).mockReturnValue({
+        identity: 'u-1',
+        select: vi.fn(),
+        clear: vi.fn(),
+      } as any)
+      const wrapper = makeWrapper(true)
+      const issues = wrapper.findAll('.cmdk__item').find(
+        (i) => i.find('.cmdk__item-text').text() === 'Issues',
+      )!
+      await issues.trigger('click')
+      expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: { user: 'u-1' } })
+    })
+
+    it('clears a pending people search on unmount', async () => {
+      vi.useFakeTimers()
+      const wrapper = makeWrapper(true)
+      await wrapper.find('input[aria-label="Search"]').setValue('alice')
+      wrapper.unmount()
+      await vi.advanceTimersByTimeAsync(200)
+      expect(apiFetch).not.toHaveBeenCalled()
     })
   })
 })
