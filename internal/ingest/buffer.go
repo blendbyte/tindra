@@ -21,7 +21,8 @@ type BufferedEvent struct {
 }
 
 type Buffer struct {
-	ch chan BufferedEvent
+	counters bufferCounters
+	ch       chan BufferedEvent
 }
 
 func NewBuffer(size int) *Buffer {
@@ -32,8 +33,10 @@ func NewBuffer(size int) *Buffer {
 func (b *Buffer) Push(e BufferedEvent) bool {
 	select {
 	case b.ch <- e:
+		b.counters.accepted.Add(1)
 		return true
 	default:
+		b.counters.rejected.Add(1)
 		return false
 	}
 }
@@ -51,7 +54,10 @@ func (b *Buffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 		if len(batch) == 0 {
 			return
 		}
+		start := time.Now()
 		writeBatch(ctx, pool, batch)
+		stats := b.Stats()
+		slog.Debug("buffer flush", "attempted", len(batch), "duration_ms", time.Since(start).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
 		batch = batch[:0]
 	}
 
@@ -89,15 +95,13 @@ func sanitizeJSONPayload(p json.RawMessage) json.RawMessage {
 
 func writeBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedEvent) {
 	b := &pgx.Batch{}
+	rows := make([][]any, 0, len(batch))
 	for _, e := range batch {
-		b.Queue(`
-			INSERT INTO events (project_id, event_id, timestamp, payload, trace_id, span_id)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (project_id, event_id) WHERE event_id IS NOT NULL DO NOTHING
-		`, e.ProjectID, e.EventID, e.Timestamp, sanitizeJSONPayload(e.Payload), nilStr(e.TraceID), nilStr(e.SpanID))
+		rows = append(rows, []any{e.ProjectID, e.EventID, e.Timestamp, sanitizeJSONPayload(e.Payload), nilStr(e.TraceID), nilStr(e.SpanID)})
 	}
+	statements := queueInserts(b, "INSERT INTO events (project_id, event_id, timestamp, payload, trace_id, span_id) VALUES ", " ON CONFLICT (project_id, event_id) WHERE event_id IS NOT NULL DO NOTHING", rows, 0)
 	results := pool.SendBatch(ctx, b)
-	for range batch {
+	for range statements {
 		if _, err := results.Exec(); err != nil {
 			slog.Error("event insert", "err", err)
 		}

@@ -238,7 +238,7 @@ func TestGrouper_storesImplicitTags(t *testing.T) {
 		t.Fatalf("expected 1 issue after grouping, got 0")
 	}
 
-	// InsertEventTags runs after UpsertIssue+LinkEventToIssue in processBatch,
+	// InsertEventTags runs after GroupEvent in processBatch,
 	// so poll until tags are non-empty rather than reading immediately.
 	var tags []storage.TagSummary
 	tagDeadline := time.Now().Add(5 * time.Second)

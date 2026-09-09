@@ -25,7 +25,8 @@ type BufferedLog struct {
 }
 
 type LogBuffer struct {
-	ch chan BufferedLog
+	counters bufferCounters
+	ch       chan BufferedLog
 }
 
 func NewLogBuffer(size int) *LogBuffer {
@@ -35,8 +36,10 @@ func NewLogBuffer(size int) *LogBuffer {
 func (b *LogBuffer) Push(l BufferedLog) bool {
 	select {
 	case b.ch <- l:
+		b.counters.accepted.Add(1)
 		return true
 	default:
+		b.counters.rejected.Add(1)
 		return false
 	}
 }
@@ -52,7 +55,10 @@ func (b *LogBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 		if len(batch) == 0 {
 			return
 		}
+		start := time.Now()
 		writeLogBatch(ctx, pool, batch)
+		stats := b.Stats()
+		slog.Debug("logbuffer flush", "attempted", len(batch), "duration_ms", time.Since(start).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
 		batch = batch[:0]
 	}
 
@@ -83,25 +89,13 @@ func (b *LogBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 
 func writeLogBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedLog) {
 	b := &pgx.Batch{}
+	rows := make([][]any, 0, len(batch))
 	for _, l := range batch {
-		b.Queue(`
-			INSERT INTO logs
-				(project_id, timestamp, level, body, trace_id, span_id, environment, release, attributes)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		`,
-			l.ProjectID,
-			l.Timestamp,
-			l.Level,
-			l.Body,
-			nilStr(l.TraceID),
-			nilStr(l.SpanID),
-			nilStr(l.Environment),
-			nilStr(l.Release),
-			nilJSONDefault(l.Attributes),
-		)
+		rows = append(rows, []any{l.ProjectID, l.Timestamp, l.Level, l.Body, nilStr(l.TraceID), nilStr(l.SpanID), nilStr(l.Environment), nilStr(l.Release), nilJSONDefault(l.Attributes)})
 	}
+	statements := queueInserts(b, "INSERT INTO logs (project_id, timestamp, level, body, trace_id, span_id, environment, release, attributes) VALUES ", "", rows, 0)
 	results := pool.SendBatch(ctx, b)
-	for range batch {
+	for range statements {
 		if _, err := results.Exec(); err != nil {
 			slog.Error("log insert", "err", err)
 		}
