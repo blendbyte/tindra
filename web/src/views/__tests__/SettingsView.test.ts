@@ -6178,3 +6178,32 @@ describe('SettingsView project profiling toggle', () => {
     expect((box?.element as HTMLInputElement).checked).toBe(false)
   })
 })
+
+
+describe('switching between Settings and the dedicated Alerts page', () => {
+  it('updates the page and query eligibility when the route props change', async () => {
+    setupMocks()
+    const wrapper = mount(SettingsView, { global: { stubs } })
+    const queries = vi.mocked(useQuery).mock.calls.map(([options]) => options as any)
+    const enabled = (key: string) => {
+      const value = queries.find(options => options.queryKey[0] === key).enabled
+      return typeof value === 'function' ? value() : value.value
+    }
+    expect(wrapper.find('h1').text()).toBe('Settings')
+    for (const key of ['tokens', 'users', 'settings', 'invites']) expect(enabled(key)).toBe(true)
+    expect(enabled('alert-rules')).toBe(false)
+
+    await wrapper.setProps({ alertsPage: true })
+    expect(wrapper.find('h1').text()).toBe('Alerts')
+    expect(wrapper.find('.settings__nav').exists()).toBe(false)
+    for (const key of ['tokens', 'users', 'settings', 'invites']) expect(enabled(key)).toBe(false)
+    expect(enabled('alert-rules')).toBe(true)
+
+    await wrapper.setProps({ alertsPage: false })
+    expect(wrapper.find('h1').text()).toBe('Settings')
+    expect(wrapper.find('.settings__nav').exists()).toBe(true)
+    for (const key of ['tokens', 'users', 'settings', 'invites']) expect(enabled(key)).toBe(true)
+    expect(enabled('alert-rules')).toBe(false)
+    wrapper.unmount()
+  })
+})

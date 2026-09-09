@@ -515,3 +515,13 @@ describe('search context', () => {
     wrapper.unmount()
   })
 })
+
+
+it('opens the dedicated Alerts page from the command palette', async () => {
+  const wrapper = makeWrapper()
+  const item = wrapper.findAll('.cmdk__item').find(item => item.text().includes('Alerts'))!
+  await item.trigger('click')
+  expect(pushMock).toHaveBeenCalledWith('/alerts')
+  expect(vi.mocked(useUiStore).mock.results[0].value.closeCmd).toHaveBeenCalled()
+  wrapper.unmount()
+})
