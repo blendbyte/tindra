@@ -22,6 +22,24 @@ func schedulingDB(t *testing.T) (*pgxpool.Pool, string) {
 	return pool, p.ID
 }
 
+// Finish one bounded sweep, preserving its cursor across scheduling budgets.
+// A slow database may require several passes even for fewer than 200 events.
+func finishSweep(t *testing.T, g *Grouper, stats GroupingStats) GroupingStats {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	total := stats
+	for stats.next != nil {
+		require.NoError(t, ctx.Err(), "grouping sweep did not finish")
+		stats = g.runPass(ctx, stats.next)
+		total.Observed += stats.Observed
+		total.Grouped += stats.Grouped
+		total.Failed += stats.Failed
+		total.Batches += stats.Batches
+	}
+	return total
+}
+
 func TestGrouperScheduling(t *testing.T) {
 	pool, project := schedulingDB(t)
 	ctx := context.Background()
@@ -34,11 +52,11 @@ func TestGrouperScheduling(t *testing.T) {
 	t.Run("drains successive pages and preserves counts", func(t *testing.T) {
 		seed(450)
 		g := NewGrouper(pool)
-		stats := g.RunOnce(ctx)
-		require.Greater(t, stats.Observed, 200)
-		for stats.next != nil {
-			stats = g.runPass(ctx, stats.next)
-		}
+		stats := finishSweep(t, g, g.RunOnce(ctx))
+		require.Equal(t, 450, stats.Observed)
+		require.Equal(t, 450, stats.Grouped)
+		require.Zero(t, stats.Failed)
+		require.Greater(t, stats.Batches, 1)
 		var count int
 		require.NoError(t, pool.QueryRow(ctx, "SELECT event_count FROM issues").Scan(&count))
 		require.Equal(t, 450, count)
@@ -50,12 +68,9 @@ func TestGrouperScheduling(t *testing.T) {
 		require.True(t, stats.BudgetReached)
 		require.LessOrEqual(t, stats.Observed, grouperPassLimit)
 		require.NotNil(t, stats.next)
-		grouped := stats.Grouped
-		for stats.next != nil {
-			stats = g.runPass(ctx, stats.next)
-			grouped += stats.Grouped
-		}
-		require.Equal(t, 2101, grouped)
+		stats = finishSweep(t, g, stats)
+		require.Equal(t, 2101, stats.Grouped)
+		require.Zero(t, stats.Failed)
 	})
 	t.Run("continues after failures and retries on the next sweep", func(t *testing.T) {
 		seed(250)
@@ -63,12 +78,13 @@ func TestGrouperScheduling(t *testing.T) {
   CREATE TRIGGER fail_grouping BEFORE UPDATE OF issue_id ON events FOR EACH ROW EXECUTE FUNCTION fail_grouping()`)
 		require.NoError(t, err)
 		defer pool.Exec(ctx, `DROP TRIGGER IF EXISTS fail_grouping ON events; DROP FUNCTION fail_grouping()`)
-		stats := NewGrouper(pool).RunOnce(ctx)
+		g := NewGrouper(pool)
+		stats := finishSweep(t, g, g.RunOnce(ctx))
 		require.Equal(t, 205, stats.Failed)
 		require.Equal(t, 45, stats.Grouped)
 		_, err = pool.Exec(ctx, "DROP TRIGGER fail_grouping ON events")
 		require.NoError(t, err)
-		stats = NewGrouper(pool).RunOnce(ctx)
+		stats = finishSweep(t, g, g.RunOnce(ctx))
 		require.Equal(t, 205, stats.Grouped)
 	})
 	t.Run("fixed sweep ceiling leaves later arrivals for the next sweep", func(t *testing.T) {
@@ -88,7 +104,11 @@ func TestGrouperScheduling(t *testing.T) {
 		var wg sync.WaitGroup
 		for range 2 {
 			wg.Add(1)
-			go func() { defer wg.Done(); NewGrouper(pool).RunOnce(ctx) }()
+			go func() {
+				defer wg.Done()
+				g := NewGrouper(pool)
+				finishSweep(t, g, g.RunOnce(ctx))
+			}()
 		}
 		wg.Wait()
 		var count int
