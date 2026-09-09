@@ -11,6 +11,7 @@ export default defineConfig({
   },
   test: {
     environment: 'happy-dom',
+    setupFiles: ['./src/testSetup.ts'],
     include: ['src/**/*.test.ts'],
     coverage: {
       provider: 'v8',
@@ -18,8 +19,7 @@ export default defineConfig({
       reportsDirectory: 'coverage',
       exclude: [
         'node_modules/',
-        'src/main.ts',
-        'src/router/',
+        'src/router/index.ts',
         '**/*.d.ts',
         'e2e/',
       ],

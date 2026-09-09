@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { useInvestigationStore } from '@/stores/investigation'
 import type { SpanSummary, SpanSample } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { formatDuration } from '@/utils/formatters'
@@ -17,6 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
 const tz = useTimezone()
 
 const queryParams = computed(() => {
@@ -30,8 +32,8 @@ const queryParams = computed(() => {
 })
 
 const { data: samples, isLoading } = useQuery({
-  queryKey: computed(() => ['span-samples', queryParams.value]),
-  queryFn: ({ signal }) => apiFetch<SpanSample[]>(`/api/spans/samples?${queryParams.value}`, { signal }),
+  queryKey: computed(() => ['span-samples', investigation.scopeKey, queryParams.value]),
+  queryFn: ({ signal }) => apiFetch<SpanSample[]>(investigation.request(`/api/spans/samples?${queryParams.value}`), { signal }),
 })
 
 

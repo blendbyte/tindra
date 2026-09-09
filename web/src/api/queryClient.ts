@@ -12,8 +12,9 @@ export function createQueryClient() {
     'web-vitals-summary', 'web-vitals-pages', 'releases', 'release-issues',
     'release-transactions', 'monitors', 'uptime-monitors', 'checkins',
     'uptime-checks', 'uptime-stats', 'dash-tx', 'dash-tx-counts',
+    'span-db-summaries', 'span-db-timeseries', 'span-cache-summaries', 'span-cache-timeseries', 'span-jobs-summaries', 'span-jobs-timeseries',
   ]) {
-    client.setQueryDefaults([key], { staleTime: 5_000 })
+    client.setQueryDefaults([key], { staleTime: 5_000, refetchOnWindowFocus: false, refetchOnReconnect: false })
   }
   client.setQueryDefaults(['projects'], { staleTime: 5_000 })
   client.setQueryDefaults(['projects', 'metadata'], { staleTime: 30_000 })

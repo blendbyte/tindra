@@ -177,7 +177,8 @@ it('does not claim there are no projects while their request is pending or faile
   await projects.refetch()
   await flushPromises()
   expect(projects.hasLoaded).toBe(true)
-  expect(projects.selectedIds).toEqual([])
+  expect(projects.selectedIds).toEqual(['p1'])
+  expect(projects.invalidIds).toEqual(['p1'])
   expect(wrapper.text()).toContain('No projects yet')
 })
 

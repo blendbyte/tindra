@@ -100,3 +100,12 @@ describe('FilterChip', () => {
     wrapper.unmount()
   })
 })
+
+it.each(['.filterchip', '.popover__item'])('closes with Escape from %s without changing the selection', async (selector) => {
+  const wrapper = mount(FilterChip, { props: defaultProps })
+  await wrapper.find('.filterchip').trigger('click')
+  await wrapper.find(selector).trigger('keydown', { key: 'Escape' })
+  expect(wrapper.find('.popover').exists()).toBe(false)
+  expect(wrapper.find('.filterchip').attributes('aria-expanded')).toBe('false')
+  expect(wrapper.emitted('change')).toBeUndefined()
+})

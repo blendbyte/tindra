@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, enableAutoUnmount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { nextTick, reactive } from 'vue'
 import type { Project } from '@/api/types'
 
 const pushMock = vi.fn()
 const routePath = reactive({ path: '/issues' })
 
-enableAutoUnmount(afterEach)
 afterEach(() => vi.unstubAllGlobals())
 
 // Stub that passes attrs through so aria-current is testable
@@ -97,12 +96,12 @@ describe('Navbar', () => {
       expect(wrapper.find('.nav__projects-trigger').text()).toContain('All projects')
     })
 
-    it('shows "All projects" when all project ids are selected', () => {
+    it('distinguishes an explicit project set from All projects', () => {
       const wrapper = makeWrapper(
         [makeProject('1', 'Alpha'), makeProject('2', 'Beta')],
         ['1', '2'],
       )
-      expect(wrapper.find('.nav__projects-trigger').text()).toContain('All projects')
+      expect(wrapper.find('.nav__projects-trigger').text()).toContain('2 projects')
     })
 
     it('shows the project name when exactly one id is selected', () => {
@@ -623,4 +622,15 @@ describe('responsive navigation interactions', () => {
     documentRemove.mockRestore()
     windowRemove.mockRestore()
   })
+})
+
+it.each(['Dashboard', 'Issues', 'Performance', 'Logs', 'Monitors', 'Releases'])('closes the mobile drawer when navigating to %s', async (label) => {
+  const wrapper = makeWrapper()
+  await wrapper.find('.nav__hamburger').trigger('click')
+  const link = Array.from(document.body.querySelectorAll<HTMLElement>('.nav__mobile-link')).find(el => el.textContent?.includes(label))!
+  expect(link).toBeDefined()
+  link.click()
+  await nextTick()
+  expect(document.body.querySelector('.nav__mobile-drawer')).toBeNull()
+  wrapper.unmount()
 })

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
-const routeState = { name: 'issues' }
+const routeState = { name: 'issues', path: '/issues' }
 
 vi.mock('vue-router', () => ({
   useRoute: vi.fn(() => routeState),
@@ -18,11 +18,13 @@ vi.mock('@/stores/auth', () => ({
 }))
 
 import App from './App.vue'
+import { useInvestigationStore } from '@/stores/investigation'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 
 const globalStubs = {
   stubs: {
+    InvestigationBar: true,
     Navbar: { template: '<nav class="navbar-stub" />' },
     QuotaBanner: { template: '<div class="quota-banner-stub" />' },
     CommandPalette: { template: '<div class="command-palette-stub" />' },
@@ -146,5 +148,30 @@ describe('App', () => {
     setupMocks({ ready: true, user: null })
     const wrapper = mount(App, { global: globalStubs })
     expect(wrapper.find('.app').exists()).toBe(true)
+  })
+})
+
+
+describe('custom investigation ranges', () => {
+  it.each(['All', '90d'])('renders a supported custom interval after %s', (preset) => {
+    setupMocks()
+    routeState.path = '/logs'
+    routeState.name = 'logs'
+    const state = useInvestigationStore()
+    state.setRange(preset)
+    state.absolute = { from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' }
+    const wrapper = mount(App, { global: globalStubs })
+    expect(wrapper.find('.router-view-stub').exists()).toBe(true)
+    routeState.path = '/issues'
+  })
+  it('still blocks custom intervals longer than the view supports', () => {
+    setupMocks()
+    routeState.path = '/logs'
+    const state = useInvestigationStore()
+    state.absolute = { from: '2026-01-01T00:00:00Z', to: '2026-03-01T00:00:00Z' }
+    const wrapper = mount(App, { global: globalStubs })
+    expect(wrapper.find('.router-view-stub').exists()).toBe(false)
+    expect(wrapper.text()).toContain('up to 30 days')
+    routeState.path = '/issues'
   })
 })

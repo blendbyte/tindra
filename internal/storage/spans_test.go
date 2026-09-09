@@ -60,7 +60,7 @@ func TestGetSpanSummaries_basicAggregation(t *testing.T) {
 
 	// Three db.query spans for the same op+description.
 	for i, dur := range []int{10, 20, 30} {
-		seedSpan(t, tx.ID, "span-s"+string(rune('a'+i)), "db.query", "SELECT 1", dur, now.Add(time.Duration(i)*time.Millisecond))
+		seedSpan(t, tx.ID, "span-s"+string(rune('a'+i)), "db.query", "SELECT 1", dur, now.Add(-time.Duration(i+1)*time.Millisecond))
 	}
 
 	summaries, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "", "")

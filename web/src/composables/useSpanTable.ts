@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
+import { useInvestigationStore } from '@/stores/investigation'
 import type { SpanSummary, SpanTimeseries } from '@/api/types'
 import { WINDOW_MAP } from '@/utils/time'
 
@@ -12,6 +13,7 @@ export function useSpanTable(config: {
   nullableCols?: string[]
 }) {
   const projects = useProjectsStore()
+  const investigation = useInvestigationStore()
   const perf = usePerformanceStore()
 
   const hours = computed(() => WINDOW_MAP[perf.windowHrs] ?? 24)
@@ -24,17 +26,20 @@ export function useSpanTable(config: {
     return p.toString()
   })
 
-  const { data: summaries, isLoading, isError, refetch } = useQuery({
-    queryKey: computed(() => [`${config.queryKeyPrefix}-summaries`, spanParams.value]),
+  const { data: summaries, isLoading, isError: summariesError, refetch: refetchSummaries } = useQuery({
+    queryKey: computed(() => [`${config.queryKeyPrefix}-summaries`, investigation.scopeKey, spanParams.value]),
     staleTime: 5_000,
-    queryFn: ({ signal }) => apiFetch<SpanSummary[]>(`/api/spans/${config.endpoint}?${spanParams.value}`, { signal }),
+    queryFn: ({ signal }) => apiFetch<SpanSummary[]>(investigation.request(`/api/spans/${config.endpoint}?${spanParams.value}`), { signal }),
   })
 
-  const { data: timeseries } = useQuery({
-    queryKey: computed(() => [`${config.queryKeyPrefix}-timeseries`, spanParams.value]),
+  const { data: timeseries, isError: timeseriesError, refetch: refetchTimeseries } = useQuery({
+    queryKey: computed(() => [`${config.queryKeyPrefix}-timeseries`, investigation.scopeKey, spanParams.value]),
     staleTime: 5_000,
-    queryFn: ({ signal }) => apiFetch<SpanTimeseries>(`/api/spans/${config.endpoint}/timeseries?${spanParams.value}`, { signal }),
+    queryFn: ({ signal }) => apiFetch<SpanTimeseries>(investigation.request(`/api/spans/${config.endpoint}/timeseries?${spanParams.value}`), { signal }),
   })
+
+  const isError = computed(() => summariesError.value || timeseriesError.value)
+  function refetch() { return Promise.all([refetchSummaries(), refetchTimeseries()]) }
 
   const sortCol = ref('time_pct')
   const sortDir = ref<'asc' | 'desc'>('desc')
@@ -84,6 +89,7 @@ export function useSpanTable(config: {
   const noData = computed(() => !isLoading.value && !isError.value && (summaries.value ?? []).length === 0)
 
   const selectedRow = ref<SpanSummary | null>(null)
+  watch(() => investigation.scopeKey, () => { selectedRow.value = null })
 
   return {
     perf,

@@ -11,11 +11,14 @@ import { VueQueryPlugin } from '@tanstack/vue-query'
 import App from './App.vue'
 import { createQueryClient } from './api/queryClient'
 import { router } from './router'
+import { installInvestigationRouter } from './router/investigation'
 import { vTooltip } from './directives/tooltip'
 import './assets/styles.css'
 
 const app = createApp(App)
-app.use(createPinia())
+const pinia = createPinia()
+app.use(pinia)
+installInvestigationRouter(router, pinia)
 app.use(router)
 app.use(VueQueryPlugin, { queryClient: createQueryClient() })
 app.directive('tooltip', vTooltip)

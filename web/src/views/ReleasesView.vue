@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { useInvestigationStore } from '@/stores/investigation'
 import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Release, ReleaseListPage } from '@/api/types'
@@ -11,6 +12,7 @@ import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
 const { formatRel } = useFormatters()
 
 // ── Pagination ────────────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ const queryKey = computed(() => ['releases', [...projects.selectedIds].sort().jo
 const { data: firstPage, isFetching, isError, refetch } = useQuery({
   queryKey,
   queryFn: ({ signal }) => apiFetch<ReleaseListPage>(`/api/releases?${buildParams(null)}`, { signal }),
-  refetchInterval: 60_000,
+
 })
 
 let moreController: AbortController | undefined
@@ -46,7 +48,7 @@ function cancelMore() {
 }
 onUnmounted(cancelMore)
 
-watch([queryKey, firstPage], ([, data]) => {
+watch([queryKey, firstPage, () => investigation.anchor], ([, data]) => {
   cancelMore()
   extraReleases.value = []
   nextCursor.value = data?.has_more && data.next_cursor_time && data.next_cursor_id
@@ -65,6 +67,7 @@ const hasMore = computed(() => nextCursor.value !== null)
 
 async function loadMore() {
   if (!nextCursor.value || isFetchingMore.value) return
+  investigation.browsingHistory = true
   const controller = moreController = new AbortController()
   isFetchingMore.value = true
   try {

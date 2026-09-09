@@ -433,6 +433,9 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 }
 
 func CountAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) (int, error) {
+	if bounds, ok := InvestigationRange(ctx); ok {
+		return countWindowIssues(ctx, pool, filter, bounds)
+	}
 	q := `SELECT COUNT(*) FROM issues WHERE TRUE`
 	q, args := addCommonFilters(q, []any{}, filter)
 	var n int
@@ -443,6 +446,9 @@ func CountAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter)
 }
 
 func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) ([]*Issue, error) {
+	if bounds, ok := InvestigationRange(ctx); ok {
+		return listWindowIssues(ctx, pool, filter, bounds)
+	}
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 50

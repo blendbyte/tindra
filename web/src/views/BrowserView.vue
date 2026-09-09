@@ -6,8 +6,9 @@ import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 import { apiFetch } from '@/api/client'
+import { investigationQuery } from '@/router/investigation'
+import { useInvestigationStore } from '@/stores/investigation'
 import type { WebVitalsSummary, WebVitalsPage, Transaction, TransactionListPage } from '@/api/types'
-import FilterChip from '@/components/FilterChip.vue'
 import UserFilter from '@/components/UserFilter.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
 import Icon from '@/components/Icon.vue'
@@ -16,6 +17,7 @@ import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
 
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
 const perf = usePerformanceStore()
 const appUser = useAppUserStore()
 const route = useRoute()
@@ -47,20 +49,20 @@ const pageloadParams = computed(() => {
 })
 
 const { data: summary, isLoading: summaryLoading, isError: summaryError, refetch: refetchSummary } = useQuery({
-  queryKey: computed(() => ['web-vitals-summary', params.value]),
-  queryFn: ({ signal }) => apiFetch<WebVitalsSummary>(`/api/vitals?${params.value}`, { signal }),
+  queryKey: computed(() => ['web-vitals-summary', investigation.scopeKey, params.value]),
+  queryFn: ({ signal }) => apiFetch<WebVitalsSummary>(investigation.request(`/api/vitals?${params.value}`), { signal }),
   enabled: computed(() => !userMode.value),
 })
 
 const { data: pages, isLoading: pagesLoading, isError: pagesError, refetch: refetchPages } = useQuery({
-  queryKey: computed(() => ['web-vitals-pages', params.value]),
-  queryFn: ({ signal }) => apiFetch<WebVitalsPage[]>(`/api/vitals/pages?${params.value}`, { signal }),
+  queryKey: computed(() => ['web-vitals-pages', investigation.scopeKey, params.value]),
+  queryFn: ({ signal }) => apiFetch<WebVitalsPage[]>(investigation.request(`/api/vitals/pages?${params.value}`), { signal }),
   enabled: computed(() => !userMode.value),
 })
 
 const { data: pageloadPage, isLoading: pageloadsLoading, isError: pageloadsError, refetch: refetchPageloads } = useQuery({
-  queryKey: computed(() => ['user-pageloads', pageloadParams.value]),
-  queryFn: ({ signal }) => apiFetch<TransactionListPage>(`/api/transactions?${pageloadParams.value}`, { signal }),
+  queryKey: computed(() => ['user-pageloads', investigation.scopeKey, pageloadParams.value]),
+  queryFn: ({ signal }) => apiFetch<TransactionListPage>(investigation.request(`/api/transactions?${pageloadParams.value}`), { signal }),
   enabled: computed(() => userMode.value),
 })
 
@@ -74,7 +76,7 @@ function resetPagination() {
   pageloadsMoreCursor.value = null
   loadingMorePageloads.value = false
 }
-watch(pageloadParams, resetPagination, { flush: 'sync' })
+watch([pageloadParams, () => investigation.anchor], resetPagination, { flush: 'sync' })
 onUnmounted(resetPagination)
 const pageloads = computed(() => [...(pageloadPage.value?.transactions ?? []), ...extraPageloads.value])
 const pageloadsHasMore = computed(() => extraPageloads.value.length === 0
@@ -85,13 +87,14 @@ async function loadMorePageloads() {
     ? { cursor_time: pageloadPage.value?.next_cursor_time, cursor_id: pageloadPage.value?.next_cursor_id }
     : pageloadsMoreCursor.value
   if (!cur?.cursor_time || !cur?.cursor_id || loadingMorePageloads.value) return
+  investigation.browsingHistory = true
   const version = paginationVersion
   loadingMorePageloads.value = true
   try {
     const p = new URLSearchParams(pageloadParams.value)
     p.set('cursor_time', cur.cursor_time)
     p.set('cursor_id', cur.cursor_id)
-    const page = await apiFetch<TransactionListPage>(`/api/transactions?${p}`)
+    const page = await apiFetch<TransactionListPage>(investigation.request(`/api/transactions?${p}`))
     if (version !== paginationVersion) return
     extraPageloads.value = [...extraPageloads.value, ...(page.transactions ?? [])]
     pageloadsMoreCursor.value = page.next_cursor_id && page.next_cursor_time
@@ -196,18 +199,6 @@ const sortedPages = computed(() => {
     <PerformanceSubnav />
 
     <div class="filterbar">
-      <FilterChip
-        label="Window"
-        :value="perf.windowHrs"
-        :options="['1h', '24h', '7d', '30d']"
-        @change="perf.windowHrs = $event"
-      />
-      <FilterChip
-        label="Env"
-        :value="perf.envFilter"
-        :options="['All', 'production', 'staging', 'development']"
-        @change="perf.envFilter = $event"
-      />
       <UserFilter />
     </div>
 
@@ -261,7 +252,7 @@ const sortedPages = computed(() => {
           v-for="t in pageloads"
           :key="t.id"
           class="txrow txrow--pageload"
-          :to="{ name: 'transaction-detail', params: { id: t.id } }"
+          :to="{ name: 'transaction-detail', params: { id: t.id }, query: investigationQuery(investigation) }"
         >
           <span class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatRel(t.start_timestamp) }}</span>
           <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ t.transaction }}</span>
@@ -364,7 +355,7 @@ const sortedPages = computed(() => {
               >
                 <td class="perf-table__desc">
                   <RouterLink
-                    :to="{ name: 'transaction-profile', query: { name: page.transaction } }"
+                    :to="{ name: 'transaction-profile', query: { ...investigationQuery(investigation), name: page.transaction } }"
                     class="perf-table__page-link mono"
                   >{{ page.transaction }}</RouterLink>
                 </td>

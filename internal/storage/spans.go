@@ -48,11 +48,12 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 		hours = 24
 	}
 
-	args := []any{hours}
-	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')`, spanOpFilter(category))
+	window := ResolveTimeRange(ctx, hours, 0)
+	args := []any{window.From, window.To}
+	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= $1 AND s.start_timestamp < $2`, spanOpFilter(category))
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
-		where += " AND s.project_id = ANY($2::uuid[])"
+		where += " AND s.project_id = ANY($3::uuid[])"
 	}
 
 	if env != "" {
@@ -82,7 +83,7 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 			s.op,
 			COALESCE(s.description, '') AS description,
 			COUNT(*) AS sample_count,
-			ROUND(COUNT(*)::numeric / GREATEST($1::numeric / 60.0, 1), 2) AS rate,
+			ROUND(COUNT(*)::numeric / GREATEST(EXTRACT(EPOCH FROM ($2::timestamptz - $1::timestamptz)) / 60.0, 1), 2) AS rate,
 			COALESCE(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY s.duration_ms), 0) AS p50,
 			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY s.duration_ms), 0) AS p95,
 			SUM(s.duration_ms) AS total_ms,
@@ -144,11 +145,12 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 		bucketSize = "day"
 	}
 
-	args := []any{hours}
-	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')`, spanOpFilter(category))
+	window := ResolveTimeRange(ctx, hours, 0)
+	args := []any{window.From, window.To}
+	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= $1 AND s.start_timestamp < $2`, spanOpFilter(category))
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
-		where += " AND s.project_id = ANY($2::uuid[])"
+		where += " AND s.project_id = ANY($3::uuid[])"
 	}
 
 	if env != "" {
@@ -207,11 +209,12 @@ func GetSpanSamples(ctx context.Context, pool *pgxpool.Pool, op, description str
 		projectIDs = []string{}
 	}
 
-	args := []any{hours, projectIDs, op, description}
+	window := ResolveTimeRange(ctx, hours, 0)
+	args := []any{window.From, projectIDs, op, description, window.To}
 	where := `
 		WHERE s.op = $3
 		  AND COALESCE(s.description, '') = $4
-		  AND s.start_timestamp >= NOW() - ($1 * INTERVAL '1 hour')
+		  AND s.start_timestamp >= $1 AND s.start_timestamp < $5
 		  AND (CARDINALITY($2::uuid[]) = 0 OR s.project_id = ANY($2::uuid[]))`
 
 	if env != "" {

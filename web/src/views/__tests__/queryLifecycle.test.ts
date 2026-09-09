@@ -1,3 +1,4 @@
+import { useInvestigationStore } from '@/stores/investigation'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { shallowMount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, disposePinia } from 'pinia'
@@ -59,6 +60,7 @@ async function open(component: Component, path: string, seed: [unknown[], unknow
     { path: '/:section/:id?', component: { template: '<div />' } },
     { path: '/', component: { template: '<div />' } },
   ] })
+  if (path.includes('project_id=')) useInvestigationStore(pinia).projectIds = new URL(path, 'http://test').searchParams.getAll('project_id')
   await router.push(path)
   await router.isReady()
   wrapper = shallowMount(component, { props, global: { directives: { tooltip: {} }, plugins: [pinia, router, [VueQueryPlugin, { queryClient: client }]] } })
@@ -67,7 +69,8 @@ async function open(component: Component, path: string, seed: [unknown[], unknow
 }
 
 function request(url: string) {
-  const found = requests.find(r => r.url === url)
+  const normalize = (raw: string) => { const u = new URL(raw, 'http://test'); u.searchParams.delete('from'); u.searchParams.delete('to'); if (u.searchParams.get('env') === '') u.searchParams.delete('env'); return u.pathname + (u.searchParams.size ? '?' + u.searchParams : '') }
+  const found = requests.find(r => normalize(r.url) === normalize(url))
   expect(found, `missing ${url}; requested ${requests.map(r => r.url).join(', ')}`).toBeDefined()
   return found!
 }
@@ -145,7 +148,7 @@ describe('view request lifecycle', () => {
     await open(TransactionProfileView, '/performance/profile?name=checkout&op=http.server&project_id=p1')
     await expectCancelled(['/api/transactions/summaries?hours=24&name=checkout&op=http.server&project_id=p1',
       '/api/transactions/timeseries?hours=24&name=checkout&op=http.server&project_id=p1',
-      '/api/transactions?name=checkout&op=http.server&project_id=p1'])
+      '/api/transactions?hours=24&name=checkout&op=http.server&project_id=p1'])
   })
 
   it('does not fetch monitor history until a monitor is expanded', async () => {

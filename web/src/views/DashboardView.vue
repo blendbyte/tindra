@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { investigationQuery } from '@/router/investigation'
+import { useInvestigationStore, RANGE_HOURS } from '@/stores/investigation'
 import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
 import { useTimezone } from '@/composables/useTimezone'
@@ -40,6 +42,8 @@ import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
+const windowLabel = computed(() => investigation.absolute ? 'selected range' : investigation.range)
 const { formatRel } = useFormatters()
 const timezone = useTimezone()
 const { dsnFor } = useConfig()
@@ -84,27 +88,27 @@ const { data: projectUsage } = useQuery({
 const { data: issuesPage, isFetching: issuesFetching } = useQuery({
   queryKey: computed(() => ['issues', 'overview', pKey.value]),
   queryFn: ({ signal }) => apiFetch<DashboardIssuePage>(`/api/issues/overview?${buildQs()}`, { signal }),
-  refetchInterval: 30_000,
+
 })
 
 const { data: txSummaries, isFetching: txFetching } = useQuery({
-  queryKey: computed(() => ['dash-tx', pKey.value]),
+  queryKey: computed(() => ['dash-tx', investigation.scopeKey]),
   queryFn: ({ signal }) =>
-    apiFetch<TransactionSummary[]>(`/api/transactions/summaries?${buildQs({ hours: '24' })}`, { signal }),
-  refetchInterval: 60_000,
+    apiFetch<TransactionSummary[]>(investigation.request(`/api/transactions/summaries?${buildQs({ hours: String(RANGE_HOURS[investigation.range] ?? 24), env: investigation.environment === 'All' ? '' : investigation.environment })}`), { signal }),
+
 })
 
 const { data: txTs } = useQuery({
-  queryKey: computed(() => ['dash-tx-counts', pKey.value]),
+  queryKey: computed(() => ['dash-tx-counts', pKey.value, investigation.environment]),
   queryFn: ({ signal }) =>
-    apiFetch<TxCountTimeseries>(`/api/transactions/counts?${buildQs({ hours: '168' })}`, { signal }),
-  refetchInterval: 120_000,
+    apiFetch<TxCountTimeseries>(`/api/transactions/counts?${buildQs({ hours: '168', ...(investigation.environment === 'All' ? {} : { env: investigation.environment }) })}`, { signal }),
+
 })
 
 const { data: releasesPage, isFetching: releasesFetching } = useQuery({
   queryKey: computed(() => ['releases', 'health', pKey.value]),
   queryFn: ({ signal }) => apiFetch<ReleaseHealthPage>(`/api/releases/health?${buildQs()}`, { signal }),
-  refetchInterval: 60_000,
+
 })
 
 const { data: alertRules, isLoading: alertsLoading } = useQuery({
@@ -113,26 +117,26 @@ const { data: alertRules, isLoading: alertsLoading } = useQuery({
     const res = await apiFetch<{ rules: AlertRule[] }>('/api/alert-rules', { signal })
     return res?.rules ?? []
   },
-  refetchInterval: 120_000,
+
 })
 
 const { data: uptimeMonitors } = useQuery({
   queryKey: computed(() => ['uptime-monitors', buildQs()]),
   queryFn: ({ signal }) => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${buildQs()}`, { signal }),
-  refetchInterval: 30_000,
+
 })
 
 const { data: cronMonitors } = useQuery({
   queryKey: computed(() => ['monitors', buildQs()]),
   queryFn: ({ signal }) => apiFetch<CronMonitor[]>(`/api/monitors?${buildQs()}`, { signal }),
-  refetchInterval: 30_000,
+
 })
 
 const { data: projectIssueCounts, isFetching: projStatsFetching } = useQuery({
   queryKey: ['projects', 'stats'],
   queryFn: ({ signal }) => apiFetch<ProjectIssueCount[]>('/api/projects/stats', { signal }),
   enabled: computed(() => projects.projects.length >= 2),
-  refetchInterval: 30_000,
+
 })
 
 // ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -163,12 +167,7 @@ const apdex = computed((): number | null => {
   return s.reduce((acc, t) => acc + t.apdex * t.sample_count, 0) / total
 })
 
-const events24h = computed((): number | null => {
-  const b = txTs.value?.buckets
-  if (!b?.length) return null
-  const cutoff = Date.now() - 24 * 3_600_000
-  return b.filter(x => new Date(x.time).getTime() >= cutoff).reduce((s, x) => s + x.count, 0)
-})
+const events24h = computed(() => txSummaries.value?.reduce((total, row) => total + row.sample_count, 0) ?? null)
 
 // ── Derived lists ─────────────────────────────────────────────────────────────
 
@@ -282,7 +281,7 @@ const projectStats = computed((): ProjectStatRow[] => {
   for (const c of projectIssueCounts.value ?? []) {
     issueByProject.set(c.project_id, c.open_issues)
   }
-  return projects.projects.map(p => {
+  return projects.projects.filter(p => !projects.selectedIds.length || projects.selectedIds.includes(p.id)).map(p => {
     const tx = txByProject.get(p.id)
     return {
       projectId: p.id,
@@ -541,6 +540,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 
   <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
   <div v-else class="page">
+    <p class="db-scope-note">Transaction metrics follow the selected range and environment. Open issues, alerts, releases, and monitor status show current state across environments; the density chart shows the last 7 days.</p>
 
     <!-- KPI strip ──────────────────────────────────────────────────────────── -->
     <div class="db-kpis">
@@ -570,7 +570,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
           }"
         >{{ errorRate.toFixed(1) }}%</div>
         <div v-else class="db-kpi__value db-kpi__value--muted">–</div>
-        <div class="db-kpi__sub">weighted · 24h</div>
+        <div class="db-kpi__sub">weighted · {{ windowLabel }}</div>
       </div>
 
       <div class="db-kpi">
@@ -589,7 +589,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
           }"
         >{{ formatDuration(p95Weighted) }}</div>
         <div v-else class="db-kpi__value db-kpi__value--muted">–</div>
-        <div class="db-kpi__sub">weighted average · 24h</div>
+        <div class="db-kpi__sub">weighted average · {{ windowLabel }}</div>
       </div>
 
       <div class="db-kpi">
@@ -608,11 +608,11 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
           }"
         >{{ apdex.toFixed(2) }}</div>
         <div v-else class="db-kpi__value db-kpi__value--muted">–</div>
-        <div class="db-kpi__sub">weighted · T=500ms · 24h</div>
+        <div class="db-kpi__sub">weighted · T=500ms · {{ windowLabel }}</div>
       </div>
 
       <div class="db-kpi">
-        <div class="db-kpi__label">Transactions / 24h</div>
+        <div class="db-kpi__label">Transactions / {{ windowLabel }}</div>
         <div v-if="loading" class="skel" style="width: 48px; height: 28px; margin-bottom: 4px" />
         <div v-else-if="events24h !== null" class="db-kpi__value">{{ fmt(events24h) }}</div>
         <div v-else class="db-kpi__value db-kpi__value--muted">–</div>
@@ -633,7 +633,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
           Open Issues <em class="col-sort__icon">{{ projSortIcon('openIssues') }}</em>
         </button>
         <button class="col-sort db-proj-head__num" :class="{ 'col-sort--active': projSortCol === 'reqPerDay' }" @click="toggleProjSort('reqPerDay')">
-          Req / 24h <em class="col-sort__icon">{{ projSortIcon('reqPerDay') }}</em>
+          Req / {{ windowLabel }} <em class="col-sort__icon">{{ projSortIcon('reqPerDay') }}</em>
         </button>
         <button class="col-sort db-proj-head__num" :class="{ 'col-sort--active': projSortCol === 'p50' }" @click="toggleProjSort('p50')">
           P50 <em class="col-sort__icon">{{ projSortIcon('p50') }}</em>
@@ -661,12 +661,12 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
           <RouterLink
             class="db-proj-row__val db-proj-row__link"
             :class="{ 'db-proj-row__val--bad': row.openIssues > 0 }"
-            :to="{ name: 'issues', query: { project_id: row.projectId } }"
+            :to="{ name: 'issues', query: { ...investigationQuery(investigation), project_id: row.projectId } }"
           >{{ row.openIssues }}</RouterLink>
           <RouterLink
             v-if="row.reqPerDay !== null"
             class="db-proj-row__val db-proj-row__link"
-            :to="{ name: 'transactions', query: { project_id: row.projectId } }"
+            :to="{ name: 'transactions', query: { ...investigationQuery(investigation), project_id: row.projectId } }"
           >{{ fmt(row.reqPerDay) }}</RouterLink>
           <span v-else class="db-proj-row__val">–</span>
           <span
@@ -698,7 +698,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
         <!-- Transaction density heatmap -->
         <div class="db-sec">
           <div class="db-sec__head">
-            <span class="db-sec__title">Transaction density - 7 days × 24 hours</span>
+            <span class="db-sec__title">Transaction density · Last 7 days</span>
             <span class="db-sec__hint">each cell = 1 hour</span>
           </div>
           <div class="db-heatmap">
@@ -733,7 +733,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
         <div v-if="totalAllMonitors > 0" class="db-sec db-monitors">
           <div class="db-sec__head">
             <span class="db-sec__title">Monitors</span>
-            <RouterLink to="/monitors" class="db-sec__link">view all →</RouterLink>
+            <RouterLink :to="investigation.link('/monitors')" class="db-sec__link">view all →</RouterLink>
           </div>
 
           <!-- All paused -->
@@ -753,7 +753,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
             <RouterLink
               v-for="{ kind, m } in problemMonitors"
               :key="m.id"
-              to="/monitors"
+              :to="investigation.link('/monitors')"
               class="db-mon-row"
             >
               <span class="db-mon-row__dot" :style="{ background: monStateColor(kind, m.state) }" />
@@ -791,7 +791,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
         <div class="db-sec">
           <div class="db-sec__head">
             <span class="db-sec__title">Hottest Issues</span>
-            <RouterLink to="/issues" class="db-sec__link">all issues →</RouterLink>
+            <RouterLink :to="investigation.link('/issues')" class="db-sec__link">all issues →</RouterLink>
           </div>
           <template v-if="loading">
             <div v-for="i in 5" :key="i" class="db-issue-row">
@@ -831,7 +831,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
         <div class="db-sec">
           <div class="db-sec__head">
             <span class="db-sec__title">Slowest Transactions</span>
-            <RouterLink to="/performance/transactions" class="db-sec__link">open performance →</RouterLink>
+            <RouterLink :to="investigation.link('/performance/transactions')" class="db-sec__link">open performance →</RouterLink>
           </div>
           <template v-if="loading">
             <div v-for="i in 5" :key="i" class="db-tx-row">
@@ -843,7 +843,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
           </template>
           <div v-else-if="slowTx.length === 0" class="db-empty">
             <Icon name="activity" :size="18" style="color: var(--text-3)" />
-            <div>No transaction data in the last 24h</div>
+            <div>No transaction data in the selected range</div>
           </div>
           <template v-else>
             <div class="db-tx-head">
@@ -856,7 +856,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
             <RouterLink
               v-for="tx in slowTx"
               :key="`${tx.transaction}-${tx.op}`"
-              :to="{ name: 'transaction-profile', query: { name: tx.transaction, op: tx.op } }"
+              :to="{ name: 'transaction-profile', query: { ...investigationQuery(investigation), name: tx.transaction, op: tx.op } }"
               class="db-tx-row"
             >
               <span class="optag" :class="`optag--${tx.op.split('.')[0]}`">{{ tx.op.split('.')[0] }}</span>
@@ -934,7 +934,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
         <div class="db-sec">
           <div class="db-sec__head">
             <span class="db-sec__title">Release Health</span>
-            <RouterLink to="/releases" class="db-sec__link">all releases →</RouterLink>
+            <RouterLink :to="investigation.link('/releases')" class="db-sec__link">all releases →</RouterLink>
           </div>
           <template v-if="loading">
             <div v-for="i in 4" :key="i" class="db-release-row">

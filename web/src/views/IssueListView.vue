@@ -7,6 +7,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { useToast } from '@/composables/useToast'
 import { apiFetch } from '@/api/client'
+import { useInvestigationStore } from '@/stores/investigation'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Issue, IssueListPage, User } from '@/api/types'
 import FilterChip from '@/components/FilterChip.vue'
@@ -22,16 +23,12 @@ import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 const router = useRouter()
 const route = useRoute()
 const projects = useProjectsStore()
+const investigation = useInvestigationStore()
 const navStore = useIssueNavStore()
 const appUser = useAppUserStore()
 const lensIdentity = computed(() => routeUserIdentity(route.query) || appUser.identity)
 
-const effectiveProjectIds = computed(() => {
-  const v = route.query.project_id
-  if (typeof v === 'string') return [v]
-  if (Array.isArray(v)) return v as string[]
-  return projects.selectedIds
-})
+const effectiveProjectIds = computed(() => projects.selectedIds)
 const { show: showToast } = useToast()
 const qc = useQueryClient()
 const { formatRel } = useFormatters()
@@ -59,8 +56,8 @@ function qp(key: string, fallback: string, lsKey?: string) {
 
 const statusFilter = ref(qp('status', 'Open', 'status'))
 const levelFilter = ref(qp('level', 'All', 'level'))
-const envFilter = ref(qp('env', 'All', 'env'))
-const sinceFilter = ref(qp('since', 'All', 'since'))
+const envFilter = computed({ get: () => investigation.environment, set: (value: string) => { investigation.environment = value } })
+const sinceFilter = computed({ get: () => investigation.range, set: (value: string) => investigation.setRange(value) })
 const assigneeFilter = ref(qp('assignee', 'All', 'assignee'))
 const tagKey = ref(qp('tag_key', ''))
 const tagValue = ref(qp('tag_value', ''))
@@ -70,7 +67,6 @@ const searchInput = ref<HTMLInputElement | null>(null)
 const assigneeOpen = ref(false)
 const assigneeEl = ref<HTMLElement | null>(null)
 
-const REFETCH_INTERVAL = 30_000
 
 const { data: me } = useQuery({
   queryKey: ['me'],
@@ -115,10 +111,10 @@ function resetPagination() {
 
 function buildIssueParams(cursor: Cursor) {
   const params = new URLSearchParams()
+  if (search.value) params.set('q', search.value)
   if (serverStatus.value) params.set('status', serverStatus.value)
   if (serverLevel.value) params.set('level', serverLevel.value)
   if (serverEnv.value) params.set('env', serverEnv.value)
-  if (serverSince.value) params.set('since', serverSince.value)
   if (serverAssigneeId.value) params.set('assignee_id', serverAssigneeId.value)
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
@@ -133,32 +129,31 @@ function buildIssueParams(cursor: Cursor) {
 
 function exportIssues(format: 'csv' | 'json') {
   const params = new URLSearchParams()
+  if (search.value) params.set('q', search.value)
   if (serverStatus.value) params.set('status', serverStatus.value)
   if (serverLevel.value) params.set('level', serverLevel.value)
   if (serverEnv.value) params.set('env', serverEnv.value)
-  if (serverSince.value) params.set('since', serverSince.value)
   if (serverAssigneeId.value) params.set('assignee_id', serverAssigneeId.value)
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
   if (lensIdentity.value) params.set('user', lensIdentity.value)
   for (const id of [...effectiveProjectIds.value].sort()) params.append('project_id', id)
   params.set('format', format)
-  window.location.href = `/api/issues/export?${params.toString()}`
+  window.location.href = investigation.request(`/api/issues/export?${params.toString()}`)
 }
 
 const issueQueryParams = computed(() => buildIssueParams(null))
 const { data: firstPage, isFetching, isError, fetchStatus, dataUpdatedAt, refetch } = useQuery({
-  queryKey: computed(() => ['issues', issueQueryParams.value]),
-  queryFn: ({ queryKey, signal }) => apiFetch<IssueListPage>(`/api/issues?${queryKey[1]}`, { signal }),
-  refetchInterval: REFETCH_INTERVAL,
+  queryKey: computed(() => ['issues', issueQueryParams.value, investigation.scopeKey]),
+  queryFn: ({ signal }) => apiFetch<IssueListPage>(investigation.request(`/api/issues?${issueQueryParams.value}`), { signal }),
   refetchOnWindowFocus: false,
 })
 
 // Reset pagination when the query scope or successful first-page result changes.
 // Query structural sharing preserves firstPage when polling returns identical
 // contents, so a timestamp-only refresh keeps loaded pages and pending requests.
-// The generation invalidates requests only when their scope or first page changes.
-watch([issueQueryParams, firstPage], ([, data]) => {
+// A new refresh anchor also resets pagination so every page uses the same bounds.
+watch([issueQueryParams, firstPage, () => investigation.scopeKey, () => investigation.anchor], ([, data]) => {
   resetPagination()
   if (!data || Array.isArray(data)) return
   nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
@@ -183,6 +178,7 @@ const serverHasMore = computed(() => nextCursor.value !== null)
 
 async function loadMore() {
   if (!nextCursor.value || isFetchingMore.value || isFetching.value || isError.value || fetchStatus?.value === 'paused') return
+  investigation.browsingHistory = true
   const controller = moreController = new AbortController()
   isFetchingMore.value = true
   loadMoreError.value = false
@@ -190,7 +186,7 @@ async function loadMore() {
   const scope = buildIssueParams(null)
   const params = buildIssueParams(nextCursor.value)
   try {
-    const data = await apiFetch<IssueListPage>(`/api/issues?${params}`, { signal: controller.signal })
+    const data = await apiFetch<IssueListPage>(investigation.request(`/api/issues?${params}`), { signal: controller.signal })
     if (controller.signal.aborted || generation !== paginationGeneration || scope !== buildIssueParams(null)) return
     if (!data) throw new Error('Missing issues response')
     extraIssues.value = [...extraIssues.value, ...(data.issues ?? [])]
@@ -447,7 +443,7 @@ function clearFilters() {
   statusFilter.value = 'Open'
   levelFilter.value = 'All'
   envFilter.value = 'All'
-  sinceFilter.value = 'All'
+  sinceFilter.value = '24h'
   assigneeFilter.value = 'All'
   tagKey.value = ''
   tagValue.value = ''
@@ -461,7 +457,7 @@ const isFiltered = computed(
     statusFilter.value !== 'Open' ||
     levelFilter.value !== 'All' ||
     envFilter.value !== 'All' ||
-    sinceFilter.value !== 'All' ||
+    sinceFilter.value !== '24h' ||
     assigneeFilter.value !== 'All' ||
     tagKey.value !== '' ||
     !!lensIdentity.value,
@@ -475,7 +471,7 @@ const activeFilterSummary = computed(() => {
   if (statusFilter.value !== 'Open') parts.push(`Status: ${statusFilter.value}`)
   if (levelFilter.value !== 'All') parts.push(`Level: ${levelFilter.value}`)
   if (envFilter.value !== 'All') parts.push(`Env: ${envFilter.value}`)
-  if (sinceFilter.value !== 'All') parts.push(`Last seen: ${sinceFilter.value}`)
+  if (sinceFilter.value !== 'All') parts.push(`Time range: ${sinceFilter.value}`)
   if (assigneeFilter.value !== 'All') parts.push(assigneeFilter.value === 'me' ? 'Assigned to me' : `Assignee: ${(users.value as User[]).find(u => u.id === assigneeFilter.value)?.name || 'someone'}`)
   if (tagKey.value) parts.push(`${tagKey.value}${tagValue.value ? ': ' + tagValue.value : ''}`)
   if (lensIdentity.value) parts.push(`User: ${appUser.label || lensIdentity.value}`)
@@ -488,13 +484,12 @@ const noOpenIssues = computed(() => statusFilter.value === 'Open' && !isFiltered
 
 // Sync filter/sort state → URL so F5 restores the same view.
 watch(
-  [statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, tagKey, tagValue, search, sortCol, sortDir, lensIdentity],
+  [statusFilter, levelFilter, assigneeFilter, tagKey, tagValue, search, sortCol, sortDir, lensIdentity],
   () => {
-    const query: Record<string, string> = {}
+    const query = { ...route.query }
+    for (const key of ['status', 'level', 'assignee', 'tag_key', 'tag_value', 'user', 'q', 'sort', 'dir']) delete query[key]
     if (statusFilter.value !== 'Open') query.status = statusFilter.value
     if (levelFilter.value !== 'All') query.level = levelFilter.value
-    if (envFilter.value !== 'All') query.env = envFilter.value
-    if (sinceFilter.value !== 'All') query.since = sinceFilter.value
     if (assigneeFilter.value !== 'All') query.assignee = assigneeFilter.value
     if (tagKey.value) query.tag_key = tagKey.value
     if (tagValue.value) query.tag_value = tagValue.value
@@ -509,11 +504,9 @@ watch(
 )
 
 // Persist filter/sort to localStorage so they survive navigation without URL params.
-watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCol, sortDir], () => {
+watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
   lsSet('status', statusFilter.value !== 'Open' ? statusFilter.value : null)
   lsSet('level', levelFilter.value !== 'All' ? levelFilter.value : null)
-  lsSet('env', envFilter.value !== 'All' ? envFilter.value : null)
-  lsSet('since', sinceFilter.value !== 'All' ? sinceFilter.value : null)
   lsSet('assignee', assigneeFilter.value !== 'All' ? assigneeFilter.value : null)
   lsSet('sort', sortCol.value !== 'last_seen' ? sortCol.value : null)
   lsSet('dir', sortDir.value !== 'desc' ? sortDir.value : null)
@@ -522,6 +515,7 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
 
 <template>
   <div class="page">
+    <p v-if="investigation.range === 'All'" class="filterbar">All retained events, with counts and sparklines filtered by the selected environment.</p>
     <!-- Filter bar -->
     <div class="filterbar">
       <FilterChip
@@ -535,18 +529,6 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
         :value="levelFilter"
         :options="['All', 'Fatal', 'Error', 'Warning', 'Info']"
         @change="levelFilter = $event"
-      />
-      <FilterChip
-        label="Environment"
-        :value="envFilter"
-        :options="['All', 'production', 'staging', 'preview', 'development']"
-        @change="envFilter = $event"
-      />
-      <FilterChip
-        label="Period"
-        :value="sinceFilter"
-        :options="['All', '24h', '7d', '30d', '90d']"
-        @change="sinceFilter = $event"
       />
       <!-- Assignee filter: custom dropdown since options carry UUIDs -->
       <div ref="assigneeEl" style="position: relative">
@@ -611,7 +593,7 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
         class="filterbar__refresh"
         :class="{ 'filterbar__refresh--fetching': isFetching }"
         :title="isFetching ? 'Refreshing…' : 'Refresh now (auto every 30s)'"
-        @click="refetch()"
+        @click="investigation.refresh(); refetch()"
       >
         <Icon name="refresh-cw" :size="11" :class="{ 'filterbar__refresh-spin': isFetching }" />
       </button>
@@ -628,7 +610,7 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
     </div>
 
     <QueryFeedback resource="issues" :failed="!!isError" :has-data="firstPage !== undefined"
-      :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="refetch()" />
+      :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="investigation.refresh(); refetch()" />
     <QueryFeedback resource="projects" :failed="!!projects.isError" :has-data="!!projects.hasLoaded"
       :refreshing="projects.isFetching" :paused="projects.fetchStatus === 'paused'" :updated-at="projects.dataUpdatedAt" @retry="projects.refetch()" />
 
@@ -703,7 +685,7 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
             @change="toggleSelect(sorted[vRow.index].id)"
           />
           <span class="leveldot" :class="sorted[vRow.index]?.kind === 'n1_query' ? 'leveldot--n1' : `leveldot--${sorted[vRow.index]?.level}`" />
-          <a :href="`/issues/${sorted[vRow.index]?.id}`" class="issue__title" @click.stop="navigateIssue($event, vRow.index, sorted[vRow.index].id)">
+          <a :href="investigation.link(`/issues/${sorted[vRow.index]?.id}`)" class="issue__title" @click.stop="navigateIssue($event, vRow.index, sorted[vRow.index].id)">
             <div style="min-width: 0; flex: 1">
               <div class="issue__title-text">
                 <span class="issue__title-type">{{ sorted[vRow.index]?.title.split(':')[0] }}</span>
