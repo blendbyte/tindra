@@ -420,7 +420,7 @@ describe('Navbar', () => {
         const labels = settingsWrap.findAll('.nav__dropdown-item').map(i => i.text())
         expect(labels).toContain('Overview')
         expect(labels).toContain('Projects')
-        expect(labels).toContain('Alerts')
+        expect(labels).not.toContain('Alerts')
         expect(labels).toContain('Users')
         expect(labels).toContain('Audit')
         expect(labels).toContain('Tokens')
@@ -429,7 +429,6 @@ describe('Navbar', () => {
 
       it.each([
         ['/settings/projects', 'Projects'],
-        ['/settings/alerts', 'Alerts'],
         ['/settings/users', 'Users'],
         ['/settings/audit', 'Audit'],
         ['/settings/tokens', 'Tokens'],

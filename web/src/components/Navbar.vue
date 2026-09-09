@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
@@ -15,7 +15,31 @@ const projects = useProjectsStore()
 
 // Mobile menu
 const menuOpen = ref(false)
+const menuButton = ref<HTMLButtonElement | null>(null)
+const mobileDrawer = ref<HTMLElement | null>(null)
+
+function closeMenu(restoreFocus = false) {
+  menuOpen.value = false
+  if (restoreFocus) menuButton.value?.focus()
+}
+
+function onKeyDown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    if (menuOpen.value) closeMenu(true)
+    filterOpen.value = false
+  }
+}
+
+function onResize() {
+  if (window.innerWidth >= 1200) closeMenu()
+}
 watch(() => route.path, () => { menuOpen.value = false })
+watch(menuOpen, async (open) => {
+  if (open) {
+    await nextTick()
+    mobileDrawer.value?.querySelector<HTMLElement>('a')?.focus()
+  }
+})
 
 // Project filter popover
 const filterOpen = ref(false)
@@ -48,12 +72,21 @@ const filterLabel = computed(() => {
 })
 
 function onMouseDown(e: MouseEvent) {
+  if (menuOpen.value && !mobileDrawer.value?.contains(e.target as Node) && !menuButton.value?.contains(e.target as Node)) closeMenu()
   if (filterEl.value && !filterEl.value.contains(e.target as Node)) {
     filterOpen.value = false
   }
 }
-onMounted(() => document.addEventListener('mousedown', onMouseDown))
-onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
+onMounted(() => {
+  document.addEventListener('mousedown', onMouseDown)
+  document.addEventListener('keydown', onKeyDown)
+  window.addEventListener('resize', onResize)
+})
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onMouseDown)
+  document.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('resize', onResize)
+})
 
 function toggleProject(id: string) {
   projects.toggleProject(id)
@@ -135,6 +168,14 @@ async function logout() {
         <Icon name="file-text" :size="13" />
         Logs
       </RouterLink>
+      <RouterLink
+        to="/alerts"
+        class="nav__link"
+        :aria-current="route.path.startsWith('/alerts') ? 'page' : undefined"
+      >
+        <Icon name="bell" :size="14" />
+        <span class="nav__link-text">Alerts</span>
+      </RouterLink>
       <div class="nav__dropdown-wrap">
         <RouterLink
           to="/monitors"
@@ -171,16 +212,18 @@ async function logout() {
     <div class="nav__spacer" />
 
     <div class="nav__right">
-      <button class="nav__hamburger" :aria-expanded="menuOpen" aria-label="Toggle navigation" @click="menuOpen = !menuOpen">
+      <button ref="menuButton" class="nav__hamburger" :aria-expanded="menuOpen" aria-controls="mobile-navigation" aria-label="Toggle navigation" @click="menuOpen = !menuOpen; filterOpen = false">
         <Icon :name="menuOpen ? 'x' : 'menu'" :size="18" />
       </button>
       <!-- Project filter -->
       <div ref="filterEl" class="nav__projects">
         <button
           class="nav__projects-trigger"
+          :aria-label="`Filter projects: ${filterLabel}`"
+          :title="filterLabel"
           :aria-haspopup="true"
           :aria-expanded="filterOpen"
-          @click="filterOpen = !filterOpen"
+          @click="filterOpen = !filterOpen; menuOpen = false"
         >
           <span class="nav__projects-label">{{ filterLabel }}</span>
           <span v-if="!allSelected" class="nav__projects-count">
@@ -189,7 +232,7 @@ async function logout() {
           <Icon name="chevron-down" :size="12" />
         </button>
 
-        <div v-if="filterOpen" class="popover" style="min-width: 300px">
+        <div v-if="filterOpen" class="popover">
           <!-- Empty state -->
           <template v-if="noProjects">
             <div class="popover-empty">
@@ -250,7 +293,7 @@ async function logout() {
 
       <!-- Theme toggle -->
       <button
-        class="nav__icon-btn"
+        class="nav__icon-btn nav__secondary-action"
         :title="ui.resolvedTheme === 'light' ? 'Switch to dark' : 'Switch to light'"
         aria-label="Toggle theme"
         @click="ui.toggleTheme()"
@@ -271,7 +314,6 @@ async function logout() {
         <div class="nav__dropdown nav__dropdown--right">
           <RouterLink to="/settings/overview" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/overview' || route.path === '/settings' }">Overview</RouterLink>
           <RouterLink to="/settings/projects" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/projects' }">Projects</RouterLink>
-          <RouterLink to="/settings/alerts" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/alerts' }">Alerts</RouterLink>
           <RouterLink to="/settings/users" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/users' }">Users</RouterLink>
           <RouterLink to="/settings/audit" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/audit' }">Audit</RouterLink>
           <RouterLink to="/settings/tokens" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/tokens' }">Tokens</RouterLink>
@@ -282,7 +324,7 @@ async function logout() {
 
       <!-- Logout -->
       <button
-        class="nav__icon-btn"
+        class="nav__icon-btn nav__secondary-action"
         title="Log out"
         @click="logout"
       >
@@ -293,7 +335,7 @@ async function logout() {
 
   <!-- Mobile nav drawer — teleported to body to escape nav's stacking context -->
   <Teleport to="body">
-    <div v-if="menuOpen" class="nav__mobile-drawer" @click.self="menuOpen = false">
+    <div v-if="menuOpen" id="mobile-navigation" ref="mobileDrawer" class="nav__mobile-drawer" role="navigation" aria-label="Main navigation" @click.self="menuOpen = false">
       <RouterLink to="/dashboard" class="nav__mobile-link" :aria-current="route.path === '/dashboard' ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="squares" :size="15" />Dashboard
       </RouterLink>
@@ -306,12 +348,22 @@ async function logout() {
       <RouterLink to="/logs" class="nav__mobile-link" :aria-current="route.path.startsWith('/logs') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="file-text" :size="14" />Logs
       </RouterLink>
+      <RouterLink to="/alerts" class="nav__mobile-link" :aria-current="route.path.startsWith('/alerts') ? 'page' : undefined" @click="menuOpen = false">
+        <Icon name="bell" :size="15" />Alerts
+      </RouterLink>
       <RouterLink to="/monitors" class="nav__mobile-link" :aria-current="route.path.startsWith('/monitors') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="clock" :size="15" />Monitors
       </RouterLink>
       <RouterLink to="/releases" class="nav__mobile-link" :aria-current="route.path.startsWith('/releases') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="package" :size="15" />Releases
       </RouterLink>
+      <button class="nav__mobile-link nav__mobile-utility" @click="ui.toggleTheme()">
+        <Icon :name="ui.resolvedTheme === 'light' ? 'moon' : 'sun'" :size="15" />
+        {{ ui.resolvedTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme' }}
+      </button>
+      <button class="nav__mobile-link nav__mobile-utility" @click="logout">
+        <Icon name="log-out" :size="15" />Log out
+      </button>
     </div>
   </Teleport>
 </template>

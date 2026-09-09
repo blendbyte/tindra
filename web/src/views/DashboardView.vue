@@ -895,7 +895,7 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
         <div class="db-sec">
           <div class="db-sec__head">
             <span class="db-sec__title">Recent Alerts</span>
-            <RouterLink v-if="canManageAlerts" to="/settings/alerts" class="db-sec__link">configure →</RouterLink>
+            <RouterLink v-if="canManageAlerts" to="/alerts" class="db-sec__link">configure →</RouterLink>
           </div>
           <template v-if="alertsLoading">
             <div v-for="i in 3" :key="i" class="db-alert-row">

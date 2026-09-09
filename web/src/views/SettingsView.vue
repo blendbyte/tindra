@@ -13,6 +13,9 @@ import Sparkline from '@/components/Sparkline.vue'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 
+// Share the existing rule editor between the dedicated Alerts route and settings.
+const props = defineProps<{ alertsPage?: boolean }>()
+
 const ui = useUiStore()
 const auth = useAuthStore()
 const { show: showToast } = useToast()
@@ -33,9 +36,11 @@ function resolveTab(param: unknown): Tab {
   return ALL_TABS.includes(p as Tab) ? (p as Tab) : 'overview'
 }
 
-const tab = ref<Tab>(resolveTab(route.params.tab))
+const tab = ref<Tab>(props.alertsPage ? 'alerts' : resolveTab(route.params.tab))
 
-watch(() => route.params.tab, (t) => { tab.value = resolveTab(t) })
+watch(() => [route.params.tab, props.alertsPage] as const, ([t, alertsPage]) => {
+  tab.value = alertsPage ? 'alerts' : resolveTab(t)
+})
 
 
 // Label override so 'users' shows as 'Users' (not 'Users' would be same anyway, but keep explicit)
@@ -64,6 +69,7 @@ function closeTokenForm() {
 // Tokens
 const { data: tokensData } = useQuery({
   queryKey: ['tokens'],
+  enabled: computed(() => !props.alertsPage),
   queryFn: ({ signal }) => apiFetch<ApiToken[]>('/api/tokens', { signal }),
 })
 const tokens = computed(() => tokensData.value ?? [])
@@ -210,6 +216,7 @@ function revoke(id: string, name: string) {
 // Team
 const { data: usersData } = useQuery({
   queryKey: ['users'],
+  enabled: computed(() => !props.alertsPage),
   queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
 })
 const users = computed(() => usersData.value ?? [])
@@ -412,7 +419,7 @@ const inviteResult = ref<{ invite_url: string; email_sent: boolean; email_config
 const { data: invitesData } = useQuery({
   queryKey: ['invites'],
   queryFn: ({ signal }) => apiFetch<Invite[]>('/api/invites', { signal }),
-  enabled: () => !!me.value?.permissions.manage_users,
+  enabled: () => !props.alertsPage && !!me.value?.permissions.manage_users,
 })
 const invites = computed(() => invitesData.value ?? [])
 
@@ -694,7 +701,7 @@ function applyAlertQueryPrefill() {
     const pids = queryParamList(route.query.project_id)
     if (pids.length) newRule.projectIDs = pids
   }
-  router.replace({ name: 'settings', params: { tab: 'alerts' } })
+  router.replace({ name: 'alerts' })
 }
 
 const { mutate: createAlertRule, isPending: creatingRule } = useMutation({
@@ -853,6 +860,7 @@ const { mutate: saveAlertRule, isPending: savingRule } = useMutation({
 // Server limits
 const { data: settings } = useQuery({
   queryKey: ['settings'],
+  enabled: computed(() => !props.alertsPage),
   queryFn: ({ signal }) => apiFetch<ServerSettings>('/api/settings', { signal }),
 })
 
@@ -862,7 +870,7 @@ const canManageAlerts = computed(() => me.value?.permissions.manage_alerts ?? fa
 const visibleTabs = computed(() => ALL_TABS.filter((t) => {
   if (t === 'tokens' || t === 'overview') return canManageProjects.value
   if (t === 'audit') return canManageUsers.value
-  if (t === 'alerts') return canManageAlerts.value
+  if (t === 'alerts') return false
   return true
 }))
 
@@ -1199,10 +1207,10 @@ function actionKindOf(action: string) {
 
 <template>
   <div class="page">
-    <div class="settings">
+    <div class="settings" :class="{ 'alerts-page': props.alertsPage }">
       <div class="settings__header">
-        <h1>Settings</h1>
-        <div class="settings__about">
+        <h1>{{ props.alertsPage ? 'Alerts' : 'Settings' }}</h1>
+        <div v-if="!props.alertsPage" class="settings__about">
           <a href="https://tindra.sh" target="_blank" rel="noopener" class="settings__about-link">
             <Icon name="globe" :size="11" />
             tindra.sh
@@ -1222,7 +1230,7 @@ function actionKindOf(action: string) {
         </div>
       </div>
 
-      <div class="settings__nav">
+      <div v-if="!props.alertsPage" class="settings__nav">
         <button
           v-for="t in visibleTabs"
           :key="t"
