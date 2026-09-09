@@ -69,3 +69,18 @@ describe('highlightBlock', () => {
     expect((await highlightBlock(code, 'javascript'))[0][0].content).toBe(code)
   })
 })
+
+describe('supported language grammars', () => {
+  it.each([
+    ['python', 'print("hello")'], ['javascript', 'const value = 1'],
+    ['typescript', 'const value: number = 1'], ['go', 'package main'],
+    ['ruby', 'puts "hello"'], ['java', 'class App {}'],
+    ['php', '<?php echo "hello";'], ['csharp', 'class App {}'],
+    ['rust', 'fn main() {}'], ['elixir', 'IO.puts("hello")'],
+    ['kotlin', 'fun main() {}'], ['swift', 'let value = 1'],
+  ])('loads %s on demand and preserves the source text', async (lang, source) => {
+    const tokens = await highlightBlock(source, lang)
+    expect(tokens.map(line => line.map(token => token.content).join('')).join('\n')).toBe(source)
+    expect(tokens.flat().some(token => token.htmlStyle)).toBe(true)
+  })
+})

@@ -1196,3 +1196,25 @@ it('initializes the timeline extent from cached transaction data', () => {
   expect(bar.attributes('style')).toContain('left: 50%')
   wrapper.unmount()
 })
+
+describe('expanded waterfall chains', () => {
+  it('shows each chain member and tail child once, then collapses them', async () => {
+    const spans = ['c1', 'c2', 'c3', 'leaf'].map((id, i) => ({
+      id, span_id: id, parent_span_id: i ? `c${i}` : null,
+      op: i === 3 ? 'db.query' : 'http.client', description: id,
+      duration_ms: 60 - i * 10, start_offset_ms: i * 5, status: 'ok', is_critical: false,
+    }))
+    setupMocks(baseTx, spans)
+    const wrapper = mount(TransactionDetailView, { global: { stubs } })
+    expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(1)
+    await wrapper.get('.span-row--group').trigger('click')
+    const rows = wrapper.findAll('.span-row:not(.span-row--header):not(.span-row--group)')
+    expect(rows).toHaveLength(4)
+    for (const id of ['c1', 'c2', 'c3', 'leaf']) {
+      expect(rows.filter(row => row.text().includes(id))).toHaveLength(1)
+    }
+    await wrapper.get('.span-row--group').trigger('click')
+    expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(1)
+    wrapper.unmount()
+  })
+})
