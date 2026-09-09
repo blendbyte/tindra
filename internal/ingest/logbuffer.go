@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,83 +24,35 @@ type BufferedLog struct {
 }
 
 type LogBuffer struct {
-	counters bufferCounters
-	ch       chan BufferedLog
+	*queue[BufferedLog]
 }
 
 func NewLogBuffer(size int) *LogBuffer {
-	return &LogBuffer{ch: make(chan BufferedLog, size)}
+	q := newQueue[BufferedLog]("logs", size, true)
+	return &LogBuffer{queue: q}
 }
 
-func (b *LogBuffer) Push(l BufferedLog) bool {
-	select {
-	case b.ch <- l:
-		b.counters.accepted.Add(1)
-		return true
-	default:
-		b.counters.rejected.Add(1)
-		return false
-	}
-}
-
-// Run is the batch writer loop for logs. Call in a dedicated goroutine.
+// Run flushes bounded batches and drains on cancellation. Stop producers first.
 func (b *LogBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	batch := make([]BufferedLog, 0, 1000)
-
-	flush := func(ctx context.Context) {
-		if len(batch) == 0 {
-			return
-		}
+	b.run(ctx, 1000, func(ctx context.Context, batch []BufferedLog) error {
 		start := time.Now()
-		writeLogBatch(ctx, pool, batch)
-		stats := b.Stats()
-		slog.Debug("logbuffer flush", "attempted", len(batch), "duration_ms", time.Since(start).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
-		batch = batch[:0]
-	}
-
-	for {
-		select {
-		case l := <-b.ch:
-			batch = append(batch, l)
-			if len(batch) >= 1000 {
-				flush(ctx)
-			}
-		case <-ticker.C:
-			flush(ctx)
-		case <-ctx.Done():
-			drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			for {
-				select {
-				case l := <-b.ch:
-					batch = append(batch, l)
-				default:
-					flush(drainCtx)
-					return
-				}
-			}
-		}
-	}
+		defer func() {
+			stats := b.Stats()
+			b.logger.Debug("log flush", "attempted", len(batch), "write_ms", time.Since(start).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
+		}()
+		return atomicWrite(ctx, pool, func(db batchSender) error { return writeLogBatch(ctx, db, batch) })
+	})
 }
 
-func writeLogBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedLog) {
+func writeLogBatch(ctx context.Context, pool batchSender, batch []BufferedLog) error {
 	b := &pgx.Batch{}
 	rows := make([][]any, 0, len(batch))
 	for _, l := range batch {
 		rows = append(rows, []any{l.ProjectID, l.Timestamp, l.Level, l.Body, nilStr(l.TraceID), nilStr(l.SpanID), nilStr(l.Environment), nilStr(l.Release), nilJSONDefault(l.Attributes)})
 	}
-	statements := queueInserts(b, "INSERT INTO logs (project_id, timestamp, level, body, trace_id, span_id, environment, release, attributes) VALUES ", "", rows, 0)
-	results := pool.SendBatch(ctx, b)
-	for range statements {
-		if _, err := results.Exec(); err != nil {
-			slog.Error("log insert", "err", err)
-		}
-	}
-	if err := results.Close(); err != nil {
-		slog.Error("log batch flush", "err", err)
+	queueInserts(b, "INSERT INTO logs (project_id, timestamp, level, body, trace_id, span_id, environment, release, attributes) VALUES ", "", rows, 0)
+	if err := execBatch(ctx, pool, b); err != nil {
+		return err
 	}
 
 	var appUsers []AppUserRow
@@ -116,7 +67,10 @@ func writeLogBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedLog)
 		}
 		appUsers = append(appUsers, AppUserRow{ProjectID: l.ProjectID, User: u, LastSeen: l.Timestamp})
 	}
-	UpsertAppUsers(ctx, pool, appUsers)
+	if err := UpsertAppUsers(ctx, pool, appUsers); err != nil {
+		return err
+	}
+	return nil
 }
 
 func nilJSONDefault(b json.RawMessage) any {

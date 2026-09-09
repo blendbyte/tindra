@@ -79,9 +79,11 @@ const stubs = {
   UserFilter: { template: '<div class="user-filter-stub" />' },
 }
 
-function setupMocks({ projects = [], selectedIds = [], issueData = undefined as unknown } = {}) {
+function setupMocks({ projects = [], selectedIds = [], issueData = { issues: [], total: 0, has_more: false } as unknown } = {}) {
   vi.mocked(useProjectsStore).mockReturnValue({
     projects,
+    isSuccess: true,
+    hasLoaded: true,
     selectedIds,
     toggleProject: vi.fn(),
     setSelected: vi.fn(),
@@ -129,25 +131,12 @@ describe('IssueListView', () => {
       expect(wrapper.text()).toContain('No open issues')
     })
 
-    it('shows "All clear" when there are no issues at all', () => {
-      setupMocks({
-        projects: [{ id: '1', name: 'App' }],
-        selectedIds: [],
-        issueData: undefined,
-      })
-      vi.mocked(useProjectsStore).mockReturnValue({
-        projects: [{ id: '1', name: 'App' }],
-        selectedIds: [],
-        toggleProject: vi.fn(),
-        setSelected: vi.fn(),
-      } as any)
-      vi.mocked(useQuery)
-        .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false), isError: ref(false), refetch: vi.fn() } as any)
-        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
-
+    it('shows a scoped empty result without claiming SDK connectivity', () => {
+      setupMocks({ projects: [{ id: '1', name: 'App' }] })
       const wrapper = mount(IssueListView, { global: { stubs } })
-      expect(wrapper.text()).toContain('All clear')
+      expect(wrapper.text()).toContain('No open issues found')
+      expect(wrapper.text()).not.toContain('All clear')
+      expect(wrapper.text()).not.toContain('connected and listening')
     })
   })
 
@@ -185,7 +174,7 @@ describe('IssueListView', () => {
         .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
 
       const wrapper = mount(IssueListView, { global: { stubs } })
-      expect(wrapper.text()).toContain('Failed to load issues')
+      expect(wrapper.text()).toContain("We couldn't load issues")
     })
 
     it('calls refetch when Try again button is clicked', async () => {
@@ -1631,10 +1620,10 @@ describe('confirmMerge early return', () => {
       routeQueryOverride = { project_id: 'url-proj-id' }
       setupMocks({ selectedIds: ['store-proj-id'] })
       mount(IssueListView, { global: { stubs } })
-      // The issues query is call index 1; queryKey is a computed whose last element is the joined project IDs
+      // The issues query is call index 1; the key contains the exact request parameters.
       const issuesCall = vi.mocked(useQuery).mock.calls[1]
       const queryKey = issuesCall[0].queryKey.value as string[]
-      expect(queryKey[queryKey.length - 1]).toBe('url-proj-id')
+      expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['url-proj-id'])
       expect(queryKey[queryKey.length - 1]).not.toContain('store-proj-id')
     })
 
@@ -1644,7 +1633,7 @@ describe('confirmMerge early return', () => {
       mount(IssueListView, { global: { stubs } })
       const issuesCall = vi.mocked(useQuery).mock.calls[1]
       const queryKey = issuesCall[0].queryKey.value as string[]
-      expect(queryKey[queryKey.length - 1]).toBe('store-proj-id')
+      expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['store-proj-id'])
     })
 
     it('uses empty project filter when neither URL param nor store selection is set', () => {
@@ -1653,7 +1642,7 @@ describe('confirmMerge early return', () => {
       mount(IssueListView, { global: { stubs } })
       const issuesCall = vi.mocked(useQuery).mock.calls[1]
       const queryKey = issuesCall[0].queryKey.value as string[]
-      expect(queryKey[queryKey.length - 1]).toBe('')
+      expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual([])
     })
   })
 })

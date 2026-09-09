@@ -6,6 +6,7 @@ import { apiFetch } from '@/api/client'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Log, LogListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
+import QueryFeedback from '@/components/QueryFeedback.vue'
 import FilterChip from '@/components/FilterChip.vue'
 import UserFilter from '@/components/UserFilter.vue'
 import { useProjectsStore } from '@/stores/projects'
@@ -114,9 +115,9 @@ const queryParams = computed(() => {
   return p.toString()
 })
 
-const { data, isLoading, isFetching, refetch } = useQuery({
+const { data, isError, isFetching, fetchStatus, dataUpdatedAt, refetch } = useQuery({
   queryKey: computed(() => ['logs', queryParams.value]),
-  queryFn: ({ signal }) => apiFetch<LogListPage>(`/api/logs?${queryParams.value}`, { signal }),
+  queryFn: ({ queryKey, signal }) => apiFetch<LogListPage>(`/api/logs?${queryKey[1]}`, { signal }),
   refetchInterval: 5000,
 })
 
@@ -234,8 +235,11 @@ onUnmounted(() => clearTimeout(debounceTimer))
       </button>
     </div>
 
+    <QueryFeedback resource="logs" :failed="!!isError" :has-data="data !== undefined"
+      :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="refetch()" />
+
     <!-- Loading skeleton -->
-    <div v-if="isLoading" class="perf-table-wrap">
+    <div v-if="!data && !isError && fetchStatus !== 'paused'" class="perf-table-wrap" role="status" aria-label="Loading logs">
       <table class="perf-table">
         <thead>
           <tr>
@@ -259,9 +263,9 @@ onUnmounted(() => clearTimeout(debounceTimer))
     </div>
 
     <!-- Empty state -->
-    <div v-else-if="logs.length === 0" class="empty-state">
+    <div v-else-if="data && logs.length === 0" class="empty-state">
       <div class="empty-state__card">
-        <div class="empty-state__icon empty-state__icon--ok">
+        <div class="empty-state__icon">
           <Icon name="file-text" :size="28" />
         </div>
         <h2 class="empty-state__title">No logs found</h2>
@@ -274,7 +278,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
     </div>
 
     <!-- Log table -->
-    <div v-else class="perf-table-wrap">
+    <div v-else-if="data" class="perf-table-wrap">
       <table class="perf-table">
         <thead>
           <tr>

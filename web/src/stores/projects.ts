@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import type { ProjectMetadata } from '@/api/types'
@@ -22,15 +22,17 @@ export const useProjectsStore = defineStore('projects', () => {
     } catch {}
   })
 
-  const { data: projects } = useQuery({
+  const { data, isPending, isError, isSuccess, isFetching, fetchStatus, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['projects', 'metadata'],
     queryFn: ({ signal }) => apiFetch<ProjectMetadata[]>('/api/projects/metadata', { signal }),
-    initialData: [],
-    initialDataUpdatedAt: 0,
   })
 
+  // Keep array consumers compatible without treating the fallback as a server result.
+  const projects = computed(() => data.value ?? [])
+  const hasLoaded = computed(() => data.value !== undefined)
+
   // Drop stale IDs that no longer correspond to real projects.
-  watch(projects, (ps) => {
+  watch(data, (ps) => {
     if (!ps) return
     const valid = new Set(ps.map((p) => p.id))
     const cleaned = selectedIds.value.filter((id) => valid.has(id))
@@ -49,5 +51,5 @@ export const useProjectsStore = defineStore('projects', () => {
     }
   }
 
-  return { projects, selectedIds, setSelected, toggleProject }
+  return { projects, hasLoaded, isPending, isError, isSuccess, isFetching, fetchStatus, dataUpdatedAt, refetch, selectedIds, setSelected, toggleProject }
 })

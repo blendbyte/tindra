@@ -12,6 +12,7 @@ import type { Issue, IssueListPage, User } from '@/api/types'
 import FilterChip from '@/components/FilterChip.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import Icon from '@/components/Icon.vue'
+import QueryFeedback from '@/components/QueryFeedback.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import IgnoreButton from '@/components/IgnoreButton.vue'
 import type { IgnorePayload } from '@/components/IgnoreButton.vue'
@@ -99,6 +100,18 @@ type Cursor = { cursor_time: string; cursor_id: string } | null
 const nextCursor = ref<Cursor>(null)
 const isFetchingMore = ref(false)
 const extraIssues = ref<Issue[]>([])
+const loadMoreError = ref(false)
+let moreController: AbortController | undefined
+onUnmounted(() => moreController?.abort())
+let paginationGeneration = 0
+function resetPagination() {
+  moreController?.abort()
+  paginationGeneration++
+  extraIssues.value = []
+  nextCursor.value = null
+  isFetchingMore.value = false
+  loadMoreError.value = false
+}
 
 function buildIssueParams(cursor: Cursor) {
   const params = new URLSearchParams()
@@ -110,7 +123,7 @@ function buildIssueParams(cursor: Cursor) {
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
   if (lensIdentity.value) params.set('user', lensIdentity.value)
-  for (const id of effectiveProjectIds.value) params.append('project_id', id)
+  for (const id of [...effectiveProjectIds.value].sort()) params.append('project_id', id)
   if (cursor) {
     params.set('cursor_time', cursor.cursor_time)
     params.set('cursor_id', cursor.cursor_id)
@@ -128,31 +141,27 @@ function exportIssues(format: 'csv' | 'json') {
   if (tagKey.value) params.set('tag_key', tagKey.value)
   if (tagValue.value) params.set('tag_value', tagValue.value)
   if (lensIdentity.value) params.set('user', lensIdentity.value)
-  for (const id of effectiveProjectIds.value) params.append('project_id', id)
+  for (const id of [...effectiveProjectIds.value].sort()) params.append('project_id', id)
   params.set('format', format)
   window.location.href = `/api/issues/export?${params.toString()}`
 }
 
-const { data: firstPage, isFetching, isError, refetch } = useQuery({
-  queryKey: computed(() => ['issues', serverStatus.value, serverLevel.value, serverEnv.value, serverSince.value, serverAssigneeId.value, tagKey.value, tagValue.value, lensIdentity.value, [...effectiveProjectIds.value].sort().join(',')]),
-  queryFn: ({ signal }) => apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(null)}`, { signal }),
+const issueQueryParams = computed(() => buildIssueParams(null))
+const { data: firstPage, isFetching, isError, fetchStatus, dataUpdatedAt, refetch } = useQuery({
+  queryKey: computed(() => ['issues', issueQueryParams.value]),
+  queryFn: ({ queryKey, signal }) => apiFetch<IssueListPage>(`/api/issues?${queryKey[1]}`, { signal }),
   refetchInterval: REFETCH_INTERVAL,
   refetchOnWindowFocus: false,
 })
 
-let moreController: AbortController | undefined
-function cancelMore() {
-  moreController?.abort()
-  isFetchingMore.value = false
-}
-onUnmounted(cancelMore)
-
-// Initialize from cached data as well as fresh responses and filter changes.
-watch([serverStatus, serverLevel, serverEnv, serverSince, serverAssigneeId, tagKey, tagValue, lensIdentity, effectiveProjectIds, firstPage], () => {
-  cancelMore()
-  extraIssues.value = []
-  const data = firstPage.value
-  nextCursor.value = data && !Array.isArray(data) && data.has_more && data.next_cursor_time && data.next_cursor_id
+// Reset pagination when the query scope or successful first-page result changes.
+// Query structural sharing preserves firstPage when polling returns identical
+// contents, so a timestamp-only refresh keeps loaded pages and pending requests.
+// The generation invalidates requests only when their scope or first page changes.
+watch([issueQueryParams, firstPage], ([, data]) => {
+  resetPagination()
+  if (!data || Array.isArray(data)) return
+  nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
     ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
     : null
 }, { immediate: true })
@@ -173,21 +182,25 @@ const total = computed(() => {
 const serverHasMore = computed(() => nextCursor.value !== null)
 
 async function loadMore() {
-  if (!nextCursor.value || isFetchingMore.value) return
+  if (!nextCursor.value || isFetchingMore.value || isFetching.value || isError.value || fetchStatus?.value === 'paused') return
   const controller = moreController = new AbortController()
   isFetchingMore.value = true
+  loadMoreError.value = false
+  const generation = paginationGeneration
+  const scope = buildIssueParams(null)
+  const params = buildIssueParams(nextCursor.value)
   try {
-    const data = await apiFetch<IssueListPage>(`/api/issues?${buildIssueParams(nextCursor.value)}`, { signal: controller.signal })
-    if (controller.signal.aborted) return
-    if (!data) return
+    const data = await apiFetch<IssueListPage>(`/api/issues?${params}`, { signal: controller.signal })
+    if (controller.signal.aborted || generation !== paginationGeneration || scope !== buildIssueParams(null)) return
+    if (!data) throw new Error('Missing issues response')
     extraIssues.value = [...extraIssues.value, ...(data.issues ?? [])]
     nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
       ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
       : null
-  } catch (error) {
-    if (!controller.signal.aborted) throw error
+  } catch {
+    if (!controller.signal.aborted && generation === paginationGeneration && scope === buildIssueParams(null)) loadMoreError.value = true
   } finally {
-    if (moreController === controller) isFetchingMore.value = false
+    if (generation === paginationGeneration) isFetchingMore.value = false
   }
 }
 
@@ -470,9 +483,8 @@ const activeFilterSummary = computed(() => {
   return parts.join(' · ')
 })
 
-const noIssues = computed(() => allIssues.value.length === 0)
-const noProjects = computed(() => !(projects.projects?.length))
-const noOpenIssues = computed(() => !noIssues.value && filtered.value.length === 0 && !isFiltered.value)
+const noProjects = computed(() => projects.isSuccess && projects.projects.length === 0)
+const noOpenIssues = computed(() => statusFilter.value === 'Open' && !isFiltered.value)
 
 // Sync filter/sort state → URL so F5 restores the same view.
 watch(
@@ -615,15 +627,19 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
       </div>
     </div>
 
-    <!-- Error state -->
-    <div v-if="isError" class="txerror" style="margin: 24px">
-      <Icon name="alert-triangle" :size="14" class="txerror__icon" />
-      <span>Failed to load issues.</span>
-      <button class="btn" @click="refetch()">Try again</button>
+    <QueryFeedback resource="issues" :failed="!!isError" :has-data="firstPage !== undefined"
+      :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="refetch()" />
+    <QueryFeedback resource="projects" :failed="!!projects.isError" :has-data="!!projects.hasLoaded"
+      :refreshing="projects.isFetching" :paused="projects.fetchStatus === 'paused'" :updated-at="projects.dataUpdatedAt" @retry="projects.refetch()" />
+
+    <div v-if="!firstPage && !isError && fetchStatus !== 'paused'" class="issuelist" role="status" aria-label="Loading issues">
+      <div v-for="i in 8" :key="i" class="issuerow" aria-hidden="true">
+        <span class="skel" style="height: 14px; width: 70%; grid-column: 1 / -1" />
+      </div>
     </div>
 
-    <!-- Issue list: shown when there are visible rows or non-default filters are active -->
-    <div v-else-if="filtered.length > 0 || isFiltered" class="issuelist">
+    <!-- Keep successful results visible when a background refresh fails. -->
+    <div v-else-if="firstPage && (filtered.length > 0 || isFiltered)" class="issuelist">
       <div class="issuerow issuerow--header">
         <input
           type="checkbox"
@@ -723,6 +739,11 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
       </div>
 
       <!-- List footer: counter + load more -->
+      <div v-if="loadMoreError" class="txerror" role="alert">
+        <Icon name="alert-triangle" :size="14" class="txerror__icon" />
+        <span>Couldn't load more issues. The issues already loaded are still shown.</span>
+        <button class="btn" :disabled="isFetchingMore || isFetching || isError || fetchStatus === 'paused'" @click="loadMore()">Try again</button>
+      </div>
       <div v-if="sorted.length > 0 || serverHasMore" class="list-footer">
         <span class="list-footer__count">
           <template v-if="isClientFiltered">
@@ -734,7 +755,7 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
         <button
           v-if="serverHasMore"
           class="btn list-footer__more"
-          :disabled="isFetchingMore"
+          :disabled="isFetchingMore || isFetching || isError || fetchStatus === 'paused'"
           @click="loadMore()"
         >
           <template v-if="isFetchingMore">Loading…</template>
@@ -745,7 +766,7 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
     </div>
 
     <!-- Empty state: no issues at all -->
-    <div v-else class="empty-state">
+    <div v-else-if="firstPage" class="empty-state">
       <!-- Ghost rows: decorative background texture -->
       <div class="empty-state__ghosts" aria-hidden="true">
         <div
@@ -786,30 +807,26 @@ watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, sortCo
       </div>
 
       <div v-else-if="noOpenIssues" class="empty-state__card">
-        <div class="empty-state__icon empty-state__icon--ok">
-          <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 8.5l3 3 7-7" />
-          </svg>
+        <div class="empty-state__icon">
+          <Icon name="file-text" :size="28" />
         </div>
-        <h2 class="empty-state__title">No open issues</h2>
+        <h2 class="empty-state__title">No open issues found</h2>
         <p class="empty-state__body">
-          Everything's resolved or ignored. Use the status filter to review closed issues.
+          No open issues match your current selection. Use the status filter to review other issues.
         </p>
         <div class="empty-state__actions">
           <button class="btn" @click="statusFilter = 'All'">View all issues</button>
+          <button class="btn" @click="router.push('/settings')">View project DSNs →</button>
         </div>
       </div>
 
       <div v-else class="empty-state__card">
-        <div class="empty-state__icon empty-state__icon--ok">
-          <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 8.5l3 3 7-7" />
-          </svg>
+        <div class="empty-state__icon">
+          <Icon name="file-text" :size="28" />
         </div>
-        <h2 class="empty-state__title">All clear</h2>
+        <h2 class="empty-state__title">No issues found</h2>
         <p class="empty-state__body">
-          No errors captured yet. Your SDK is connected and listening.
-          Issues will appear here the moment something breaks.
+          No issues match your current selection. To verify your SDK setup, send a test event from your application.
         </p>
         <div class="empty-state__actions">
           <button class="btn" @click="router.push('/settings')">

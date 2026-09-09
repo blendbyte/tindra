@@ -19,6 +19,7 @@ services:
   tindra:
     image: ghcr.io/blendbyte/tindra:latest
     restart: unless-stopped
+    stop_grace_period: 75s
     ports:
       - "${PORT:-8080}:8080"
     environment:
@@ -28,6 +29,7 @@ services:
       DATA_DIR: /data
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
+      STATS_API_KEY: ${STATS_API_KEY:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       RETENTION_DAYS: ${RETENTION_DAYS:-90}
       # Profiles are far larger per unit of time than anything else stored, so

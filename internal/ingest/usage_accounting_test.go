@@ -60,7 +60,7 @@ func TestBufferedUsageAccounting(t *testing.T) {
 	require.Equal(t, 2050, linked, "explicit IDs must link every span to the right input transaction")
 }
 
-func TestFailedGroupedTransactionsDoNotPublishIDs(t *testing.T) {
+func TestFailedGroupedTransactionsPublishOnlyRecoveredIDs(t *testing.T) {
 	ctx := context.Background()
 	_, err := testPool.Exec(ctx, "TRUNCATE transactions CASCADE")
 	require.NoError(t, err)
@@ -69,19 +69,24 @@ func TestFailedGroupedTransactionsDoNotPublishIDs(t *testing.T) {
 		require.True(t, buffer.Push(ingest.BufferedTransaction{ProjectID: project, Transaction: "test", Status: "ok", StartTimestamp: time.Now(), Timestamp: time.Now()}))
 	}
 	hookCalled := false
-	buffer.Hook = func(_ context.Context, _ *pgxpool.Pool, _ []ingest.BufferedTransaction, ids []string) {
+	buffer.Hook = func(ctx context.Context, pool *pgxpool.Pool, batch []ingest.BufferedTransaction, ids []string) {
 		hookCalled = true
-		for _, id := range ids {
-			require.Empty(t, id)
-		}
+		require.Len(t, batch, 1)
+		require.Len(t, ids, 1)
+		require.Equal(t, testProject.ID, batch[0].ProjectID)
+		var projectID string
+		require.NoError(t, pool.QueryRow(ctx, "SELECT project_id FROM transactions WHERE id=$1", ids[0]).Scan(&projectID))
+		require.Equal(t, testProject.ID, projectID)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	buffer.Run(cancelled, testPool)
 	require.True(t, hookCalled)
+	require.EqualValues(t, 1, buffer.Stats().Persisted)
+	require.EqualValues(t, 1, buffer.Stats().Dropped["invalid_record"])
 	var count int
 	require.NoError(t, testPool.QueryRow(ctx, "SELECT count(*) FROM transactions").Scan(&count))
-	require.Zero(t, count)
+	require.Equal(t, 1, count)
 	require.NoError(t, testPool.QueryRow(ctx, "SELECT COALESCE(sum(n),0) FROM telemetry_usage WHERE kind='transactions'").Scan(&count))
-	require.Zero(t, count)
+	require.Equal(t, 1, count)
 }

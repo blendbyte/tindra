@@ -70,6 +70,11 @@ func (ro *router) securityHeaders(next http.Handler) http.Handler {
 // so LOG_LEVEL=warn or higher suppresses request logs entirely.
 func slogRequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Scrapes must not wait on the log sink, including with debug logging.
+		if r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		ww := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(ww, r)

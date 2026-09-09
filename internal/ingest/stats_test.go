@@ -34,5 +34,6 @@ func TestBufferStatsConcurrentPushes(t *testing.T) {
 	logs := ingest.NewLogBuffer(1)
 	require.True(t, logs.Push(ingest.BufferedLog{}))
 	require.False(t, logs.Push(ingest.BufferedLog{}))
-	require.EqualValues(t, 1, logs.Stats().Rejected)
+	require.EqualValues(t, 0, logs.Stats().Rejected)
+	require.EqualValues(t, 1, logs.Stats().Dropped["buffer_full"])
 }

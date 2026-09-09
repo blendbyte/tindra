@@ -332,11 +332,13 @@ func serveCmd(cfg config) *cobra.Command {
 
 			go storage.MonitorPool(ctx, pool)
 
+			writerCtx, stopWriters := context.WithCancel(context.Background())
+			defer stopWriters()
 			buf := ingest.NewBuffer(cfg.ingestBufferSize)
 			bufDone := make(chan struct{})
 			go func() {
 				defer close(bufDone)
-				buf.Run(ctx, pool)
+				buf.Run(writerCtx, pool)
 			}()
 
 			txBuf := ingest.NewTransactionBuffer(cfg.ingestBufferSize)
@@ -344,21 +346,21 @@ func serveCmd(cfg config) *cobra.Command {
 			txBufDone := make(chan struct{})
 			go func() {
 				defer close(txBufDone)
-				txBuf.Run(ctx, pool)
+				txBuf.Run(writerCtx, pool)
 			}()
 
 			logBuf := ingest.NewLogBuffer(cfg.ingestBufferSize)
 			logBufDone := make(chan struct{})
 			go func() {
 				defer close(logBufDone)
-				logBuf.Run(ctx, pool)
+				logBuf.Run(writerCtx, pool)
 			}()
 
 			profBuf := ingest.NewProfileBuffer(cfg.profileBufferSize)
 			profBufDone := make(chan struct{})
 			go func() {
 				defer close(profBufDone)
-				profBuf.Run(ctx, pool)
+				profBuf.Run(writerCtx, pool)
 			}()
 
 			grouper := issues.NewGrouper(pool)
@@ -470,23 +472,36 @@ func serveCmd(cfg config) *cobra.Command {
 				return fmt.Errorf("listen: %w", err)
 			}
 
+			shutdownDone := make(chan struct{})
 			go func() {
+				defer close(shutdownDone)
 				<-ctx.Done()
 				shutCtx, shutCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer shutCancel()
 				if err := srv.Shutdown(shutCtx); err != nil {
 					slog.Error("server shutdown error", "err", err)
+					_ = srv.Close()
 				}
 			}()
 
 			startupLog.Info("starting server", "addr", cfg.bindAddr)
-			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-				return fmt.Errorf("serve: %w", err)
-			}
+			serveErr := srv.Serve(ln)
+			// Also drain accepted data if serving stops unexpectedly.
+			cancel()
+			<-shutdownDone
+			// Reject late pushes even if HTTP shutdown reached its deadline.
+			buf.StopAccepting()
+			txBuf.StopAccepting()
+			logBuf.StopAccepting()
+			profBuf.StopAccepting()
+			stopWriters()
 			<-bufDone
 			<-txBufDone
 			<-logBufDone
 			<-profBufDone
+			if serveErr != nil && serveErr != http.ErrServerClosed {
+				return fmt.Errorf("serve: %w", serveErr)
+			}
 			return nil
 		},
 	}

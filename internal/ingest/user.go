@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // SentryUser is the end-user attached to an event, transaction, or log via
@@ -137,9 +135,9 @@ type AppUserRow struct {
 }
 
 // UpsertAppUsers merges seen end-users into app_users. Empty identities are skipped.
-func UpsertAppUsers(ctx context.Context, pool *pgxpool.Pool, rows []AppUserRow) {
+func UpsertAppUsers(ctx context.Context, pool batchSender, rows []AppUserRow) error {
 	if len(rows) == 0 {
-		return
+		return nil
 	}
 	type key struct{ projectID, identity string }
 	best := map[key]AppUserRow{}
@@ -167,7 +165,7 @@ func UpsertAppUsers(ctx context.Context, pool *pgxpool.Pool, rows []AppUserRow) 
 		best[k] = r
 	}
 	if len(best) == 0 {
-		return
+		return nil
 	}
 	b := &pgx.Batch{}
 	for _, r := range best {
@@ -187,15 +185,7 @@ func UpsertAppUsers(ctx context.Context, pool *pgxpool.Pool, rows []AppUserRow) 
 		`, r.ProjectID, r.User.Identity, nilStr(r.User.ID), nilStr(r.User.Username),
 			nilStr(r.User.Email), nilStr(r.User.Name), seen)
 	}
-	br := pool.SendBatch(ctx, b)
-	for range best {
-		if _, err := br.Exec(); err != nil {
-			slog.Error("app_users upsert", "err", err)
-		}
-	}
-	if err := br.Close(); err != nil {
-		slog.Error("app_users batch close", "err", err)
-	}
+	return execBatch(ctx, pool, b)
 }
 
 func coalesceStr(a, b string) string {

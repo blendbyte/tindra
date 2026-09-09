@@ -193,6 +193,7 @@ services:
   tindra:
     image: ghcr.io/blendbyte/tindra:latest
     restart: unless-stopped
+    stop_grace_period: 75s
     ports:
       - "${HOST_PORT}:8080"
     environment:
@@ -201,6 +202,8 @@ services:
       BIND_ADDR: ":8080"
       DATA_DIR: /data
       LOG_FORMAT: json
+      # Set a secret bearer token to enable operator metrics at /metrics.
+      # STATS_API_KEY: "replace-with-a-secret"
       COOKIE_SECURE: "${COOKIE_SECURE}"
       RETENTION_DAYS: "90"
       # ── profiling (optional) ──────────────────────────────────────────────

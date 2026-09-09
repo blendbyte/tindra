@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -55,74 +54,36 @@ type BufferedTransaction struct {
 }
 
 type TransactionBuffer struct {
-	counters bufferCounters
-	ch       chan BufferedTransaction
-	Hook     func(ctx context.Context, pool *pgxpool.Pool, txs []BufferedTransaction, txIDs []string)
+	*queue[BufferedTransaction]
+	Hook func(context.Context, *pgxpool.Pool, []BufferedTransaction, []string)
 }
 
 func NewTransactionBuffer(size int) *TransactionBuffer {
-	return &TransactionBuffer{ch: make(chan BufferedTransaction, size)}
+	q := newQueue[BufferedTransaction]("transactions", size, false)
+	return &TransactionBuffer{queue: q}
 }
 
-func (b *TransactionBuffer) Push(tx BufferedTransaction) bool {
-	select {
-	case b.ch <- tx:
-		b.counters.accepted.Add(1)
-		return true
-	default:
-		b.counters.rejected.Add(1)
-		return false
-	}
-}
-
-// Run is the batch writer loop for transactions. Call in a dedicated goroutine.
+// Run flushes bounded batches and drains on cancellation. Stop producers first.
 func (b *TransactionBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	batch := make([]BufferedTransaction, 0, 100)
-
-	flush := func(ctx context.Context) {
-		if len(batch) == 0 {
-			return
-		}
+	b.run(ctx, 100, func(ctx context.Context, batch []BufferedTransaction) error {
 		start := time.Now()
-		txIDs := writeTxBatch(ctx, pool, batch)
+		var ids []string
+		err := atomicWrite(ctx, pool, func(db batchSender) error {
+			var err error
+			ids, err = writeTxBatch(ctx, db, batch)
+			return err
+		})
 		writtenAt := time.Now()
-		if b.Hook != nil {
-			b.Hook(ctx, pool, batch, txIDs)
+		if err == nil && b.Hook != nil {
+			b.Hook(ctx, pool, batch, ids)
 		}
 		stats := b.Stats()
-		slog.Debug("transaction flush", "attempted", len(batch), "write_ms", writtenAt.Sub(start).Milliseconds(), "hook_ms", time.Since(writtenAt).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
-		batch = batch[:0]
-	}
-
-	for {
-		select {
-		case tx := <-b.ch:
-			batch = append(batch, tx)
-			if len(batch) >= 100 {
-				flush(ctx)
-			}
-		case <-ticker.C:
-			flush(ctx)
-		case <-ctx.Done():
-			drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			for {
-				select {
-				case tx := <-b.ch:
-					batch = append(batch, tx)
-				default:
-					flush(drainCtx)
-					return
-				}
-			}
-		}
-	}
+		b.logger.Debug("transaction flush", "attempted", len(batch), "write_ms", writtenAt.Sub(start).Milliseconds(), "hook_ms", time.Since(writtenAt).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
+		return err
+	})
 }
 
-func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTransaction) []string {
+func writeTxBatch(ctx context.Context, pool batchSender, batch []BufferedTransaction) ([]string, error) {
 	// Phase 1: explicit IDs preserve input-to-span linkage across grouped inserts.
 	txBatch := &pgx.Batch{}
 	txIDs := make([]string, len(batch))
@@ -139,24 +100,12 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 			nilStr(tx.EventID), nilStr(tx.ProfilerID), nilStr(tx.ThreadID),
 			nilStr(tx.UserIdentity), nilStr(tx.UserID), nilStr(tx.UserUsername), nilStr(tx.UserEmail), nilStr(tx.UserName)})
 	}
-	statements := queueInserts(txBatch, `INSERT INTO transactions
+	queueInserts(txBatch, `INSERT INTO transactions
 		(id,project_id,trace_id,span_id,transaction,op,status,duration_ms,start_timestamp,timestamp,
 		 environment,release,platform,measurements,event_id,profiler_id,thread_id,
 		 user_identity,user_id,user_username,user_email,user_name) VALUES `, "", rows, 1)
-	txResults := pool.SendBatch(ctx, txBatch)
-	failed := false
-	for range statements {
-		if _, err := txResults.Exec(); err != nil {
-			slog.Error("transaction insert", "err", err)
-			failed = true
-		}
-	}
-	if err := txResults.Close(); err != nil {
-		slog.Error("transaction batch close", "err", err)
-		failed = true
-	}
-	if failed {
-		return make([]string, len(batch))
+	if err := execBatch(ctx, pool, txBatch); err != nil {
+		return nil, err
 	}
 
 	var appUsers []AppUserRow
@@ -176,7 +125,9 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 			LastSeen: tx.Timestamp,
 		})
 	}
-	UpsertAppUsers(ctx, pool, appUsers)
+	if err := UpsertAppUsers(ctx, pool, appUsers); err != nil {
+		return nil, err
+	}
 
 	// Phase 2: insert spans referencing the transaction IDs
 	type indexedSpan struct {
@@ -195,9 +146,6 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 			toInsert = append(toInsert, indexedSpan{txIDs[i], tx.ProjectID, tx.Environment, tx.Release, sp})
 		}
 	}
-	if len(toInsert) == 0 {
-		return txIDs
-	}
 
 	spanBatch := &pgx.Batch{}
 	for _, s := range toInsert {
@@ -213,14 +161,8 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 			s.projectID, nilStr(s.environment), nilStr(s.release),
 		)
 	}
-	spanResults := pool.SendBatch(ctx, spanBatch)
-	for range toInsert {
-		if _, err := spanResults.Exec(); err != nil {
-			slog.Error("span insert", "err", err)
-		}
-	}
-	if err := spanResults.Close(); err != nil {
-		slog.Error("span batch close", "err", err)
+	if err := execBatch(ctx, pool, spanBatch); err != nil {
+		return nil, err
 	}
 
 	// Upsert releases for any transaction that carries a release.
@@ -232,22 +174,16 @@ func writeTxBatch(ctx context.Context, pool *pgxpool.Pool, batch []BufferedTrans
 		}
 	}
 	if len(seen) == 0 {
-		return txIDs
+		return txIDs, nil
 	}
 	rb := &pgx.Batch{}
 	for k := range seen {
 		rb.Queue(`INSERT INTO releases (project_id, version) VALUES ($1, $2) ON CONFLICT (project_id, version) DO NOTHING`, k.projectID, k.version)
 	}
-	rr := pool.SendBatch(ctx, rb)
-	for range seen {
-		if _, err := rr.Exec(); err != nil {
-			slog.Error("release upsert (tx)", "err", err)
-		}
+	if err := execBatch(ctx, pool, rb); err != nil {
+		return nil, err
 	}
-	if err := rr.Close(); err != nil {
-		slog.Error("release batch close (tx)", "err", err)
-	}
-	return txIDs
+	return txIDs, nil
 }
 
 func nilStr(s string) *string {

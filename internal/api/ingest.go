@@ -219,7 +219,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			}
 			parseLogs(project.ID, item.Payload, func(l ingest.BufferedLog) {
 				ingest.ScrubLog(&l, scrubCfg)
-				ro.logBuf.Push(l) // best-effort; drop silently if full
+				ro.logBuf.Push(l) // Best effort; the buffer counts and reports refusals.
 			})
 
 		case "profile", "profile_chunk":
@@ -230,6 +230,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				// A malformed or over-long profile is dropped on its own. The
 				// transaction it travels with is still good data.
+				ro.profBuf.RecordDrop("invalid_record")
 				slog.Debug("discarding profile", "project", project.Slug,
 					"type", item.Header.Type, "err", err)
 				continue
@@ -239,6 +240,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			// bounded memory even when profiles arrive faster than they drain.
 			buffered, err := ingest.NewBufferedProfile(project.ID, prof)
 			if err != nil {
+				ro.profBuf.RecordDrop("encode_failed")
 				slog.Error("encode profile", "project", project.Slug, "err", err)
 				continue
 			}

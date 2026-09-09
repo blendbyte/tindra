@@ -131,6 +131,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	r.Use(middleware.Recoverer)
 
 	r.Get("/healthz", ro.healthz)
+	r.Get("/metrics", ro.handleIngestionMetrics)
 	r.Get("/assets/email-logo.png", ro.handleEmailLogo)
 
 	// Envelope ingest: URL carries project UUID, public key comes via X-Sentry-Auth header.
@@ -226,6 +227,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Get("/api/releases/{releaseID}/transactions", ro.handleGetReleaseTransactions)
 		r.With(ro.requirePerm("manage_users")).Get("/api/audit", ro.handleListAuditLog)
 		r.With(ro.requirePerm("manage_projects")).Get("/api/instance/health", ro.handleGetInstanceHealth)
+		r.With(ro.requirePerm("manage_projects")).Get("/api/instance/ingestion", ro.handleIngestionStatus)
 
 		r.Get("/api/projects/{projectSlug}/issues", ro.handleListIssues)
 		r.Get("/api/projects/{projectSlug}/issues/{issueID}", ro.handleGetIssue)

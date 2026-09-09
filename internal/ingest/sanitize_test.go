@@ -46,3 +46,26 @@ func TestSanitizeJSONPayload_preservesOtherUnicodeEscapes(t *testing.T) {
 		t.Errorf("non-null unicode escapes should be preserved: got %q", got)
 	}
 }
+
+func TestSanitizeJSONPayload_preservesEscapedBackslashes(t *testing.T) {
+	for _, tt := range []struct{ name, input, want string }{
+		{"literal", `{"message":"\\u0000"}`, `{"message":"\\u0000"}`},
+		{"backslash then null", `{"message":"\\\u0000"}`, `{"message":"\\"}`},
+		{"mixed", `{"message":"\\u0000 and \u0000","user":{"id":"id\u0000"}}`, `{"message":"\\u0000 and ","user":{"id":"id"}}`},
+		{"escaped quote", `{"message":"\"\u0000"}`, `{"message":"\""}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			input := json.RawMessage(tt.input)
+			got := sanitizeJSONPayload(input)
+			if string(got) != tt.want || !json.Valid(got) {
+				t.Fatalf("got %s, want %s", got, tt.want)
+			}
+			if string(input) != tt.input {
+				t.Fatal("modified input")
+			}
+			if string(sanitizeJSONPayload(got)) != tt.want {
+				t.Fatal("sanitization is not idempotent")
+			}
+		})
+	}
+}
