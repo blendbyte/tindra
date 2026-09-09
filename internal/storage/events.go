@@ -189,7 +189,7 @@ func GetEventForIssueAtOffset(ctx context.Context, pool *pgxpool.Pool, issueID s
 		SELECT id, release, trace_id, received_at, payload
 		FROM events
 		WHERE issue_id = $1
-		ORDER BY received_at DESC
+		ORDER BY received_at DESC, id DESC
 		LIMIT 1 OFFSET $2
 	`, issueID, offset)
 
@@ -230,7 +230,7 @@ func ListEventsForIssue(ctx context.Context, pool *pgxpool.Pool, issueID string,
 			SELECT id, timestamp, received_at, level, environment, release
 			FROM events
 			WHERE issue_id = $1
-			  AND (received_at, id::text) < ($2, $3)
+			  AND (received_at, id) < ($2, $3::uuid)
 			ORDER BY received_at DESC, id DESC
 			LIMIT $4
 		`, issueID, cursorTime, *cursorID, limit+1)
@@ -280,7 +280,7 @@ func ListEventsForIssue(ctx context.Context, pool *pgxpool.Pool, issueID string,
 		tagRows, tagErr := pool.Query(ctx, `
 			SELECT event_id::text, key, value
 			FROM event_tags
-			WHERE event_id::text = ANY($1)
+			WHERE event_id = ANY($1::uuid[])
 		`, ids)
 		if tagErr != nil {
 			slog.Error("list events: fetch tags", "err", tagErr)

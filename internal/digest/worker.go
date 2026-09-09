@@ -119,7 +119,7 @@ func (w *Worker) sendToUsers(ctx context.Context, users []storage.DigestUser) {
 		return
 	}
 
-	projects, err := storage.ListProjects(ctx, w.pool)
+	projects, err := storage.ListProjectMetadata(ctx, w.pool)
 	if err != nil {
 		slog.Error("digest: list projects", "err", err)
 		return
@@ -187,13 +187,7 @@ func (w *Worker) buildReport(ctx context.Context, projectIDs []string, from, to 
 
 	var err error
 
-	r.DailyErrors, err = dailyErrorCounts(ctx, w.pool, projectIDs, from, to)
-	errs = append(errs, err)
-
-	r.DailyTx, err = dailyTxCounts(ctx, w.pool, projectIDs, from, to)
-	errs = append(errs, err)
-
-	r.Projects, err = projectBreakdown(ctx, w.pool, projectIDs, from, to)
+	r.DailyErrors, r.DailyTx, r.Projects, err = reportVolume(ctx, w.pool, projectIDs, from, to)
 	errs = append(errs, err)
 
 	r.Issues, err = issuesSummary(ctx, w.pool, projectIDs, from, to)

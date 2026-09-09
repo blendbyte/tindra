@@ -14,6 +14,7 @@ import (
 )
 
 type APIToken struct {
+	TouchDue   bool       `json:"-"`
 	ID         string     `json:"id"`
 	ProjectID  string     `json:"project_id"`
 	Name       string     `json:"name"`
@@ -121,14 +122,16 @@ func DeleteAPITokenByID(ctx context.Context, pool *pgxpool.Pool, id string) (boo
 	return tag.RowsAffected() == 1, nil
 }
 
-// GetAPITokenByHash looks up a token by the SHA-256 hash of its plaintext value.
-// Returns nil, nil if not found.
+const apiTokenTouchDueSQL = "(last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')"
+
+// GetAPITokenByHash looks up a valid token and computes touch eligibility using
+// the database clock. Returns nil, nil if not found or expired.
 func GetAPITokenByHash(ctx context.Context, pool *pgxpool.Pool, hash string) (*APIToken, error) {
 	var t APIToken
 	err := pool.QueryRow(ctx, `
-		SELECT id, project_id, name, writable, created_at, last_used_at, expires_at
+		SELECT id, project_id, name, writable, created_at, last_used_at, expires_at, `+apiTokenTouchDueSQL+`
 		FROM api_tokens WHERE token_hash = $1 AND expires_at > NOW()
-	`, hash).Scan(&t.ID, &t.ProjectID, &t.Name, &t.Writable, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
+	`, hash).Scan(&t.ID, &t.ProjectID, &t.Name, &t.Writable, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt, &t.TouchDue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -138,10 +141,10 @@ func GetAPITokenByHash(ctx context.Context, pool *pgxpool.Pool, hash string) (*A
 	return &t, nil
 }
 
-// TouchAPIToken updates last_used_at to now. Call in a goroutine - no need to
-// block the request on a non-critical write.
+// TouchAPIToken records approximate last use, at most once per minute. The
+// condition also coalesces concurrent updates from different API instances.
 func TouchAPIToken(ctx context.Context, pool *pgxpool.Pool, id string) {
-	_, _ = pool.Exec(ctx, `UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1`, id)
+	_, _ = pool.Exec(ctx, `UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1 AND `+apiTokenTouchDueSQL, id)
 }
 
 // HashAPIToken returns the SHA-256 hash of a plaintext token value. Used by the

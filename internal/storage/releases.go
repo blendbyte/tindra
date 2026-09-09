@@ -53,29 +53,90 @@ type ReleaseFilter struct {
 	Limit      int
 }
 
-// releaseSelectSQL is the common SELECT + LEFT JOIN block for release queries.
-const releaseSelectSQL = `
-	SELECT
-		r.id, r.project_id, r.version, r.deployed_at, r.created_at,
-		(SELECT COUNT(*) FROM issues
+// ReleaseMetadata supplies release pickers without computing telemetry metrics.
+type ReleaseMetadata struct {
+	ID         string    `json:"id"`
+	ProjectID  string    `json:"project_id"`
+	Version    string    `json:"version"`
+	DeployedAt time.Time `json:"deployed_at"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func ListReleaseMetadata(ctx context.Context, pool *pgxpool.Pool, filter ReleaseFilter) ([]*ReleaseMetadata, error) {
+	q, args := releasePageQuery(filter)
+	rows, err := pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query release metadata: %w", err)
+	}
+	defer rows.Close()
+	releases := []*ReleaseMetadata{}
+	for rows.Next() {
+		var r ReleaseMetadata
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.Version, &r.DeployedAt, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		releases = append(releases, &r)
+	}
+	return releases, rows.Err()
+}
+
+// Reuse identical issue-health definitions in full and dashboard responses.
+const releaseIssueCountsSQL = `		(SELECT COUNT(*) FROM issues
 		 WHERE project_id = r.project_id AND first_release = r.version)                     AS new_issues,
 		(SELECT COUNT(DISTINCT i.id) FROM issues i
 		 JOIN events e ON e.issue_id = i.id
 		 WHERE i.status = 'regressed'
-		   AND e.project_id = r.project_id AND e.release = r.version)                       AS regressed_issues,
-		COUNT(t.id)                                                                          AS tx_count,
-		COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY t.duration_ms), 0)             AS tx_p50,
-		COALESCE(ROUND(
-			COUNT(t.id) FILTER (WHERE t.status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded')) * 100.0 / NULLIF(COUNT(t.id), 0), 1
-		), 0)                                                                                AS tx_error_rate
-	FROM releases r
-	LEFT JOIN transactions t ON t.project_id = r.project_id AND t.release = r.version`
+		   AND e.project_id = r.project_id AND e.release = r.version)                       AS regressed_issues`
+
+const releaseSelectSQL = `
+	SELECT
+		r.id, r.project_id, r.version, r.deployed_at, r.created_at,
+` + releaseIssueCountsSQL + `,
+		t.tx_count, t.tx_p50, t.tx_error_rate
+	FROM %s r
+	LEFT JOIN LATERAL (
+		SELECT COUNT(*) AS tx_count,
+		       COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms), 0) AS tx_p50,
+		       COALESCE(ROUND(
+		           COUNT(*) FILTER (WHERE status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded'))
+		           * 100.0 / NULLIF(COUNT(*), 0), 1
+		       ), 0) AS tx_error_rate
+		FROM transactions
+		WHERE project_id = r.project_id AND release = r.version
+	) t ON TRUE`
 
 func scanRelease(row pgx.Row, r *Release) error {
 	return row.Scan(
 		&r.ID, &r.ProjectID, &r.Version, &r.DeployedAt, &r.CreatedAt,
 		&r.NewIssues, &r.RegressedIssues, &r.TxCount, &r.TxP50, &r.TxErrorRate,
 	)
+}
+
+// ReleaseHealth contains only the fields used by the dashboard health list.
+type ReleaseHealth struct {
+	ReleaseMetadata
+	NewIssues       int `json:"new_issues"`
+	RegressedIssues int `json:"regressed_issues"`
+}
+
+func ListRecentReleaseHealth(ctx context.Context, pool *pgxpool.Pool, projectIDs []string) ([]ReleaseHealth, error) {
+	page, args := releasePageQuery(ReleaseFilter{ProjectIDs: projectIDs, Limit: 5})
+	rows, err := pool.Query(ctx, "WITH release_page AS MATERIALIZED ("+page+`) SELECT
+ r.id,r.project_id,r.version,r.deployed_at,r.created_at, `+releaseIssueCountsSQL+`
+ FROM release_page r ORDER BY r.deployed_at DESC,r.id DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("release health: %w", err)
+	}
+	defer rows.Close()
+	result := []ReleaseHealth{}
+	for rows.Next() {
+		var r ReleaseHealth
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.Version, &r.DeployedAt, &r.CreatedAt, &r.NewIssues, &r.RegressedIssues); err != nil {
+			return nil, fmt.Errorf("scan release health: %w", err)
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
 }
 
 func CountReleases(ctx context.Context, pool *pgxpool.Pool, filter ReleaseFilter) (int, error) {
@@ -92,7 +153,7 @@ func CountReleases(ctx context.Context, pool *pgxpool.Pool, filter ReleaseFilter
 	return n, nil
 }
 
-func ListReleases(ctx context.Context, pool *pgxpool.Pool, filter ReleaseFilter) ([]*Release, error) {
+func releasePageQuery(filter ReleaseFilter) (string, []any) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -108,15 +169,21 @@ func ListReleases(ctx context.Context, pool *pgxpool.Pool, filter ReleaseFilter)
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
 		where += fmt.Sprintf(
-			" AND (r.deployed_at < $%d OR (r.deployed_at = $%d AND r.id < $%d::uuid))",
-			n, n, n+1,
+			" AND (r.deployed_at, r.id) < ($%d, $%d::uuid)",
+			n, n+1,
 		)
 	}
 	args = append(args, limit)
 
-	q := releaseSelectSQL + where +
-		" GROUP BY r.id, r.project_id, r.version, r.deployed_at, r.created_at" +
-		fmt.Sprintf(" ORDER BY r.deployed_at DESC, r.id DESC LIMIT $%d", len(args))
+	return `SELECT r.id, r.project_id, r.version, r.deployed_at, r.created_at FROM releases r` + where +
+		fmt.Sprintf(" ORDER BY r.deployed_at DESC, r.id DESC LIMIT $%d", len(args)), args
+}
+
+func ListReleases(ctx context.Context, pool *pgxpool.Pool, filter ReleaseFilter) ([]*Release, error) {
+	page, args := releasePageQuery(filter)
+	q := "WITH release_page AS MATERIALIZED (" + page + ") " +
+		fmt.Sprintf(releaseSelectSQL, "release_page") +
+		" ORDER BY r.deployed_at DESC, r.id DESC"
 
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
@@ -140,9 +207,8 @@ func ListReleases(ctx context.Context, pool *pgxpool.Pool, filter ReleaseFilter)
 
 func GetRelease(ctx context.Context, pool *pgxpool.Pool, id string) (*Release, error) {
 	var r Release
-	err := scanRelease(pool.QueryRow(ctx, releaseSelectSQL+`
+	err := scanRelease(pool.QueryRow(ctx, fmt.Sprintf(releaseSelectSQL, "releases")+`
 		WHERE r.id = $1
-		GROUP BY r.id, r.project_id, r.version, r.deployed_at, r.created_at
 	`, id), &r)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

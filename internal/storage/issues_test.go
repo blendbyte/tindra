@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -150,6 +152,28 @@ func TestListIssues_filterByStatus(t *testing.T) {
 	if len(resolved) != 1 {
 		t.Errorf("expected 1 resolved issue, got %d", len(resolved))
 	}
+}
+
+func TestGetIssueMetadataIndependentOfEvents(t *testing.T) {
+	p, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, p.ID, "metadata", "Metadata", "error", "error", "", "v1", time.Now())
+	require.NoError(t, err)
+	full, err := storage.GetIssue(ctx, testPool, issue.ID)
+	require.NoError(t, err)
+	lock, err := testPool.Begin(ctx)
+	require.NoError(t, err)
+	defer lock.Rollback(ctx)
+	_, err = lock.Exec(ctx, `LOCK TABLE events, releases IN ACCESS EXCLUSIVE MODE`)
+	require.NoError(t, err)
+	readCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	metadata, err := storage.GetIssueMetadata(readCtx, testPool, issue.ID)
+	require.NoError(t, err)
+	require.Equal(t, &storage.IssueMetadata{ID: full.ID, ProjectID: full.ProjectID, FirstSeen: full.FirstSeen, Status: full.Status}, metadata)
+	missing, err := storage.GetIssueMetadata(readCtx, testPool, "00000000-0000-0000-0000-000000000000")
+	require.NoError(t, err)
+	require.Nil(t, missing)
 }
 
 func TestGetIssue(t *testing.T) {
