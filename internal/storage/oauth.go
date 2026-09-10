@@ -28,6 +28,32 @@ var (
 	ErrOAuthUserLimit       = errors.New("user limit reached")
 )
 
+// LinkOAuthIdentity is an operator-only admission path for an existing user.
+// It must never be called based on an unverified provider email. A subject
+// already bound to another user cannot be reassigned, including concurrently.
+func LinkOAuthIdentity(ctx context.Context, pool *pgxpool.Pool, userID, provider, sub string) error {
+	if strings.TrimSpace(provider) == "" || strings.TrimSpace(sub) == "" {
+		return fmt.Errorf("provider and subject must not be blank")
+	}
+	var linkedID string
+	err := pool.QueryRow(ctx, `WITH linked AS (INSERT INTO oauth_identities (user_id, provider, sub, email)
+		SELECT id, $2, $3, email FROM users WHERE id = $1
+		ON CONFLICT (provider, sub) DO UPDATE SET sub = EXCLUDED.sub
+		WHERE oauth_identities.user_id = EXCLUDED.user_id
+		RETURNING user_id)
+		INSERT INTO audit_log (event_type, target_id, details)
+		SELECT 'user.sso.link', user_id,
+			jsonb_build_object('provider', $2::text, 'subject', $3::text, 'source', 'cli') FROM linked
+		RETURNING target_id`, userID, provider, sub).Scan(&linkedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("cannot link identity: subject belongs to another user or target user no longer exists")
+	}
+	if err != nil {
+		return fmt.Errorf("link OAuth identity: %w", err)
+	}
+	return nil
+}
+
 // FindOrCreateOAuthUser links an existing account or redeems a valid invitation
 // for a verified provider email. New users receive no management permissions.
 func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, sub, email string, emailVerified bool, userLimit int) (*User, error) {

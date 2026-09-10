@@ -54,6 +54,7 @@ func TestUsersCmd_hasSubcommands(t *testing.T) {
 		"send-password-reset": false,
 		"send-invite":         false,
 		"disable-mfa":         false,
+		"link-sso":            false,
 	}
 	for _, sub := range cmd.Commands() {
 		if _, ok := want[sub.Name()]; !ok {

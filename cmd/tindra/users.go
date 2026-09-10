@@ -18,7 +18,7 @@ func usersCmd(cfg config) *cobra.Command {
 		Use:   "users",
 		Short: "Manage users",
 	}
-	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg), usersSendPasswordResetCmd(cfg), usersSendInviteCmd(cfg), usersDisableMFACmd(cfg))
+	cmd.AddCommand(usersCreateCmd(cfg), usersListCmd(cfg), usersSendPasswordResetCmd(cfg), usersSendInviteCmd(cfg), usersDisableMFACmd(cfg), usersLinkSSOCmd(cfg))
 	return cmd
 }
 

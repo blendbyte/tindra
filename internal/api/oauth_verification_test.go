@@ -76,7 +76,7 @@ func TestOAuthEmailVerificationAdmission(t *testing.T) {
 					require.NoError(t, err)
 					userID = user.ID
 					if kind == "linked identity" {
-						_, err = storage.FindOrCreateOAuthUser(t.Context(), pool, "verification", sub, email, true, 0)
+						err = storage.LinkOAuthIdentity(t.Context(), pool, user.ID, "verification", sub)
 						require.NoError(t, err)
 					}
 				}
