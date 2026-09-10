@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/ui'
+import ModalDialog from './ModalDialog.vue'
 
 const ui = useUiStore()
 
@@ -73,11 +74,12 @@ const groups: Group[] = [
 
 <template>
   <Teleport to="body">
-    <div v-if="ui.shortcutsOpen" class="shortcuts-overlay" @mousedown.self="close">
-      <div class="shortcuts-modal" role="dialog" aria-label="Keyboard shortcuts">
+    <ModalDialog v-if="ui.shortcutsOpen" aria-label="Keyboard shortcuts" @close="close" @keydown="onKey">
+    <div class="shortcuts-overlay" @mousedown.self.prevent="close">
+      <div class="shortcuts-modal">
         <div class="shortcuts-modal__header">
           <span class="shortcuts-modal__title">Keyboard shortcuts</span>
-          <button class="shortcuts-modal__close" @click="close">
+          <button class="shortcuts-modal__close" autofocus aria-label="Close keyboard shortcuts" @click="close">
             <kbd class="nav__kbd">esc</kbd>
           </button>
         </div>
@@ -94,5 +96,6 @@ const groups: Group[] = [
         </div>
       </div>
     </div>
+    </ModalDialog>
   </Teleport>
 </template>

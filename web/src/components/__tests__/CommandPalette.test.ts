@@ -203,6 +203,22 @@ describe('CommandPalette', () => {
   })
 
   describe('keyboard navigation', () => {
+    it('routes dialog-local keys once and exposes the selected command', async () => {
+      const wrapper = makeWrapper(true)
+      const input = wrapper.get('input')
+      await input.trigger('keydown', { key: 'ArrowDown' })
+      expect(input.attributes('aria-activedescendant')).toBe('command-option-1')
+      expect(wrapper.get('#command-option-1').attributes('aria-selected')).toBe('true')
+      await input.trigger('keydown', { key: 'Enter' })
+      expect(pushMock).toHaveBeenCalledExactlyOnceWith({ path: '/performance', query: {} })
+      const ui = vi.mocked(useUiStore).mock.results.at(-1)!.value
+      expect(ui.closeCmd).toHaveBeenCalledOnce()
+      await input.trigger('keydown', { key: 'k', ctrlKey: true })
+      expect(ui.closeCmd).toHaveBeenCalledTimes(2)
+      await input.trigger('keydown', { key: 'Escape' })
+      expect(ui.closeCmd).toHaveBeenCalledTimes(3)
+    })
+
     it('highlights the first item by default', () => {
       const wrapper = makeWrapper(true)
       expect(wrapper.findAll('.cmdk__item')[0].classes()).toContain('cmdk__item--active')

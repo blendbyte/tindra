@@ -9,6 +9,7 @@ import { useFormatters } from '@/composables/useFormatters'
 import type { Issue, IssueListPage, AppUser } from '@/api/types'
 import { useAppUserStore, appUserLabel } from '@/stores/appUser'
 import Icon from './Icon.vue'
+import ModalDialog from './ModalDialog.vue'
 
 const router = useRouter()
 const ui = useUiStore()
@@ -205,12 +206,13 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
+    <ModalDialog v-if="ui.cmdOpen" aria-label="Command palette" @close="ui.closeCmd()"
+      @keydown="(event) => { onKey(event); onGlobalKey(event) }">
     <div
-      v-if="ui.cmdOpen"
       class="cmdk-overlay"
-      @mousedown.self="ui.closeCmd()"
+      @mousedown.self.prevent="ui.closeCmd()"
     >
-      <div class="cmdk" role="dialog" aria-label="Command palette">
+      <div class="cmdk">
         <div class="cmdk__search">
           <Icon v-if="!isSearching" name="search" :size="14" />
           <Icon v-else name="loader" :size="14" class="cmdk__spinner" />
@@ -219,12 +221,18 @@ onUnmounted(() => {
             v-model="q"
             placeholder="Search issues, people, or jump to a page…"
             aria-label="Search"
+            autofocus
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            aria-controls="command-results"
+            :aria-activedescendant="items[active] ? `command-option-${active}` : undefined"
             @input="active = 0"
           />
           <span class="nav__kbd" style="margin-left: auto">esc</span>
         </div>
 
-        <div class="cmdk__list">
+        <div id="command-results" class="cmdk__list" role="listbox" aria-label="Commands">
           <div
             v-if="isEmpty"
             class="cmdk__empty"
@@ -232,10 +240,13 @@ onUnmounted(() => {
             No results for "{{ q }}"
           </div>
           <template v-for="[group, groupItems] in grouped" :key="group">
-            <div class="cmdk__group-label">{{ group }}</div>
+            <div class="cmdk__group-label" role="presentation">{{ group }}</div>
             <div
               v-for="it in groupItems"
               :key="it.id"
+              :id="`command-option-${it.idx}`"
+              role="option"
+              :aria-selected="it.idx === active"
               class="cmdk__item"
               :class="{ 'cmdk__item--active': it.idx === active }"
               @mouseenter="active = it.idx"
@@ -255,5 +266,6 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+    </ModalDialog>
   </Teleport>
 </template>
