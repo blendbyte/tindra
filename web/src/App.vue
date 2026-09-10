@@ -36,7 +36,7 @@ watch(
   <div v-if="auth.ready && (isLogin || !!auth.user)" class="app">
     <Navbar v-if="!isLogin" />
     <QuotaBanner v-if="!isLogin" />
-    <InvestigationBar v-if="!isLogin && hasInvestigation(route.path)" />
+    <InvestigationBar v-if="!isLogin && route.name !== 'issue-detail' && hasInvestigation(route.path)" />
     <p v-if="hasInvestigation(route.path) && investigation.routeError" class="page" role="alert">{{ investigation.routeError }}</p>
     <p v-else-if="unsupported" class="page" role="status">This view supports time ranges up to 90 days. Choose a supported time range above to load its data.</p>
     <RouterView v-else />
