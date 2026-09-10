@@ -12,7 +12,7 @@ test.describe('login page', () => {
   })
 
   test('has the correct page title', async ({ page }) => {
-    await expect(page).toHaveTitle('Tindra')
+    await expect(page).toHaveTitle('Sign in - Tindra')
   })
 
   test('shows the email and password fields', async ({ page }) => {
