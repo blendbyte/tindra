@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 )
 
 const (
+	MaxUploadSize     = 10 << 20        // 10 MiB per source map
 	fileCacheMax      = 64              // max cached JS files (FIFO eviction)
 	fileCacheTTL      = 5 * time.Minute // re-fetch after this duration
 	fetchTimeout      = 5 * time.Second
@@ -30,6 +32,11 @@ const (
 	cacheBytesMax     = 32 << 20
 	fetchMaxSize      = 5 << 20 // 5 MB per file
 	ctxLineMax        = 140     // chars visible in context_line window
+)
+
+var (
+	ErrUploadTooLarge = errors.New("source map exceeds the 10 MiB limit")
+	ErrInvalidMap     = errors.New("invalid source map")
 )
 
 type cachedFile struct {
@@ -91,9 +98,15 @@ func NormalizeURL(u string) string {
 // Upload stores a sourcemap on disk and records its metadata in Postgres.
 // If a record already exists for (project, release, url) it is replaced.
 func (s *Store) Upload(ctx context.Context, projectID, release, url string, r io.Reader) (*storage.Sourcemap, error) {
-	data, err := io.ReadAll(io.LimitReader(r, 10<<20)) // 10 MB cap
+	data, err := io.ReadAll(io.LimitReader(r, MaxUploadSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)
+	}
+	if len(data) > MaxUploadSize {
+		return nil, ErrUploadTooLarge
+	}
+	if _, err := ParseContext(ctx, data); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMap, err)
 	}
 
 	sum := sha256.Sum256(data)
@@ -103,8 +116,13 @@ func (s *Store) Upload(ctx context.Context, projectID, release, url string, r io
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, hexHash+".map"), data, 0o644); err != nil {
-		return nil, fmt.Errorf("write file: %w", err)
+	// Publish only complete files, including when replacing a shared content hash.
+	file, err := os.CreateTemp(dir, ".upload-*")
+	if err != nil {
+		return nil, fmt.Errorf("create file: %w", err)
+	}
+	if err := publishUpload(file, filepath.Join(dir, hexHash+".map"), data); err != nil {
+		return nil, err
 	}
 
 	sm, err := storage.UpsertSourcemap(ctx, s.pool, &storage.Sourcemap{
@@ -118,6 +136,25 @@ func (s *Store) Upload(ctx context.Context, projectID, release, url string, r io
 		return nil, fmt.Errorf("db: %w", err)
 	}
 	return sm, nil
+}
+
+// publishUpload owns the temporary file and cleans it up on every failure path.
+func publishUpload(file interface {
+	io.WriteCloser
+	Name() string
+}, target string, data []byte) error {
+	defer os.Remove(file.Name()) //nolint:errcheck
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close file: %w", err)
+	}
+	if err := os.Rename(file.Name(), target); err != nil {
+		return fmt.Errorf("publish file: %w", err)
+	}
+	return nil
 }
 
 // Delete removes a sourcemap record from the DB and, if no other record in the

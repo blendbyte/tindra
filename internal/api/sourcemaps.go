@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/blendbyte/tindra/internal/sourcemaps"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -19,10 +21,18 @@ func (ro *router) handleUploadSourcemap(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	// Allow 1 MiB for multipart headers and fields beyond the map itself.
+	r.Body = http.MaxBytesReader(w, r.Body, sourcemaps.MaxUploadSize+(1<<20))
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "source map upload exceeds the 11 MiB request limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	defer r.MultipartForm.RemoveAll() //nolint:errcheck
 
 	release := r.FormValue("release")
 	if release == "" {
@@ -44,6 +54,14 @@ func (ro *router) handleUploadSourcemap(w http.ResponseWriter, r *http.Request) 
 
 	sm, err := ro.smStore.Upload(r.Context(), project.ID, release, url, file)
 	if err != nil {
+		if errors.Is(err, sourcemaps.ErrUploadTooLarge) {
+			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
+		if errors.Is(err, sourcemaps.ErrInvalidMap) {
+			http.Error(w, "invalid source map", http.StatusBadRequest)
+			return
+		}
 		slog.Error("upload sourcemap", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
