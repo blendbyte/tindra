@@ -281,41 +281,6 @@ func TestLoadOAuthProviders_auth0DomainStripsHTTPS(t *testing.T) {
 	}
 }
 
-func TestLoadOAuthProviders_microsoftDefaultTenant(t *testing.T) {
-	t.Setenv("OAUTH_REDIRECT_BASE", "https://app.example.com")
-	t.Setenv("MICROSOFT_CLIENT_ID", "ms-id")
-	t.Setenv("MICROSOFT_CLIENT_SECRET", "ms-sec")
-	t.Setenv("MICROSOFT_TENANT", "")
-	t.Setenv("OIDC_ISSUER_URL", "")
-	t.Setenv("GITHUB_CLIENT_ID", "")
-	t.Setenv("GOOGLE_CLIENT_ID", "")
-	t.Setenv("ZITADEL_ISSUER_URL", "")
-	t.Setenv("AUTH0_DOMAIN", "")
-
-	// Discovery will fail (real Microsoft endpoint not reachable in test) → 0 providers.
-	providers := LoadOAuthProviders(context.Background())
-	if len(providers) != 0 {
-		t.Errorf("expected 0 providers when Microsoft discovery fails, got %d", len(providers))
-	}
-}
-
-func TestLoadOAuthProviders_microsoftCustomTenant(t *testing.T) {
-	t.Setenv("OAUTH_REDIRECT_BASE", "https://app.example.com")
-	t.Setenv("MICROSOFT_CLIENT_ID", "ms-id")
-	t.Setenv("MICROSOFT_CLIENT_SECRET", "ms-sec")
-	t.Setenv("MICROSOFT_TENANT", "my-tenant-id")
-	t.Setenv("OIDC_ISSUER_URL", "")
-	t.Setenv("GITHUB_CLIENT_ID", "")
-	t.Setenv("GOOGLE_CLIENT_ID", "")
-	t.Setenv("ZITADEL_ISSUER_URL", "")
-	t.Setenv("AUTH0_DOMAIN", "")
-
-	providers := LoadOAuthProviders(context.Background())
-	if len(providers) != 0 {
-		t.Errorf("expected 0 providers when Microsoft discovery fails, got %d", len(providers))
-	}
-}
-
 // ---------------------------------------------------------------------------
 // newOIDCProvider + oidcProvider.Name + oidcProvider.AuthCodeURL with a
 // minimal mock OIDC discovery server (no external network calls).

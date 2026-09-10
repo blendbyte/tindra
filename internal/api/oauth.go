@@ -14,6 +14,7 @@ import (
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 
@@ -54,6 +55,17 @@ func newOIDCProvider(ctx context.Context, name, issuer, clientID, clientSecret, 
 		},
 		verifier: p.Verifier(&gooidc.Config{ClientID: clientID}),
 	}, nil
+}
+
+// Microsoft discovery requires a concrete tenant so its issuer can be checked exactly.
+func newMicrosoftProvider(ctx context.Context, tenant, clientID, clientSecret, redirectBase string) (*oidcProvider, error) {
+	tenant = strings.TrimSpace(tenant)
+	tenantID, err := uuid.Parse(tenant)
+	if err != nil || len(tenant) != 36 || tenantID == uuid.Nil {
+		return nil, fmt.Errorf("MICROSOFT_TENANT must be a concrete Directory (tenant) ID in UUID format; common, organizations, and consumers are not supported")
+	}
+	issuer := "https://login.microsoftonline.com/" + tenantID.String() + "/v2.0"
+	return newOIDCProvider(ctx, "microsoft", issuer, clientID, clientSecret, redirectBase)
 }
 
 func (p *oidcProvider) Name() string { return p.name }
@@ -205,7 +217,7 @@ func (ro *router) ssoRequired() bool {
 //	GOOGLE_CLIENT_SECRET  - Google OAuth2 client secret
 //	MICROSOFT_CLIENT_ID   - Microsoft OAuth2 client ID
 //	MICROSOFT_CLIENT_SECRET
-//	MICROSOFT_TENANT      - Azure AD tenant ID or "common" / "organizations" / "consumers"
+//	MICROSOFT_TENANT      - required Azure AD Directory (tenant) ID in UUID format
 //	GITHUB_CLIENT_ID      - GitHub OAuth2 client ID
 //	GITHUB_CLIENT_SECRET  - GitHub OAuth2 client secret
 //	ZITADEL_ISSUER_URL    - Zitadel instance URL (e.g. https://auth.example.com)
@@ -267,13 +279,8 @@ func LoadOAuthProviders(ctx context.Context) []oauthProvider {
 
 	// Microsoft
 	if id, secret := os.Getenv("MICROSOFT_CLIENT_ID"), os.Getenv("MICROSOFT_CLIENT_SECRET"); id != "" && secret != "" {
-		tenant := os.Getenv("MICROSOFT_TENANT")
-		if tenant == "" {
-			tenant = "common"
-		}
-		issuer := "https://login.microsoftonline.com/" + tenant + "/v2.0"
 		add("microsoft", func() (oauthProvider, error) {
-			return newOIDCProvider(ctx, "microsoft", issuer, id, secret, base)
+			return newMicrosoftProvider(ctx, os.Getenv("MICROSOFT_TENANT"), id, secret, base)
 		})
 	}
 
