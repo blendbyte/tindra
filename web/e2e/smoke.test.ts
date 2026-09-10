@@ -7,6 +7,7 @@ import { test, expect } from '@playwright/test'
 
 test.describe('login page', () => {
   test.beforeEach(async ({ page }) => {
+    await page.route('**/api/auth/providers', route => route.fulfill({ json: { providers: [] } }))
     await page.goto('/login')
   })
 
@@ -26,9 +27,26 @@ test.describe('login page', () => {
 
   test('shows a validation message on empty submit', async ({ page }) => {
     await page.getByRole('button', { name: /sign in|log in/i }).click()
-    // Browser native or custom validation should prevent submission
     const emailField = page.getByLabel('Email')
     await expect(emailField).toBeFocused()
+    await expect(emailField).toHaveAttribute('aria-invalid', 'true')
+    await expect(emailField).toHaveAccessibleDescription('Email and password are required.')
+    await expect(page.getByRole('alert')).toHaveText('Email and password are required.')
+  })
+
+  test('focuses the password when only the email is filled', async ({ page }) => {
+    await page.getByLabel('Email').fill('user@example.com')
+    await page.getByRole('button', { name: /sign in/i }).click()
+    await expect(page.getByLabel('Password')).toBeFocused()
+    await expect(page.getByLabel('Password')).toHaveAccessibleDescription('Email and password are required.')
+    await expect(page.getByLabel('Email')).not.toHaveAttribute('aria-invalid', 'true')
+  })
+
+  test('keyboard submission focuses the email when only the password is filled', async ({ page }) => {
+    await page.getByLabel('Password').fill('secret')
+    await page.getByLabel('Password').press('Enter')
+    await expect(page.getByLabel('Email')).toBeFocused()
+    await expect(page.getByLabel('Password')).not.toHaveAttribute('aria-invalid', 'true')
   })
 })
 

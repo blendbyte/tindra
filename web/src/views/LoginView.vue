@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
@@ -15,8 +15,12 @@ const qc = useQueryClient()
 const auth = useAuthStore()
 const email = ref('')
 const password = ref('')
+const emailInput = ref<HTMLInputElement | null>(null)
+const passwordInput = ref<HTMLInputElement | null>(null)
 const error = ref<string | null>(null)
 const loading = ref(false)
+const emailMissing = computed(() => error.value === 'required' && !email.value)
+const passwordMissing = computed(() => error.value === 'required' && !password.value)
 
 // MFA step
 const mfaToken = ref<string | null>(null)
@@ -67,6 +71,9 @@ const loginError = computed<LoginError | null>(() => error.value ? mapError(erro
 async function submit() {
   if (!email.value || !password.value) {
     error.value = 'required'
+    await nextTick()
+    const invalidInput = emailMissing.value ? emailInput.value : passwordInput.value
+    invalidInput?.focus()
     return
   }
   error.value = null
@@ -190,11 +197,14 @@ function backToLogin() {
             <label class="field__label" for="email">Email</label>
             <input
               id="email"
+              ref="emailInput"
               v-model="email"
               type="email"
               class="field__input"
               placeholder="you@example.com"
               autocomplete="email"
+              :aria-invalid="emailMissing || undefined"
+              :aria-describedby="emailMissing ? 'login-error' : undefined"
               autofocus
             />
           </div>
@@ -203,15 +213,18 @@ function backToLogin() {
             <label class="field__label" for="password">Password</label>
             <input
               id="password"
+              ref="passwordInput"
               v-model="password"
               type="password"
               class="field__input"
               placeholder="••••••••••••"
               autocomplete="current-password"
+              :aria-invalid="passwordMissing || undefined"
+              :aria-describedby="passwordMissing ? 'login-error' : undefined"
             />
           </div>
 
-          <div v-if="loginError" class="login__error-box">
+          <div v-if="loginError" id="login-error" class="login__error-box" role="alert">
             <Icon name="alert-circle" :size="14" class="login__error-icon" />
             <div>
               <div class="login__error-title">{{ loginError.title }}</div>

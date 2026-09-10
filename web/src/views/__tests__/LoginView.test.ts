@@ -33,6 +33,7 @@ function mountLogin(providers: string[] = []) {
   const providersData = ref<{ providers: string[] } | undefined>({ providers })
   vi.mocked(useQuery).mockReturnValue({ data: providersData } as any)
   return mount(LoginView, {
+    attachTo: document.body,
     global: { stubs: { Icon: true } },
   })
 }
@@ -69,6 +70,43 @@ describe('LoginView', () => {
       const wrapper = mountLogin()
       await wrapper.find('form').trigger('submit')
       expect(apiFetch).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['', '', 'email'],
+      ['', 'secret', 'email'],
+      ['user@example.com', '', 'password'],
+    ])('focuses the missing field for email=%s and password=%s', async (email, password, focused) => {
+      const wrapper = mountLogin()
+      await wrapper.find('#email').setValue(email)
+      await wrapper.find('#password').setValue(password)
+      wrapper.find<HTMLButtonElement>('button[type="submit"]').element.focus()
+      await wrapper.find('form').trigger('submit')
+      expect(document.activeElement).toBe(wrapper.find(`#${focused}`).element)
+      expect(wrapper.find('#login-error').attributes('role')).toBe('alert')
+      for (const [id, value] of [['email', email], ['password', password]]) {
+        expect(wrapper.find(`#${id}`).attributes('aria-invalid')).toBe(value ? undefined : 'true')
+        expect(wrapper.find(`#${id}`).attributes('aria-describedby')).toBe(value ? undefined : 'login-error')
+      }
+      expect(apiFetch).not.toHaveBeenCalled()
+    })
+
+    it('clears invalid field associations as missing values are entered', async () => {
+      const wrapper = mountLogin()
+      expect(wrapper.find('#email').attributes('aria-invalid')).toBeUndefined()
+      expect(wrapper.find('#password').attributes('aria-invalid')).toBeUndefined()
+      await wrapper.find('form').trigger('submit')
+      await wrapper.find('#email').setValue('user@example.com')
+      expect(wrapper.find('#email').attributes('aria-invalid')).toBeUndefined()
+      expect(wrapper.find('#email').attributes('aria-describedby')).toBeUndefined()
+      expect(wrapper.find('#password').attributes('aria-invalid')).toBe('true')
+      await wrapper.find('#password').setValue('secret')
+      expect(wrapper.find('#password').attributes('aria-invalid')).toBeUndefined()
+      expect(wrapper.find('#password').attributes('aria-describedby')).toBeUndefined()
+      vi.mocked(apiFetch).mockResolvedValue({})
+      await wrapper.find('form').trigger('submit')
+      expect(wrapper.find('#login-error').exists()).toBe(false)
+      expect(apiFetch).toHaveBeenCalledTimes(1)
     })
 
     it('calls the login API with email and password', async () => {
