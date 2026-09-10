@@ -148,7 +148,7 @@ func (ro *router) handleDoPasswordReset(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	u, err := storage.UsePasswordResetToken(r.Context(), ro.pool, token, req.Password)
+	u, session, err := storage.UsePasswordResetTokenWithSession(r.Context(), ro.pool, token, req.Password)
 	if err != nil {
 		slog.Error("reset password", "err", err)
 		http.Error(w, "unable to reset password", http.StatusBadRequest)
@@ -165,22 +165,7 @@ func (ro *router) handleDoPasswordReset(w http.ResponseWriter, r *http.Request) 
 		IP:        r.RemoteAddr,
 	})
 
-	// Admin-initiated resets clear MFA so the user re-enrolls on next login.
-	if u.MFAEnabled {
-		if err := storage.DisableMFA(r.Context(), ro.pool, u.ID); err != nil {
-			slog.Error("disable mfa after password reset", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		u.MFAEnabled = false
-	}
-
-	session, err := storage.CreateSession(r.Context(), ro.pool, u.ID)
-	if err != nil {
-		slog.Error("create session after password reset", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
+	clearMFAChallengeCookie(w, ro.cookieSecure)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "tindra_session",

@@ -333,51 +333,99 @@ func UpdateUserProfile(ctx context.Context, pool *pgxpool.Pool, id, name, email,
 	return &u, nil
 }
 
+// ChangeUserPassword changes credentials and revokes all existing authentication artifacts.
 func ChangeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword string) error {
+	_, err := changeUserPassword(ctx, pool, userID, currentPassword, newPassword, "")
+	return err
+}
+
+// ChangeUserPasswordWithSession rotates the requesting session in the same transaction.
+func ChangeUserPasswordWithSession(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword, currentSession string) (*Session, error) {
+	if currentSession == "" {
+		return nil, ErrInvalidPassword
+	}
+	return changeUserPassword(ctx, pool, userID, currentPassword, newPassword, currentSession)
+}
+
+func changeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword, currentSession string) (*Session, error) {
 	if len(newPassword) < minPasswordLen {
-		return fmt.Errorf("password must be at least %d characters", minPasswordLen)
+		return nil, fmt.Errorf("password must be at least %d characters", minPasswordLen)
 	}
 	if len(newPassword) > maxPasswordLen {
-		return fmt.Errorf("password must be at most %d characters", maxPasswordLen)
+		return nil, fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
 
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
 	var hash string
-	err := pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash)
+	err = tx.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&hash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("user not found")
+		return nil, fmt.Errorf("user not found")
 	}
 	if err != nil {
-		return fmt.Errorf("query: %w", err)
+		return nil, fmt.Errorf("query: %w", err)
 	}
 	if hash == "" {
-		return fmt.Errorf("account has no password set")
+		return nil, fmt.Errorf("account has no password set")
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(currentPassword)) != nil {
-		return ErrInvalidPassword
+		return nil, ErrInvalidPassword
 	}
 
+	if currentSession != "" {
+		var valid bool
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE token_hash=$1 AND user_id=$2 AND expires_at>NOW())`, tokenHash(currentSession), userID).Scan(&valid)
+		if err != nil {
+			return nil, fmt.Errorf("get current session: %w", err)
+		}
+		if !valid {
+			return nil, ErrInvalidPassword
+		}
+	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), BcryptCost)
 	if err != nil {
-		return fmt.Errorf("hash password: %w", err)
+		return nil, fmt.Errorf("hash password: %w", err)
 	}
-	_, err = pool.Exec(ctx,
-		`UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL WHERE id = $2`,
+	_, err = tx.Exec(ctx,
+		`UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $2`,
 		string(newHash), userID,
 	)
 	if err != nil {
-		return fmt.Errorf("update: %w", err)
+		return nil, fmt.Errorf("update: %w", err)
 	}
-	return nil
+	if err := revokeCredentialArtifacts(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	var session *Session
+	if currentSession != "" {
+		session, err = createSession(ctx, tx, userID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit password change: %w", err)
+	}
+	return session, nil
 }
 
 func CreateSession(ctx context.Context, pool *pgxpool.Pool, userID string) (*Session, error) {
+	return createSession(ctx, pool, userID)
+}
+
+func createSession(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, userID string) (*Session, error) {
 	token, err := generateSessionToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 	s := Session{Token: token} // plaintext token goes to cookie; only the hash is stored
-	err = pool.QueryRow(ctx, `
+	err = db.QueryRow(ctx, `
 		INSERT INTO sessions (token_hash, user_id, expires_at)
 		VALUES ($1, $2, $3)
 		RETURNING user_id, expires_at, created_at

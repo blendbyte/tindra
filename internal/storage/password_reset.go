@@ -50,46 +50,100 @@ func GetPasswordResetUser(ctx context.Context, pool *pgxpool.Pool, token string)
 	return &u, nil
 }
 
-// UsePasswordResetToken marks the token used and sets the new password atomically.
-// Returns nil user if the token is expired or already used.
+// UsePasswordResetToken resets credentials and revokes all existing authentication artifacts.
 func UsePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPassword string) (*User, error) {
+	user, _, err := usePasswordResetToken(ctx, pool, token, newPassword, false)
+	return user, err
+}
+
+// UsePasswordResetTokenWithSession includes the recovery session in the transaction.
+func UsePasswordResetTokenWithSession(ctx context.Context, pool *pgxpool.Pool, token, newPassword string) (*User, *Session, error) {
+	return usePasswordResetToken(ctx, pool, token, newPassword, true)
+}
+
+func usePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPassword string, issueSession bool) (*User, *Session, error) {
 	if len(newPassword) < minPasswordLen {
-		return nil, fmt.Errorf("password must be at least %d characters", minPasswordLen)
+		return nil, nil, fmt.Errorf("password must be at least %d characters", minPasswordLen)
 	}
 	if len(newPassword) > maxPasswordLen {
-		return nil, fmt.Errorf("password must be at most %d characters", maxPasswordLen)
+		return nil, nil, fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), BcryptCost)
 	if err != nil {
-		return nil, fmt.Errorf("hash password: %w", err)
+		return nil, nil, fmt.Errorf("hash password: %w", err)
 	}
-
-	var u User
-	err = pool.QueryRow(ctx, `
-		WITH reset AS (
-			UPDATE password_reset_tokens
-			SET used_at = NOW()
-			WHERE token_hash = $1 AND expires_at > NOW() AND used_at IS NULL
-			RETURNING user_id
-		)
-		UPDATE users
-		SET password_hash = $2, failed_attempts = 0, locked_until = NULL
-		FROM reset
-		WHERE users.id = reset.user_id
-		RETURNING users.id, users.email, users.name, users.password_hash, users.mfa_enabled,
-			users.perm_manage_projects, users.perm_manage_users, users.perm_manage_alerts, users.perm_manage_issues,
-			users.created_at
-	`, tokenHash(token), string(hash)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
-		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var userID string
+	err = tx.QueryRow(ctx, `SELECT user_id FROM password_reset_tokens WHERE token_hash=$1 AND expires_at>NOW() AND used_at IS NULL`, tokenHash(token)).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reset password: %w", err)
+		return nil, nil, fmt.Errorf("find reset: %w", err)
+	}
+	// Lock the user first across every credential-change path, then recheck the
+	// token after acquiring the lock. Competing reset links cannot both succeed.
+	var lockedID string
+	err = tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&lockedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("lock user: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE password_reset_tokens SET used_at=NOW() WHERE token_hash=$1 AND expires_at>NOW() AND used_at IS NULL`, tokenHash(token))
+	if err != nil {
+		return nil, nil, fmt.Errorf("consume reset: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, nil, nil
+	}
+	// Recovery links are administrator-issued and require MFA re-enrollment.
+	var u User
+	err = tx.QueryRow(ctx, `
+		UPDATE users SET password_hash=$2, failed_attempts=0, locked_until=NULL,
+			mfa_enabled=false, mfa_secret=NULL, mfa_pending_secret=NULL, mfa_pending_expires_at=NULL
+		WHERE id=$1
+		RETURNING id,email,name,password_hash,mfa_enabled,
+			perm_manage_projects,perm_manage_users,perm_manage_alerts,perm_manage_issues,created_at
+	`, userID, string(hash)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
+		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers, &u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reset password: %w", err)
+	}
+	if err := revokeCredentialArtifacts(ctx, tx, userID); err != nil {
+		return nil, nil, err
+	}
+	var session *Session
+	if issueSession {
+		session, err = createSession(ctx, tx, userID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, fmt.Errorf("commit reset: %w", err)
 	}
 	u.HasPassword = true
-	return &u, nil
+	return &u, session, nil
+}
+
+// revokeCredentialArtifacts runs after locking/updating the user in the caller's transaction.
+func revokeCredentialArtifacts(ctx context.Context, tx pgx.Tx, userID string) error {
+	for _, query := range []string{
+		`DELETE FROM sessions WHERE user_id=$1`,
+		`DELETE FROM mfa_challenges WHERE user_id=$1`,
+		`DELETE FROM password_reset_tokens WHERE user_id=$1`,
+	} {
+		if _, err := tx.Exec(ctx, query, userID); err != nil {
+			return fmt.Errorf("revoke credentials: %w", err)
+		}
+	}
+	return nil
 }
 
 // AdminSetPassword sets a user's password without requiring their old password.
@@ -104,8 +158,13 @@ func AdminSetPassword(ctx context.Context, pool *pgxpool.Pool, userID, newPasswo
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	tag, err := pool.Exec(ctx,
-		`UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL WHERE id = $2`,
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $2`,
 		string(hash), userID,
 	)
 	if err != nil {
@@ -113,6 +172,12 @@ func AdminSetPassword(ctx context.Context, pool *pgxpool.Pool, userID, newPasswo
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("user not found")
+	}
+	if err := revokeCredentialArtifacts(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit admin password: %w", err)
 	}
 	return nil
 }

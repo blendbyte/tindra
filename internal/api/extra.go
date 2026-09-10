@@ -152,7 +152,13 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if err := storage.ChangeUserPassword(r.Context(), ro.pool, userID, req.CurrentPassword, req.NewPassword); err != nil {
+	cookie, err := r.Cookie("tindra_session")
+	if err != nil {
+		http.Error(w, "session required", http.StatusUnauthorized)
+		return
+	}
+	session, err := storage.ChangeUserPasswordWithSession(r.Context(), ro.pool, userID, req.CurrentPassword, req.NewPassword, cookie.Value)
+	if err != nil {
 		if errors.Is(err, storage.ErrInvalidPassword) {
 			http.Error(w, "current password is incorrect", http.StatusUnauthorized)
 			return
@@ -166,6 +172,8 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		ActorID:   &userID,
 		IP:        r.RemoteAddr,
 	})
+	http.SetCookie(w, &http.Cookie{Name: "tindra_session", Value: session.Token, Path: "/", HttpOnly: true, Secure: ro.cookieSecure, SameSite: http.SameSiteStrictMode, Expires: session.ExpiresAt})
+	clearMFAChallengeCookie(w, ro.cookieSecure)
 	w.WriteHeader(http.StatusOK)
 }
 
