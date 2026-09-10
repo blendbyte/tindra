@@ -34,7 +34,7 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 	reader := bufio.NewReaderSize(r, 64*1024)
 
 	line, err := reader.ReadBytes('\n')
-	if err != nil && len(line) == 0 {
+	if err != nil && (err != io.EOF || len(line) == 0) {
 		return EnvelopeHeader{}, nil, fmt.Errorf("read envelope header: %w", err)
 	}
 	var header EnvelopeHeader
@@ -45,6 +45,9 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 	var items []Item
 	for {
 		line, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return header, items, fmt.Errorf("read item header: %w", err)
+		}
 		if err == io.EOF && len(line) == 0 {
 			break
 		}
@@ -66,7 +69,19 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 			if _, err := io.ReadFull(reader, payload); err != nil {
 				return header, items, fmt.Errorf("read item payload: %w", err)
 			}
-			_, _ = reader.ReadByte() // consume trailing newline, ignore EOF
+			separator, err := reader.ReadByte()
+			if err == nil && separator == '\r' {
+				separator, err = reader.ReadByte()
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+			}
+			if err != nil && err != io.EOF {
+				return header, items, fmt.Errorf("read item separator: %w", err)
+			}
+			if err == nil && separator != '\n' {
+				return header, items, fmt.Errorf("invalid item separator: %q", separator)
+			}
 		} else {
 			payload, err = reader.ReadBytes('\n')
 			if err != nil && err != io.EOF {
