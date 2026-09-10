@@ -365,8 +365,8 @@ func ListCheckins(ctx context.Context, pool *pgxpool.Pool, monitorID string, lim
 	return out, rows.Err()
 }
 
-// ListMonitorsWithRecentErrors returns active monitors whose last check-in was an error
-// after the given time. Used by the alert evaluator for cron_error rules.
+// ListMonitorsWithRecentErrors returns active monitors with an error completed
+// after the given time, even if another run has since succeeded.
 func ListMonitorsWithRecentErrors(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, since time.Time) ([]*CronMonitor, error) {
 	var (
 		query string
@@ -374,7 +374,10 @@ func ListMonitorsWithRecentErrors(ctx context.Context, pool *pgxpool.Pool, proje
 	)
 	args = append(args, since)
 	base := `SELECT ` + cronMonitorCols + ` FROM cron_monitors
-		WHERE status='active' AND last_checkin_status='error' AND last_checkin_at > $1`
+		WHERE status='active' AND EXISTS (
+			SELECT 1 FROM cron_checkins ci WHERE ci.monitor_id=cron_monitors.id
+			AND ci.status='error' AND COALESCE(ci.finished_at, ci.received_at) > $1
+		)`
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
 		query = base + fmt.Sprintf(` AND project_id = ANY($%d::uuid[]) ORDER BY last_checkin_at DESC`, len(args))

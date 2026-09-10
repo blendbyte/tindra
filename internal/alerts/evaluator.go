@@ -291,7 +291,9 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 		}
 		clauses = append(clauses, "m.status = 'active'", "ci.status = 'error'")
 		args = append(args, since)
-		clauses = append(clauses, fmt.Sprintf("ci.received_at > $%d", len(args)))
+		// Paired check-ins retain their initial receipt time when they finish.
+		// Fall back for older terminal records without a completion timestamp.
+		clauses = append(clauses, fmt.Sprintf("COALESCE(ci.finished_at, ci.received_at) > $%d", len(args)))
 		where := strings.Join(clauses, " AND ")
 		var count int
 		if err := e.pool.QueryRow(ctx,
