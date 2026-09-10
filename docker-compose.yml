@@ -5,9 +5,7 @@ services:
     environment:
       POSTGRES_DB: tindra
       POSTGRES_USER: tindra
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tindra}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a nonempty database password}
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -23,7 +21,7 @@ services:
     ports:
       - "${PORT:-8080}:8080"
     environment:
-      DATABASE_URL: postgres://tindra:${POSTGRES_PASSWORD:-tindra}@postgres:5432/tindra?sslmode=disable
+      DATABASE_URL: postgres://tindra:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a nonempty database password}@postgres:5432/tindra?sslmode=disable
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       BIND_ADDR: ":8080"
       DATA_DIR: /data
