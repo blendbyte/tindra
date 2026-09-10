@@ -8,7 +8,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: process.env.CI ? 'http://127.0.0.1:18080' : 'http://localhost:5173',
     trace: 'on-first-retry',
   },
   projects: [
@@ -17,11 +17,15 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  // Start the Vite dev server automatically when running E2E tests locally.
-  // The Vite dev server proxies /api to the Go backend on port 8080, so
-  // run `make run` in a separate terminal before `bun run test:e2e`.
+  // CI tests the compiled app and its embedded production frontend.
+  // Locally, Vite proxies /api to the backend started with `make run`.
   webServer: process.env.CI
-    ? undefined
+    ? {
+        command: '../bin/tindra serve',
+        url: 'http://127.0.0.1:18080/login',
+        reuseExistingServer: false,
+        timeout: 60_000,
+      }
     : {
         command: 'bun run dev',
         url: 'http://localhost:5173',

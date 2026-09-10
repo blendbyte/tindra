@@ -9,151 +9,20 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  action-pins:
-    name: Check action SHA pins
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - name: Test pinning check
-        run: bun test scripts/check-action-pins.test.ts
-      - name: Require immutable action references
-        run: bun scripts/check-action-pins.ts
-
-  changes:
-    name: Detect changes
-    runs-on: ubuntu-latest
-    outputs:
-      go: ${{ steps.decide.outputs.go }}
-      frontend: ${{ steps.decide.outputs.frontend }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
-        id: filter
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          filters: |
-            go:
-              - '**/*.go'
-              - 'go.mod'
-              - 'go.sum'
-              - 'migrations/**'
-            frontend:
-              - 'web/**'
-      - name: Resolve change flags
-        id: decide
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "go=true" >> "$GITHUB_OUTPUT"
-            echo "frontend=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "go=${{ steps.filter.outputs.go }}" >> "$GITHUB_OUTPUT"
-            echo "frontend=${{ steps.filter.outputs.frontend }}" >> "$GITHUB_OUTPUT"
-          fi
-
-  go-test:
-    name: Go tests
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: tindra
-          POSTGRES_PASSWORD: tindra
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Create UI stub for embed
-        run: mkdir -p internal/ui/dist && printf '<!doctype html>' > internal/ui/dist/index.html
-      - name: Run tests
-        env:
-          TINDRA_TEST_DSN: postgres://tindra:tindra@localhost:5432/postgres?sslmode=disable
-        run: go test -race -p 8 -coverprofile=coverage.out -covermode=atomic ./...
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
-        with:
-          files: coverage.out
-          flags: go
-          token: ${{ secrets.CODECOV_TOKEN }}
-
-  go-lint:
-    name: Go lint
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Create UI stub for embed
-        run: mkdir -p internal/ui/dist && printf '<!doctype html>' > internal/ui/dist/index.html
-      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
-        with:
-          version: latest
-
-  frontend:
-    name: Frontend
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - name: Install dependencies
-        working-directory: web
-        run: bun install --frozen-lockfile
-      - name: Type check and build
-        working-directory: web
-        run: bun run build
-
-  frontend-test:
-    name: Frontend tests
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - name: Install dependencies
-        working-directory: web
-        run: bun install --frozen-lockfile
-      - name: Run tests with coverage
-        working-directory: web
-        run: bun run test:coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
-        with:
-          files: web/coverage/coverage-final.json
-          flags: frontend
-          token: ${{ secrets.CODECOV_TOKEN }}
+  verify:
+    uses: ./.github/workflows/verify.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   docker-dev:
     name: Push dev image
-    needs: [action-pins, changes, go-test, frontend]
-    if: |
-      always() &&
-      github.event_name == 'push' &&
-      (needs.changes.outputs.go == 'true' || needs.changes.outputs.frontend == 'true') &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled')
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
