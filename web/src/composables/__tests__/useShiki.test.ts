@@ -52,13 +52,17 @@ describe('highlightBlock', () => {
   })
 
   it('loads only requested languages and shares initialization', async () => {
+    vi.resetModules()
+    const { highlightBlock: highlightFreshBlock } = await import('../useShiki')
     const { createHighlighterCore } = await import('shiki/core')
+    await Promise.all([
+      highlightFreshBlock('let y = 2', 'typescript'),
+      highlightFreshBlock('let z = 3', 'typescript'),
+    ])
+    expect(createHighlighterCore).toHaveBeenCalledTimes(1)
     const hl = await vi.mocked(createHighlighterCore).mock.results[0].value
-    expect(hl.getLoadedLanguages()).not.toContain('python')
-    await Promise.all([highlightBlock('let y = 2', 'typescript'), highlightBlock('let z = 3', 'typescript')])
     expect(hl.getLoadedLanguages()).toContain('typescript')
     expect(hl.getLoadedLanguages()).not.toContain('python')
-    expect(createHighlighterCore).toHaveBeenCalledTimes(1)
   })
 
   it('leaves unknown languages and oversized blocks intact', async () => {
