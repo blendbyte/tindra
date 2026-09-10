@@ -2,15 +2,18 @@ package uptime_test
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 
 	"github.com/blendbyte/tindra/internal/storage"
 	"github.com/blendbyte/tindra/internal/testutil"
@@ -73,7 +76,7 @@ func TestWorker_probesAndRecordsUp(t *testing.T) {
 	defer srv.Close()
 
 	m := seedMonitor(t, srv.URL, "GET", "200-299")
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, err := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if err != nil {
@@ -108,7 +111,7 @@ func TestWorker_probesAndRecordsDown_wrongStatusCode(t *testing.T) {
 	defer srv.Close()
 
 	m := seedMonitor(t, srv.URL, "GET", "200-299")
-	w := uptime.NewWorker(testPool)
+	w := uptime.NewWorker(testPool, true)
 
 	// Two probes to cross the failure threshold; reset next_check_at between
 	// calls so the monitor is immediately due again (interval_secs=300 by default).
@@ -145,7 +148,7 @@ func TestWorker_headMethod(t *testing.T) {
 	defer srv.Close()
 
 	m := seedMonitor(t, srv.URL, "HEAD", "200-299")
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	if receivedMethod != "HEAD" {
 		t.Errorf("expected HEAD request, got %q", receivedMethod)
@@ -181,7 +184,7 @@ func TestWorker_bodyContainsMatch(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 1 || checks[0].Status != "up" {
@@ -214,7 +217,7 @@ func TestWorker_bodyContainsMismatch(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 1 || checks[0].Status != "down" {
@@ -230,7 +233,7 @@ func TestWorker_connectionRefused(t *testing.T) {
 	ctx := context.Background()
 
 	m := seedMonitor(t, "http://127.0.0.1:19999", "GET", "200-299")
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 1 || checks[0].Status != "down" {
@@ -253,7 +256,7 @@ func TestWorker_pausedMonitorSkipped(t *testing.T) {
 	m := seedMonitor(t, srv.URL, "GET", "200-299")
 	testPool.Exec(ctx, `UPDATE uptime_monitors SET status='paused' WHERE id=$1`, m.ID)
 
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 0 {
@@ -274,7 +277,7 @@ func TestWorker_notYetDueSkipped(t *testing.T) {
 	// Advance next_check_at into the future
 	testPool.Exec(ctx, `UPDATE uptime_monitors SET next_check_at = NOW() + INTERVAL '10 minutes' WHERE id=$1`, m.ID)
 
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 0 {
@@ -294,7 +297,7 @@ func TestWorker_userAgentHeader(t *testing.T) {
 	defer srv.Close()
 
 	seedMonitor(t, srv.URL, "GET", "200-299")
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	if receivedUA != "Tindra-Uptime/1.0" {
 		t.Errorf("User-Agent: got %q, want Tindra-Uptime/1.0", receivedUA)
@@ -312,7 +315,7 @@ func TestWorker_customExpectedCode(t *testing.T) {
 
 	// Monitor only accepts 200 — 202 should be treated as down
 	m := seedMonitor(t, srv.URL, "GET", "200")
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 1 || checks[0].Status != "down" {
@@ -337,7 +340,7 @@ func TestWorker_doesNotFollowRedirects(t *testing.T) {
 
 	// expected_codes includes only 200-299 so a 302 should be recorded as down
 	m := seedMonitor(t, srv.URL, "GET", "200-299")
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	if redirected {
 		t.Error("worker followed a redirect but should not have")
@@ -358,7 +361,7 @@ func TestWorker_Run_stopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		uptime.NewWorker(testPool).Run(ctx)
+		uptime.NewWorker(testPool, true).Run(ctx)
 		close(done)
 	}()
 	cancel()
@@ -395,7 +398,7 @@ func TestWorker_timeout(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 1 {
@@ -422,7 +425,7 @@ func TestWorker_invalidExpectedCodes(t *testing.T) {
 	// Corrupt expected_codes directly in the DB to simulate misconfiguration
 	testPool.Exec(ctx, `UPDATE uptime_monitors SET expected_codes='invalid-codes' WHERE id=$1`, m.ID)
 
-	uptime.NewWorker(testPool).RunOnce(ctx)
+	uptime.NewWorker(testPool, true).RunOnce(ctx)
 
 	checks, _ := storage.ListUptimeChecks(ctx, testPool, m.ID, 10)
 	if len(checks) != 1 {
@@ -433,5 +436,30 @@ func TestWorker_invalidExpectedCodes(t *testing.T) {
 	}
 	if checks[0].Error == nil || !strings.Contains(*checks[0].Error, "invalid expected_codes") {
 		t.Errorf("expected 'invalid expected_codes' error, got %v", checks[0].Error)
+	}
+}
+
+func TestWorker_privateTargetsRequireExplicitOptIn(t *testing.T) {
+	for _, allowPrivate := range []bool{false, true} {
+		t.Run(fmt.Sprint(allowPrivate), func(t *testing.T) {
+			truncate(t)
+			var hits atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1); w.WriteHeader(200) }))
+			defer server.Close()
+			m := seedMonitor(t, server.URL, "GET", "200-299")
+			uptime.NewWorker(testPool, allowPrivate).RunOnce(t.Context())
+			checks, err := storage.ListUptimeChecks(t.Context(), testPool, m.ID, 10)
+			require.NoError(t, err)
+			require.Len(t, checks, 1)
+			if allowPrivate {
+				require.Equal(t, "up", checks[0].Status)
+				require.EqualValues(t, 1, hits.Load())
+			} else {
+				require.Equal(t, "down", checks[0].Status)
+				require.Zero(t, hits.Load())
+				require.NotNil(t, checks[0].Error)
+				require.Contains(t, *checks[0].Error, "private address")
+			}
+		})
 	}
 }

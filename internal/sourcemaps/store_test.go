@@ -72,7 +72,7 @@ func TestStore_Upload_and_retrieve(t *testing.T) {
 	// Truncate sourcemaps
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	content := []byte(`{"version":3,"sources":["src/app.js"],"mappings":"AAAA"}`)
 	r := strings.NewReader(string(content))
@@ -104,7 +104,7 @@ func TestStore_Upload_and_retrieve(t *testing.T) {
 
 func TestStore_Upload_replaces(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	old := `{"version":3,"sources":["a.js"],"mappings":"AAAA"}`
 	store.Upload(context.Background(), testProject.ID, "v1", "~/app.js", strings.NewReader(old))
@@ -133,7 +133,7 @@ func minimalSourceMapContent() string {
 }
 
 func TestStore_ResolveEventPayload_noRelease(t *testing.T) {
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(`{"level":"error"}`)
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
 	if string(got) != string(payload) {
@@ -142,7 +142,7 @@ func TestStore_ResolveEventPayload_noRelease(t *testing.T) {
 }
 
 func TestStore_ResolveEventPayload_noException(t *testing.T) {
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(`{"level":"error","message":"plain"}`)
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "v1", payload)
 	if string(got) != string(payload) {
@@ -152,7 +152,7 @@ func TestStore_ResolveEventPayload_noException(t *testing.T) {
 
 func TestStore_ResolveEventPayload_withSourcemap(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	// Upload a source map for ~/dist/app.js
 	store.Upload(context.Background(), testProject.ID, "v2.0.0", "~/dist/app.js",
@@ -189,7 +189,7 @@ func TestStore_ResolveEventPayload_withSourcemap(t *testing.T) {
 
 func TestStore_ResolveEventPayload_frameWithFilename(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	// Upload sourcemap for ~/dist/app.js
 	store.Upload(context.Background(), testProject.ID, "v4", "~/dist/app.js",
@@ -223,7 +223,7 @@ func TestStore_ResolveEventPayload_frameWithFilename(t *testing.T) {
 }
 
 func TestStore_ResolveEventPayload_frameNoLineno(t *testing.T) {
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	// lineno missing → early return, frame unchanged
 	payload := json.RawMessage(`{
@@ -251,7 +251,7 @@ func TestStore_ResolveEventPayload_frameNoLineno(t *testing.T) {
 }
 
 func TestStore_ResolveEventPayload_frameNoURL(t *testing.T) {
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	// Neither abs_path nor filename → early return
 	payload := json.RawMessage(`{
@@ -275,7 +275,7 @@ func TestStore_ResolveEventPayload_frameNoURL(t *testing.T) {
 }
 
 func TestStore_ResolveEventPayload_invalidJSON(t *testing.T) {
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(`not json`)
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "v1", payload)
 	if string(got) != string(payload) {
@@ -287,7 +287,7 @@ func TestStore_ResolveEventPayload_invalidJSON(t *testing.T) {
 
 func TestStore_Delete_notFound(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	ok, err := store.Delete(context.Background(), "00000000-0000-0000-0000-000000000000", testProject.ID)
 	if err != nil {
@@ -300,7 +300,7 @@ func TestStore_Delete_notFound(t *testing.T) {
 
 func TestStore_Delete_removesRecord(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	content := `{"version":3,"sources":["src/del.js"],"mappings":"AAAA"}`
 	sm, err := store.Upload(context.Background(), testProject.ID, "v3.0.0", "~/dist/del.js", strings.NewReader(content))
@@ -325,7 +325,7 @@ func TestStore_Delete_removesRecord(t *testing.T) {
 
 func TestStore_Delete_keepsFileWhenHashShared(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	// Upload identical content under two different releases — same hash, two records.
 	content := `{"version":3,"sources":["src/shared.js"],"mappings":"AAAA"}`
@@ -355,7 +355,7 @@ func TestStore_Delete_keepsFileWhenHashShared(t *testing.T) {
 
 func TestStore_ResolveEventPayload_noSourcemapInDB(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	// Use a non-HTTP URL so the HTTP-fetch fallback is skipped immediately.
 	payload := json.RawMessage(`{
@@ -401,7 +401,7 @@ func TestStore_fetchContextLine_httpFallback(t *testing.T) {
 	defer srv.Close()
 
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
 	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/app.js","lineno":1,"colno":0}]}}]}}`, srv.URL))
 
@@ -438,7 +438,7 @@ func TestStore_fetchContextLine_longLine(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	// colno=100: start=30, end=170; both start>0 and end<200 → leading and trailing {snip}
 	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/long.js","lineno":1,"colno":100}]}}]}}`, srv.URL))
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
@@ -454,7 +454,7 @@ func TestStore_fetchContextLine_longLine(t *testing.T) {
 }
 
 func TestStore_fetchContextLine_nonHTTPURL(t *testing.T) {
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	// ~/dist/app.js is not an http:// URL → fetchContextLine returns "" immediately
 	payload := json.RawMessage(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"~/dist/app.js","lineno":1,"colno":0}]}}]}}`)
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
@@ -475,7 +475,7 @@ func TestStore_fetchContextLine_outOfBounds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(fmt.Sprintf(
 		`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":100,"colno":0}]}}]}}`,
 		srv.URL+"/app.js",
@@ -498,7 +498,7 @@ func TestStore_fetchContextLine_emptyLine(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(fmt.Sprintf(
 		`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":2,"colno":0}]}}]}}`,
 		srv.URL+"/empty.js",
@@ -521,7 +521,7 @@ func TestStore_fetchContextLine_non200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(fmt.Sprintf(
 		`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":%q,"lineno":1,"colno":0}]}}]}}`,
 		srv.URL+"/missing.js",
@@ -546,7 +546,7 @@ func TestStore_setCachedLines_lruEviction(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	ctx := context.Background()
 
 	// Insert 66 entries (> fileCacheMax=64) to trigger eviction
@@ -571,7 +571,7 @@ func TestStore_fetchContextLine_colnoNearStart(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/start.js","lineno":1,"colno":10}]}}]}}`, srv.URL))
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
 
@@ -593,7 +593,7 @@ func TestStore_fetchContextLine_colnoNearEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := sourcemaps.NewStore(testDataDir, testPool)
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
 	payload := json.RawMessage(fmt.Sprintf(`{"exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"%s/end.js","lineno":1,"colno":170}]}}]}}`, srv.URL))
 	got := store.ResolveEventPayload(context.Background(), testProject.ID, "", payload)
 
@@ -609,7 +609,7 @@ func TestStore_fetchContextLine_colnoNearEnd(t *testing.T) {
 
 func TestStore_ParsedCacheReplacementAndDeletion(t *testing.T) {
 	ctx := context.Background()
-	store := sourcemaps.NewStore(t.TempDir(), testPool)
+	store := sourcemaps.NewTestStore(t.TempDir(), testPool)
 	makeMap := func(line string) string {
 		data, _ := json.Marshal(map[string]any{"version": 3, "sources": []string{"src/app.js"}, "sourcesContent": []string{line}, "mappings": "AAAA"})
 		return string(data)

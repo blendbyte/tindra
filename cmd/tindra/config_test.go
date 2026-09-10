@@ -243,3 +243,16 @@ func clearEnv(t *testing.T, keys ...string) {
 		os.Unsetenv(k)
 	}
 }
+
+func TestUptimePrivateIPOptIn(t *testing.T) {
+	for _, value := range []string{"", "false", "true"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("UPTIME_ALLOW_PRIVATE_IPS", value)
+			t.Setenv("WEBHOOK_ALLOW_PRIVATE_IPS", "true")
+			cfg := loadConfig()
+			if cfg.uptimeAllowPrivateIPs != (value == "true") {
+				t.Fatalf("uptime private-IP opt-in for %q: got %v", value, cfg.uptimeAllowPrivateIPs)
+			}
+		})
+	}
+}

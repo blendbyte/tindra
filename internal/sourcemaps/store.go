@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -56,10 +57,12 @@ type Store struct {
 }
 
 func NewStore(dataDir string, pool *pgxpool.Pool) *Store {
+	client := alerts.NewOutboundClient(false)
+	client.Timeout = fetchTimeout
 	return &Store{
 		dataDir:    dataDir,
 		pool:       pool,
-		httpClient: &http.Client{Timeout: fetchTimeout},
+		httpClient: client,
 		fileCache:  make(map[string]cachedFile, fileCacheMax),
 		flights:    make(map[string]*fileFlight),
 		parsed:     make(map[string]*SourceMap),

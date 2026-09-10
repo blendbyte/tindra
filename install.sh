@@ -206,6 +206,8 @@ services:
       # STATS_API_KEY: "replace-with-a-secret"
       COOKIE_SECURE: "${COOKIE_SECURE}"
       RETENTION_DAYS: "90"
+      # Allow uptime probes to reach internal services only when explicitly needed.
+      # UPTIME_ALLOW_PRIVATE_IPS: "true"
       # ── profiling (optional) ──────────────────────────────────────────────
       # Profiles are far larger per unit of time than anything else stored, so
       # they age out on their own schedule and under a hard storage ceiling.

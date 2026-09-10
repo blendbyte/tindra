@@ -10,44 +10,54 @@ import (
 	"github.com/blendbyte/tindra/internal/version"
 )
 
-// newWebhookClient returns an HTTP client whose DialContext validates the
-// resolved IP against the private-address block list immediately before each
-// TCP connection. Pinning the dial to the checked IP eliminates the TOCTOU
-// window between ValidateWebhookURL (run at save time) and actual delivery.
-// NewWebhookClient builds an HTTP client whose DialContext validates resolved
-// IPs at dial time. Exported so the ingest passthrough can reuse the same
-// safe dialer without duplicating the logic.
+// NewWebhookClient uses the protected outbound transport with the alert user agent.
 func NewWebhookClient(allowPrivate bool) *http.Client {
+	client := NewOutboundClient(allowPrivate)
+	client.Transport = userAgentTransport{rt: client.Transport}
+	return client
+}
+
+// NewOutboundClient checks every resolved destination immediately before dialing
+// and connects to the checked IP. Redirects use the same protected transport.
+// Callers can customize timeouts and redirect policy without losing protection.
+func NewOutboundClient(allowPrivate bool) *http.Client {
 	dialer := &net.Dialer{Timeout: 30 * time.Second}
-	transport := &http.Transport{
+	transport := newOutboundTransport(allowPrivate, net.DefaultResolver.LookupHost, dialer.DialContext)
+	return &http.Client{Timeout: 10 * time.Second, Transport: transport}
+}
+
+// Keep resolution and dialing separate so the checked address is the only
+// address passed to the connector, including after DNS changes.
+func newOutboundTransport(allowPrivate bool,
+	lookup func(context.Context, string) ([]string, error),
+	dial func(context.Context, string, string) (net.Conn, error),
+) *http.Transport {
+	return &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
 				return nil, err
 			}
-			ips, err := net.DefaultResolver.LookupHost(ctx, host)
+			ips, err := lookup(ctx, host)
 			if err != nil {
 				return nil, fmt.Errorf("could not resolve %s", host)
 			}
 			if len(ips) == 0 {
 				return nil, fmt.Errorf("no addresses for %s", host)
 			}
-			if !allowPrivate {
-				for _, ipStr := range ips {
-					ip := net.ParseIP(ipStr)
-					if ip == nil {
-						continue
-					}
-					if isBlockedIP(ip) {
-						return nil, fmt.Errorf("webhook host %s resolves to a private address", host)
-					}
+			for _, ipStr := range ips {
+				ip := net.ParseIP(ipStr)
+				if ip == nil {
+					return nil, fmt.Errorf("destination host %s resolved to an invalid address", host)
+				}
+				if !allowPrivate && isBlockedIP(ip) {
+					return nil, fmt.Errorf("destination host %s resolves to a private address", host)
 				}
 			}
 			// Dial the first checked IP directly - no second DNS lookup.
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+			return dial(ctx, network, net.JoinHostPort(ips[0], port))
 		},
 	}
-	return &http.Client{Timeout: 10 * time.Second, Transport: userAgentTransport{rt: transport}}
 }
 
 type userAgentTransport struct {

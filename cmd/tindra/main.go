@@ -64,6 +64,7 @@ type config struct {
 	profileRetentionDays   int // days to keep profiles (0 = keep forever)
 	profileStorageLimitMB  int // instance-wide profile storage budget (0 = no cap)
 	webhookAllowPrivateIPs bool
+	uptimeAllowPrivateIPs  bool
 	requireMFA             bool
 	trustedProxies         []*net.IPNet
 	skipAutoMigrate        bool
@@ -236,6 +237,7 @@ func loadConfig() config {
 		rateLimitLogin:         rateLimitLogin,
 		rateLimitEnvelope:      rateLimitEnvelope,
 		webhookAllowPrivateIPs: os.Getenv("WEBHOOK_ALLOW_PRIVATE_IPS") == "true",
+		uptimeAllowPrivateIPs:  os.Getenv("UPTIME_ALLOW_PRIVATE_IPS") == "true",
 		requireMFA:             os.Getenv("REQUIRE_MFA") != "false",
 		trustedProxies:         trustedProxies,
 		skipAutoMigrate:        os.Getenv("SKIP_AUTO_MIGRATE") == "true",
@@ -383,7 +385,7 @@ func serveCmd(cfg config) *cobra.Command {
 				WithProfileLimits(cfg.profileRetentionDays, cfg.profileStorageLimitMB).
 				Run(ctx)
 			go digest.NewWorker(pool, emailSender, cfg.publicURL).Run(ctx)
-			go uptime.NewWorker(pool).Run(ctx)
+			go uptime.NewWorker(pool, cfg.uptimeAllowPrivateIPs).Run(ctx)
 
 			go func() {
 				ticker := time.NewTicker(60 * time.Second)

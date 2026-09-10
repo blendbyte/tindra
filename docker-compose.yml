@@ -29,6 +29,7 @@ services:
       DATA_DIR: /data
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
+      UPTIME_ALLOW_PRIVATE_IPS: ${UPTIME_ALLOW_PRIVATE_IPS:-false}
       STATS_API_KEY: ${STATS_API_KEY:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       RETENTION_DAYS: ${RETENTION_DAYS:-90}

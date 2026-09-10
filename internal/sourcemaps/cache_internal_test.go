@@ -28,7 +28,7 @@ func TestSharedFetchAndFailureCache(t *testing.T) {
 		http.Error(w, "missing", 404)
 	}))
 	defer server.Close()
-	store := NewStore("", nil)
+	store := NewTestStore("", nil)
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Add(1)
@@ -59,7 +59,7 @@ func TestEnrichmentTotalBudget(t *testing.T) {
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); <-r.Context().Done() }))
 	defer server.Close()
-	store := NewStore("", nil)
+	store := NewTestStore("", nil)
 	frames := []map[string]any{}
 	for i := range 10 {
 		frames = append(frames, map[string]any{"abs_path": fmt.Sprintf("%s/%d.js", server.URL, i), "lineno": 1})
@@ -84,7 +84,7 @@ func TestFetchCapacityAndWaiterCancellation(t *testing.T) {
 	started := make(chan struct{}, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { started <- struct{}{}; <-r.Context().Done() }))
 	defer server.Close()
-	store := NewStore("", nil)
+	store := NewTestStore("", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
@@ -115,7 +115,7 @@ func TestFetchCapacityAndWaiterCancellation(t *testing.T) {
 }
 
 func TestCacheByteBudget(t *testing.T) {
-	store := NewStore("", nil)
+	store := NewTestStore("", nil)
 	for i := range 10 {
 		store.cacheLines(fmt.Sprint(i), []string{strings.Repeat("x", 5<<20)})
 	}
@@ -137,7 +137,7 @@ func TestParseContextCancelled(t *testing.T) {
 }
 
 func TestConcurrentParsedCache(t *testing.T) {
-	store := NewStore(t.TempDir(), nil)
+	store := NewTestStore(t.TempDir(), nil)
 	dir := filepath.Join(store.dataDir, "sourcemaps", "project")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestEnrichmentBudgetPreservesCompletedFrames(t *testing.T) {
 		map[string]any{"abs_path": server.URL + "/slow.js", "lineno": 1},
 		map[string]any{"abs_path": server.URL + "/later.js", "lineno": 1},
 	}}}}}})
-	got := NewStore("", nil).ResolveEventPayload(context.Background(), "", "", payload)
+	got := NewTestStore("", nil).ResolveEventPayload(context.Background(), "", "", payload)
 	var decoded map[string]any
 	if err := json.Unmarshal(got, &decoded); err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestEnrichmentBudgetPreservesCompletedFrames(t *testing.T) {
 }
 
 func TestOversizedFileDoesNotDisplaceCachedSource(t *testing.T) {
-	store := NewStore("", nil)
+	store := NewTestStore("", nil)
 	store.cacheLines("small", []string{"keep"})
 	before := store.fileBytes
 	store.cacheLines("large", []string{strings.Repeat("x", cacheBytesMax)})
@@ -214,7 +214,7 @@ func TestOversizedFileDoesNotDisplaceCachedSource(t *testing.T) {
 }
 
 func TestParsedCacheRejectsMissingInvalidAndCancelledReads(t *testing.T) {
-	store := NewStore(t.TempDir(), nil)
+	store := NewTestStore(t.TempDir(), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if store.parsedSourceMap(ctx, "p", "hash") != nil {
@@ -243,7 +243,7 @@ func TestParsedCacheRejectsMissingInvalidAndCancelledReads(t *testing.T) {
 }
 
 func TestParsedCacheEvictsOldestAndReparses(t *testing.T) {
-	store := NewStore(t.TempDir(), nil)
+	store := NewTestStore(t.TempDir(), nil)
 	dir := filepath.Join(store.dataDir, "sourcemaps", "p")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestParsedCacheEvictsOldestAndReparses(t *testing.T) {
 }
 
 func TestOversizedParsedMapRemainsUsableWithoutCaching(t *testing.T) {
-	store := NewStore(t.TempDir(), nil)
+	store := NewTestStore(t.TempDir(), nil)
 	dir := filepath.Join(store.dataDir, "sourcemaps", "p")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -301,7 +301,7 @@ func TestOversizedParsedMapRemainsUsableWithoutCaching(t *testing.T) {
 
 func TestSharedSourceWaiterReceivesOwnersResult(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		store := NewStore("", nil)
+		store := NewTestStore("", nil)
 		flight := &fileFlight{done: make(chan struct{})}
 		store.flights["source.js"] = flight
 		result := make(chan []string, 1)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -30,17 +31,13 @@ type Worker struct {
 	sem    chan struct{}
 }
 
-func NewWorker(pool *pgxpool.Pool) *Worker {
-	return &Worker{
-		pool: pool,
-		client: &http.Client{
-			Timeout: 70 * time.Second, // hard cap well above any per-monitor timeout
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
-		sem: make(chan struct{}, maxConcurrent),
+func NewWorker(pool *pgxpool.Pool, allowPrivate bool) *Worker {
+	client := alerts.NewOutboundClient(allowPrivate)
+	client.Timeout = 70 * time.Second // hard cap above each monitor's timeout
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
+	return &Worker{pool: pool, client: client, sem: make(chan struct{}, maxConcurrent)}
 }
 
 // Run starts the probe loop. Call in a dedicated goroutine.
