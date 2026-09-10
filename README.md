@@ -32,16 +32,21 @@ One Go binary. One Postgres database. Compatible with every Sentry SDK: point yo
 
 - **Dashboard** with KPI strip, transaction density heatmap, hottest issues, release health, and recent alerts
 - **Error tracking** with grouping, stack traces, breadcrumbs, tags, assignees, merge and resolve
+- **Log search** with severity, environment, text, and user filters, plus volume alerts created directly from a query
 - **Performance monitoring** with transaction list, span waterfall, and p50/p75/p95/p99 percentiles
 - **Profiling** with flame graphs on the transaction detail page, from both transaction-based and continuous Sentry SDK profiling
+- **User-scoped debugging** to follow an end user across errors, logs, transactions, web vitals, and performance spans
+- **Shared investigation filters** that preserve project, environment, user, and time range across views, with shareable URLs and custom windows up to 90 days
 - **Cron monitors** with check-in history, missed/error alerts, and Sentry, Oh Dear, and Spatie SDK compatibility
 - **Uptime monitors** with HTTP/HTTPS probing, configurable intervals and timeouts, expected status codes and body assertions, 24h/7d/30d uptime stats, and down/recovery alerts
 - **Releases** linked to issues and regressions
-- **Alerts** via email, Slack, Discord, Microsoft Teams, and webhooks, with filters, thresholds, and cooldowns
+- **Alerts** via email, Slack, Discord, Microsoft Teams, and webhooks, with filters, log-volume thresholds, and cooldowns
 - **Source maps** resolved server-side, no client exposure
+- **Guided project setup** with test-event confirmation, ingestion diagnostics, and source map verification against real stack frames
+- **Ingestion monitoring** with authenticated Prometheus metrics for queue depth, retries, rejected data, and ingestion health
 - **SSO** with Google, GitHub, Microsoft, Auth0, Zitadel, and any OIDC provider
 - **Real-time** updates: new issues appear in the UI within a second of receipt
-- **MCP server** built in - connect Claude or any MCP client via `POST /mcp` using an API token
+- **MCP server** built in to inspect full event payloads, source-mapped stack traces, breadcrumbs, and older event occurrences from Claude or any MCP client via `POST /mcp` using an API token
 - **Keyboard-first UI** with command palette, full dark mode, and virtualized lists at 60 fps
 
 ## Self-host
