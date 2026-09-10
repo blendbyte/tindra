@@ -229,7 +229,7 @@ func (ro *router) allowMFAEnrollmentRequest(w http.ResponseWriter, r *http.Reque
 	}
 	switch r.Method + " " + r.URL.Path {
 	case "GET /api/me", "PATCH /api/me", "PATCH /api/me/password",
-		"GET /api/auth/mfa/setup", "POST /api/auth/mfa/confirm":
+		"POST /api/auth/mfa/setup", "POST /api/auth/mfa/confirm":
 		return true
 	}
 	w.Header().Set("X-Tindra-MFA-Required", "setup")

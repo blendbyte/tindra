@@ -6207,3 +6207,58 @@ describe('switching between Settings and the dedicated Alerts page', () => {
     wrapper.unmount()
   })
 })
+
+describe('authenticator replacement', () => {
+  it('requires the current code before showing the replacement QR', async () => {
+    const { apiFetch } = await import('@/api/client')
+    currentTab = 'profile'
+    setupMocks({ ...adminUser, mfa_enabled: true })
+    vi.mocked(useMutation).mockImplementation((options: any) => ({
+      isPending: ref(false),
+      mutate: async () => {
+        try { options.onSuccess?.(await options.mutationFn()) }
+        catch (error) { options.onError?.(error) }
+      },
+    }) as any)
+    vi.mocked(apiFetch).mockResolvedValue({ secret: 'replacement', uri: 'otpauth://test', qr: 'data:image/png;base64,test' })
+    const wrapper = mount(SettingsView, { global: { stubs } })
+    await wrapper.findAll('button').find(b => b.text() === 'Replace authenticator')!.trigger('click')
+    const form = wrapper.find('#mfa-current-code').element.closest('form')!
+    expect(form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true)
+    await wrapper.find('#mfa-current-code').setValue('123456')
+    await wrapper.findAll('form').find(f => f.find('#mfa-current-code').exists())!.trigger('submit')
+    await new Promise(r => setTimeout(r, 0))
+    expect(apiFetch).toHaveBeenCalledWith('/api/auth/mfa/setup', {
+      method: 'POST', body: JSON.stringify({ code: '123456' }),
+    })
+    expect(wrapper.find('.mfa-setup-card').exists()).toBe(true)
+    expect(wrapper.find('#mfa-current-code').exists()).toBe(false)
+  })
+})
+
+it.each([new Error('incorrect code'), 'unavailable'])('keeps the active authenticator when replacement setup fails: %s', async (failure) => {
+  const { apiFetch } = await import('@/api/client')
+  currentTab = 'profile'
+  setupMocks({ ...adminUser, mfa_enabled: true })
+  vi.mocked(useMutation).mockImplementation((options: any) => ({
+    isPending: ref(false),
+    mutate: async () => {
+      try { options.onSuccess?.(await options.mutationFn()) }
+      catch (error) { options.onError?.(error) }
+    },
+  }) as any)
+  vi.mocked(apiFetch).mockRejectedValue(failure)
+  const wrapper = mount(SettingsView, { global: { stubs } })
+  await wrapper.findAll('button').find(b => b.text() === 'Replace authenticator')!.trigger('click')
+  await wrapper.find('#mfa-current-code').setValue('123456')
+  await wrapper.findAll('form').find(f => f.find('#mfa-current-code').exists())!.trigger('submit')
+  await new Promise(r => setTimeout(r, 0))
+  expect(wrapper.find('.profile-error').text()).toBe(failure instanceof Error ? failure.message : 'Failed to start authenticator setup')
+  expect(wrapper.find('.mfa-badge').text()).toBe('Enabled')
+  expect(wrapper.find('.mfa-setup-card').exists()).toBe(false)
+  await wrapper.findAll('form').find(f => f.find('#mfa-current-code').exists())!.find('button[type="button"]').trigger('click')
+  expect(wrapper.find('#mfa-current-code').exists()).toBe(false)
+  expect(wrapper.find('.profile-error').exists()).toBe(false)
+  await wrapper.findAll('button').find(b => b.text() === 'Replace authenticator')!.trigger('click')
+  expect(wrapper.find<HTMLInputElement>('#mfa-current-code').element.value).toBe('')
+})

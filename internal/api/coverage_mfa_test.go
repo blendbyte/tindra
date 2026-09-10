@@ -20,10 +20,10 @@ func authHandlerWithURL(publicURL string) http.Handler {
 }
 
 func TestMFASetup_withPublicURL(t *testing.T) {
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	authHandlerWithURL("https://app.example.com").ServeHTTP(rec, req)
@@ -59,7 +59,7 @@ func TestMFASetup_withPublicURL(t *testing.T) {
 }
 
 func TestMFAVerify_noMFASecret(t *testing.T) {
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
 	token, err := storage.CreateMFAChallenge(context.Background(), testPool, testUser.ID)
 	if err != nil {

@@ -48,7 +48,7 @@ func TestRequiredMFAEnrollment(t *testing.T) {
 			t.Fatalf("%s: %d", path, rec.Code)
 		}
 	}
-	rec := request("GET", "/api/auth/mfa/setup", "")
+	rec := request("POST", "/api/auth/mfa/setup", "")
 	if rec.Code != 200 {
 		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
 	}
@@ -87,7 +87,7 @@ func TestMFAEnrollmentAllowlist(t *testing.T) {
 				allowed      bool
 			}{
 				{"GET", "/api/me", true}, {"PATCH", "/api/me", true}, {"PATCH", "/api/me/password", true},
-				{"GET", "/api/auth/mfa/setup", true}, {"POST", "/api/auth/mfa/confirm", true},
+				{"POST", "/api/auth/mfa/setup", true}, {"POST", "/api/auth/mfa/confirm", true},
 				{"POST", "/api/me", false}, {"GET", "/api/me/password", false}, {"GET", "/api/users", false},
 			} {
 				ro := &router{requireMFA: required}

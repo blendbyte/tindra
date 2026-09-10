@@ -66,6 +66,29 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Replacing an enrolled factor requires proof of the current factor, which
+	// also works for SSO-only accounts without a local password.
+	var activeSecret *string
+	if user.MFAEnabled {
+		var req struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+			http.Error(w, "current authenticator code required", http.StatusUnauthorized)
+			return
+		}
+		activeSecret, err = storage.GetMFASecret(r.Context(), ro.pool, userID)
+		if err != nil {
+			slog.Error("get active mfa secret", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if activeSecret == nil || !totp.Validate(req.Code, *activeSecret) {
+			http.Error(w, "incorrect code", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      totpIssuer(ro.publicURL),
 		AccountName: user.Email,
@@ -76,9 +99,15 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := storage.StoreMFASecret(r.Context(), ro.pool, userID, key.Secret()); err != nil {
+	staged, err := storage.SetPendingMFASecret(r.Context(), ro.pool, userID, key.Secret(), activeSecret)
+	if err != nil {
 		slog.Error("store mfa secret", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if !staged {
+		http.Error(w, "authenticator changed; restart setup", http.StatusConflict)
 		return
 	}
 
@@ -115,7 +144,7 @@ func (ro *router) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := storage.GetMFASecret(r.Context(), ro.pool, userID)
+	secret, err := storage.GetPendingMFASecret(r.Context(), ro.pool, userID)
 	if err != nil {
 		slog.Error("get mfa secret", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -131,12 +160,17 @@ func (ro *router) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := storage.EnableMFA(r.Context(), ro.pool, userID); err != nil {
+	confirmed, err := storage.ConfirmMFA(r.Context(), ro.pool, userID, *secret)
+	if err != nil {
 		slog.Error("enable mfa", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
+	if !confirmed {
+		http.Error(w, "authenticator setup changed or expired; restart setup", http.StatusConflict)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 

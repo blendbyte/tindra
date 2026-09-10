@@ -226,3 +226,8 @@ describe('SetupMFAView', () => {
     })
   })
 })
+
+it('starts enrollment with POST', async () => {
+  await mountReady()
+  expect(apiFetch).toHaveBeenCalledWith('/api/auth/mfa/setup', { method: 'POST' })
+})

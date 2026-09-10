@@ -375,7 +375,7 @@ func TestMFADisable_badRequestBody(t *testing.T) {
 
 func TestMFAConfirm_noPendingSetup(t *testing.T) {
 	// Ensure no mfa_secret is set for the test user
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
 	body := bytes.NewBufferString(`{"code":"123456"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/confirm", body)
@@ -577,7 +577,7 @@ func TestMFAVerify_validTokenWrongCode(t *testing.T) {
 	secret := "JBSWY3DPEHPK3PXP" // base32 encoded dummy secret
 	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = $1 WHERE id = $2",
 		secret, testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1",
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1",
 		testUser.ID)
 
 	token, err := storage.CreateMFAChallenge(context.Background(), testPool, testUser.ID)

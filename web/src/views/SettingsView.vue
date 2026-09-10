@@ -527,6 +527,8 @@ function submitPasswordChange() {
 // MFA setup / disable
 const mfaSetupData = ref<{ secret: string; uri: string; qr: string } | null>(null)
 const showMFASecret = ref(false)
+const showReplaceMFA = ref(false)
+const mfaCurrentCode = ref('')
 const mfaCode = ref('')
 const mfaSetupError = ref<string | null>(null)
 const showDisableMFA = ref(false)
@@ -534,8 +536,9 @@ const mfaDisablePassword = ref('')
 const mfaDisableError = ref<string | null>(null)
 
 const { mutate: startMFASetup, isPending: loadingMFASetup } = useMutation({
-  mutationFn: () => apiFetch<{ secret: string; uri: string }>('/api/auth/mfa/setup'),
-  onSuccess: (data) => { mfaSetupData.value = data; mfaCode.value = ''; mfaSetupError.value = null },
+  mutationFn: () => apiFetch<{ secret: string; uri: string; qr: string }>('/api/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ code: mfaCurrentCode.value }) }),
+  onSuccess: (data) => { mfaSetupData.value = data; mfaCode.value = ''; mfaCurrentCode.value = ''; showReplaceMFA.value = false; mfaSetupError.value = null },
+  onError: (e) => { mfaSetupError.value = e instanceof Error ? e.message : 'Failed to start authenticator setup' },
 })
 
 const { mutate: confirmMFASetup, isPending: confirmingMFA } = useMutation({
@@ -2819,6 +2822,7 @@ function actionKindOf(action: string) {
                 <button class="btn btn--primary" :disabled="loadingMFASetup" @click="startMFASetup()">
                   {{ loadingMFASetup ? 'Generating…' : 'Enable two-factor auth' }}
                 </button>
+                <div v-if="mfaSetupError" class="profile-error">{{ mfaSetupError }}</div>
               </div>
             </template>
 
@@ -2873,6 +2877,17 @@ function actionKindOf(action: string) {
                   Enabled
                 </span>
                 <span style="font-size: var(--text-sm); color: var(--text-2)">Your account is protected with two-factor authentication.</span>
+              </div>
+              <div style="margin-top: 14px">
+                <button v-if="!showReplaceMFA" class="btn btn--ghost" @click="showReplaceMFA = true; mfaSetupError = null">Replace authenticator</button>
+                <form v-else @submit.prevent="startMFASetup()">
+                  <label class="field__label" for="mfa-current-code">Code from your current authenticator</label>
+                  <input id="mfa-current-code" v-model="mfaCurrentCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required />
+                  <p>Your current authenticator stays active until you confirm the replacement.</p>
+                  <button class="btn btn--primary" type="submit" :disabled="mfaCurrentCode.length !== 6 || loadingMFASetup">Continue</button>
+                  <button class="btn btn--ghost" type="button" @click="showReplaceMFA = false; mfaCurrentCode = ''; mfaSetupError = null">Cancel</button>
+                </form>
+                <div v-if="mfaSetupError" class="profile-error">{{ mfaSetupError }}</div>
               </div>
               <div v-if="!showDisableMFA" style="margin-top: 14px">
                 <button class="btn btn--ghost" style="color: var(--danger, #ef4444)" @click="showDisableMFA = true; mfaDisableError = null">

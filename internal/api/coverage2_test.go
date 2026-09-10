@@ -515,17 +515,17 @@ func TestGetMonitor_bearerTokenWrongProject(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // mfa.go — handleMFASetup: unauthenticated already covered; cover the path
-// where the user already has MFA set up (secret is overwritten).
+// where an unenrolled user has a legacy secret.
 // ---------------------------------------------------------------------------
 
 func TestMFASetup_withExistingSecret(t *testing.T) {
-	// Pre-set a secret, then call setup again — should overwrite and succeed.
+	// A legacy unconfirmed secret must not prevent initial enrollment.
 	testPool.Exec(context.Background(),
 		"UPDATE users SET mfa_secret = 'OLDSECRET' WHERE id = $1", testUser.ID)
 	defer testPool.Exec(context.Background(),
-		"UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+		"UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	authHandler().ServeHTTP(rec, req)
@@ -601,7 +601,7 @@ func TestMFADisable_successCov2(t *testing.T) {
 	cookie := &http.Cookie{Name: "tindra_session", Value: sess.Token}
 
 	// Set up MFA for this user.
-	setupReq := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	setupReq := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	setupReq.AddCookie(cookie)
 	setupRec := httptest.NewRecorder()
 	h.ServeHTTP(setupRec, setupReq)
@@ -671,7 +671,7 @@ func TestMFAVerify_validTokenAndCode(t *testing.T) {
 	cookie := &http.Cookie{Name: "tindra_session", Value: sess.Token}
 
 	// Setup MFA.
-	setupReq := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	setupReq := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	setupReq.AddCookie(cookie)
 	setupRec := httptest.NewRecorder()
 	h.ServeHTTP(setupRec, setupReq)

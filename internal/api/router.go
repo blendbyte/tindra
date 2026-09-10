@@ -289,8 +289,8 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 
 		r.Patch("/api/me/password", ro.handleChangePassword)
 
-		r.Get("/api/auth/mfa/setup", ro.handleMFASetup)
-		r.Post("/api/auth/mfa/confirm", ro.handleMFAConfirm)
+		r.With(loginRL.limitByIP()).Post("/api/auth/mfa/setup", ro.handleMFASetup)
+		r.With(loginRL.limitByIP()).Post("/api/auth/mfa/confirm", ro.handleMFAConfirm)
 		r.Delete("/api/auth/mfa", ro.handleMFADisable)
 	})
 

@@ -12,10 +12,10 @@ import (
 )
 
 func TestMFASetup_authenticated(t *testing.T) {
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	authHandler().ServeHTTP(rec, req)
@@ -44,10 +44,10 @@ func TestMFASetup_authenticated(t *testing.T) {
 }
 
 func TestMFASetup_storesSecret(t *testing.T) {
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	authHandler().ServeHTTP(rec, req)
@@ -57,7 +57,7 @@ func TestMFASetup_storesSecret(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	secret, err := storage.GetMFASecret(ctx, testPool, testUser.ID)
+	secret, err := storage.GetPendingMFASecret(ctx, testPool, testUser.ID)
 	if err != nil {
 		t.Fatalf("GetMFASecret: %v", err)
 	}

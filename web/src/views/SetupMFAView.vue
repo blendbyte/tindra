@@ -22,7 +22,7 @@ const done = ref(false)
 
 onMounted(async () => {
   try {
-    setupData.value = await apiFetch<{ secret: string; uri: string; qr: string }>('/api/auth/mfa/setup')
+    setupData.value = await apiFetch<{ secret: string; uri: string; qr: string }>('/api/auth/mfa/setup', { method: 'POST' })
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : 'Failed to load setup'
   }

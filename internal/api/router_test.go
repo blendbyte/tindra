@@ -105,7 +105,7 @@ func TestSetLimits_zeroDisablesLimit(t *testing.T) {
 // --- handleMFASetup unauthenticated ---
 
 func TestMFASetup_unauthenticated(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	rec := httptest.NewRecorder()
 	authHandler().ServeHTTP(rec, req)
 

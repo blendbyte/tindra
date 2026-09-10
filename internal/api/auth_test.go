@@ -167,10 +167,10 @@ func TestHandleLogin_emptyFields(t *testing.T) {
 
 func TestMFASetup_success(t *testing.T) {
 	// Clean any pending secret first so the test is idempotent.
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
 	authHandler().ServeHTTP(rec, req)
@@ -198,8 +198,8 @@ func TestMFASetup_success(t *testing.T) {
 
 func TestMFAConfirm_wrongCode(t *testing.T) {
 	const secret = "JBSWY3DPEHPK3PXP"
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = $1 WHERE id = $2", secret, testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_pending_secret = $1, mfa_pending_expires_at = NOW()+interval '10 minutes' WHERE id = $2", secret, testUser.ID)
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
 	body := bytes.NewBufferString(`{"code":"000000"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/confirm", body)
@@ -233,7 +233,7 @@ func TestMFADisable_success(t *testing.T) {
 func TestMFAVerify_success(t *testing.T) {
 	const secret = "JBSWY3DPEHPK3PXP"
 	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = $1 WHERE id = $2", secret, testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL WHERE id = $1", testUser.ID)
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
 	token, err := storage.CreateMFAChallenge(context.Background(), testPool, testUser.ID)
 	if err != nil {

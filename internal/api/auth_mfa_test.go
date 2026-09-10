@@ -42,7 +42,7 @@ func TestMFA_setupConfirmAndLogin(t *testing.T) {
 	h := authHandler()
 
 	// 1. Setup: get a provisioning URI.
-	setupReq := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	setupReq := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	setupReq.AddCookie(authCookie())
 	setupRec := httptest.NewRecorder()
 	h.ServeHTTP(setupRec, setupReq)
@@ -135,7 +135,7 @@ func TestMFA_setupConfirmAndLogin(t *testing.T) {
 
 func TestMFA_confirmWrongCode(t *testing.T) {
 	// Setup (generates a secret into the DB).
-	setupReq := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/setup", nil)
+	setupReq := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/setup", nil)
 	setupReq.AddCookie(authCookie())
 	setupRec := httptest.NewRecorder()
 	authHandler().ServeHTTP(setupRec, setupReq)
