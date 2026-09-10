@@ -1049,13 +1049,13 @@ func (ro *router) handleListEventsForIssue(w http.ResponseWriter, r *http.Reques
 func (ro *router) handleListTransactionSummaries(w http.ResponseWriter, r *http.Request) {
 	hours := 24
 	if h := r.URL.Query().Get("hours"); h != "" {
-		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 720 {
+		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 2160 {
 			hours = n
 		}
 	}
 	offsetHours := 0
 	if o := r.URL.Query().Get("offset"); o != "" {
-		if n, err := strconv.Atoi(o); err == nil && n >= 0 && n <= 720 {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 && n <= 2160 {
 			offsetHours = n
 		}
 	}
@@ -1093,7 +1093,7 @@ func (ro *router) handleTransactionCounts(w http.ResponseWriter, r *http.Request
 func (ro *router) transactionTimeseries(w http.ResponseWriter, r *http.Request, countsOnly bool) {
 	hours := 24
 	if h := r.URL.Query().Get("hours"); h != "" {
-		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 720 {
+		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 2160 {
 			hours = n
 		}
 	}
@@ -1144,7 +1144,7 @@ func (ro *router) handleListAllTransactions(w http.ResponseWriter, r *http.Reque
 		filter.Op = ops[0]
 	}
 	if h := q.Get("hours"); h != "" {
-		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 720 {
+		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 2160 {
 			t := time.Now().UTC().Add(-time.Duration(n) * time.Hour)
 			filter.Since = &t
 		}
@@ -1486,7 +1486,7 @@ func (ro *router) handleSpanSummaries(category string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hours := 24
 		if h := r.URL.Query().Get("hours"); h != "" {
-			if n, err := strconv.Atoi(h); err == nil && n > 0 && n <= 720 {
+			if n, err := strconv.Atoi(h); err == nil && n > 0 && n <= 2160 {
 				hours = n
 			}
 		}
@@ -1494,7 +1494,7 @@ func (ro *router) handleSpanSummaries(category string) http.HandlerFunc {
 		env := r.URL.Query().Get("env")
 		release := r.URL.Query().Get("release")
 
-		summaries, err := storage.GetSpanSummaries(r.Context(), ro.pool, category, projectIDs, hours, env, release)
+		summaries, err := storage.GetSpanSummaries(r.Context(), ro.pool, category, projectIDs, hours, env, release, r.URL.Query().Get("user"))
 		if err != nil {
 			slog.Error("span summaries", "category", category, "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1515,7 +1515,7 @@ func (ro *router) handleSpanSamples(w http.ResponseWriter, r *http.Request) {
 	}
 	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
 
-	samples, err := storage.GetSpanSamples(r.Context(), ro.pool, op, description, projectIDs, hours, env, release)
+	samples, err := storage.GetSpanSamples(r.Context(), ro.pool, op, description, projectIDs, hours, env, release, r.URL.Query().Get("user"))
 	if err != nil {
 		slog.Error("span samples", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1529,7 +1529,7 @@ func (ro *router) handleSpanTimeseries(category string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hours := 24
 		if h := r.URL.Query().Get("hours"); h != "" {
-			if n, err := strconv.Atoi(h); err == nil && n > 0 && n <= 720 {
+			if n, err := strconv.Atoi(h); err == nil && n > 0 && n <= 2160 {
 				hours = n
 			}
 		}
@@ -1537,7 +1537,7 @@ func (ro *router) handleSpanTimeseries(category string) http.HandlerFunc {
 		env := r.URL.Query().Get("env")
 		release := r.URL.Query().Get("release")
 
-		ts, err := storage.GetSpanTimeseries(r.Context(), ro.pool, category, projectIDs, hours, env, release)
+		ts, err := storage.GetSpanTimeseries(r.Context(), ro.pool, category, projectIDs, hours, env, release, r.URL.Query().Get("user"))
 		if err != nil {
 			slog.Error("span timeseries", "category", category, "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1550,7 +1550,7 @@ func (ro *router) handleSpanTimeseries(category string) http.HandlerFunc {
 func (ro *router) handleGetWebVitals(w http.ResponseWriter, r *http.Request) {
 	hours := 24
 	if h := r.URL.Query().Get("hours"); h != "" {
-		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 720 {
+		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 2160 {
 			hours = n
 		}
 	}
@@ -1576,7 +1576,7 @@ func (ro *router) handleGetWebVitals(w http.ResponseWriter, r *http.Request) {
 func (ro *router) handleGetWebVitalsPages(w http.ResponseWriter, r *http.Request) {
 	hours := 24
 	if h := r.URL.Query().Get("hours"); h != "" {
-		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 720 {
+		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 2160 {
 			hours = n
 		}
 	}

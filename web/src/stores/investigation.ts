@@ -1,8 +1,9 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
+import { useAppUserStore } from './appUser'
 
 export const RANGE_HOURS: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720, '90d': 2160 }
-export const CORE_RANGES = ['1h', '24h', '7d', '30d']
+export const CORE_RANGES = ['1h', '24h', '7d', '30d', '90d']
 
 function saved() {
   try { return JSON.parse(sessionStorage.getItem('tindra:investigation') || 'null') } catch { return null }
@@ -16,6 +17,8 @@ function legacyPreference(key: string): string | null {
 }
 
 export const useInvestigationStore = defineStore('investigation', () => {
+  const appUser = useAppUserStore()
+  const userIdentity = computed(() => appUser.identity)
   const initial = saved() ?? { environment: legacyPreference('env') ?? 'All', range: legacyPreference('window') ?? '24h' }
   const projectIds = ref<string[]>(Array.isArray(initial?.projectIds) ? initial.projectIds.filter((id: unknown) => typeof id === 'string') : legacyProjects())
   const environment = ref<string>(typeof initial?.environment === 'string' ? initial.environment : 'All')
@@ -30,7 +33,7 @@ export const useInvestigationStore = defineStore('investigation', () => {
     if (range.value === 'All') return null
     return { from: new Date(anchor.value - (RANGE_HOURS[range.value] ?? 24) * 3_600_000).toISOString(), to: new Date(anchor.value).toISOString() }
   })
-  const scopeKey = computed(() => JSON.stringify([[...projectIds.value].sort(), environment.value, range.value, absolute.value]))
+  const scopeKey = computed(() => JSON.stringify([[...projectIds.value].sort(), environment.value, range.value, absolute.value, userIdentity.value]))
   watch(scopeKey, () => { anchor.value = Date.now(); browsingHistory.value = false }, { flush: 'sync' })
   watch([projectIds, environment, range, paused], () => {
     try { sessionStorage.setItem('tindra:investigation', JSON.stringify({ projectIds: projectIds.value, environment: environment.value, range: range.value, paused: paused.value })) } catch {}
@@ -41,6 +44,7 @@ export const useInvestigationStore = defineStore('investigation', () => {
   function request(path: string, comparison = false) {
     const [pathname, query = ''] = path.split('?')
     const p = new URLSearchParams(query)
+    if (userIdentity.value && !p.has('user')) p.set('user', userIdentity.value)
     const window = bounds.value
     if (window) {
       let from = Date.parse(window.from), to = Date.parse(window.to)
@@ -59,6 +63,7 @@ export const useInvestigationStore = defineStore('investigation', () => {
   function link(path: string) {
     const url = new URL(path, window.location.origin)
     const p = url.searchParams
+    if (!p.has('user')) p.set('user', userIdentity.value)
     if (!p.has('project_id')) for (const id of projectIds.value.length ? [...projectIds.value].sort() : ['all']) p.append('project_id', id)
     if (!p.has('env') && !p.has('environment')) p.set('environment', environment.value === 'All' ? 'all' : environment.value)
     if (!p.has('range') && !p.has('window')) {
@@ -69,5 +74,5 @@ export const useInvestigationStore = defineStore('investigation', () => {
   }
   function refresh() { browsingHistory.value = false; anchor.value = Date.now() }
   function setRange(value: string) { absolute.value = null; range.value = value }
-  return { routeError, projectIds, environment, range, absolute, paused, browsingHistory, anchor, bounds, scopeKey, request, link, refresh, setRange }
+  return { userIdentity, routeError, projectIds, environment, range, absolute, paused, browsingHistory, anchor, bounds, scopeKey, request, link, refresh, setRange }
 })

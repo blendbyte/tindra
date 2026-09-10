@@ -32,10 +32,7 @@ func investigationContext(next http.Handler) http.Handler {
 		if q.Has("from") || q.Has("to") {
 			from, e1 := time.Parse(time.RFC3339Nano, q.Get("from"))
 			to, e2 := time.Parse(time.RFC3339Nano, q.Get("to"))
-			max := 30 * 24 * time.Hour
-			if r.URL.Path == "/api/issues" || r.URL.Path == "/api/issues/export" {
-				max = 90 * 24 * time.Hour
-			}
+			max := 90 * 24 * time.Hour
 			if e1 != nil || e2 != nil || !from.Before(to) || to.Sub(from) > max {
 				http.Error(w, "Provide valid from/to timestamps within the supported range", http.StatusBadRequest)
 				return

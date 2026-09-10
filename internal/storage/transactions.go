@@ -348,7 +348,7 @@ func GetTransactionCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []
 
 func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, userIdentity string, countsOnly bool, window TimeRange, releases []string) (string, []any, string) {
 
-	if hours <= 0 || hours > 720 {
+	if hours <= 0 || hours > 2160 {
 		hours = 24
 	}
 
@@ -410,7 +410,7 @@ func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, u
 }
 
 func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, offsetHours int, env string, name string, op string, release string, userIdentity string) ([]*TransactionSummary, error) {
-	if hours <= 0 || hours > 720 {
+	if hours <= 0 || hours > 2160 {
 		hours = 24
 	}
 	if offsetHours < 0 {

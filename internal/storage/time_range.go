@@ -23,7 +23,7 @@ func ResolveTimeRange(ctx context.Context, hours, offset int) TimeRange {
 	if bounds, ok := InvestigationRange(ctx); ok {
 		return bounds
 	}
-	if hours <= 0 || hours > 720 {
+	if hours <= 0 || hours > 2160 {
 		hours = 24
 	}
 	to := time.Now().UTC().Add(-time.Duration(offset) * time.Hour)

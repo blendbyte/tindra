@@ -1,3 +1,4 @@
+import { useAppUserStore } from '@/stores/appUser'
 import { watch } from 'vue'
 import type { Pinia } from 'pinia'
 import type { LocationQuery, LocationQueryRaw, Router } from 'vue-router'
@@ -12,6 +13,7 @@ export function isTelemetry(path: string) {
 }
 export function investigationQuery(state: ReturnType<typeof useInvestigationStore>): LocationQueryRaw {
   return {
+    user: state.userIdentity,
     project_id: state.projectIds.length ? [...state.projectIds].sort() : 'all',
     environment: state.environment === 'All' ? 'all' : state.environment,
     range: state.absolute ? 'custom' : state.range === 'All' ? 'all' : state.range,
@@ -52,6 +54,12 @@ export function installInvestigationRouter(router: Router, pinia: Pinia) {
         navigating = false
         return
       }
+    }
+    if (q.user !== undefined) {
+      const identity = first(q.user) ?? ''
+      const user = useAppUserStore(pinia)
+      if (!identity) user.clear()
+      else if (identity !== user.identity) user.select({ identity, user_id: identity, username: null, email: null, name: null, last_seen: '', project_id: '' })
     }
     if (q.project_id !== undefined) {
       const raw = Array.isArray(q.project_id) ? q.project_id : [q.project_id]

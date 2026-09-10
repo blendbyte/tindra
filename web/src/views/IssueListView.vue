@@ -17,7 +17,6 @@ import QueryFeedback from '@/components/QueryFeedback.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import IgnoreButton from '@/components/IgnoreButton.vue'
 import type { IgnorePayload } from '@/components/IgnoreButton.vue'
-import UserFilter from '@/components/UserFilter.vue'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 
 const router = useRouter()
@@ -563,7 +562,6 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           </div>
         </div>
       </div>
-      <UserFilter />
       <button v-if="tagKey" class="tag-chip" @click="tagKey = ''; tagValue = ''">
         <span class="tag-chip__k">{{ tagKey }}</span>
         <template v-if="tagValue">

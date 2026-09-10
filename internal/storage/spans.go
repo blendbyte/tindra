@@ -43,8 +43,8 @@ func spanOpFilter(category string) string {
 	return "TRUE"
 }
 
-func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, projectIDs []string, hours int, env, release string) ([]*SpanSummary, error) {
-	if hours <= 0 || hours > 720 {
+func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, projectIDs []string, hours int, env, release string, userIdentity ...string) ([]*SpanSummary, error) {
+	if hours <= 0 || hours > 2160 {
 		hours = 24
 	}
 
@@ -63,6 +63,10 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 	if release != "" {
 		args = append(args, release)
 		where += fmt.Sprintf(" AND s.release = $%d", len(args))
+	}
+	if len(userIdentity) > 0 && userIdentity[0] != "" {
+		args = append(args, userIdentity[0])
+		where += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM transactions parent WHERE parent.id = s.transaction_id AND parent.project_id = s.project_id AND parent.user_identity = $%d)", len(args))
 	}
 
 	missRateExpr := `NULL`
@@ -127,8 +131,8 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 	return out, rows.Err()
 }
 
-func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string, projectIDs []string, hours int, env, release string) (*SpanTimeseries, error) {
-	if hours <= 0 || hours > 720 {
+func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string, projectIDs []string, hours int, env, release string, userIdentity ...string) (*SpanTimeseries, error) {
+	if hours <= 0 || hours > 2160 {
 		hours = 24
 	}
 
@@ -160,6 +164,10 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 	if release != "" {
 		args = append(args, release)
 		where += fmt.Sprintf(" AND s.release = $%d", len(args))
+	}
+	if len(userIdentity) > 0 && userIdentity[0] != "" {
+		args = append(args, userIdentity[0])
+		where += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM transactions parent WHERE parent.id = s.transaction_id AND parent.project_id = s.project_id AND parent.user_identity = $%d)", len(args))
 	}
 
 	q := fmt.Sprintf(`
@@ -201,8 +209,8 @@ type SpanSample struct {
 	TraceID         string    `json:"trace_id"`
 }
 
-func GetSpanSamples(ctx context.Context, pool *pgxpool.Pool, op, description string, projectIDs []string, hours int, env, release string) ([]*SpanSample, error) {
-	if hours <= 0 || hours > 720 {
+func GetSpanSamples(ctx context.Context, pool *pgxpool.Pool, op, description string, projectIDs []string, hours int, env, release string, userIdentity ...string) ([]*SpanSample, error) {
+	if hours <= 0 || hours > 2160 {
 		hours = 24
 	}
 	if projectIDs == nil {
@@ -224,6 +232,10 @@ func GetSpanSamples(ctx context.Context, pool *pgxpool.Pool, op, description str
 	if release != "" {
 		args = append(args, release)
 		where += fmt.Sprintf(" AND s.release = $%d", len(args))
+	}
+	if len(userIdentity) > 0 && userIdentity[0] != "" {
+		args = append(args, userIdentity[0])
+		where += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM transactions parent WHERE parent.id = s.transaction_id AND parent.project_id = s.project_id AND parent.user_identity = $%d)", len(args))
 	}
 
 	rows, err := pool.Query(ctx, `

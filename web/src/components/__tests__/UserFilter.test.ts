@@ -201,23 +201,23 @@ describe('UserFilter', () => {
     expect(replaceMock).toHaveBeenCalled()
   })
 
-  it('uses project_id from the route when it is a string', async () => {
+  it('uses the shared project selection rather than an unhydrated route string', async () => {
     routeState.query = { user: 'u-1', project_id: 'p-route' }
     vi.mocked(apiFetch).mockResolvedValue([alice])
     mountFilter()
     await flushPromises()
     const url = String(vi.mocked(apiFetch).mock.calls[0][0])
-    expect(url).toContain('project_id=p-route')
+    expect(url).toContain('project_id=proj-1')
   })
 
-  it('uses project_id from the route when it is an array', async () => {
+  it('uses the shared project selection rather than an unhydrated route array', async () => {
     routeState.query = { user: 'u-1', project_id: ['p-a', 'p-b'] }
     vi.mocked(apiFetch).mockResolvedValue([alice])
     mountFilter()
     await flushPromises()
     const url = String(vi.mocked(apiFetch).mock.calls[0][0])
-    expect(url).toContain('project_id=p-a')
-    expect(url).toContain('project_id=p-b')
+    expect(url).toContain('project_id=proj-1')
+    expect(url).not.toContain('project_id=p-b')
   })
 
   it('shows an empty hint when no people exist', async () => {

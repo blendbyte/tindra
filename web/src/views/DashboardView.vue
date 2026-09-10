@@ -99,9 +99,9 @@ const { data: txSummaries, isFetching: txFetching } = useQuery({
 })
 
 const { data: txTs } = useQuery({
-  queryKey: computed(() => ['dash-tx-counts', pKey.value, investigation.environment]),
+  queryKey: computed(() => ['dash-tx-counts', pKey.value, investigation.environment, investigation.userIdentity]),
   queryFn: ({ signal }) =>
-    apiFetch<TxCountTimeseries>(`/api/transactions/counts?${buildQs({ hours: '168', ...(investigation.environment === 'All' ? {} : { env: investigation.environment }) })}`, { signal }),
+    apiFetch<TxCountTimeseries>(`/api/transactions/counts?${buildQs({ hours: '168', ...(investigation.userIdentity ? { user: investigation.userIdentity } : {}), ...(investigation.environment === 'All' ? {} : { env: investigation.environment }) })}`, { signal }),
 
 })
 
@@ -540,7 +540,6 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 
   <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
   <div v-else class="page">
-    <p class="db-scope-note">Transaction metrics follow the selected range and environment. Open issues, alerts, releases, and monitor status show current state across environments; the density chart shows the last 7 days.</p>
 
     <!-- KPI strip ──────────────────────────────────────────────────────────── -->
     <div class="db-kpis">

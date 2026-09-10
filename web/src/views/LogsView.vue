@@ -9,7 +9,6 @@ import type { Log, LogListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import QueryFeedback from '@/components/QueryFeedback.vue'
 import FilterChip from '@/components/FilterChip.vue'
-import UserFilter from '@/components/UserFilter.vue'
 import { useProjectsStore } from '@/stores/projects'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 import { useAuthStore } from '@/stores/auth'
@@ -167,7 +166,6 @@ onUnmounted(() => clearTimeout(debounceTimer))
         :options="['All', 'Fatal', 'Error', 'Warning', 'Info', 'Debug', 'Trace']"
         @change="levelFilter = $event; minLevelMode = false"
       />
-      <UserFilter />
 
       <div class="filterbar__spacer" />
 

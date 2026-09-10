@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import Icon from './Icon.vue'
+import { usePopoverPosition } from '@/composables/usePopoverPosition'
 
 const props = defineProps<{
   label: string
   value: string
   options: string[]
+  icon?: string
 }>()
 
 const emit = defineEmits<{ change: [value: string] }>()
 
 const open = ref(false)
 const el = ref<HTMLElement | null>(null)
+const menuStyle = usePopoverPosition(open, el, 160)
 
 function onMouseDown(e: MouseEvent) {
   if (el.value && !el.value.contains(e.target as Node)) open.value = false
@@ -21,23 +24,25 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
 </script>
 
 <template>
-  <div ref="el" class="nav__projects" style="position: relative">
+  <div ref="el" class="filterchip-wrap" style="position: relative">
     <button
       class="filterchip"
       :class="{ 'filterchip--active': value !== options[0] }"
+      :aria-label="`${label}: ${value}`"
       @click="open = !open"
       :aria-expanded="open"
       aria-haspopup="true"
       @keydown.esc="open = false"
     >
-      <span class="filterchip__label">{{ label }}:</span>
+      <Icon v-if="icon" :name="icon" :size="13" />
+      <span v-else class="filterchip__label">{{ label }}:</span>
       <span class="filterchip__value">{{ value }}</span>
       <Icon name="chevron-down" :size="11" />
     </button>
     <div
       v-if="open"
       class="popover"
-      style="left: 0; right: auto; min-width: 160px"
+      :style="menuStyle"
     >
       <div class="popover__list">
         <button

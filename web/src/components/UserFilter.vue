@@ -7,6 +7,9 @@ import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import type { AppUser } from '@/api/types'
 import Icon from './Icon.vue'
+import { usePopoverPosition } from '@/composables/usePopoverPosition'
+
+defineProps<{ compact?: boolean }>()
 
 const route = useRoute()
 const router = useRouter()
@@ -15,6 +18,7 @@ const projects = useProjectsStore()
 
 const open = ref(false)
 const el = ref<HTMLElement | null>(null)
+const menuStyle = usePopoverPosition(open, el, 280)
 const search = ref('')
 const searchDebounced = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
@@ -37,12 +41,7 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
 })
 
-const projectIds = computed(() => {
-  const v = route.query.project_id
-  if (typeof v === 'string' && v) return [v]
-  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string' && x !== '')
-  return projects.selectedIds
-})
+const projectIds = computed(() => projects.selectedIds)
 
 const listParams = computed(() => {
   const p = new URLSearchParams()
@@ -164,40 +163,34 @@ function optionSub(u: AppUser): string {
 </script>
 
 <template>
-  <div ref="el" class="user-filter" style="position: relative">
+  <div ref="el" class="user-filter" style="position: relative" @keydown.esc="open = false">
     <button
       v-if="!appUser.selected"
       class="filterchip"
+      :aria-expanded="open"
+      title="Filter by user"
       aria-label="Filter by user"
       @click="toggle"
     >
-      <span class="filterchip__label">User:</span>
-      <span class="filterchip__value">All</span>
-      <Icon name="chevron-down" :size="11" />
+      <Icon v-if="compact" name="user" :size="13" />
+      <span v-else class="filterchip__label">User:</span>
+      <span v-if="!compact" class="filterchip__value">All</span>
+      <Icon v-if="!compact" name="chevron-down" :size="11" />
     </button>
-    <button
-      v-else
-      class="user-chip"
-      :title="appUser.label"
-      aria-label="Change user filter"
-      @click="toggle"
-    >
-      <span class="user-chip__avatar">{{ appUser.initial }}</span>
-      <span class="user-chip__name">{{ appUser.label }}</span>
-      <span
-        class="user-chip__clear"
-        role="button"
-        aria-label="Clear user filter"
-        @click.stop="clear"
-      >
+    <div v-else class="user-chip">
+      <button class="user-chip__select" :title="appUser.label" aria-label="Change user filter" :aria-expanded="open" @click="toggle">
+        <span class="user-chip__avatar" aria-hidden="true">{{ appUser.initial }}</span>
+        <span class="user-chip__name">{{ appUser.label }}</span>
+      </button>
+      <button class="user-chip__clear" aria-label="Clear user filter" @click="clear">
         <Icon name="x" :size="10" />
-      </span>
-    </button>
+      </button>
+    </div>
 
     <div
       v-if="open"
       class="popover"
-      style="left: 0; right: auto; min-width: 240px"
+      :style="menuStyle"
     >
       <div class="popover__search">
         <input
@@ -208,16 +201,19 @@ function optionSub(u: AppUser): string {
         />
       </div>
       <div class="popover__list">
-        <div
+        <button
+          type="button"
           class="popover__item"
           :class="{ 'popover__item--active': !appUser.selected }"
           @click="clear"
         >
           All users
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           v-for="u in options"
           :key="u.identity + u.project_id"
+          :aria-label="appUserLabel(u)"
           class="popover__item"
           :class="{ 'popover__item--active': u.identity === appUser.identity }"
           @click="pick(u)"
@@ -227,7 +223,7 @@ function optionSub(u: AppUser): string {
             <span>{{ appUserLabel(u) }}</span>
             <span v-if="optionSub(u)" class="user-filter__sub">{{ optionSub(u) }}</span>
           </span>
-        </div>
+        </button>
         <div v-if="!isFetching && options.length === 0" class="user-filter__empty">
           {{ search.trim() ? 'No matching people' : 'No people yet. set_user() on the SDK, then errors and traces show up here.' }}
         </div>
@@ -235,3 +231,11 @@ function optionSub(u: AppUser): string {
     </div>
   </div>
 </template>
+
+
+<style scoped>
+.user-chip__select { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.user-chip__clear { border: 0; background: transparent; cursor: pointer; flex-shrink: 0; }
+.user-chip__select:focus-visible, .user-chip__clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.user-filter__meta { flex: 1; overflow-wrap: anywhere; }
+</style>

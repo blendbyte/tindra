@@ -8,6 +8,7 @@ const route = useRoute()
 
 <template>
   <div class="perf-subnav">
+    <nav class="perf-subnav__tabs" aria-label="Performance views">
     <RouterLink
       :to="{ path: '/performance/transactions', query: investigationQuery(investigation) }"
       class="perf-subnav__link"
@@ -33,5 +34,7 @@ const route = useRoute()
       class="perf-subnav__link"
       :class="{ 'perf-subnav__link--active': route.path === '/performance/browser' }"
     >Browser</RouterLink>
+    </nav>
+    <div v-if="$slots.actions" class="perf-subnav__actions"><slot name="actions" /></div>
   </div>
 </template>

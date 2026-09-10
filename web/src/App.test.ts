@@ -168,10 +168,21 @@ describe('custom investigation ranges', () => {
     setupMocks()
     routeState.path = '/logs'
     const state = useInvestigationStore()
-    state.absolute = { from: '2026-01-01T00:00:00Z', to: '2026-03-01T00:00:00Z' }
+    state.absolute = { from: '2026-01-01T00:00:00Z', to: '2026-05-01T00:00:00Z' }
     const wrapper = mount(App, { global: globalStubs })
     expect(wrapper.find('.router-view-stub').exists()).toBe(false)
-    expect(wrapper.text()).toContain('up to 30 days')
+    expect(wrapper.text()).toContain('up to 90 days')
     routeState.path = '/issues'
   })
+})
+
+
+it.each(['/dashboard', '/performance/transactions', '/logs'])('renders %s with the shared 90-day range', (path) => {
+  setupMocks()
+  routeState.path = path
+  routeState.name = 'dashboard'
+  useInvestigationStore().setRange('90d')
+  const wrapper = mount(App, { global: globalStubs })
+  expect(wrapper.find('.router-view-stub').exists()).toBe(true)
+  routeState.path = '/issues'
 })

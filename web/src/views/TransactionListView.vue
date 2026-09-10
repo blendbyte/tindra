@@ -15,7 +15,6 @@ import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
-import UserFilter from '@/components/UserFilter.vue'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 
 const router = useRouter()
@@ -30,7 +29,7 @@ const userMode = computed(() => !!lensIdentity.value)
 
 const effectiveProjectIds = computed(() => projects.selectedIds)
 
-const WINDOW_MAP: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 }
+const WINDOW_MAP: Record<string, number> = { '1h': 1, '24h': 24, '7d': 168, '30d': 720, '90d': 2160 }
 function lsGet(key: string): string | null {
   try { return localStorage.getItem('tindra:transactions:' + key) } catch { return null }
 }
@@ -320,7 +319,11 @@ function apdexClass(score: number): string {
 
 <template>
   <div class="page">
-    <PerformanceSubnav />
+    <PerformanceSubnav>
+      <template v-if="projects.projects.length && releaseOptions.length > 1 && !userMode" #actions>
+        <FilterChip label="Release" :value="releaseFilter" :options="releaseOptions" @change="releaseFilter = $event" />
+      </template>
+    </PerformanceSubnav>
 
     <!-- Empty state: no projects -->
     <div v-if="noProjects" class="empty-state">
@@ -358,18 +361,6 @@ function apdexClass(score: number): string {
 
     <!-- Normal view -->
     <template v-else>
-      <!-- Filter bar -->
-      <div class="filterbar">
-        <FilterChip
-          v-if="releaseOptions.length > 1 && !userMode"
-          label="Release"
-          :value="releaseFilter"
-          :options="releaseOptions"
-          @change="releaseFilter = $event"
-        />
-        <UserFilter />
-      </div>
-
       <!-- Op tabs - only shown when there are 2+ distinct ops -->
       <div v-if="availableOps.length > 1" class="optabs">
         <button

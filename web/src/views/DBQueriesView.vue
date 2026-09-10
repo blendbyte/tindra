@@ -12,15 +12,14 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
 
 <template>
   <div class="page">
-    <PerformanceSubnav />
-
-    <div class="filterbar">
-      <div class="filterbar__spacer" />
-      <div class="filterbar__search">
-        <Icon name="search" :size="12" style="color: var(--text-3)" />
-        <input v-model="search" placeholder="Filter queries…" aria-label="Filter queries" />
-      </div>
-    </div>
+    <PerformanceSubnav>
+      <template #actions>
+        <div class="filterbar__search">
+          <Icon name="search" :size="12" style="color: var(--text-3)" />
+          <input v-model="search" placeholder="Filter queries…" aria-label="Filter queries" />
+        </div>
+      </template>
+    </PerformanceSubnav>
 
     <div v-if="isError" class="txerror">
       <Icon name="alert-circle" :size="16" class="txerror__icon" />

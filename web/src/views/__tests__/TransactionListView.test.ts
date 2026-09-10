@@ -59,7 +59,7 @@ const stubs = {
   Icon: { template: '<span />' },
   FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
   TimeseriesChart: { template: '<div />' },
-  PerformanceSubnav: { template: '<div />' },
+  PerformanceSubnav: { template: '<div><slot name="actions" /></div>' },
   BrandMark: { template: '<span />' },
   UserFilter: { template: '<div />' },
 }

@@ -9,7 +9,6 @@ import { apiFetch } from '@/api/client'
 import { investigationQuery } from '@/router/investigation'
 import { useInvestigationStore } from '@/stores/investigation'
 import type { WebVitalsSummary, WebVitalsPage, Transaction, TransactionListPage } from '@/api/types'
-import UserFilter from '@/components/UserFilter.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
 import Icon from '@/components/Icon.vue'
 import { WINDOW_MAP } from '@/utils/time'
@@ -197,10 +196,6 @@ const sortedPages = computed(() => {
 <template>
   <div class="page">
     <PerformanceSubnav />
-
-    <div class="filterbar">
-      <UserFilter />
-    </div>
 
     <!-- Error -->
     <div v-if="isError" class="txerror">

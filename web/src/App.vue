@@ -16,7 +16,7 @@ const route = useRoute()
 const ui = useUiStore()
 const auth = useAuthStore()
 const investigation = useInvestigationStore()
-const unsupported = computed(() => isTelemetry(route.path) && route.path !== '/issues' && (investigation.absolute ? Date.parse(investigation.absolute.to) - Date.parse(investigation.absolute.from) > 30 * 86400000 : investigation.range === 'All' || investigation.range === '90d'))
+const unsupported = computed(() => isTelemetry(route.path) && route.path !== '/issues' && (investigation.absolute ? Date.parse(investigation.absolute.to) - Date.parse(investigation.absolute.from) > 90 * 86400000 : investigation.range === 'All'))
 
 const isLogin = computed(() =>
   route.name === 'login' || route.name === 'accept-invite' || route.name === 'reset-password'
@@ -38,7 +38,7 @@ watch(
     <QuotaBanner v-if="!isLogin" />
     <InvestigationBar v-if="!isLogin && hasInvestigation(route.path)" />
     <p v-if="hasInvestigation(route.path) && investigation.routeError" class="page" role="alert">{{ investigation.routeError }}</p>
-    <p v-else-if="unsupported" class="page" role="status">This view supports time ranges up to 30 days. Choose a supported time range above to load its data.</p>
+    <p v-else-if="unsupported" class="page" role="status">This view supports time ranges up to 90 days. Choose a supported time range above to load its data.</p>
     <RouterView v-else />
     <CommandPalette v-if="!isLogin" />
     <ShortcutsModal v-if="!isLogin" />

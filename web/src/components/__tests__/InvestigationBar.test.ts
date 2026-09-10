@@ -22,7 +22,7 @@ beforeEach(() => {
 })
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  return mount(InvestigationBar, { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } })
+  return mount(InvestigationBar, { global: { stubs: { UserFilter: true }, plugins: [[VueQueryPlugin, { queryClient: client }]] } })
 }
 describe('investigation bar', () => {
   it('loads project-scoped environments, retains custom values and changes shared filters', async () => {
@@ -38,11 +38,11 @@ describe('investigation bar', () => {
     chips[1]!.vm.$emit('change', 'preview')
     expect(state.range).toBe('7d')
     expect(state.environment).toBe('preview')
-    await wrapper.findAll('button').find(b => b.text() === 'Pause')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Pause')!.trigger('click')
     expect(state.paused).toBe(true)
-    await wrapper.findAll('button').find(b => b.text() === 'Resume')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Resume')!.trigger('click')
     expect(state.paused).toBe(false)
-    await wrapper.findAll('button').find(b => b.text() === 'Refresh now')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Refresh now')!.trigger('click')
     expect(mocks.freshness.refresh).toHaveBeenCalledOnce()
   })
   it('shows custom bounds, unavailable projects, and environment errors', async () => {
@@ -85,7 +85,7 @@ describe('investigation bar', () => {
     f.fetching.value = true
     await flushPromises()
     expect(wrapper.text()).toContain('Loading…')
-    expect(wrapper.findAll('button').find(b => b.text() === 'Refreshing…')!.attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Refreshing…')!.attributes('disabled')).toBeDefined()
     f.fetching.value = false; f.failed.value = [{}]
     await flushPromises()
     expect(wrapper.text()).toContain("Couldn't refresh 1 panel.")
@@ -101,6 +101,34 @@ describe('investigation bar', () => {
     useInvestigationStore().browsingHistory = true
     await flushPromises()
     expect(wrapper.text()).toContain('Paused while browsing older results')
-    expect(wrapper.text()).toContain('Refresh latest')
+    expect(wrapper.find('[aria-label="Refresh latest"]').exists()).toBe(true)
   })
+})
+
+
+it('keeps dashboard explanations behind the info control and dismisses them with Escape', async () => {
+  mocks.route.path = '/dashboard'
+  const wrapper = setup()
+  const details = wrapper.find('details')
+  expect(details.attributes('open')).toBeUndefined()
+  expect(details.text()).toContain('Transaction metrics use the selected filters')
+  expect(wrapper.find('[aria-label="Refresh now"]').text()).toBe('')
+  ;(details.element as HTMLDetailsElement).open = true
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+  expect((details.element as HTMLDetailsElement).open).toBe(false)
+})
+
+
+it('shows compact elapsed time inside the refresh control', async () => {
+  const wrapper = setup()
+  const button = wrapper.find('[aria-label="Refresh now"]')
+  expect(button.text()).toBe('')
+  mocks.freshness.updatedAt.value = 100
+  for (const [seconds, label] of [[13, '13s'], [125, '2m'], [7200, '2h']] as const) {
+    mocks.freshness.age.value = seconds
+    await flushPromises()
+    expect(button.text()).toBe(label)
+  }
+  await button.trigger('click')
+  expect(mocks.freshness.refresh).toHaveBeenCalledOnce()
 })

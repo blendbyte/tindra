@@ -125,3 +125,55 @@ func TestInvestigationLogCountsAndReleaseCharts(t *testing.T) {
 		}
 	}
 }
+
+func TestNinetyDayTelemetryWindow(t *testing.T) {
+	p := setupProjectForTxns(t)
+	to := time.Now().UTC()
+	from := to.Add(-90 * 24 * time.Hour)
+	at := to.Add(-60 * 24 * time.Hour)
+	tx := seedTransaction(t, p.ID, "historical", 10, at)
+	seedSpan(t, tx.ID, "abcdef0123456789", "db.query", "SELECT historical", 10, at)
+	seedLog(t, p.ID, "info", "historical", at, "preview")
+	ctx := storage.WithTimeRange(context.Background(), storage.TimeRange{From: from, To: to})
+	for _, queryContext := range []context.Context{context.Background(), ctx} {
+		summaries, err := storage.ListTransactionSummaries(queryContext, testPool, []string{p.ID}, 2160, 0, "", "", "", "", "")
+		require.NoError(t, err)
+		require.Len(t, summaries, 1)
+		chart, err := storage.GetTransactionTimeseries(queryContext, testPool, []string{p.ID}, 2160, "", "", "", "")
+		require.NoError(t, err)
+		require.Equal(t, "day", chart.BucketSize)
+		require.Len(t, chart.Buckets, 1)
+		spans, err := storage.GetSpanTimeseries(queryContext, testPool, "db", []string{p.ID}, 2160, "", "")
+		require.NoError(t, err)
+		require.Equal(t, "day", spans.BucketSize)
+		require.Len(t, spans.Buckets, 1)
+		samples, err := storage.GetSpanSamples(queryContext, testPool, "db.query", "SELECT historical", []string{p.ID}, 2160, "", "")
+		require.NoError(t, err)
+		require.Len(t, samples, 1)
+	}
+	logs, _, err := storage.ListLogs(ctx, testPool, storage.LogFilter{ProjectIDs: []string{p.ID}})
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+}
+
+func TestSpanInvestigationUserFilter(t *testing.T) {
+	p := setupProjectForTxns(t)
+	now := time.Now().Add(-time.Minute)
+	for i, identity := range []string{"alice", "bob"} {
+		tx := seedTransaction(t, p.ID, "users", 10, now)
+		_, err := testPool.Exec(context.Background(), "UPDATE transactions SET user_identity=$1 WHERE id=$2", identity, tx.ID)
+		require.NoError(t, err)
+		seedSpan(t, tx.ID, string(rune('a'+i))+"123456789abcdef", "db.query", "SELECT user", 10, now)
+	}
+	summaries, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "", "", "alice")
+	require.NoError(t, err)
+	require.Len(t, summaries, 1)
+	require.EqualValues(t, 1, summaries[0].SampleCount)
+	chart, err := storage.GetSpanTimeseries(context.Background(), testPool, "db", []string{p.ID}, 24, "", "", "alice")
+	require.NoError(t, err)
+	require.Len(t, chart.Buckets, 1)
+	require.EqualValues(t, 1, chart.Buckets[0].Count)
+	samples, err := storage.GetSpanSamples(context.Background(), testPool, "db.query", "SELECT user", []string{p.ID}, 24, "", "", "nobody")
+	require.NoError(t, err)
+	require.Empty(t, samples)
+}

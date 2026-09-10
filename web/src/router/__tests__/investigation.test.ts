@@ -110,3 +110,18 @@ describe('investigation URL validation and refresh', () => {
     expect(state.anchor).toBe(before)
   })
 })
+
+it('carries and clears the application user across views and browser history', async () => {
+  const { router, state } = setup()
+  await router.push('/performance/transactions?user=alice')
+  const scope = state.scopeKey
+  await router.push('/dashboard')
+  expect(router.currentRoute.value.query.user).toBe('alice')
+  expect(new URL(state.request('/api/transactions/summaries'), 'http://test').searchParams.get('user')).toBe('alice')
+  await router.push('/logs?user=')
+  expect(state.userIdentity).toBe('')
+  expect(state.scopeKey).not.toBe(scope)
+  router.back()
+  await flushPromises()
+  expect(state.userIdentity).toBe('alice')
+})

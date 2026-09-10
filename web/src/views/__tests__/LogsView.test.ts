@@ -392,7 +392,7 @@ describe('LogsView', () => {
       const wrapper = mount(LogsView, { global: { stubs } })
       const link = wrapper.find('.log-trace-link')
       expect(link.exists()).toBe(true)
-      expect(link.attributes('href')).toBe('/transactions/tx-9?project_id=all&environment=all&range=24h')
+      expect(link.attributes('href')).toBe('/transactions/tx-9?user=&project_id=all&environment=all&range=24h')
     })
 
     // A log can carry a trace_id whose transaction was never ingested (or was
@@ -418,7 +418,7 @@ describe('LogsView', () => {
       const wrapper = mount(LogsView, { global: { stubs } })
       await wrapper.find('.perf-table__row--clickable').trigger('click')
       const link = wrapper.find('.log-expanded a')
-      expect(link.attributes('href')).toBe('/transactions/tx-9?project_id=all&environment=all&range=24h')
+      expect(link.attributes('href')).toBe('/transactions/tx-9?user=&project_id=all&environment=all&range=24h')
       expect(link.text()).toContain('t-abc')
     })
 
