@@ -915,7 +915,7 @@ func TestWorker_profileLimitsApplyWithGlobalRetentionOff(t *testing.T) {
 	}
 }
 
-// Turning off global retention must not start purging anything else.
+// Profile retention alone must not enable general age-based purging.
 func TestWorker_globalRetentionOffLeavesOtherDataAlone(t *testing.T) {
 	clearProfiles(t)
 	ctx := context.Background()
@@ -930,7 +930,7 @@ func TestWorker_globalRetentionOffLeavesOtherDataAlone(t *testing.T) {
 	}
 
 	// Profile limits set, global retention off: the ancient logs must survive.
-	retention.NewWorker(testPool, 0).WithRowLimits(1, 0).WithProfileLimits(7, 10).RunOnce(ctx)
+	retention.NewWorker(testPool, 0).WithProfileLimits(7, 10).RunOnce(ctx)
 
 	var logs int
 	testPool.QueryRow(ctx, "SELECT COUNT(*) FROM logs WHERE project_id = $1", testProject.ID).Scan(&logs)

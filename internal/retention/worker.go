@@ -13,8 +13,8 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
-// Worker periodically deletes data older than RetentionDays.
-// Set RetentionDays to 0 to disable (data is kept forever).
+// Worker periodically enforces age, row-count, and profile retention limits.
+// Setting RetentionDays to 0 disables only the general age-based policy.
 type Worker struct {
 	pool          *pgxpool.Pool
 	retentionDays int
@@ -67,11 +67,10 @@ func (w *Worker) WithProfileLimits(retentionDays, storageLimitMB int) *Worker {
 	return w
 }
 
-// enabled reports whether any purge is configured. The profile limits stand on
-// their own: an instance that keeps everything forever still needs a ceiling on
-// profile storage, or a single misconfigured SDK fills the disk.
+// enabled reports whether any independent retention policy is configured.
 func (w *Worker) enabled() bool {
-	return w.retentionDays > 0 || w.profileRetentionDays > 0 || w.profileStorageLimitMB > 0
+	return w.retentionDays > 0 || w.logRowLimit > 0 || w.txRowLimit > 0 ||
+		w.profileRetentionDays > 0 || w.profileStorageLimitMB > 0
 }
 
 // RunOnce runs a single purge cycle and reports whether a telemetry deletion
@@ -88,7 +87,7 @@ func (w *Worker) RunOnce(ctx context.Context) bool {
 // telemetry deletion budget was exhausted. Passes never overlap.
 func (w *Worker) Run(ctx context.Context) {
 	if !w.enabled() {
-		slog.Info("retention: disabled (RETENTION_DAYS=0)")
+		slog.Info("retention: disabled (no retention limits configured)")
 		return
 	}
 
@@ -120,8 +119,7 @@ func (w *Worker) purge(ctx context.Context) bool {
 		profilesDeleted, profilesCapDeleted int64
 	)
 
-	// The general retention window drives everything except the profile
-	// purges, which are configured independently below.
+	// Row caps and profile policies run independently of the general age window.
 	if w.retentionDays > 0 {
 		cutoff := time.Now().AddDate(0, 0, -w.retentionDays)
 		slog.Info("retention: purging", "cutoff", cutoff.Format(time.DateOnly))
@@ -132,10 +130,9 @@ func (w *Worker) purge(ctx context.Context) bool {
 		uptimeChecksDeleted = w.purgeUptimeChecks(ctx, cutoff)
 		firingsDeleted = w.purgeAlertFirings(ctx)
 		w.purgeExpiredAuthTokens(ctx)
-
-		logsCapDeleted = w.purgeLogsRowCap(ctx)
-		txCapDeleted = w.purgeTransactionsRowCap(ctx)
 	}
+	logsCapDeleted = w.purgeLogsRowCap(ctx)
+	txCapDeleted = w.purgeTransactionsRowCap(ctx)
 
 	if w.profileRetentionDays > 0 {
 		profileCutoff := time.Now().AddDate(0, 0, -w.profileRetentionDays)
