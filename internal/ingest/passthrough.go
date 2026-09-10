@@ -81,6 +81,9 @@ func rewriteEnvelopeDSN(raw []byte, upstreamDSN string) ([]byte, error) {
 	if err := json.Unmarshal(bytes.TrimRight(headerLine, "\r\n"), &hdr); err != nil {
 		return nil, fmt.Errorf("parse header: %w", err)
 	}
+	if hdr == nil {
+		return nil, fmt.Errorf("envelope header must be a JSON object")
+	}
 	dsnJSON, _ := json.Marshal(upstreamDSN)
 	hdr["dsn"] = dsnJSON
 

@@ -37,10 +37,14 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 	if err != nil && (err != io.EOF || len(line) == 0) {
 		return EnvelopeHeader{}, nil, fmt.Errorf("read envelope header: %w", err)
 	}
-	var header EnvelopeHeader
-	if err := json.Unmarshal(bytes.TrimRight(line, "\r\n"), &header); err != nil {
+	var parsedHeader *EnvelopeHeader
+	if err := json.Unmarshal(bytes.TrimRight(line, "\r\n"), &parsedHeader); err != nil {
 		return EnvelopeHeader{}, nil, fmt.Errorf("parse envelope header: %w", err)
 	}
+	if parsedHeader == nil {
+		return EnvelopeHeader{}, nil, fmt.Errorf("envelope header must be a JSON object")
+	}
+	header := *parsedHeader
 
 	var items []Item
 	for {
