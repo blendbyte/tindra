@@ -23,13 +23,14 @@ type OAuthIdentity struct {
 }
 
 var (
-	ErrOAuthInviteRequired = errors.New("an invitation is required to sign in")
-	ErrOAuthUserLimit      = errors.New("user limit reached")
+	ErrOAuthEmailUnverified = errors.New("a verified email is required to link an account")
+	ErrOAuthInviteRequired  = errors.New("an invitation is required to sign in")
+	ErrOAuthUserLimit       = errors.New("user limit reached")
 )
 
 // FindOrCreateOAuthUser links an existing account or redeems a valid invitation
-// for the provider email. New users receive no management permissions.
-func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, sub, email string, userLimit int) (*User, error) {
+// for a verified provider email. New users receive no management permissions.
+func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, sub, email string, emailVerified bool, userLimit int) (*User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 
 	// Returning identities do not need an invitation or an available user slot.
@@ -40,6 +41,10 @@ func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, su
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("lookup identity: %w", err)
+	}
+
+	if !emailVerified || email == "" {
+		return nil, ErrOAuthEmailUnverified
 	}
 
 	tx, err := pool.Begin(ctx)

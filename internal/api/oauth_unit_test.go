@@ -476,7 +476,7 @@ func TestOIDCProvider_Exchange_tokenEndpointError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOIDCProvider: %v", err)
 	}
-	_, _, err = p.Exchange(context.Background(), "bad-code", "verifier")
+	_, _, _, err = p.Exchange(context.Background(), "bad-code", "verifier")
 	if err == nil {
 		t.Fatal("expected error when token endpoint returns 404")
 	}
@@ -497,7 +497,7 @@ func TestOIDCProvider_Exchange_missingIDToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOIDCProvider: %v", err)
 	}
-	_, _, err = p.Exchange(context.Background(), "any-code", "verifier")
+	_, _, _, err = p.Exchange(context.Background(), "any-code", "verifier")
 	if err == nil {
 		t.Fatal("expected error when id_token is absent from token response")
 	}
@@ -520,7 +520,7 @@ func TestOIDCProvider_Exchange_invalidIDToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOIDCProvider: %v", err)
 	}
-	_, _, err = p.Exchange(context.Background(), "any-code", "verifier")
+	_, _, _, err = p.Exchange(context.Background(), "any-code", "verifier")
 	if err == nil {
 		t.Fatal("expected error when id_token is an invalid JWT")
 	}

@@ -29,7 +29,7 @@ func TestFindOrCreateOAuthUser_newUser(t *testing.T) {
 
 	_, err := storage.CreateInvite(t.Context(), testPool, "", "oauth@example.com", "Invited user")
 	require.NoError(t, err)
-	u, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-001", "oauth@example.com", 0)
+	u, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-001", "oauth@example.com", true, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,9 +48,9 @@ func TestFindOrCreateOAuthUser_existingIdentity(t *testing.T) {
 
 	_, err := storage.CreateInvite(t.Context(), testPool, "", "returning@example.com", "")
 	require.NoError(t, err)
-	first, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-002", "returning@example.com", 0)
+	first, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-002", "returning@example.com", true, 0)
 	require.NoError(t, err)
-	second, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-002", "returning@example.com", 0)
+	second, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-002", "returning@example.com", true, 0)
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestFindOrCreateOAuthUser_linksByEmail(t *testing.T) {
 	local, _ := storage.CreateUser(context.Background(), testPool, "linked@example.com", "password1234")
 
 	// OAuth login with matching email → should find and link to existing user
-	oauthUser, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "google", "google-sub-001", "linked@example.com", 0)
+	oauthUser, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "google", "google-sub-001", "linked@example.com", true, 0)
 	if err != nil {
 		t.Fatalf("oauth link: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestFindOrCreateOAuthUser_caseInsensitiveEmail(t *testing.T) {
 
 	_, err := storage.CreateInvite(t.Context(), testPool, "", "upper@example.com", "")
 	require.NoError(t, err)
-	u, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-003", "UPPER@EXAMPLE.COM", 0)
+	u, err := storage.FindOrCreateOAuthUser(context.Background(), testPool, "github", "gh-sub-003", "UPPER@EXAMPLE.COM", true, 0)
 	require.NoError(t, err)
 	if u.Email != "upper@example.com" {
 		t.Errorf("email should be normalized: got %q", u.Email)
@@ -177,7 +177,7 @@ func TestOAuthAdmissionRejectsMissingOrInvalidInvites(t *testing.T) {
 				}
 				require.NoError(t, err)
 			}
-			user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "denied", email, 0)
+			user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "denied", email, true, 0)
 			require.ErrorIs(t, err, storage.ErrOAuthInviteRequired)
 			require.Nil(t, user)
 			var users, identities int
@@ -195,7 +195,7 @@ func TestOAuthAdmissionConsumesInviteWithoutGrantingAdmin(t *testing.T) {
 	truncateUsers(t)
 	token, err := storage.CreateInvite(t.Context(), testPool, "", "invited@example.com", "Invited Name")
 	require.NoError(t, err)
-	user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "invited", "INVITED@example.com", 1)
+	user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "invited", "INVITED@example.com", true, 1)
 	require.NoError(t, err)
 	require.Equal(t, "Invited Name", user.Name)
 	require.Equal(t, storage.UserPermissions{}, user.Permissions)
@@ -204,11 +204,11 @@ func TestOAuthAdmissionConsumesInviteWithoutGrantingAdmin(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, invite)
 	// A linked identity remains authoritative even if the provider email changes.
-	returning, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "invited", "changed@example.com", 1)
+	returning, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "invited", "changed@example.com", true, 1)
 	require.NoError(t, err)
 	require.Equal(t, user.ID, returning.ID)
 	// Existing users can also link another provider when the instance is full.
-	linked, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "github", "invited", user.Email, 1)
+	linked, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "github", "invited", user.Email, true, 1)
 	require.NoError(t, err)
 	require.Equal(t, user.ID, linked.ID)
 }
@@ -219,7 +219,7 @@ func TestOAuthAdmissionUserLimitPreservesInvite(t *testing.T) {
 	require.NoError(t, err)
 	token, err := storage.CreateInvite(t.Context(), testPool, "", "waiting@example.com", "Waiting")
 	require.NoError(t, err)
-	user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "waiting", "waiting@example.com", 1)
+	user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "waiting", "waiting@example.com", true, 1)
 	require.ErrorIs(t, err, storage.ErrOAuthUserLimit)
 	require.Nil(t, user)
 	invite, err := storage.GetInvite(t.Context(), testPool, token)
@@ -232,7 +232,7 @@ func TestOAuthAdmissionUserLimitPreservesInvite(t *testing.T) {
 	require.NoError(t, testPool.QueryRow(t.Context(), `SELECT count(*) FROM oauth_identities`).Scan(&n))
 	require.Zero(t, n)
 	// Retrying after capacity becomes available consumes the same invitation.
-	_, err = storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "waiting", "waiting@example.com", 2)
+	_, err = storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "waiting", "waiting@example.com", true, 2)
 	require.NoError(t, err)
 }
 
@@ -247,7 +247,7 @@ func TestOAuthAdmissionConcurrentLastSlot(t *testing.T) {
 	for _, email := range []string{"one@example.com", "two@example.com"} {
 		go func() {
 			<-start
-			_, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", email, email, 1)
+			_, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", email, email, true, 1)
 			results <- err
 		}()
 	}
@@ -279,7 +279,7 @@ func TestOAuthAdmissionConcurrentSameIdentity(t *testing.T) {
 	for range 2 {
 		go func() {
 			<-start
-			user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "same", "same@example.com", 1)
+			user, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "same", "same@example.com", true, 1)
 			results <- result{user, err}
 		}()
 	}
@@ -313,7 +313,7 @@ func TestOAuthAdmissionDatabaseFailuresRollBack(t *testing.T) {
 			cfg.ConnConfig.Tracer = trace
 			failing, err := pgxpool.NewWithConfig(t.Context(), cfg)
 			require.NoError(t, err)
-			user, err := storage.FindOrCreateOAuthUser(t.Context(), failing, "google", "rollback", "rollback@example.com", 1)
+			user, err := storage.FindOrCreateOAuthUser(t.Context(), failing, "google", "rollback", "rollback@example.com", true, 1)
 			require.Error(t, err)
 			require.Nil(t, user)
 			require.True(t, trace.hit.Load())
@@ -327,9 +327,42 @@ func TestOAuthAdmissionDatabaseFailuresRollBack(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, invite)
 			// A failed attempt must leave the same invitation usable on retry.
-			user, err = storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "rollback", "rollback@example.com", 1)
+			user, err = storage.FindOrCreateOAuthUser(t.Context(), testPool, "google", "rollback", "rollback@example.com", true, 1)
 			require.NoError(t, err)
 			require.NotNil(t, user)
 		})
+	}
+}
+
+func TestOAuthAdmissionRequiresVerifiedEmail(t *testing.T) {
+	truncateUsers(t)
+	user, err := storage.CreateUser(t.Context(), testPool, "verified@example.com", "password1234")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, email string
+		verified    bool
+	}{
+		{"unverified existing account", user.Email, false},
+		{"unverified new account", "unknown@example.com", false},
+		{"missing email", "", true},
+		{"blank email", " \t ", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "verification", "new", tc.email, tc.verified, 0)
+			require.ErrorIs(t, err, storage.ErrOAuthEmailUnverified)
+			require.Nil(t, got)
+		})
+	}
+	linked, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "verification", "linked", user.Email, true, 0)
+	require.NoError(t, err)
+	require.Equal(t, user.ID, linked.ID)
+	for _, email := range []string{"", "different@example.com"} {
+		returning, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "verification", "linked", email, false, 0)
+		require.NoError(t, err)
+		require.Equal(t, user.ID, returning.ID)
+		// The subject is scoped to its provider, not globally trusted.
+		denied, err := storage.FindOrCreateOAuthUser(t.Context(), testPool, "other-provider", "linked", email, false, 0)
+		require.ErrorIs(t, err, storage.ErrOAuthEmailUnverified)
+		require.Nil(t, denied)
 	}
 }

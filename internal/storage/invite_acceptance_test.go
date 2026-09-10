@@ -149,7 +149,7 @@ func TestInviteAcceptanceConcurrentAdmission(t *testing.T) {
 				go func() {
 					<-start
 					if kind == "last slot with SSO" && i == 1 {
-						u, err := storage.FindOrCreateOAuthUser(ctx, testPool, "test", uuid.NewString(), email, limit)
+						u, err := storage.FindOrCreateOAuthUser(ctx, testPool, "test", uuid.NewString(), email, true, limit)
 						done <- result{u, err}
 						return
 					}

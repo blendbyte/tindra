@@ -29,8 +29,8 @@ func (m mockProviderExchangeErr) Name() string { return m.name }
 func (m mockProviderExchangeErr) AuthCodeURL(state, _ string) string {
 	return "/fake-redirect?state=" + state
 }
-func (m mockProviderExchangeErr) Exchange(_ context.Context, _, _ string) (string, string, error) {
-	return "", "", errors.New("token exchange rejected by upstream provider")
+func (m mockProviderExchangeErr) Exchange(_ context.Context, _, _ string) (string, string, bool, error) {
+	return "", "", false, errors.New("token exchange rejected by upstream provider")
 }
 
 // ---------------------------------------------------------------------------

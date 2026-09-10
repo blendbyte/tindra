@@ -17,8 +17,8 @@ func (m mockProvider) Name() string { return m.name }
 func (m mockProvider) AuthCodeURL(state, _ string) string {
 	return "/fake-redirect?state=" + state
 }
-func (m mockProvider) Exchange(_ context.Context, _, _ string) (string, string, error) {
-	return "user@example.com", "sub123", nil
+func (m mockProvider) Exchange(_ context.Context, _, _ string) (string, string, bool, error) {
+	return "user@example.com", "sub123", true, nil
 }
 
 // routerWithSSO builds a handler with one or more mock OAuth providers configured.

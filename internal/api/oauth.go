@@ -26,8 +26,8 @@ type oauthProvider interface {
 	Name() string
 	// AuthCodeURL returns the provider's authorization endpoint URL.
 	AuthCodeURL(state, pkceVerifier string) string
-	// Exchange trades the authorization code for an email address and opaque subject ID.
-	Exchange(ctx context.Context, code, pkceVerifier string) (email, sub string, err error)
+	// Exchange returns an authenticated subject and the provider's email verification status.
+	Exchange(ctx context.Context, code, pkceVerifier string) (email, sub string, emailVerified bool, err error)
 }
 
 // ---- OIDC provider (covers Zitadel, Auth0, Cloudflare Access, Google, Microsoft) ----
@@ -62,33 +62,30 @@ func (p *oidcProvider) AuthCodeURL(state, pkceVerifier string) string {
 	return p.cfg.AuthCodeURL(state, oauth2.S256ChallengeOption(pkceVerifier))
 }
 
-func (p *oidcProvider) Exchange(ctx context.Context, code, pkceVerifier string) (string, string, error) {
+func (p *oidcProvider) Exchange(ctx context.Context, code, pkceVerifier string) (string, string, bool, error) {
 	token, err := p.cfg.Exchange(ctx, code, oauth2.VerifierOption(pkceVerifier))
 	if err != nil {
-		return "", "", fmt.Errorf("exchange: %w", err)
+		return "", "", false, fmt.Errorf("exchange: %w", err)
 	}
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
-		return "", "", fmt.Errorf("no id_token in response")
+		return "", "", false, fmt.Errorf("no id_token in response")
 	}
 	idToken, err := p.verifier.Verify(ctx, rawID)
 	if err != nil {
-		return "", "", fmt.Errorf("verify id_token: %w", err)
+		return "", "", false, fmt.Errorf("verify id_token: %w", err)
 	}
 	var claims struct {
 		Email         string `json:"email"`
 		EmailVerified *bool  `json:"email_verified"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		return "", "", fmt.Errorf("claims: %w", err)
+		return "", "", false, fmt.Errorf("claims: %w", err)
 	}
-	if claims.Email == "" {
-		return "", "", fmt.Errorf("email claim missing")
+	if idToken.Subject == "" {
+		return "", "", false, fmt.Errorf("subject claim missing")
 	}
-	if claims.EmailVerified != nil && !*claims.EmailVerified {
-		return "", "", fmt.Errorf("email address has not been verified by the provider")
-	}
-	return claims.Email, idToken.Subject, nil
+	return claims.Email, idToken.Subject, claims.EmailVerified != nil && *claims.EmailVerified, nil
 }
 
 // ---- GitHub provider (OAuth2, not OIDC) ----
@@ -114,43 +111,41 @@ func (p *githubProvider) AuthCodeURL(state, pkceVerifier string) string {
 	return p.cfg.AuthCodeURL(state)
 }
 
-func (p *githubProvider) Exchange(ctx context.Context, code, _ string) (string, string, error) {
+func (p *githubProvider) Exchange(ctx context.Context, code, _ string) (string, string, bool, error) {
 	token, err := p.cfg.Exchange(ctx, code)
 	if err != nil {
-		return "", "", fmt.Errorf("exchange: %w", err)
+		return "", "", false, fmt.Errorf("exchange: %w", err)
 	}
 
 	// Get numeric user ID (stable sub).
 	user, err := githubAPIGet[struct {
-		ID    int64  `json:"id"`
-		Email string `json:"email"`
+		ID int64 `json:"id"`
 	}](ctx, token.AccessToken, "https://api.github.com/user")
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 
-	email := user.Email
-	if email == "" {
-		// Primary email may not be public - fetch from the emails endpoint.
-		type ghEmail struct {
-			Email   string `json:"email"`
-			Primary bool   `json:"primary"`
-		}
-		emails, err := githubAPIGet[[]ghEmail](ctx, token.AccessToken, "https://api.github.com/user/emails")
-		if err != nil {
-			return "", "", err
-		}
-		for _, e := range *emails {
-			if e.Primary {
-				email = e.Email
-				break
-			}
+	if user.ID <= 0 {
+		return "", "", false, fmt.Errorf("GitHub user ID missing or invalid")
+	}
+	// The public profile email has no verification flag. Only the emails
+	// endpoint can establish ownership for linking or invitation acceptance.
+	type ghEmail struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	emails, err := githubAPIGet[[]ghEmail](ctx, token.AccessToken, "https://api.github.com/user/emails")
+	if err != nil {
+		return "", "", false, err
+	}
+	for _, e := range *emails {
+		if e.Primary && e.Verified {
+			return e.Email, fmt.Sprintf("%d", user.ID), true, nil
 		}
 	}
-	if email == "" {
-		return "", "", fmt.Errorf("no email returned by GitHub")
-	}
-	return email, fmt.Sprintf("%d", user.ID), nil
+	// An already-linked subject may still sign in without a verified email.
+	return "", fmt.Sprintf("%d", user.ID), false, nil
 }
 
 func githubAPIGet[T any](ctx context.Context, accessToken, url string) (*T, error) {
@@ -377,15 +372,19 @@ func (ro *router) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	binding.MaxAge = -1
 	http.SetCookie(w, binding)
 
-	email, sub, err := p.Exchange(r.Context(), code, oauthState.Verifier)
+	email, sub, emailVerified, err := p.Exchange(r.Context(), code, oauthState.Verifier)
 	if err != nil {
 		slog.Error("oauth exchange", "provider", name, "err", err)
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
 
-	user, err := storage.FindOrCreateOAuthUser(r.Context(), ro.pool, name, sub, email, int(ro.userLimit.Load()))
+	user, err := storage.FindOrCreateOAuthUser(r.Context(), ro.pool, name, sub, email, emailVerified, int(ro.userLimit.Load()))
 	if err != nil {
+		if errors.Is(err, storage.ErrOAuthEmailUnverified) {
+			http.Error(w, "Your sign-in provider must verify your email before this account can be linked. Contact your administrator.", http.StatusForbidden)
+			return
+		}
 		if errors.Is(err, storage.ErrOAuthInviteRequired) {
 			http.Error(w, "An invitation is required to sign in. Contact your administrator.", http.StatusForbidden)
 			return

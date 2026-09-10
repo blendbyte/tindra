@@ -231,8 +231,8 @@ type admissionProvider struct {
 	email string
 }
 
-func (p admissionProvider) Exchange(_ context.Context, _, _ string) (string, string, error) {
-	return p.email, p.email, nil
+func (p admissionProvider) Exchange(_ context.Context, _, _ string) (string, string, bool, error) {
+	return p.email, p.email, true, nil
 }
 
 func TestHandleOAuthCallbackAdmission(t *testing.T) {
