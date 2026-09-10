@@ -308,6 +308,10 @@ func serveCmd(cfg config) *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()
 
+			if err := checkDataDir(cfg.dataDir); err != nil {
+				return err
+			}
+
 			pool, err := storage.Connect(ctx, cfg.databaseURL)
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)

@@ -21,8 +21,11 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
     -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT}" \
     -o /tindra ./cmd/tindra
 
+RUN mkdir -p /data/sourcemaps
+
 # Stage 3: Minimal runtime image
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /tindra /tindra
+COPY --from=builder --chown=65532:65532 /data/ /data/
 EXPOSE 8080
 ENTRYPOINT ["/tindra", "serve"]
