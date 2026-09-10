@@ -673,29 +673,19 @@ func handleEnvelopeCheckin(ctx context.Context, pool *pgxpool.Pool, payload []by
 		durationMs = &ms
 	}
 
+	now := time.Now().UTC()
+	checkin := &storage.CronCheckin{Status: ci.Status, Environment: ci.Environment}
+	if ci.CheckinID != "" {
+		checkin.SDKCheckinID = &ci.CheckinID
+	}
 	switch ci.Status {
 	case "in_progress":
-		now := time.Now().UTC()
-		_, _ = storage.RecordCheckin(ctx, pool, m.ID, &storage.CronCheckin{
-			Status:      "in_progress",
-			Environment: ci.Environment,
-			StartedAt:   &now,
-		})
+		checkin.StartedAt = &now
 	case "ok", "error":
-		if ci.CheckinID != "" {
-			// Try to finish an existing in_progress check-in first.
-			updated, _ := storage.FinishCheckin(ctx, pool, m.ID, ci.CheckinID, ci.Status, durationMs)
-			if updated != nil {
-				return
-			}
-		}
-		// Single-shot or no matching in_progress: record terminal check-in directly.
-		now := time.Now().UTC()
-		_, _ = storage.RecordCheckin(ctx, pool, m.ID, &storage.CronCheckin{
-			Status:      ci.Status,
-			DurationMs:  durationMs,
-			Environment: ci.Environment,
-			FinishedAt:  &now,
-		})
+		checkin.DurationMs = durationMs
+		checkin.FinishedAt = &now
+	default:
+		return
 	}
+	_, _ = storage.RecordCheckin(ctx, pool, m.ID, checkin)
 }

@@ -36,14 +36,15 @@ type CronMonitor struct {
 }
 
 type CronCheckin struct {
-	ID          string     `json:"id"`
-	MonitorID   string     `json:"monitor_id"`
-	Status      string     `json:"status"` // in_progress, ok, error
-	DurationMs  *int       `json:"duration_ms,omitempty"`
-	Environment *string    `json:"environment,omitempty"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
-	ReceivedAt  time.Time  `json:"received_at"`
+	ID           string     `json:"id"`
+	SDKCheckinID *string    `json:"-"`
+	MonitorID    string     `json:"monitor_id"`
+	Status       string     `json:"status"` // in_progress, ok, error
+	DurationMs   *int       `json:"duration_ms,omitempty"`
+	Environment  *string    `json:"environment,omitempty"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	ReceivedAt   time.Time  `json:"received_at"`
 }
 
 // ParseCronSchedule validates and parses a standard 5-field cron expression.
@@ -198,8 +199,11 @@ func DeleteCronMonitor(ctx context.Context, pool *pgxpool.Pool, id string) (bool
 }
 
 // RecordCheckin inserts a check-in and updates the monitor state atomically.
-// For in_progress check-ins, started_at and finished_at should be nil.
+// For in_progress check-ins, started_at should be set and finished_at nil.
 // For terminal (ok/error) single-shot pings, finished_at should be set.
+// SDK IDs are scoped to a monitor. Only the first terminal result can finish
+// an existing SDK check-in; duplicate or late deliveries return (nil, nil)
+// without changing the check-in or monitor state.
 func RecordCheckin(ctx context.Context, pool *pgxpool.Pool, monitorID string, ci *CronCheckin) (*CronCheckin, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -209,15 +213,23 @@ func RecordCheckin(ctx context.Context, pool *pgxpool.Pool, monitorID string, ci
 
 	var created CronCheckin
 	err = tx.QueryRow(ctx, `
-		INSERT INTO cron_checkins (monitor_id, status, duration_ms, environment, started_at, finished_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO cron_checkins (monitor_id, status, duration_ms, environment, started_at, finished_at, sdk_checkin_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (monitor_id, sdk_checkin_id) DO UPDATE SET
+			status=EXCLUDED.status, duration_ms=EXCLUDED.duration_ms,
+			environment=COALESCE(EXCLUDED.environment, cron_checkins.environment),
+			finished_at=EXCLUDED.finished_at
+		WHERE cron_checkins.status='in_progress' AND EXCLUDED.status IN ('ok', 'error')
 		RETURNING id, monitor_id, status, duration_ms, environment, started_at, finished_at, received_at`,
-		monitorID, ci.Status, ci.DurationMs, ci.Environment, ci.StartedAt, ci.FinishedAt,
+		monitorID, ci.Status, ci.DurationMs, ci.Environment, ci.StartedAt, ci.FinishedAt, ci.SDKCheckinID,
 	).Scan(
 		&created.ID, &created.MonitorID, &created.Status,
 		&created.DurationMs, &created.Environment,
 		&created.StartedAt, &created.FinishedAt, &created.ReceivedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("insert checkin: %w", err)
 	}
