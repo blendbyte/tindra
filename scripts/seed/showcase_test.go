@@ -116,7 +116,7 @@ func TestInvestigationLinksAndEnvelope(t *testing.T) {
 // Exercise real HTTP ingestion, asynchronous writers/grouping, and the migrated schema.
 func TestShowcaseDatabaseAndIngestion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	pool, cleanup := testutil.SetupDB(ctx)
+	pool, databaseURL, cleanup := testutil.SetupDBWithDSN(ctx)
 	defer cleanup()
 	defer cancel()
 	project, err := storage.CreateProject(ctx, pool, "showcase", "Commerce Demo")
@@ -183,7 +183,7 @@ func TestShowcaseDatabaseAndIngestion(t *testing.T) {
 	require.NoError(t, err)
 	commandCtx, commandCancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer commandCancel()
-	command := exec.CommandContext(commandCtx, "go", "run", "main.go", "--db", pool.Config().ConnString(), fmt.Sprintf("http://%s@%s/%s", complete.PublicKey, server.Listener.Addr(), complete.ID))
+	command := exec.CommandContext(commandCtx, "go", "run", "main.go", "--db", databaseURL, fmt.Sprintf("http://%s@%s/%s", complete.PublicKey, server.Listener.Addr(), complete.ID))
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	require.Contains(t, string(output), "0 failures")

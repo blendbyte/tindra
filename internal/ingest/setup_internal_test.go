@@ -3,12 +3,9 @@ package ingest
 import (
 	"context"
 	"errors"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -98,44 +95,20 @@ func TestSetupDiagnosticsFollowAtomicWriteOutcome(t *testing.T) {
 	}
 }
 
-type setupObservationCounter struct {
-	writes atomic.Int32
-}
-
-func (c *setupObservationCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	if strings.Contains(data.SQL, "INSERT INTO project_setup_observations") {
-		c.writes.Add(1)
-	}
-	return ctx
-}
-
-func (*setupObservationCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
-
+// Deduplication is independent of database latency. Persistence is covered above.
 func TestSetupFailureRecordsEachProjectOncePerBatch(t *testing.T) {
-	ctx := t.Context()
-	pool, cleanup := testutil.SetupDB(ctx)
-	defer cleanup()
-	p, err := storage.CreateProject(ctx, pool, "deduplicated-setup", "Setup")
-	require.NoError(t, err)
-	other, err := storage.CreateProject(ctx, pool, "other-setup", "Other")
-	require.NoError(t, err)
-	counter := &setupObservationCounter{}
-	config := pool.Config()
-	config.ConnConfig.Tracer = counter
-	observed, err := pgxpool.NewWithConfig(ctx, config)
-	require.NoError(t, err)
-	defer observed.Close()
-	recordSetupWriteFailure(ctx, observed, "events", []string{p.ID, p.ID, other.ID, p.ID, other.ID}, errors.New("batch rolled back"))
-	require.EqualValues(t, 2, counter.writes.Load(), "each affected project should incur exactly one diagnostics write")
-	for _, id := range []string{p.ID, other.ID} {
-		observations, err := storage.ListSetupObservations(ctx, pool, id)
-		require.NoError(t, err)
-		require.Len(t, observations, 1)
-		require.Equal(t, "events", observations[0].Kind)
-		require.Equal(t, "rejected", observations[0].Outcome)
-		require.Equal(t, "storage_failed", observations[0].Reason)
-		receipts, err := storage.ListSetupReceipts(ctx, pool, id)
-		require.NoError(t, err)
-		require.Empty(t, receipts)
+	writes := map[string][]storage.SetupObservation{}
+	recordSetupFailures(t.Context(), "events", []string{"first", "first", "second", "first", "second"}, errors.New("batch rolled back"),
+		func(ctx context.Context, id string, observations []storage.SetupObservation) error {
+			require.NoError(t, ctx.Err())
+			writes[id] = append(writes[id], observations...)
+			return nil
+		})
+	require.Len(t, writes, 2)
+	for _, id := range []string{"first", "second"} {
+		require.Len(t, writes[id], 1)
+		require.Equal(t, "events", writes[id][0].Kind)
+		require.Equal(t, "rejected", writes[id][0].Outcome)
+		require.Equal(t, "storage_failed", writes[id][0].Reason)
 	}
 }
