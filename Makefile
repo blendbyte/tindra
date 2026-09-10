@@ -2,6 +2,7 @@
 
 BINARY  := bin/tindra
 COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+DEV_COMPOSE := $(COMPOSE) -p tindra-dev -f docker-compose.dev.yml
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
@@ -49,13 +50,13 @@ web:
 
 # Start only Postgres for local dev (use alongside `make run`)
 db:
-	$(COMPOSE) up postgres -d
+	$(DEV_COMPOSE) up -d postgres
 
 db-stop:
-	$(COMPOSE) stop postgres
+	$(DEV_COMPOSE) stop postgres
 
 db-logs:
-	$(COMPOSE) logs -f postgres
+	$(DEV_COMPOSE) logs -f postgres
 
 # Absorb extra words passed after `make cli ...` so Make doesn't error
 %:
