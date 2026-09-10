@@ -950,9 +950,8 @@ function finishSetup() {
 </template>
 
 <style scoped>
-.empty-state--setup { display: block; padding: 32px 24px 48px; }
+.empty-state--setup { display: block; }
 .empty-state--setup > .empty-state__ghosts { display: none; }
-@media (max-width: 600px) { .empty-state--setup { padding: 24px 12px; } }
 /* ── KPI strip ──────────────────────────────────────────────────────────────── */
 
 .db-kpis {

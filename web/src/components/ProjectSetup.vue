@@ -187,7 +187,7 @@ async function upload() {
   <section class="setup" :aria-labelledby="`${id}-title`">
     <header class="setup__header">
       <div>
-        <p class="setup__eyebrow">Project setup · {{ project.name }}</p>
+        <p class="setup__eyebrow"><Icon name="braces" :size="14" /> Project setup <span>/</span> {{ project.name }}</p>
         <h2 :id="`${id}-title`">{{ headline }}</h2>
         <p>Connect your app, confirm an event, then check any optional data you need.</p>
       </div>
@@ -202,12 +202,15 @@ async function upload() {
       <button v-else class="btn" @click="refetch()">Try again</button>
     </div>
 
+    <div class="setup__layout">
+    <div class="setup__main">
     <div class="setup__connection">
-      <div>
+      <div class="setup__panel-head"><Icon name="braces" :size="14" /><h3>Connect your application</h3></div>
+      <div class="field">
         <label class="field__label" :for="`${id}-dsn`">Project DSN</label>
         <div class="setup__inline">
           <input :id="`${id}-dsn`" class="field__input mono" readonly :value="dsn" />
-          <button class="btn" @click="copy(dsn, 'DSN')">Copy DSN</button>
+          <button class="btn" @click="copy(dsn, 'DSN')"><Icon name="copy" :size="12" />Copy DSN</button>
         </div>
       </div>
       <div class="setup__inline">
@@ -222,7 +225,7 @@ async function upload() {
         <template v-if="sdk !== 'other'">
           <p>Install <code>{{ sdk === 'node' ? '@sentry/node' : '@sentry/browser' }}</code> in your app. For an existing integration, keep its initialization and run the test block below.</p>
           <div class="setup__code">
-            <pre><code>{{ snippet }}</code></pre>
+            <pre class="codeblock"><code>{{ snippet }}</code></pre>
             <button class="btn" :class="{ 'btn--primary': !confirmed }" @click="copy(snippet, 'Snippet')">Copy snippet</button>
           </div>
         </template>
@@ -246,7 +249,7 @@ async function upload() {
     </div>
 
     <details :open="waitingLong || focus === 'errors'" class="setup__section">
-      <summary>Nothing arriving?</summary>
+      <summary><Icon class="setup__chevron" name="chevron-right" :size="12" />Nothing arriving?</summary>
       <ol>
         <li>Check that the running app uses the DSN above, including its public key and host.</li>
         <li>Inspect the SDK’s request or debug output. Check for blocked network requests, proxy errors, and HTTP 401, 413, or 429 responses.</li>
@@ -256,11 +259,12 @@ async function upload() {
       <p v-for="o in data?.observations.filter(o => o.kind === 'envelope' && o.outcome === 'rejected')" :key="o.reason">{{ reasonText[o.reason] }} <span class="setup__muted">Observed {{ time(o.observed_at) }}.</span></p>
     </details>
 
+    </div>
     <div v-if="data" class="setup__checks">
-      <h3>Data checks</h3>
+      <div class="setup__panel-head"><Icon name="activity" :size="14" /><h3>Data checks</h3></div>
       <p class="setup__muted">Transactions, profiles, and source maps are optional. These checks cover this project across all environments and time filters.</p>
       <details v-for="item in kinds" :key="item.kind" class="setup__section" :open="focus === item.kind || (focus === 'profiles' && item.kind === 'profile_chunks')">
-        <summary><span>{{ item.title }}</span><span class="setup__state" :class="{ 'setup__state--ok': state(item.kind) === 'Received' }">{{ state(item.kind) }}</span></summary>
+        <summary><Icon class="setup__chevron" name="chevron-right" :size="12" /><span>{{ item.title }}</span><span class="setup__state" :class="{ 'setup__state--ok': state(item.kind) === 'Received', 'setup__state--warning': state(item.kind) === 'Needs attention' }">{{ state(item.kind) }}</span></summary>
         <p v-if="receipt(item.kind)">First stored {{ time(receipt(item.kind)!.first_received_at) }}. Last stored {{ time(receipt(item.kind)!.last_received_at) }}.</p>
         <p v-if="state(item.kind) === 'Queued'">Tindra accepted this data into its queue, but has not confirmed storage. Check again shortly; if this persists, check the server’s database and writer logs.</p>
         <p>{{ item.help }}</p>
@@ -277,7 +281,7 @@ async function upload() {
       </details>
 
       <details class="setup__section" :open="focus === 'sourcemaps'">
-        <summary><span>Source maps</span><span class="setup__state">{{ verification ? ({ verified: 'Verified', partially_verified: 'Some frames resolved', needs_attention: 'Needs attention', no_frames: 'No stack frames', not_applicable: 'Not applicable' }[verification.status] ?? 'Not verified') : data.sourcemap_count ? `${data.sourcemap_count} uploaded, not verified` : 'Not verified' }}</span></summary>
+        <summary><Icon class="setup__chevron" name="chevron-right" :size="12" /><span>Source maps</span><span class="setup__state">{{ verification ? ({ verified: 'Verified', partially_verified: 'Some frames resolved', needs_attention: 'Needs attention', no_frames: 'No stack frames', not_applicable: 'Not applicable' }[verification.status] ?? 'Not verified') : data.sourcemap_count ? `${data.sourcemap_count} uploaded, not verified` : 'Not verified' }}</span></summary>
         <p>Verify an error from your built JavaScript app. Tindra matches its release and file URL against your uploads, then checks the original source location.</p>
         <p v-if="!data.sourcemaps_available">Source map storage is not configured on this server.</p>
         <template v-else>
@@ -313,6 +317,7 @@ async function upload() {
         </template>
       </details>
     </div>
+    </div>
     <footer class="setup__footer">
       <span class="setup__muted">{{ data ? `Last checked ${time(data.checked_at)}` : 'Setup status is not yet available.' }}</span>
       <button class="btn" :class="{ 'btn--primary': connected || confirmed }" @click="finish">{{ connected || confirmed ? 'Continue to dashboard' : 'Set up later' }}</button>
@@ -321,47 +326,76 @@ async function upload() {
 </template>
 
 <style scoped>
-.setup { max-width: 820px; width: 100%; margin: 0 auto; text-align: left; color: var(--text-1); font-size: var(--text-sm); line-height: 1.6; }
-.setup__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 28px; }
-.setup__eyebrow { color: var(--text-3); margin: 0 0 8px; }
-.setup h2 { font-size: var(--text-xl); font-weight: 600; margin: 0 0 8px; }
-.setup h3 { font-size: var(--text-base); font-weight: 600; margin: 0 0 8px; }
-.setup p { margin-bottom: 12px; }
+.setup { width: 100%; min-width: 0; text-align: left; color: var(--text-1); font-size: var(--text-sm); line-height: 1.6; }
+.setup__header { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px; border-bottom: 1px solid var(--border); }
+.setup__eyebrow { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: var(--text-xs); }
+.setup__eyebrow span { color: var(--border); }
+.setup h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 8px 0 4px; }
+.setup h3 { font-size: var(--text-xs); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; margin: 0; }
+.setup p { margin: 0 0 12px; }
+.setup__header p:last-child { margin-bottom: 0; color: var(--text-2); }
 .setup__header .btn { flex-shrink: 0; }
-.setup__connection { display: grid; gap: 16px; padding: 24px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; }
-.setup__inline { display: flex; align-items: center; gap: 12px; }
+.setup__layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; border-bottom: 1px solid var(--border); }
+.setup__main { min-width: 0; }
+.setup__connection { display: grid; gap: 16px; padding: 0 24px 20px; }
+.setup__panel-head { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border-soft); color: var(--text-3); }
+.setup__connection > .setup__panel-head { margin: 0 -24px; }
+.setup__connection > p { margin: 0; color: var(--text-2); }
+.setup__inline { display: flex; align-items: center; gap: 8px; }
 .setup__inline input { flex: 1; min-width: 0; }
 .setup__inline select { width: auto; max-width: 100%; }
-.setup .btn { white-space: nowrap; min-height: 36px; }
-.setup__code { background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px; padding: 16px; min-width: 0; }
-.setup__code pre { overflow: auto; font-size: var(--text-sm); line-height: 1.7; margin-bottom: 12px; }
-.setup__muted { color: var(--text-3); }
+.setup .field__input { height: 30px; padding-left: 10px; font-size: var(--text-xs); }
+.setup .btn { white-space: nowrap; }
+.setup__code { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.setup__code pre { width: 100%; line-height: 1.7; }
+.setup__muted { color: var(--text-3); font-size: var(--text-xs); }
 .setup__result:empty { display: none; }
-.setup__result--success strong, .setup__state--ok { color: var(--success); }
-.setup__notice { padding: 16px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 16px; }
-.setup__checks { margin-top: 32px; }
-.setup__section { border-bottom: 1px solid var(--border-soft); padding: 16px 0; }
-.setup__section summary { cursor: pointer; font-weight: 500; }
-.setup__section summary::marker { color: var(--text-3); }
-.setup__section summary + p, .setup__section ol { margin-top: 12px; }
-.setup__state { float: right; color: var(--text-3); font-size: var(--text-sm); font-weight: 400; max-width: 65%; text-align: right; }
+.setup__result { padding: 12px; border: 1px solid var(--border-soft); background: var(--surface); border-radius: 3px; }
+.setup__result p:last-child { margin-bottom: 0; }
+.setup__result--success { background: oklch(from var(--success) l c h / 0.06); border-color: oklch(from var(--success) l c h / 0.25); }
+.setup__result--success strong { color: var(--success); }
+.setup__notice { padding: 16px 24px; border-bottom: 1px solid var(--border); }
+.setup > p[role="status"] { padding: 12px 24px; margin: 0; color: var(--text-3); }
+.setup__checks { min-width: 0; border-left: 1px solid var(--border); }
+.setup__checks > p { padding: 16px; margin: 0; border-bottom: 1px solid var(--border-soft); }
+.setup__section { border-bottom: 1px solid var(--border-soft); padding: 0 16px; }
+.setup__section:last-child { border-bottom: 0; }
+.setup__main > .setup__section { border-top: 1px solid var(--border-soft); padding: 0 24px; }
+.setup__section summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; min-height: 44px; list-style: none; }
+.setup__section summary::-webkit-details-marker { display: none; }
+.setup__section summary:hover { color: var(--accent); }
+.setup__chevron { flex-shrink: 0; color: var(--text-3); }
+.setup__section[open] > summary .setup__chevron { transform: rotate(90deg); }
+.setup__section[open] { padding-bottom: 16px; }
+.setup__section > p { color: var(--text-2); }
+.setup__state { margin-left: auto; color: var(--text-3); font-size: var(--text-xs); font-weight: 400; text-align: right; }
 .setup__state--ok { color: var(--success); }
-.setup ol { list-style: decimal; padding-left: 22px; }
+.setup__state--warning { color: var(--warning); }
+.setup ol { list-style: decimal; padding-left: 22px; margin-bottom: 12px; color: var(--text-2); }
 .setup li { padding: 4px 0; }
-.setup__doc { margin-left: 12px; color: var(--accent); text-decoration: underline; }
+.setup__doc { display: inline-block; margin-top: 8px; color: var(--accent); }
 .setup__verification { margin-top: 16px; overflow-wrap: anywhere; }
 .setup__verification li { padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
 .setup__verification p { margin-bottom: 4px; }
+.setup__checks .setup__inline { flex-wrap: wrap; }
+.setup__checks .setup__inline input { flex-basis: 100%; }
 .setup__upload { margin-top: 20px; }
-.setup__upload form { display: grid; gap: 8px; max-width: 480px; margin-top: 12px; }
+.setup__upload form { display: grid; gap: 8px; margin-top: 12px; }
+.setup__upload input { min-width: 0; max-width: 100%; }
 .setup__upload .btn { justify-self: start; margin-top: 8px; }
-.setup__footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; }
+.setup__footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 24px; }
+@media (max-width: 1000px) {
+  .setup__layout { grid-template-columns: minmax(0, 1fr); }
+  .setup__checks { border-left: 0; border-top: 1px solid var(--border); }
+}
 @media (max-width: 600px) {
-  .setup__header, .setup__footer { flex-direction: column; align-items: flex-start; gap: 12px; }
-  .setup__connection { padding: 16px; }
+  .setup__header { flex-direction: column; align-items: flex-start; gap: 16px; padding: 20px 16px; }
+  .setup__connection { padding: 0 16px 16px; }
+  .setup__connection > .setup__panel-head { margin: 0 -16px; }
+  .setup__main > .setup__section { padding-left: 16px; padding-right: 16px; }
   .setup__inline { flex-wrap: wrap; }
   .setup__inline input { flex-basis: 100%; }
-  .setup .btn { min-height: 44px; }
-  .setup__state { float: none; display: block; text-align: left; max-width: 100%; margin-left: 16px; }
+  .setup .btn, .setup .field__input { min-height: 40px; }
+  .setup__footer { padding: 16px; flex-wrap: wrap; }
 }
 </style>
