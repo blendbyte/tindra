@@ -25,6 +25,8 @@ const passwordMissing = computed(() => error.value === 'required' && !password.v
 // MFA step
 const mfaToken = ref<string | null>(null)
 const mfaCode = ref('')
+const mfaInput = ref<HTMLInputElement | null>(null)
+watch(mfaInput, input => input?.focus(), { flush: 'post' })
 const mfaLoading = ref(false)
 
 const { data: providersData } = useQuery({
@@ -146,17 +148,22 @@ function backToLogin() {
             <Icon name="shield" :size="22" />
           </div>
           <div class="login__mfa-title">Two-factor authentication</div>
-          <div class="login__mfa-hint">Enter the 6-digit code from your authenticator app.</div>
+          <div id="login-mfa-hint" class="login__mfa-hint">Enter the 6-digit code from your authenticator app.</div>
+          <label for="login-mfa-code" class="field__label">Authenticator code</label>
           <input
+            id="login-mfa-code"
+            ref="mfaInput"
             v-model="mfaCode"
             class="field__input login__mfa-code"
             placeholder="000000"
             maxlength="6"
             inputmode="numeric"
             autocomplete="one-time-code"
+            :aria-invalid="!!loginError || undefined"
+            :aria-describedby="loginError ? 'login-mfa-hint login-mfa-error' : 'login-mfa-hint'"
             autofocus
           />
-          <div v-if="loginError" class="login__error-box">
+          <div v-if="loginError" id="login-mfa-error" class="login__error-box" role="alert">
             <Icon name="alert-circle" :size="14" class="login__error-icon" />
             <div>
               <div class="login__error-title">{{ loginError.title }}</div>

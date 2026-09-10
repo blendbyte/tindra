@@ -16,6 +16,8 @@ const setupData = ref<{ secret: string; uri: string; qr: string } | null>(null)
 const loadError = ref<string | null>(null)
 const showSecret = ref(false)
 const code = ref('')
+const codeInput = ref<HTMLInputElement | null>(null)
+watch(codeInput, input => input?.focus(), { flush: 'post' })
 const confirmError = ref<string | null>(null)
 const confirming = ref(false)
 const done = ref(false)
@@ -122,17 +124,22 @@ function copySecret() {
 
           <div class="mfa-gate__step" style="margin-top: 20px">
             <span class="mfa-setup-card__num">2</span>
-            <span>Enter the 6-digit code from your app to confirm and activate.</span>
+            <span id="setup-mfa-hint">Enter the 6-digit code from your app to confirm and activate.</span>
           </div>
 
+          <label for="setup-mfa-code" class="field__label">Authenticator code</label>
           <div class="mfa-gate__code-row">
             <input
+              id="setup-mfa-code"
+              ref="codeInput"
               v-model="code"
               class="field__input login__mfa-code mfa-gate__code-input"
               placeholder="000000"
               maxlength="6"
               inputmode="numeric"
               autocomplete="one-time-code"
+              :aria-invalid="!!confirmError || undefined"
+              :aria-describedby="confirmError ? 'setup-mfa-hint setup-mfa-error' : 'setup-mfa-hint'"
               autofocus
             />
             <button
@@ -144,7 +151,7 @@ function copySecret() {
             </button>
           </div>
 
-          <div v-if="confirmError" class="login__error-box" style="margin-top: 12px">
+          <div v-if="confirmError" id="setup-mfa-error" role="alert" class="login__error-box" style="margin-top: 12px">
             <Icon name="alert-circle" :size="14" class="login__error-icon" />
             <div class="login__error-title">{{ confirmError }}</div>
           </div>

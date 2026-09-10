@@ -6209,6 +6209,37 @@ describe('switching between Settings and the dedicated Alerts page', () => {
 })
 
 describe('authenticator replacement', () => {
+  it('focuses setup confirmation and links its label, instructions, and error', async () => {
+    const { apiFetch } = await import('@/api/client')
+    currentTab = 'profile'
+    setupMocks(adminUser)
+    vi.mocked(useMutation).mockImplementation((options: any) => ({
+      isPending: ref(false),
+      mutate: async (value: unknown) => {
+        try { options.onSuccess?.(await options.mutationFn(value)) }
+        catch (error) { options.onError?.(error) }
+      },
+    }) as any)
+    vi.mocked(apiFetch).mockResolvedValueOnce({ secret: 'setup', uri: '', qr: '' })
+    const wrapper = mount(SettingsView, { attachTo: document.body, global: { stubs } })
+    await wrapper.findAll('button').find(b => b.text() === 'Enable two-factor auth')!.trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+    const input = wrapper.get('#settings-mfa-code')
+    expect(wrapper.get('label[for="settings-mfa-code"]').text()).toBe('Authenticator code')
+    expect(document.activeElement).toBe(input.element)
+    expect(input.attributes('aria-describedby')).toBe('settings-mfa-hint')
+    vi.mocked(apiFetch).mockRejectedValueOnce(new Error('Invalid code'))
+    await input.setValue('123456')
+    await input.trigger('keydown', { key: 'Enter' })
+    await new Promise(r => setTimeout(r, 0))
+    expect(input.attributes('aria-invalid')).toBe('true')
+    expect(input.attributes('aria-describedby')).toBe('settings-mfa-hint settings-mfa-error')
+    expect(wrapper.get('#settings-mfa-error').attributes('role')).toBe('alert')
+    await wrapper.get('.mfa-setup-card').findAll('button').find(b => b.text() === 'Cancel')!.trigger('click')
+    expect(wrapper.find('#settings-mfa-code').exists()).toBe(false)
+    expect(wrapper.find('#settings-mfa-error').exists()).toBe(false)
+  })
+
   it('requires the current code before showing the replacement QR', async () => {
     const { apiFetch } = await import('@/api/client')
     currentTab = 'profile'

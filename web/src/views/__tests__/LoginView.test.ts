@@ -179,6 +179,27 @@ describe('LoginView', () => {
   })
 
   describe('MFA step', () => {
+    it('labels and focuses the code field and associates verification feedback', async () => {
+      const wrapper = await triggerMfa()
+      const input = wrapper.get('#login-mfa-code')
+      expect(wrapper.get('label[for="login-mfa-code"]').text()).toBe('Authenticator code')
+      expect(document.activeElement).toBe(input.element)
+      expect(input.attributes('aria-describedby')).toBe('login-mfa-hint')
+      vi.mocked(apiFetch).mockRejectedValueOnce(new Error('invalid code'))
+      await input.setValue('123456')
+      await new Promise(r => setTimeout(r, 0))
+      expect(input.attributes('aria-invalid')).toBe('true')
+      expect(input.attributes('aria-describedby')).toBe('login-mfa-hint login-mfa-error')
+      expect(wrapper.get('#login-mfa-error').attributes('role')).toBe('alert')
+    })
+
+    it('focuses the code field for an SSO MFA challenge on initial mount', async () => {
+      routeMock.query = { mfa: '1' }
+      const wrapper = mountLogin(['github'])
+      await new Promise(r => setTimeout(r, 0))
+      expect(document.activeElement).toBe(wrapper.get('#login-mfa-code').element)
+    })
+
     async function triggerMfa() {
       vi.mocked(apiFetch).mockResolvedValueOnce({ mfa_required: true, mfa_token: 'tok-123' })
       const wrapper = mountLogin()

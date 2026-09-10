@@ -530,6 +530,8 @@ const showMFASecret = ref(false)
 const showReplaceMFA = ref(false)
 const mfaCurrentCode = ref('')
 const mfaCode = ref('')
+const mfaCodeInput = ref<HTMLInputElement | null>(null)
+watch(mfaCodeInput, input => input?.focus(), { flush: 'post' })
 const mfaSetupError = ref<string | null>(null)
 const showDisableMFA = ref(false)
 const mfaDisablePassword = ref('')
@@ -2846,18 +2848,23 @@ function actionKindOf(action: string) {
                     <Icon name="copy" :size="11" /> Copy
                   </button>
                 </div>
-                <div class="mfa-setup-card__step" style="margin-top: 20px">
+                <div id="settings-mfa-hint" class="mfa-setup-card__step" style="margin-top: 20px">
                   <span class="mfa-setup-card__num">2</span>
                   Enter the 6-digit code from your app to confirm setup.
                 </div>
+                <label for="settings-mfa-code" class="field__label">Authenticator code</label>
                 <div style="display: flex; gap: 8px; align-items: center; margin-top: 10px">
                   <input
+                    id="settings-mfa-code"
+                    ref="mfaCodeInput"
                     v-model="mfaCode"
                     class="field__input mfa-setup-card__code-input"
                     placeholder="000000"
                     maxlength="6"
                     inputmode="numeric"
                     autocomplete="one-time-code"
+                    :aria-invalid="!!mfaSetupError || undefined"
+                    :aria-describedby="mfaSetupError ? 'settings-mfa-hint settings-mfa-error' : 'settings-mfa-hint'"
                     @keydown.enter="confirmMFASetup(mfaCode)"
                   />
                   <button class="btn btn--primary" :disabled="mfaCode.length < 6 || confirmingMFA" @click="confirmMFASetup(mfaCode)">
@@ -2865,7 +2872,7 @@ function actionKindOf(action: string) {
                   </button>
                   <button class="btn btn--ghost" @click="cancelMFASetup">Cancel</button>
                 </div>
-                <div v-if="mfaSetupError" class="profile-error" style="margin-top: 8px">{{ mfaSetupError }}</div>
+                <div v-if="mfaSetupError" id="settings-mfa-error" role="alert" class="profile-error" style="margin-top: 8px">{{ mfaSetupError }}</div>
               </div>
             </template>
 
@@ -2882,12 +2889,13 @@ function actionKindOf(action: string) {
                 <button v-if="!showReplaceMFA" class="btn btn--ghost" @click="showReplaceMFA = true; mfaSetupError = null">Replace authenticator</button>
                 <form v-else @submit.prevent="startMFASetup()">
                   <label class="field__label" for="mfa-current-code">Code from your current authenticator</label>
-                  <input id="mfa-current-code" v-model="mfaCurrentCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required />
-                  <p>Your current authenticator stays active until you confirm the replacement.</p>
+                  <input id="mfa-current-code" v-model="mfaCurrentCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required
+                    :aria-invalid="!!mfaSetupError || undefined" :aria-describedby="mfaSetupError ? 'mfa-replace-hint mfa-replace-error' : 'mfa-replace-hint'" />
+                  <p id="mfa-replace-hint">Your current authenticator stays active until you confirm the replacement.</p>
                   <button class="btn btn--primary" type="submit" :disabled="mfaCurrentCode.length !== 6 || loadingMFASetup">Continue</button>
                   <button class="btn btn--ghost" type="button" @click="showReplaceMFA = false; mfaCurrentCode = ''; mfaSetupError = null">Cancel</button>
                 </form>
-                <div v-if="mfaSetupError" class="profile-error">{{ mfaSetupError }}</div>
+                <div v-if="mfaSetupError" id="mfa-replace-error" role="alert" class="profile-error">{{ mfaSetupError }}</div>
               </div>
               <div v-if="!showDisableMFA" style="margin-top: 14px">
                 <button class="btn btn--ghost" style="color: var(--danger, #ef4444)" @click="showDisableMFA = true; mfaDisableError = null">
@@ -2896,10 +2904,11 @@ function actionKindOf(action: string) {
               </div>
               <div v-else style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px; max-width: 280px">
                 <div class="field">
-                  <label class="field__label">Confirm your password to disable 2FA</label>
-                  <input v-model="mfaDisablePassword" class="field__input" type="password" autocomplete="current-password" />
+                  <label class="field__label" for="mfa-disable-password">Confirm your password to disable 2FA</label>
+                  <input id="mfa-disable-password" v-model="mfaDisablePassword" class="field__input" type="password" autocomplete="current-password"
+                    :aria-invalid="!!mfaDisableError || undefined" :aria-describedby="mfaDisableError ? 'mfa-disable-error' : undefined" />
                 </div>
-                <div v-if="mfaDisableError" class="profile-error">{{ mfaDisableError }}</div>
+                <div v-if="mfaDisableError" id="mfa-disable-error" role="alert" class="profile-error">{{ mfaDisableError }}</div>
                 <div style="display: flex; gap: 8px">
                   <button class="btn btn--primary" :disabled="!mfaDisablePassword || disablingMFA" @click="disableMFA(mfaDisablePassword)" style="background: var(--danger, #ef4444); border-color: var(--danger, #ef4444)">
                     {{ disablingMFA ? 'Disabling…' : 'Disable 2FA' }}

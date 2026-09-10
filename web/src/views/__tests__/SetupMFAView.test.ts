@@ -47,6 +47,22 @@ async function mountReady() {
 }
 
 describe('SetupMFAView', () => {
+  it('labels and focuses the loaded code field and links validation errors', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(mockSetupData)
+    const wrapper = mount(SetupMFAView, { attachTo: document.body, global: { stubs } })
+    await new Promise(r => setTimeout(r, 0))
+    const input = wrapper.get('#setup-mfa-code')
+    expect(wrapper.get('label[for="setup-mfa-code"]').text()).toBe('Authenticator code')
+    expect(document.activeElement).toBe(input.element)
+    expect(input.attributes('aria-describedby')).toBe('setup-mfa-hint')
+    vi.mocked(apiFetch).mockRejectedValueOnce(new Error('Invalid code'))
+    await input.setValue('123456')
+    await new Promise(r => setTimeout(r, 0))
+    expect(input.attributes('aria-invalid')).toBe('true')
+    expect(input.attributes('aria-describedby')).toBe('setup-mfa-hint setup-mfa-error')
+    expect(wrapper.get('#setup-mfa-error').attributes('role')).toBe('alert')
+  })
+
   describe('loading state', () => {
     it('shows loading skeleton while setup data is being fetched', () => {
       vi.mocked(apiFetch).mockReturnValue(new Promise(() => {}))
