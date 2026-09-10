@@ -90,16 +90,15 @@ func TestOAuthResetBeforeCredentialIssuance(t *testing.T) {
 	}
 }
 
-func TestInviteResetBeforeSessionIssuance(t *testing.T) {
+func TestInviteAccountIsInvisibleUntilSessionIssuance(t *testing.T) {
 	pool := oauthDB(t)
 	email := uuid.NewString() + "@invite-race.test"
 	token, err := storage.CreateInvite(t.Context(), pool, "", email, "Invited")
 	require.NoError(t, err)
-	trace := &changeMFAQuery{match: "SELECT password_hash, mfa_enabled FROM users", change: func() {
+	trace := &changeMFAQuery{match: "INSERT INTO sessions", change: func() {
 		u, err := storage.GetUserByEmail(t.Context(), pool, email)
 		require.NoError(t, err)
-		require.NotNil(t, u)
-		require.NoError(t, storage.AdminSetPassword(t.Context(), pool, u.ID, "new-password-1234"))
+		require.Nil(t, u, "an administrator cannot reset an account before admission commits")
 	}}
 	cfg := pool.Config()
 	cfg.ConnConfig.Tracer = trace
@@ -112,6 +111,14 @@ func TestInviteResetBeforeSessionIssuance(t *testing.T) {
 	rec := httptest.NewRecorder()
 	routes.ServeHTTP(rec, httptest.NewRequest("POST", "/"+token, strings.NewReader(`{"password":"old-password-1234"}`)))
 	require.True(t, trace.fired.Load())
-	require.Equal(t, 401, rec.Code, rec.Body.String())
-	require.Empty(t, rec.Result().Cookies())
+	require.Equal(t, 201, rec.Code, rec.Body.String())
+	cookies := rec.Result().Cookies()
+	require.Len(t, cookies, 1)
+	user, err := storage.GetUserByEmail(t.Context(), pool, email)
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	require.NoError(t, storage.AdminSetPassword(t.Context(), pool, user.ID, "replacement-password"))
+	identity, err := storage.GetSessionIdentity(t.Context(), pool, cookies[0].Value)
+	require.NoError(t, err)
+	require.Nil(t, identity)
 }

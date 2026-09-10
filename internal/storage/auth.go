@@ -69,6 +69,12 @@ const (
 )
 
 func CreateUser(ctx context.Context, pool *pgxpool.Pool, email, password string) (*User, error) {
+	return createUser(ctx, pool, email, password)
+}
+
+func createUser(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, email, password string) (*User, error) {
 	if len(password) < minPasswordLen {
 		return nil, fmt.Errorf("password must be at least %d characters", minPasswordLen)
 	}
@@ -81,7 +87,7 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, email, password string)
 	}
 	var u User
 	// The first user created gets all permissions so the instance is usable without manual SQL.
-	err = pool.QueryRow(ctx, `
+	err = db.QueryRow(ctx, `
 		WITH is_first AS (SELECT NOT EXISTS (SELECT 1 FROM users) AS v)
 		INSERT INTO users (email, password_hash,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)

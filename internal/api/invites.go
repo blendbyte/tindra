@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/storage"
@@ -163,58 +164,24 @@ func (ro *router) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inv, err := storage.GetInvite(r.Context(), ro.pool, token)
+	user, session, err := storage.AcceptInviteWithSession(r.Context(), ro.pool, token, req.Password, req.Name, int(ro.userLimit.Load()))
 	if err != nil {
-		slog.Error("get invite", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if inv == nil {
-		http.Error(w, "invite not found or expired", http.StatusNotFound)
-		return
-	}
-
-	if lim := ro.userLimit.Load(); lim > 0 {
-		count, err := storage.CountUsers(r.Context(), ro.pool)
-		if err != nil {
-			slog.Error("count users", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if count >= int64(lim) {
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.Is(err, storage.ErrInviteUserLimit):
 			http.Error(w, "user limit reached", http.StatusTooManyRequests)
-			return
+		case errors.Is(err, storage.ErrInvitePasswordTooShort), errors.Is(err, storage.ErrInvitePasswordTooLong):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_email_key":
+			http.Error(w, "an account with this email already exists", http.StatusBadRequest)
+		default:
+			slog.Error("accept invitation", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
-	}
-
-	user, err := storage.CreateUser(r.Context(), ro.pool, inv.Email, req.Password)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	name := req.Name
-	if name == "" {
-		name = inv.Name
-	}
-	if name != "" {
-		if updated, err2 := storage.UpdateUserProfile(r.Context(), ro.pool, user.ID, name, user.Email, user.Timezone); err2 == nil && updated != nil {
-			user = updated
-		}
-	}
-
-	if err := storage.MarkInviteAccepted(r.Context(), ro.pool, token); err != nil {
-		slog.Error("mark invite accepted", "err", err)
-	}
-
-	session, err := storage.CreateAuthenticatedSession(r.Context(), ro.pool, user)
-	if err != nil {
-		if errors.Is(err, storage.ErrAuthenticationChanged) {
-			http.Error(w, "authentication changed; please sign in again", http.StatusUnauthorized)
-			return
-		}
-		slog.Error("create session after invite accept", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if user == nil {
+		http.Error(w, "invite not found or expired", http.StatusNotFound)
 		return
 	}
 

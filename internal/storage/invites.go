@@ -104,3 +104,81 @@ func DeleteInvite(ctx context.Context, pool *pgxpool.Pool, id string) (bool, err
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+var (
+	ErrInviteUserLimit        = errors.New("user limit reached")
+	ErrInvitePasswordTooShort = fmt.Errorf("password must be at least %d characters", minPasswordLen)
+	ErrInvitePasswordTooLong  = fmt.Errorf("password must be at most %d characters", maxPasswordLen)
+)
+
+// AcceptInviteWithSession claims a live invitation and creates the account and
+// session atomically. A nil user means the invitation is no longer usable.
+func AcceptInviteWithSession(ctx context.Context, pool *pgxpool.Pool, token, password, name string, userLimit int) (*User, *Session, error) {
+	if len(password) < minPasswordLen {
+		return nil, nil, ErrInvitePasswordTooShort
+	}
+	if len(password) > maxPasswordLen {
+		return nil, nil, ErrInvitePasswordTooLong
+	}
+	// Reject arbitrary invalid tokens without taking the instance-wide admission
+	// lock. The transactional claim below remains authoritative after this read.
+	invite, err := GetInvite(ctx, pool, token)
+	if err != nil {
+		return nil, nil, fmt.Errorf("look up invitation: %w", err)
+	}
+	if invite == nil {
+		return nil, nil, nil
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin invitation acceptance: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	// Match OAuth admission's lock order: users table, then invitation row. This
+	// serializes quota checks with all user inserts, including concurrent SSO.
+	if _, err := tx.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return nil, nil, fmt.Errorf("lock invitation admission: %w", err)
+	}
+	var email, invitedName string
+	err = tx.QueryRow(ctx, `UPDATE user_invites SET accepted_at=clock_timestamp()
+		WHERE token_hash=$1 AND accepted_at IS NULL AND expires_at>clock_timestamp()
+		RETURNING email, COALESCE(name, '')`, tokenHash(token)).Scan(&email, &invitedName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("claim invitation: %w", err)
+	}
+	if userLimit > 0 {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&count); err != nil {
+			return nil, nil, fmt.Errorf("count users: %w", err)
+		}
+		if count >= userLimit {
+			return nil, nil, ErrInviteUserLimit
+		}
+	}
+	user, err := createUser(ctx, tx, email, password)
+	if err != nil {
+		return nil, nil, err
+	}
+	if name == "" {
+		name = invitedName
+	}
+	if name != "" {
+		if _, err := tx.Exec(ctx, `UPDATE users SET name=$2 WHERE id=$1`, user.ID, name); err != nil {
+			return nil, nil, fmt.Errorf("set invited user name: %w", err)
+		}
+		user.Name = name
+	}
+	// The new account is not visible outside this transaction yet. A later
+	// password reset cannot race ahead of issuance and will revoke this session.
+	session, err := createSession(ctx, tx, user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, fmt.Errorf("commit invitation acceptance: %w", err)
+	}
+	return user, session, nil
+}
