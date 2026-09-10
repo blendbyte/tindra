@@ -22,18 +22,9 @@ func realIPFromTrustedProxy(trustedProxies []*net.IPNet) func(http.Handler) http
 				host, _, err := net.SplitHostPort(r.RemoteAddr)
 				if err == nil {
 					if ip := net.ParseIP(host); ip != nil && cidrContains(trustedProxies, ip) {
-						if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-							// Leftmost entry is the original client IP.
-							clientIP := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-							if net.ParseIP(clientIP) != nil {
-								r = r.Clone(r.Context())
-								r.RemoteAddr = clientIP + ":0"
-							}
-						} else if xri := r.Header.Get("X-Real-IP"); xri != "" {
-							if net.ParseIP(strings.TrimSpace(xri)) != nil {
-								r = r.Clone(r.Context())
-								r.RemoteAddr = strings.TrimSpace(xri) + ":0"
-							}
+						if clientIP := forwardedClientIP(r.Header, trustedProxies); clientIP != nil {
+							r = r.Clone(r.Context())
+							r.RemoteAddr = net.JoinHostPort(clientIP.String(), "0")
 						}
 					}
 				}
@@ -41,6 +32,29 @@ func realIPFromTrustedProxy(trustedProxies []*net.IPNet) func(http.Handler) http
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// forwardedClientIP walks from the nearest forwarded hop to the first
+// untrusted address. Never skip a malformed hop or fall back to another header
+// when a supplied chain cannot establish a client address.
+func forwardedClientIP(headers http.Header, trustedProxies []*net.IPNet) net.IP {
+	if values := headers.Values("X-Forwarded-For"); len(values) > 0 {
+		chain := strings.Split(strings.Join(values, ","), ",")
+		for i := len(chain) - 1; i >= 0; i-- {
+			ip := net.ParseIP(strings.TrimSpace(chain[i]))
+			if ip == nil {
+				return nil
+			}
+			if !cidrContains(trustedProxies, ip) {
+				return ip
+			}
+		}
+		return nil
+	}
+	if values := headers.Values("X-Real-IP"); len(values) == 1 {
+		return net.ParseIP(strings.TrimSpace(values[0]))
+	}
+	return nil
 }
 
 func cidrContains(cidrs []*net.IPNet, ip net.IP) bool {

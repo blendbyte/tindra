@@ -1,10 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func mustParseCIDR(s string) *net.IPNet {
@@ -248,5 +250,73 @@ func TestCORS_preflightOptions(t *testing.T) {
 	}
 	if called {
 		t.Error("next handler should not be called for OPTIONS preflight")
+	}
+}
+
+func TestRealIPFromTrustedProxyTrustBoundary(t *testing.T) {
+	trusted := []*net.IPNet{mustParseCIDR("10.0.0.0/8"), mustParseCIDR("fd00::/8")}
+	for _, tc := range []struct {
+		name, peer string
+		xff, xri   []string
+		want       string
+	}{
+		{"spoofed leftmost", "10.0.0.1:1234", []string{"192.0.2.99, 198.51.100.2"}, nil, "198.51.100.2:0"},
+		{"multiple trusted hops", "10.0.0.1:1234", []string{"192.0.2.99, 198.51.100.2, 10.1.1.1, 10.2.2.2"}, nil, "198.51.100.2:0"},
+		{"untrusted intervening proxy", "10.0.0.1:1234", []string{"192.0.2.99, 198.51.100.2, 203.0.113.3"}, nil, "203.0.113.3:0"},
+		{"repeated XFF headers", "10.0.0.1:1234", []string{"192.0.2.99", "198.51.100.2, 10.2.2.2"}, nil, "198.51.100.2:0"},
+		{"malformed untrusted prefix ignored", "10.0.0.1:1234", []string{"garbage, 198.51.100.2"}, nil, "198.51.100.2:0"},
+		{"malformed nearest hop", "10.0.0.1:1234", []string{"192.0.2.99, garbage, 10.2.2.2"}, []string{"192.0.2.98"}, "10.0.0.1:1234"},
+		{"empty hop", "10.0.0.1:1234", []string{"192.0.2.99,"}, nil, "10.0.0.1:1234"},
+		{"empty XFF blocks fallback", "10.0.0.1:1234", []string{""}, []string{"192.0.2.99"}, "10.0.0.1:1234"},
+		{"all hops trusted", "10.0.0.1:1234", []string{"10.1.1.1, 10.2.2.2"}, []string{"192.0.2.99"}, "10.0.0.1:1234"},
+		{"no forwarding headers", "10.0.0.1:1234", nil, nil, "10.0.0.1:1234"},
+		{"ambiguous XRI", "10.0.0.1:1234", nil, []string{"192.0.2.99", "198.51.100.2"}, "10.0.0.1:1234"},
+		{"IPv6 client and proxies", "[fd00::1]:1234", []string{"192.0.2.99, 2001:0db8:0000:0000:0000:0000:0000:0002, fd00::2"}, nil, "[2001:db8::2]:0"},
+		{"IPv6 real IP fallback", "10.0.0.1:1234", nil, []string{" 2001:db8::2 "}, "[2001:db8::2]:0"},
+		{"mapped IPv4 canonicalized", "10.0.0.1:1234", []string{"::ffff:198.51.100.2"}, nil, "198.51.100.2:0"},
+		{"untrusted peer", "198.51.100.2:1234", []string{"192.0.2.99"}, nil, "198.51.100.2:1234"},
+		{"peer missing port", "10.0.0.1", []string{"192.0.2.99"}, nil, "10.0.0.1"},
+		{"peer not an IP", "hostname:1234", []string{"192.0.2.99"}, nil, "hostname:1234"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = tc.peer
+			for _, value := range tc.xff {
+				req.Header.Add("X-Forwarded-For", value)
+			}
+			for _, value := range tc.xri {
+				req.Header.Add("X-Real-IP", value)
+			}
+			if got := captureRemoteAddr(realIPFromTrustedProxy(trusted), req); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if req.RemoteAddr != tc.peer {
+				t.Fatal("middleware mutated the original request")
+			}
+		})
+	}
+}
+
+func TestForwardedSpoofingCannotResetIPRateLimit(t *testing.T) {
+	limiter := newRateLimiter(1, time.Minute)
+	h := realIPFromTrustedProxy([]*net.IPNet{mustParseCIDR("10.0.0.0/8")})(limiter.limitByIP()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })))
+	for _, group := range [][]string{
+		{"198.51.100.2", "198.51.100.2", "198.51.100.2"},
+		{"2001:db8::2", "2001:0db8:0000:0000:0000:0000:0000:0002", "2001:db8::2"},
+	} {
+		for i, client := range group {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = "10.0.0.1:1234"
+			req.Header.Set("X-Forwarded-For", fmt.Sprintf("192.0.2.%d, %s, 10.1.1.1", i+1, client))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			want := http.StatusOK
+			if i > 0 {
+				want = http.StatusTooManyRequests
+			}
+			if rec.Code != want {
+				t.Fatalf("client %s request %d: got %d want %d", client, i, rec.Code, want)
+			}
+		}
 	}
 }
