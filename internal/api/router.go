@@ -137,11 +137,9 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	r.Get("/metrics", ro.handleIngestionMetrics)
 	r.Get("/assets/email-logo.png", ro.handleEmailLogo)
 
-	// Envelope ingest: URL carries project UUID, public key comes via X-Sentry-Auth header.
+	// Envelope ingestion authenticates and rate-limits by the public key's project.
 	r.Options("/api/{projectID}/envelope/", ro.handleEnvelopeCORS)
-	r.With(ro.envelopeRL.limitBy(func(r *http.Request) string {
-		return chi.URLParam(r, "projectID")
-	})).Post("/api/{projectID}/envelope/", ro.handleEnvelope)
+	r.Post("/api/{projectID}/envelope/", ro.handleEnvelope)
 
 	r.With(loginRL.limitByIP()).Post("/api/auth/login", ro.handleLogin)
 	r.Post("/api/auth/logout", ro.handleLogout)

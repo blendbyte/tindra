@@ -110,6 +110,16 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The URL is only an SDK routing hint. Key limits by the authenticated
+	// project so changing that hint cannot reset the request budget.
+	if ro.envelopeRL != nil && !ro.envelopeRL.allow(project.ID) {
+		_, resetAt := ro.envelopeRL.peek(project.ID)
+		secs := max(int(time.Until(resetAt).Seconds())+1, 1)
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	// Keep a bounded observation per kind/outcome, even for mixed envelopes.
 	observations := map[string]storage.SetupObservation{}
 	observe := func(kind, outcome, reason string) {
