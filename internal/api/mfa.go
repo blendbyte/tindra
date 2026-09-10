@@ -258,9 +258,14 @@ func (ro *router) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Code is correct - now consume the challenge to prevent replay.
-	if _, err := storage.ConsumeMFAChallenge(r.Context(), ro.pool, req.MFAToken); err != nil {
+	consumedUserID, err := storage.ConsumeMFAChallenge(r.Context(), ro.pool, req.MFAToken)
+	if err != nil {
 		slog.Error("consume mfa challenge", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if consumedUserID != userID {
+		http.Error(w, "invalid or expired MFA token", http.StatusUnauthorized)
 		return
 	}
 
