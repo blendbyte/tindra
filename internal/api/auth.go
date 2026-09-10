@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -53,8 +54,12 @@ func (ro *router) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// MFA step: issue a short-lived challenge token instead of a full session.
 	if user.MFAEnabled {
-		mfaToken, err := storage.CreateMFAChallenge(r.Context(), ro.pool, user.ID)
+		mfaToken, err := storage.CreateAuthenticatedMFAChallenge(r.Context(), ro.pool, user)
 		if err != nil {
+			if errors.Is(err, storage.ErrAuthenticationChanged) {
+				http.Error(w, "authentication changed; please sign in again", http.StatusUnauthorized)
+				return
+			}
 			slog.Error("create mfa challenge", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -66,8 +71,12 @@ func (ro *router) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := storage.CreateSession(r.Context(), ro.pool, user.ID)
+	session, err := storage.CreateAuthenticatedSession(r.Context(), ro.pool, user)
 	if err != nil {
+		if errors.Is(err, storage.ErrAuthenticationChanged) {
+			http.Error(w, "authentication changed; please sign in again", http.StatusUnauthorized)
+			return
+		}
 		slog.Error("create session", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

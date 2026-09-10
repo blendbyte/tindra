@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -201,8 +202,12 @@ func (ro *router) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		slog.Error("mark invite accepted", "err", err)
 	}
 
-	session, err := storage.CreateSession(r.Context(), ro.pool, user.ID)
+	session, err := storage.CreateAuthenticatedSession(r.Context(), ro.pool, user)
 	if err != nil {
+		if errors.Is(err, storage.ErrAuthenticationChanged) {
+			http.Error(w, "authentication changed; please sign in again", http.StatusUnauthorized)
+			return
+		}
 		slog.Error("create session after invite accept", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

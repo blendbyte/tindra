@@ -40,7 +40,7 @@ type concurrentMFAConsume struct {
 }
 
 func (c *concurrentMFAConsume) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	if strings.Contains(data.SQL, "DELETE FROM mfa_challenges") {
+	if strings.Contains(data.SQL, "SELECT mfa_secret, mfa_enabled FROM users") {
 		if c.arrived.Add(1) == 2 {
 			close(c.ready)
 		}

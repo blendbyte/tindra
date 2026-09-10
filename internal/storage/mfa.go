@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -57,13 +58,19 @@ func DisableMFA(ctx context.Context, pool *pgxpool.Pool, userID string) error {
 
 // CreateMFAChallenge issues a short-lived token after password passes but before TOTP is verified.
 func CreateMFAChallenge(ctx context.Context, pool *pgxpool.Pool, userID string) (string, error) {
+	return createMFAChallenge(ctx, pool, userID)
+}
+
+func createMFAChallenge(ctx context.Context, db interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, userID string) (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate: %w", err)
 	}
 	token := hex.EncodeToString(b)
 	expiresAt := time.Now().Add(10 * time.Minute)
-	_, err := pool.Exec(ctx, `
+	_, err := db.Exec(ctx, `
 		INSERT INTO mfa_challenges (token_hash, user_id, expires_at) VALUES ($1, $2, $3)
 	`, tokenHash(token), userID, expiresAt)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image/png"
 	"log/slog"
 	"net/http"
@@ -257,21 +258,14 @@ func (ro *router) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Code is correct - now consume the challenge to prevent replay.
-	consumedUserID, err := storage.ConsumeMFAChallenge(r.Context(), ro.pool, req.MFAToken)
-	if err != nil {
-		slog.Error("consume mfa challenge", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if consumedUserID != userID {
+	// Commit challenge consumption and session creation together with reset protection.
+	session, err := storage.CompleteMFALogin(r.Context(), ro.pool, req.MFAToken, userID, *secret)
+	if errors.Is(err, storage.ErrAuthenticationChanged) {
 		http.Error(w, "invalid or expired MFA token", http.StatusUnauthorized)
 		return
 	}
-
-	session, err := storage.CreateSession(r.Context(), ro.pool, userID)
 	if err != nil {
-		slog.Error("create session", "err", err)
+		slog.Error("complete mfa login", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

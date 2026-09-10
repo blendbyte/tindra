@@ -232,8 +232,8 @@ func TestMFADisable_success(t *testing.T) {
 
 func TestMFAVerify_success(t *testing.T) {
 	const secret = "JBSWY3DPEHPK3PXP"
-	testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = $1 WHERE id = $2", secret, testUser.ID)
-	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_enabled = true, mfa_secret = $1 WHERE id = $2", secret, testUser.ID)
+	defer testPool.Exec(context.Background(), "UPDATE users SET mfa_enabled = false, mfa_secret = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $1", testUser.ID)
 
 	token, err := storage.CreateMFAChallenge(context.Background(), testPool, testUser.ID)
 	if err != nil {

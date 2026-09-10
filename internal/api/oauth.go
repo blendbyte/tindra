@@ -380,8 +380,12 @@ func (ro *router) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if user.MFAEnabled {
-		token, err := storage.CreateMFAChallenge(r.Context(), ro.pool, user.ID)
+		token, err := storage.CreateAuthenticatedMFAChallenge(r.Context(), ro.pool, user)
 		if err != nil {
+			if errors.Is(err, storage.ErrAuthenticationChanged) {
+				http.Error(w, "authentication changed; please sign in again", http.StatusUnauthorized)
+				return
+			}
 			slog.Error("create oauth mfa challenge", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -394,8 +398,12 @@ func (ro *router) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := storage.CreateSession(r.Context(), ro.pool, user.ID)
+	session, err := storage.CreateAuthenticatedSession(r.Context(), ro.pool, user)
 	if err != nil {
+		if errors.Is(err, storage.ErrAuthenticationChanged) {
+			http.Error(w, "authentication changed; please sign in again", http.StatusUnauthorized)
+			return
+		}
 		slog.Error("create session", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
