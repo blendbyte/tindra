@@ -28,7 +28,7 @@
   </picture>
 </p>
 
-One Go binary. One Postgres database. Compatible with every Sentry SDK: point your DSN at Tindra and nothing else changes.
+Tindra runs as one Go binary with one Postgres database and uses Sentry SDKs with a Tindra DSN.
 
 - **Dashboard** with KPI strip, transaction density heatmap, hottest issues, release health, and recent alerts
 - **Error tracking** with grouping, stack traces, breadcrumbs, tags, assignees, merge and resolve
@@ -44,10 +44,10 @@ One Go binary. One Postgres database. Compatible with every Sentry SDK: point yo
 - **Source maps** resolved server-side, no client exposure
 - **Guided project setup** with test-event confirmation, ingestion diagnostics, and source map verification against real stack frames
 - **Ingestion monitoring** with authenticated Prometheus metrics for queue depth, retries, rejected data, and ingestion health
-- **SSO** with Google, GitHub, Microsoft, Auth0, Zitadel, and any OIDC provider
-- **Real-time** updates: new issues appear in the UI within a second of receipt
+- **SSO and MFA** with Google, GitHub, Microsoft, Auth0, Zitadel, and OIDC providers, plus authenticator-based two-factor authentication. Microsoft requires a tenant ID and explicit account linking
+- **Automatic refresh** with pause and manual refresh controls
 - **MCP server** built in to inspect full event payloads, source-mapped stack traces, breadcrumbs, and older event occurrences from Claude or any MCP client via `POST /mcp` using an API token
-- **Keyboard-first UI** with command palette, full dark mode, and virtualized lists at 60 fps
+- **Keyboard-first UI** with command palette, full dark mode, and virtualized lists
 
 ## Self-host
 
@@ -58,6 +58,35 @@ bash -c "$(curl -sSL https://install.tindra.sh)"
 The installer creates a `docker-compose.yml` with a random database password, pulls the images, and sets up your first account. No manual SQL, no config files.
 
 Full setup guide, environment variable reference, and backup docs at [tindra.sh/docs](https://tindra.sh/docs).
+
+## Local development
+
+Requires Go 1.27+, Bun, and Docker Compose. From the repository root:
+
+```bash
+cp .env.example .env
+```
+
+Set `PUBLIC_URL=http://localhost:5173` in `.env`, then install dependencies and start the backend:
+
+```bash
+(cd web && bun install --frozen-lockfile)
+make web
+make db
+make run
+```
+
+The frontend build supplies the assets embedded by Go. The development database listens on `127.0.0.1:5432`, uses the credentials in `.env.example`, and stores data in a separate `tindra-dev` volume. The backend applies migrations on startup and listens on port 8080.
+
+Once the backend is running, create an account in another terminal, replacing the example password with your own (at least 12 characters), then start the frontend:
+
+```bash
+make cli ARGS='users create --email you@example.com --password "your-local-password"'
+cd web
+bun run dev
+```
+
+Open `http://localhost:5173`. Two-factor enrollment is required by default. Use `make db-stop` to stop the development database.
 
 ## License
 
