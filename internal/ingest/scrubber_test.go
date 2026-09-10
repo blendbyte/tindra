@@ -412,3 +412,40 @@ func TestScrubTransaction_blockedUserFields(t *testing.T) {
 		})
 	}
 }
+
+func TestScrubTransaction_FieldRulesDoNotRequirePatterns(t *testing.T) {
+	for _, scenario := range []struct {
+		name            string
+		patterns        []ScrubPattern
+		wantDescription string
+		wantContact     string
+	}{
+		{"no patterns", nil, "contact alice@example.com", "alice@example.com"},
+		{"disabled pattern", []ScrubPattern{{Name: "email", Builtin: true, Enabled: false}}, "contact alice@example.com", "alice@example.com"},
+		{"invalid pattern", []ScrubPattern{{Name: "invalid", Pattern: "[", Enabled: true}}, "contact alice@example.com", "alice@example.com"},
+		{"field and pattern", []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}}, "contact [Filtered]", "[Filtered]"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			original := json.RawMessage(`{"password":"private-secret","user":{"email":"private@example.com","id":"u-1"},"items":[{"token":"private-token","name":"keep"}],"contact":"alice@example.com"}`)
+			before := append([]byte(nil), original...)
+			tx := BufferedTransaction{Spans: []BufferedSpan{
+				{Description: "contact alice@example.com", Data: original},
+				{Data: json.RawMessage(`{"password":"second-secret","keep":true}`)},
+				{},
+			}}
+			ScrubTransaction(&tx, ScrubConfig{Fields: []string{"PASSWORD", "user.email", "items.token"}, Patterns: scenario.patterns})
+			require.JSONEq(t, `{"password":"[Filtered]","user":{"email":"[Filtered]","id":"u-1"},"items":[{"token":"[Filtered]","name":"keep"}],"contact":"`+scenario.wantContact+`"}`, string(tx.Spans[0].Data))
+			require.JSONEq(t, `{"password":"[Filtered]","keep":true}`, string(tx.Spans[1].Data))
+			require.Equal(t, scenario.wantDescription, tx.Spans[0].Description)
+			require.Nil(t, tx.Spans[2].Data)
+			require.Equal(t, before, []byte(original))
+		})
+	}
+}
+
+func TestScrubTransaction_NoRulesLeavesSpansUnchanged(t *testing.T) {
+	tx := BufferedTransaction{Spans: []BufferedSpan{{Description: "keep alice@example.com", Data: json.RawMessage(`{ "password": "keep" }`)}}}
+	ScrubTransaction(&tx, ScrubConfig{})
+	require.Equal(t, "keep alice@example.com", tx.Spans[0].Description)
+	require.Equal(t, `{ "password": "keep" }`, string(tx.Spans[0].Data))
+}
