@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -340,8 +341,16 @@ func (ro *router) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := storage.FindOrCreateOAuthUser(r.Context(), ro.pool, name, sub, email)
+	user, err := storage.FindOrCreateOAuthUser(r.Context(), ro.pool, name, sub, email, int(ro.userLimit.Load()))
 	if err != nil {
+		if errors.Is(err, storage.ErrOAuthInviteRequired) {
+			http.Error(w, "An invitation is required to sign in. Contact your administrator.", http.StatusForbidden)
+			return
+		}
+		if errors.Is(err, storage.ErrOAuthUserLimit) {
+			http.Error(w, "The user limit has been reached. Contact your administrator.", http.StatusTooManyRequests)
+			return
+		}
 		slog.Error("find or create oauth user", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

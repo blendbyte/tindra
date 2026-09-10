@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/blendbyte/tindra/internal/ingest"
@@ -177,6 +178,9 @@ func TestHandleOAuthCallback_providerMismatch(t *testing.T) {
 
 func TestHandleOAuthCallback_fullFlow(t *testing.T) {
 	pool := oauthDB(t)
+	if _, err := storage.CreateInvite(t.Context(), pool, "", "user@example.com", "Invited user"); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	// Insert a valid state for "google" directly so we can pass it to the
@@ -215,5 +219,113 @@ func TestHandleOAuthCallback_fullFlow(t *testing.T) {
 	}
 	if sessionCookie == nil {
 		t.Error("expected tindra_session cookie to be set after successful OAuth callback")
+	}
+}
+
+// Each callback test uses a distinct identity so existing accounts cannot mask
+// a missing invitation or a full instance.
+type admissionProvider struct {
+	mockProvider
+	email string
+}
+
+func (p admissionProvider) Exchange(_ context.Context, _, _ string) (string, string, error) {
+	return p.email, p.email, nil
+}
+
+func TestHandleOAuthCallbackAdmission(t *testing.T) {
+	pool := oauthDB(t)
+	for _, scenario := range []struct {
+		name   string
+		invite bool
+		full   bool
+		status int
+	}{
+		{name: "uninvited", status: http.StatusForbidden},
+		{name: "invited", invite: true, status: http.StatusFound},
+		{name: "at-limit", invite: true, full: true, status: http.StatusTooManyRequests},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			email := uuid.NewString() + "@admission.example.com"
+			if scenario.invite {
+				if _, err := storage.CreateInvite(t.Context(), pool, "", email, "Invited"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h := NewRouter(pool, nil, nil, nil, nil, nil, []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+			if scenario.full {
+				count, err := storage.CountUsers(t.Context(), pool)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if count == 0 {
+					if _, err := storage.CreateOAuthUser(t.Context(), pool, uuid.NewString()+"@existing.example.com"); err != nil {
+						t.Fatal(err)
+					}
+					count = 1
+				}
+				h.SetLimits(0, 0, int(count))
+			}
+			state, err := storage.CreateOAuthState(t.Context(), pool, "admission", "verifier")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/auth/admission/callback?state="+state+"&code=code", nil))
+			if rec.Code != scenario.status {
+				t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
+			}
+			if scenario.status != http.StatusFound {
+				if len(rec.Result().Cookies()) != 0 {
+					t.Fatal("rejected callback must not issue a session")
+				}
+				user, err := storage.GetUserByEmail(t.Context(), pool, email)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if user != nil {
+					t.Fatal("rejected callback created an account")
+				}
+			}
+		})
+	}
+}
+
+func TestHandleOAuthCallbackAdmissionDatabaseFailure(t *testing.T) {
+	pool := oauthDB(t)
+	for _, stage := range []string{"DELETE FROM oauth_states", "SELECT user_id FROM oauth_identities", "INSERT INTO sessions"} {
+		t.Run(stage, func(t *testing.T) {
+			email := uuid.NewString() + "@example.com"
+			if _, err := storage.CreateInvite(t.Context(), pool, "", email, "Invited"); err != nil {
+				t.Fatal(err)
+			}
+			state, err := storage.CreateOAuthState(t.Context(), pool, "admission", "verifier")
+			if err != nil {
+				t.Fatal(err)
+			}
+			trace := &cancelDashboardQuery{match: stage}
+			cfg := pool.Config()
+			cfg.ConnConfig.Tracer = trace
+			failing, err := pgxpool.NewWithConfig(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer failing.Close()
+			h := routerWithSSOAndPool(failing, admissionProvider{mockProvider{name: "admission"}, email})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/auth/admission/callback?state="+state+"&code=code", nil))
+			if !trace.hit.Load() {
+				t.Fatal("failure query was not reached")
+			}
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() != "internal error\n" {
+				t.Fatalf("unexpected error disclosure: %s", rec.Body.String())
+			}
+			if len(rec.Result().Cookies()) != 0 {
+				t.Fatal("failed callback must not issue a session")
+			}
+		})
 	}
 }

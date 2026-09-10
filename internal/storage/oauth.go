@@ -22,44 +22,84 @@ type OAuthIdentity struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// FindOrCreateOAuthUser looks up an existing OAuth identity and returns its user.
-// If the identity doesn't exist, it finds or creates a local user by email and links the identity.
-func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, sub, email string) (*User, error) {
-	email = strings.ToLower(email)
+var (
+	ErrOAuthInviteRequired = errors.New("an invitation is required to sign in")
+	ErrOAuthUserLimit      = errors.New("user limit reached")
+)
 
-	// Fast path: identity already linked.
+// FindOrCreateOAuthUser links an existing account or redeems a valid invitation
+// for the provider email. New users receive no management permissions.
+func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, sub, email string, userLimit int) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	// Returning identities do not need an invitation or an available user slot.
 	var userID string
-	err := pool.QueryRow(ctx, `
-		SELECT user_id FROM oauth_identities WHERE provider = $1 AND sub = $2
-	`, provider, sub).Scan(&userID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("lookup identity: %w", err)
-	}
+	err := pool.QueryRow(ctx, `SELECT user_id FROM oauth_identities WHERE provider = $1 AND sub = $2`, provider, sub).Scan(&userID)
 	if err == nil {
 		return GetUserByID(ctx, pool, userID)
 	}
-
-	// Identity not found - find or create user by email, then link.
-	user, err := GetUserByEmail(ctx, pool, email)
-	if err != nil {
-		return nil, err
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("lookup identity: %w", err)
 	}
-	if user == nil {
-		user, err = CreateOAuthUser(ctx, pool, email)
-		if err != nil {
-			return nil, err
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin OAuth admission: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	// Serialize first-time admissions and block concurrent user inserts while
+	// checking the quota. Ordinary reads and returning SSO logins remain unlocked.
+	if _, err := tx.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return nil, fmt.Errorf("lock OAuth admission: %w", err)
+	}
+	// Another callback may have linked this identity while we waited.
+	err = tx.QueryRow(ctx, `SELECT user_id FROM oauth_identities WHERE provider = $1 AND sub = $2`, provider, sub).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, email).Scan(&userID)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		var inviteID, name string
+		err = tx.QueryRow(ctx, `SELECT id, COALESCE(name, '') FROM user_invites
+			WHERE lower(email) = $1 AND accepted_at IS NULL AND expires_at > NOW()
+			ORDER BY created_at, id LIMIT 1 FOR UPDATE`, email).Scan(&inviteID, &name)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrOAuthInviteRequired
 		}
+		if err != nil {
+			return nil, fmt.Errorf("find OAuth invitation: %w", err)
+		}
+		if userLimit > 0 {
+			var count int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&count); err != nil {
+				return nil, fmt.Errorf("count users: %w", err)
+			}
+			if count >= userLimit {
+				return nil, ErrOAuthUserLimit
+			}
+		}
+		err = tx.QueryRow(ctx, `INSERT INTO users (email, name, password_hash) VALUES ($1, $2, '') RETURNING id`, email, name).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("create invited OAuth user: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE user_invites SET accepted_at = NOW() WHERE id = $1`, inviteID); err != nil {
+			return nil, fmt.Errorf("accept OAuth invitation: %w", err)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("lookup OAuth account: %w", err)
 	}
 
-	_, err = pool.Exec(ctx, `
-		INSERT INTO oauth_identities (user_id, provider, sub, email)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (provider, sub) DO NOTHING
-	`, user.ID, provider, sub, email)
+	// Re-read the winning identity so a callback never returns a different user
+	// from the one actually linked to this provider subject.
+	err = tx.QueryRow(ctx, `INSERT INTO oauth_identities (user_id, provider, sub, email)
+		VALUES ($1, $2, $3, $4) ON CONFLICT (provider, sub) DO UPDATE SET sub = EXCLUDED.sub
+		RETURNING user_id`, userID, provider, sub, email).Scan(&userID)
 	if err != nil {
-		return nil, fmt.Errorf("insert identity: %w", err)
+		return nil, fmt.Errorf("link OAuth identity: %w", err)
 	}
-	return user, nil
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit OAuth admission: %w", err)
+	}
+	return GetUserByID(ctx, pool, userID)
 }
 
 // CreateOAuthState stores a short-lived PKCE state token.
