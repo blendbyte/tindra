@@ -165,3 +165,13 @@ describe('ResetPasswordView', () => {
 function mountView() {
   return mount(ResetPasswordView, { global: { stubs } })
 }
+
+it('directs SSO recovery to the identity provider without a password form', async () => {
+  vi.mocked(apiFetch).mockResolvedValueOnce({ email: 'user@example.com', sso_required: true })
+  const wrapper = mount(ResetPasswordView, { global: { stubs } })
+  await new Promise((r) => setTimeout(r, 0))
+  expect(wrapper.find('form').exists()).toBe(false)
+  expect(wrapper.text()).toContain('This instance uses SSO')
+  expect(wrapper.find('a.login__submit').attributes('href')).toBe('/login')
+  expect(apiFetch).toHaveBeenCalledTimes(1)
+})

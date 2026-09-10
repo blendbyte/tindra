@@ -136,7 +136,7 @@ func (ro *router) handleGetPasswordReset(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "reset link not found or expired", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]string{"email": u.Email})
+	writeJSON(w, map[string]any{"email": u.Email, "sso_required": ro.ssoRequired()})
 }
 
 const (
@@ -146,6 +146,10 @@ const (
 
 // handleDoPasswordReset redeems the token, sets the new password, and opens a session. Public endpoint.
 func (ro *router) handleDoPasswordReset(w http.ResponseWriter, r *http.Request) {
+	if ro.ssoRequired() {
+		http.Error(w, "Password recovery is disabled for this instance. Sign in with SSO or contact your administrator.", http.StatusForbidden)
+		return
+	}
 	token := chi.URLParam(r, "token")
 	var req struct {
 		Password string `json:"password"`

@@ -14,6 +14,7 @@ const token = route.params.token as string
 
 const state = ref<'loading' | 'ready' | 'submitting' | 'done' | 'invalid'>('loading')
 const email = ref('')
+const ssoRequired = ref(false)
 const password = ref('')
 const confirm = ref('')
 const error = ref<string | null>(null)
@@ -24,8 +25,9 @@ const mfaLoading = ref(false)
 
 onMounted(async () => {
   try {
-    const data = await apiFetch<{ email: string }>(`/api/auth/password-reset/${token}`)
+    const data = await apiFetch<{ email: string; sso_required?: boolean }>(`/api/auth/password-reset/${token}`)
     email.value = data.email
+    ssoRequired.value = data.sso_required === true
     state.value = 'ready'
   } catch {
     state.value = 'invalid'
@@ -34,7 +36,7 @@ onMounted(async () => {
 
 async function submit(e: Event) {
   e.preventDefault()
-  if (state.value === 'submitting') return
+  if (ssoRequired.value || state.value === 'submitting') return
   error.value = null
   if (password.value !== confirm.value) {
     error.value = 'Passwords do not match.'
@@ -145,6 +147,11 @@ watch(mfaCode, (v) => {
             <span class="btn__kbd">↵</span>
           </button>
         </div>
+      </template>
+
+      <template v-else-if="ssoRequired">
+        <p class="login__invite-email">This instance uses SSO. Sign in with your identity provider, or contact your administrator if you need help recovering access.</p>
+        <a href="/login" class="btn btn--primary login__submit">Continue to SSO</a>
       </template>
 
       <template v-else>

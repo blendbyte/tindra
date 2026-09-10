@@ -46,6 +46,7 @@ type router struct {
 	encodeProfile          func(string, *ingest.Profile) (ingest.BufferedProfile, error)
 	smStore                *sourcemaps.Store
 	oauthProviders         []oauthProvider
+	ssoOnly                bool
 	cookieSecure           bool
 	corsOrigin             string
 	publicURL              string
@@ -102,6 +103,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		logBuf:                 logBuf,
 		smStore:                smStore,
 		oauthProviders:         oauthProviders,
+		ssoOnly:                oauthConfigured(),
 		cookieSecure:           cookieSecure,
 		corsOrigin:             corsOrigin,
 		publicURL:              publicURL,

@@ -176,8 +176,28 @@ func githubAPIGet[T any](ctx context.Context, accessToken, url string) (*T, erro
 
 // ---- Provider loading from environment ----
 
+// oauthConfigured captures operator intent, including incomplete configuration.
+// Authentication policy must not depend on discovery succeeding at startup.
+func oauthConfigured() bool {
+	for _, key := range []string{
+		"OAUTH_REDIRECT_BASE", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET",
+		"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET",
+		"GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "ZITADEL_ISSUER_URL", "ZITADEL_CLIENT_ID", "ZITADEL_CLIENT_SECRET",
+		"AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET",
+	} {
+		if os.Getenv(key) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (ro *router) ssoRequired() bool {
+	return ro.ssoOnly || len(ro.oauthProviders) > 0
+}
+
 // LoadOAuthProviders initialises all configured OAuth providers from env vars.
-// Missing/incomplete providers are skipped with a warning rather than crashing.
+// Failed providers are skipped; configured SSO policy still disables local login.
 //
 // Env vars:
 //
@@ -278,7 +298,7 @@ func (ro *router) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	for i, p := range ro.oauthProviders {
 		names[i] = p.Name()
 	}
-	writeJSON(w, map[string]any{"providers": names})
+	writeJSON(w, map[string]any{"providers": names, "sso_required": ro.ssoRequired()})
 }
 
 func (ro *router) providerByName(name string) oauthProvider {

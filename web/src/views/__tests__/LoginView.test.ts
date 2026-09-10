@@ -29,8 +29,8 @@ import LoginView from '../LoginView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 
-function mountLogin(providers: string[] = []) {
-  const providersData = ref<{ providers: string[] } | undefined>({ providers })
+function mountLogin(providers: string[] = [], ssoRequired = false) {
+  const providersData = ref<{ providers: string[]; sso_required: boolean } | undefined>({ providers, sso_required: ssoRequired })
   vi.mocked(useQuery).mockReturnValue({ data: providersData } as any)
   return mount(LoginView, {
     attachTo: document.body,
@@ -359,4 +359,11 @@ it('loads SSO providers with the query cancellation signal', async () => {
   vi.mocked(apiFetch).mockResolvedValue({ providers: ['google'] })
   await expect(options.queryFn({ signal })).resolves.toEqual({ providers: ['google'] })
   expect(apiFetch).toHaveBeenCalledWith('/api/auth/providers', { signal })
+})
+
+it('keeps password login hidden when configured SSO is unavailable', () => {
+  const wrapper = mountLogin([], true)
+  expect(wrapper.find('input[type="password"]').exists()).toBe(false)
+  expect(wrapper.find('[role="alert"]').text()).toContain('SSO is currently unavailable')
+  wrapper.unmount()
 })

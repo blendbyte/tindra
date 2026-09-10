@@ -137,3 +137,28 @@ describe('AcceptInviteView', () => {
     })
   })
 })
+
+it('directs SSO invitations to sign in without a local password form', async () => {
+  vi.mocked(apiFetch).mockResolvedValueOnce({ email: 'invited@example.com', name: 'Developer', sso_required: true })
+  const wrapper = mountView()
+  await new Promise((r) => setTimeout(r, 0))
+  expect(wrapper.find('form').exists()).toBe(false)
+  expect(wrapper.text()).toContain('Sign in with SSO using invited@example.com')
+  expect(wrapper.find('a.login__submit').attributes('href')).toBe('/login')
+  expect(apiFetch).toHaveBeenCalledTimes(1)
+})
+
+it('submits the chosen name for a local invitation', async () => {
+  vi.mocked(apiFetch).mockResolvedValueOnce({ email: 'invited@example.com', name: '', sso_required: false })
+  vi.mocked(apiFetch).mockResolvedValueOnce({})
+  const wrapper = mountView()
+  await new Promise((r) => setTimeout(r, 0))
+  await wrapper.find('#invite-name').setValue('  Developer  ')
+  await wrapper.find('#invite-password').setValue('a-secure-password')
+  await wrapper.find('form').trigger('submit')
+  await new Promise((r) => setTimeout(r, 0))
+  expect(apiFetch).toHaveBeenLastCalledWith(`/api/auth/invite/${tokenParam.token}/accept`, {
+    method: 'POST', body: JSON.stringify({ password: 'a-secure-password', name: 'Developer' }),
+  })
+  expect(pushMock).toHaveBeenCalledWith('/issues')
+})

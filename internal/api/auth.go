@@ -31,7 +31,7 @@ func (ro *router) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(ro.oauthProviders) > 0 {
+	if ro.ssoRequired() {
 		http.Error(w, "password login disabled", http.StatusForbidden)
 		return
 	}

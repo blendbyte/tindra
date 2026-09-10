@@ -14,6 +14,7 @@ const token = route.params.token as string
 
 const state = ref<'loading' | 'ready' | 'submitting' | 'error' | 'invalid'>('loading')
 const inviteEmail = ref('')
+const ssoRequired = ref(false)
 const inviteName = ref('')
 const name = ref('')
 const password = ref('')
@@ -21,8 +22,9 @@ const error = ref<string | null>(null)
 
 onMounted(async () => {
   try {
-    const data = await apiFetch<{ email: string; name: string }>(`/api/auth/invite/${token}`)
+    const data = await apiFetch<{ email: string; name: string; sso_required?: boolean }>(`/api/auth/invite/${token}`)
     inviteEmail.value = data.email
+    ssoRequired.value = data.sso_required === true
     inviteName.value = data.name ?? ''
     name.value = data.name ?? ''
     state.value = 'ready'
@@ -33,7 +35,7 @@ onMounted(async () => {
 
 async function submit(e: Event) {
   e.preventDefault()
-  if (!password.value || state.value === 'submitting') return
+  if (ssoRequired.value || !password.value || state.value === 'submitting') return
   error.value = null
   state.value = 'submitting'
   try {
@@ -83,7 +85,11 @@ async function submit(e: Event) {
           <div class="login__invite-email">{{ inviteEmail }}</div>
         </div>
 
-        <form class="login__form" novalidate @submit="submit">
+        <template v-if="ssoRequired">
+          <p class="login__invite-email">Sign in with SSO using {{ inviteEmail }} to accept your invitation.</p>
+          <a href="/login" class="btn btn--primary login__submit">Continue to SSO</a>
+        </template>
+        <form v-else class="login__form" novalidate @submit="submit">
           <div class="field">
             <label class="field__label" for="invite-name">Name <span class="muted">(optional)</span></label>
             <input

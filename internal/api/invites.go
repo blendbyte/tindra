@@ -140,14 +140,19 @@ func (ro *router) handleGetInvite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invite not found or expired", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]string{
-		"email": inv.Email,
-		"name":  inv.Name,
+	writeJSON(w, map[string]any{
+		"sso_required": ro.ssoRequired(),
+		"email":        inv.Email,
+		"name":         inv.Name,
 	})
 }
 
 // handleAcceptInvite creates the user account, marks the invite accepted, and opens a session.
 func (ro *router) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
+	if ro.ssoRequired() {
+		http.Error(w, "Use SSO with your invited email to accept this invitation.", http.StatusForbidden)
+		return
+	}
 	token := chi.URLParam(r, "token")
 	var req struct {
 		Password string `json:"password"`

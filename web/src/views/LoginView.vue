@@ -29,12 +29,12 @@ const mfaLoading = ref(false)
 
 const { data: providersData } = useQuery({
   queryKey: ['auth-providers'],
-  queryFn: ({ signal }) => apiFetch<{ providers: string[] }>('/api/auth/providers', { signal }),
+  queryFn: ({ signal }) => apiFetch<{ providers: string[]; sso_required?: boolean }>('/api/auth/providers', { signal }),
   staleTime: Infinity,
 })
 
 const providers = computed(() => providersData.value?.providers ?? [])
-const hasSso = computed(() => providers.value.length > 0)
+const hasSso = computed(() => providersData.value?.sso_required === true || providers.value.length > 0)
 
 function providerLabel(name: string) {
   const labels: Record<string, string> = {
@@ -179,6 +179,9 @@ function backToLogin() {
 
       <!-- SSO-only -->
       <template v-else-if="hasSso">
+        <p v-if="providers.length === 0" role="alert" class="login__error-hint">
+          SSO is currently unavailable. Contact your administrator or try again later.
+        </p>
         <a
           v-for="p in providers"
           :key="p"
