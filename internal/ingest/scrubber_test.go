@@ -449,3 +449,29 @@ func TestScrubTransaction_NoRulesLeavesSpansUnchanged(t *testing.T) {
 	require.Equal(t, "keep alice@example.com", tx.Spans[0].Description)
 	require.Equal(t, `{ "password": "keep" }`, string(tx.Spans[0].Data))
 }
+
+func TestScrubTransaction_Name(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		cfg   ScrubConfig
+		want  string
+	}{
+		{name: "no rules", input: "/users/private@example.com", want: "/users/private@example.com"},
+		{name: "email pattern", input: "/users/private@example.com", cfg: ScrubConfig{Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}}}, want: "/users/[Filtered]"},
+		{name: "custom pattern", input: "GET /customers/12345", cfg: ScrubConfig{Patterns: []ScrubPattern{{Pattern: `\d+`, Enabled: true}}}, want: "GET /customers/[Filtered]"},
+		{name: "field only case insensitive", input: "/users/private@example.com", cfg: ScrubConfig{Fields: []string{"TRANSACTION"}}, want: "[Filtered]"},
+		{name: "field takes precedence", input: "sensitive", cfg: ScrubConfig{Fields: []string{"transaction"}, Patterns: []ScrubPattern{{Pattern: "Filtered", Enabled: true}}}, want: "[Filtered]"},
+		{name: "disabled pattern", input: "/users/private@example.com", cfg: ScrubConfig{Patterns: []ScrubPattern{{Name: "email", Builtin: true}}}, want: "/users/private@example.com"},
+		{name: "unrelated field", input: "/users/private@example.com", cfg: ScrubConfig{Fields: []string{"transaction.name"}}, want: "/users/private@example.com"},
+		{name: "empty name", input: "", cfg: ScrubConfig{Patterns: []ScrubPattern{{Name: "email", Builtin: true, Enabled: true}}}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := BufferedTransaction{Transaction: tc.input, TraceID: "12345", EventID: "67890"}
+			ScrubTransaction(&tx, tc.cfg)
+			require.Equal(t, tc.want, tx.Transaction)
+			require.Equal(t, "12345", tx.TraceID)
+			require.Equal(t, "67890", tx.EventID)
+		})
+	}
+}

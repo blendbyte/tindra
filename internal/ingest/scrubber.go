@@ -90,9 +90,16 @@ func ScrubEvent(payload json.RawMessage, cfg ScrubConfig) json.RawMessage {
 }
 
 // ScrubTransaction applies PII scrubbing to the mutable parts of a transaction:
-// span Data blobs and span Description strings. The transaction is modified in place.
+// name, user fields, span Data blobs, and span Description strings.
+// The transaction is modified in place.
 func ScrubTransaction(tx *BufferedTransaction, cfg ScrubConfig) {
 	fields, regexps := buildScrubber(cfg)
+	if _, blocked := fields["transaction"]; blocked {
+		tx.Transaction = scrubPlaceholder
+	} else {
+		tx.Transaction = scrubString(tx.Transaction, regexps)
+	}
+
 	if len(fields) > 0 {
 		blocked := func(path string) bool {
 			_, ok := fields[path]
