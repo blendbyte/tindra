@@ -257,13 +257,13 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		// manage_issues: write operations on issues.
 		r.With(ro.requirePerm("manage_issues")).Patch("/api/issues/bulk", ro.handleBulkUpdateIssues)
 		r.With(ro.requirePerm("manage_issues")).Patch("/api/issues/{issueID}", ro.handleUpdateIssueGlobal)
-		r.With(ro.requirePerm("manage_issues")).Patch("/api/projects/{projectSlug}/issues/{issueID}", ro.handleUpdateIssue)
-		r.With(ro.requirePerm("manage_issues")).Post("/api/projects/{projectSlug}/issues/merge", ro.handleMergeIssues)
-		r.With(ro.requirePerm("manage_issues")).Post("/api/projects/{projectSlug}/issues/{issueID}/unmerge", ro.handleUnmergeIssue)
+		r.With(ro.requireProjectWrite("manage_issues")).Patch("/api/projects/{projectSlug}/issues/{issueID}", ro.handleUpdateIssue)
+		r.With(ro.requireProjectWrite("manage_issues")).Post("/api/projects/{projectSlug}/issues/merge", ro.handleMergeIssues)
+		r.With(ro.requireProjectWrite("manage_issues")).Post("/api/projects/{projectSlug}/issues/{issueID}/unmerge", ro.handleUnmergeIssue)
 
-		// manage_projects: sourcemap write operations (project create/delete TBD in later phases).
-		r.With(ro.requirePerm("manage_projects")).Post("/api/projects/{projectSlug}/sourcemaps", ro.handleUploadSourcemap)
-		r.With(ro.requirePerm("manage_projects")).Delete("/api/projects/{projectSlug}/sourcemaps/{smID}", ro.handleDeleteSourcemap)
+		// Source-map writes allow scoped writable tokens or manage_projects sessions.
+		r.With(ro.requireProjectWrite("manage_projects")).Post("/api/projects/{projectSlug}/sourcemaps", ro.handleUploadSourcemap)
+		r.With(ro.requireProjectWrite("manage_projects")).Delete("/api/projects/{projectSlug}/sourcemaps/{smID}", ro.handleDeleteSourcemap)
 
 		// manage_users: invite management, user deletion, permission management, and admin user actions.
 		r.With(ro.requirePerm("manage_users")).Post("/api/invites", ro.handleCreateInvite)

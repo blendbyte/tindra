@@ -251,16 +251,35 @@ func (ro *router) allowMFAEnrollmentRequest(w http.ResponseWriter, r *http.Reque
 	return false
 }
 
-// requirePerm returns a middleware that enforces a named permission.
-// Bearer-token requests (project-scoped) bypass the check - they are already
-// scoped to a single project by the token itself.
+// requireProjectWrite permits writable tokens for their own project and checks
+// the named user permission for sessions. Use only on projectSlug routes.
+func (ro *router) requireProjectWrite(perm string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		sessionHandler := ro.requirePerm(perm)(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if projectID, token := r.Context().Value(ctxTokenProjID).(string); token {
+				writable, _ := r.Context().Value(ctxTokenWritable).(bool)
+				if projectID == "" || !writable {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				if _, ok := ro.projectFromSlug(w, r); !ok {
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			sessionHandler.ServeHTTP(w, r)
+		})
+	}
+}
+
+// requirePerm enforces a named user permission and rejects bearer tokens.
 func (ro *router) requirePerm(perm string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Bearer tokens are project-scoped and carry no user permissions.
-			// Project-level operations (issues, sourcemaps, alert rules) are scoped
-			// via projectFromSlug, not requirePerm. Anything behind requirePerm
-			// (user management, global project mutations) requires a session cookie.
+			// Bearer tokens carry no user permissions. Project writes use
+			// requireProjectWrite; global operations require a session.
 			if _, ok := r.Context().Value(ctxTokenProjID).(string); ok {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
