@@ -13,7 +13,9 @@
 //	transactions  transactions + spans (also feeds queries/caches/jobs/browser views)
 //	profiles      profiled transactions with flame graphs, both wire formats
 //	logs          structured log records
-//	monitors      cron monitors (requires --db)
+//	monitors      cron and uptime monitor history (requires --db)
+//	alerts        disabled alert rules and delivery history (requires --db)
+//	workflow      linked investigations, with issue states and comments when --db is set
 //
 // The sub-views queries, caches, jobs, browser are aliases for transactions.
 //
@@ -61,6 +63,9 @@ func parseDSN(raw string) (dsn, error) {
 	if err != nil {
 		return dsn{}, fmt.Errorf("invalid DSN: %w", err)
 	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+		return dsn{}, fmt.Errorf("DSN must use http or https with a host and no query or fragment")
+	}
 	if u.User == nil {
 		return dsn{}, fmt.Errorf("DSN must contain public key as username: http://PUBLIC_KEY@host/project_id")
 	}
@@ -80,6 +85,8 @@ func (d dsn) envelopeURL() string {
 	return fmt.Sprintf("%s/api/%s/envelope/", d.baseURL, d.projectID)
 }
 
+var seedHTTPClient = &http.Client{Timeout: 20 * time.Second}
+
 // --- Envelope helpers ---
 
 func newEventID() string {
@@ -93,6 +100,12 @@ func buildEnvelope(items []envelopeItem) []byte {
 	header := map[string]any{
 		"event_id": newEventID(),
 		"sent_at":  time.Now().UTC().Format(time.RFC3339),
+	}
+	for _, item := range items {
+		if payload, ok := item.payload.(map[string]any); ok && item.typ == "event" && payload["event_id"] != nil {
+			header["event_id"] = payload["event_id"]
+			break
+		}
 	}
 	enc := json.NewEncoder(&buf)
 	enc.Encode(header) //nolint:errcheck
@@ -123,7 +136,7 @@ func send(target dsn, envelope []byte) (retryAfter time.Duration, err error) {
 	req.Header.Set("X-Sentry-Auth",
 		fmt.Sprintf("Sentry sentry_version=7, sentry_key=%s", target.publicKey))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := seedHTTPClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -131,7 +144,7 @@ func send(target dsn, envelope []byte) (retryAfter time.Duration, err error) {
 	if resp.StatusCode == http.StatusTooManyRequests {
 		wait := 60 * time.Second
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, e := strconv.Atoi(ra); e == nil {
+			if secs, e := strconv.Atoi(ra); e == nil && secs > 0 {
 				wait = time.Duration(secs) * time.Second
 			}
 		}
@@ -156,15 +169,15 @@ type seedUser struct {
 }
 
 var seedUsers = []seedUser{
-	{"101", "jdoe", "jane.doe@acme.io", "Jane Doe", "203.0.113.42"},
-	{"204", "m_chen", "marcus.chen@startup.dev", "Marcus Chen", "198.51.100.17"},
+	{"101", "jdoe", "jane.doe@example.com", "Jane Doe", "203.0.113.42"},
+	{"204", "m_chen", "marcus.chen@example.com", "Marcus Chen", "198.51.100.17"},
 	{"317", "priya_k", "priya@example.com", "Priya Krishnamurthy", "203.0.113.91"},
-	{"482", "tobiasw", "tobias.w@corp.net", "Tobias Weber", "198.51.100.55"},
-	{"539", "lfernandez", "l.fernandez@agency.io", "Lucía Fernández", "203.0.113.8"},
+	{"482", "tobiasw", "tobias.w@example.com", "Tobias Weber", "198.51.100.55"},
+	{"539", "lfernandez", "l.fernandez@example.com", "Lucía Fernández", "203.0.113.8"},
 	{"601", "anon_user", "", "", "198.51.100.200"},
-	{"718", "saraht", "sarah.thornton@bigco.com", "Sarah Thornton", "203.0.113.34"},
-	{"825", "devraj_m", "devraj@saas.app", "Devraj Mehta", "198.51.100.77"},
-	{"890", "nina_ok", "nina@ok.dev", "Nina Okonkwo", "203.0.113.19"},
+	{"718", "saraht", "sarah.thornton@example.com", "Sarah Thornton", "203.0.113.34"},
+	{"825", "devraj_m", "devraj@example.com", "Devraj Mehta", "198.51.100.77"},
+	{"890", "nina_ok", "nina@example.com", "Nina Okonkwo", "203.0.113.19"},
 	{"912", "guest", "", "", "198.51.100.9"},
 }
 
@@ -232,11 +245,16 @@ func randomPast(maxAgo time.Duration) time.Time {
 // trafficBiasedTime returns a random time within maxAgo with the hour weighted
 // towards business hours (09–17) so heatmaps show a realistic daily rhythm.
 func trafficBiasedTime(maxAgo time.Duration) time.Time {
+	now := time.Now().UTC()
 	t := randomPast(maxAgo)
 	h := weightedHour()
 	m := rand.Intn(60) //nolint:gosec
 	s := rand.Intn(60) //nolint:gosec
-	return time.Date(t.Year(), t.Month(), t.Day(), h, m, s, 0, time.UTC)
+	candidate := time.Date(t.Year(), t.Month(), t.Day(), h, m, s, 0, time.UTC)
+	if candidate.After(now) || candidate.Before(now.Add(-maxAgo)) {
+		return t
+	}
+	return candidate
 }
 
 // weightedHour picks an hour 0-23 biased towards working hours.
@@ -2005,7 +2023,7 @@ func init() {
 	mixed := projectDef{
 		name:         "mixed",
 		description:  "All project types combined (Laravel, Go, Python, JavaScript)",
-		releases:     []string{"1.4.2", "1.4.3", "2.9.1", "1.0.0", "1.5.0"},
+		releases:     []string{"1.4.0", "1.4.1", "1.4.2", "1.5.0"},
 		environments: defaultEnvironments,
 	}
 	for _, src := range []projectDef{laravelProject, goProject, pythonProject, jsProject} {
@@ -2064,7 +2082,7 @@ func buildErrorEvent(tmpl issueTemplate, ts time.Time, releases, envs []string) 
 		"level":       tmpl.level,
 		"platform":    tmpl.platform,
 		"environment": randomChoice(envs),
-		"release":     randomChoice(releases),
+		"release":     releaseAt(ts, releases),
 		"transaction": tmpl.transaction,
 		"exception": map[string]any{
 			"values": []map[string]any{excValue},
@@ -2135,7 +2153,7 @@ func buildSpanNodes(nodes []spanNode, parentSpanID string, parentStart time.Time
 		end := start.Add(time.Duration(spanMs * float64(time.Millisecond)))
 
 		spanID := newEventID()[:16]
-		out = append(out, map[string]any{
+		span := map[string]any{
 			"span_id":         spanID,
 			"parent_span_id":  parentSpanID,
 			"op":              node.op,
@@ -2143,10 +2161,26 @@ func buildSpanNodes(nodes []spanNode, parentSpanID string, parentStart time.Time
 			"start_timestamp": start.Format(time.RFC3339Nano),
 			"timestamp":       end.Format(time.RFC3339Nano),
 			"status":          "ok",
-		})
+			"data":            spanData(node.op, node.description),
+		}
+		if strings.HasPrefix(node.op, "queue") || strings.HasPrefix(node.op, "task") || strings.HasPrefix(node.op, "job") || strings.HasPrefix(node.op, "celery") {
+			if rand.Intn(20) == 0 {
+				span["status"] = "internal_error"
+				span["data"].(map[string]any)["messaging.message.retry.count"] = 2
+			} //nolint:gosec
+		}
+		out = append(out, span)
 
 		if len(node.children) > 0 {
-			out = append(out, buildSpanNodes(node.children, spanID, start)...)
+			children := buildSpanNodes(node.children, spanID, start)
+			for _, child := range children {
+				childEnd, _ := time.Parse(time.RFC3339Nano, child["timestamp"].(string))
+				if childEnd.After(end) {
+					end = childEnd
+				}
+			}
+			span["timestamp"] = end.Format(time.RFC3339Nano)
+			out = append(out, children...)
 		}
 
 		if end.After(groupEnd) {
@@ -2161,7 +2195,7 @@ func buildTransaction(tmpl txTemplate, ts time.Time, releases, envs []string) ma
 	totalMs := jitterMs(tmpl.durationMs[0], tmpl.durationMs[1])
 	end := ts.Add(time.Duration(totalMs * float64(time.Millisecond)))
 
-	traceID := newEventID()[:16]
+	traceID := newEventID()
 	rootSpanID := newEventID()[:16]
 
 	spans := buildSpanNodes(tmpl.spans, rootSpanID, ts)
@@ -2177,7 +2211,7 @@ func buildTransaction(tmpl txTemplate, ts time.Time, releases, envs []string) ma
 		"timestamp":       end.Format(time.RFC3339Nano),
 		"platform":        tmpl.platform,
 		"environment":     randomChoice(envs),
-		"release":         randomChoice(releases),
+		"release":         releaseAt(ts, releases),
 		"contexts": map[string]any{
 			"trace": map[string]any{
 				"trace_id": traceID,
@@ -2186,11 +2220,17 @@ func buildTransaction(tmpl txTemplate, ts time.Time, releases, envs []string) ma
 				"status":   status,
 			},
 		},
-		"spans": spans,
+		"spans": fitSpans(spans, ts, end),
+		"tags":  buildTags(tmpl.platform),
 	}
 
 	if tmpl.op == "pageload" || tmpl.op == "navigation" {
-		tx["measurements"] = seedWebVitals()
+		measurements := seedWebVitals()
+		tx["measurements"] = measurements
+		lcp := measurements["lcp"].(map[string]any)["value"].(float64)
+		if lcp > totalMs {
+			tx["timestamp"] = ts.Add(time.Duration(lcp * float64(time.Millisecond))).Format(time.RFC3339Nano)
+		}
 	}
 
 	// Always attach a user so the User lens has traces and page loads to show.
@@ -2223,11 +2263,13 @@ func seedWebVitals() map[string]any {
 			return 0.25 + rand.Float64()*0.2 // poor: 0.25–0.45
 		}
 	}
+	lcp := vitalMs(2500, 4000)
+	fcp := min(vitalMs(1800, 3000), lcp)
 	return map[string]any{
-		"lcp":  map[string]any{"value": vitalMs(2500, 4000), "unit": "millisecond"},
-		"fcp":  map[string]any{"value": vitalMs(1800, 3000), "unit": "millisecond"},
+		"lcp":  map[string]any{"value": lcp, "unit": "millisecond"},
+		"fcp":  map[string]any{"value": fcp, "unit": "millisecond"},
 		"inp":  map[string]any{"value": vitalMs(200, 500), "unit": "millisecond"},
-		"ttfb": map[string]any{"value": vitalMs(800, 1800), "unit": "millisecond"},
+		"ttfb": map[string]any{"value": min(vitalMs(800, 1800), fcp), "unit": "millisecond"},
 		"cls":  map[string]any{"value": clsVal(), "unit": ""},
 	}
 }
@@ -2236,86 +2278,11 @@ func seedWebVitals() map[string]any {
 // Main
 // =============================================================================
 
-// dbCreateMonitor inserts a cron monitor directly and returns its UUID.
-func dbCreateMonitor(ctx context.Context, pool *pgxpool.Pool, projectID, name, schedule string, graceSecs int) (string, error) {
-	var id string
-	err := pool.QueryRow(ctx, `
-		INSERT INTO cron_monitors (project_id, name, schedule, grace_period_secs, status)
-		VALUES ($1, $2, $3, $4, 'active')
-		RETURNING id`,
-		projectID, name, schedule, graceSecs,
-	).Scan(&id)
-	return id, err
-}
-
-func cronPing(baseURL, monitorID, status string, durationSecs float64) error {
-	u := fmt.Sprintf("%s/api/cron/%s?status=%s", baseURL, monitorID, status)
-	if durationSecs > 0 {
-		u += fmt.Sprintf("&duration=%.1f", durationSecs)
-	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ping returned %s", resp.Status)
-	}
-	return nil
-}
-
-func cronCheckinStart(baseURL, monitorID string) (string, error) {
-	u := fmt.Sprintf("%s/api/cron/%s/checkins/", baseURL, monitorID)
-	body, _ := json.Marshal(map[string]string{"status": "in_progress"})
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("checkin start returned %s", resp.Status)
-	}
-	var r struct {
-		ID string `json:"id"`
-	}
-	json.NewDecoder(resp.Body).Decode(&r) //nolint:errcheck
-	return r.ID, nil
-}
-
-func cronCheckinFinish(baseURL, monitorID, checkinID, status string, durationSecs float64) error {
-	u := fmt.Sprintf("%s/api/cron/%s/checkins/%s/", baseURL, monitorID, checkinID)
-	payload := map[string]any{"status": status, "duration": durationSecs}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, u, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("checkin finish returned %s", resp.Status)
-	}
-	return nil
-}
-
 // =============================================================================
 // Uptime monitor seeding
 // =============================================================================
 
-func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
+func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 	ctx := context.Background()
 
 	// outageWindow is a closed interval [startAgo, endAgo] where startAgo is
@@ -2350,7 +2317,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 		{
 			name: "API health check", url: "https://api.example.com/health",
 			method: "GET", intervalSecs: 60, expectedCodes: "200",
-			monitorStatus: "active", description: "mostly up — small outage 3 days ago and 10 days ago",
+			monitorStatus: "active", description: "mostly up: small outage 3 days ago and 10 days ago",
 			baseRespMs: 85,
 			outages: []outageWindow{
 				{startAgo: 73 * time.Hour, endAgo: 71 * time.Hour, errMsg: "upstream timeout: no response within 10s"},
@@ -2367,7 +2334,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 		{
 			name: "Payment gateway", url: "https://pay.example.com/ping",
 			method: "HEAD", intervalSecs: 60, expectedCodes: "200",
-			monitorStatus: "active", description: "currently down — 503 errors",
+			monitorStatus: "active", description: "currently down: 503 errors",
 			baseRespMs: 95,
 			outages: []outageWindow{
 				{startAgo: 6 * time.Hour, endAgo: 5 * time.Hour, errMsg: "503 Service Unavailable", code: 503},
@@ -2387,13 +2354,13 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 		{
 			name: "Staging environment", url: "https://staging.example.com/health",
 			method: "GET", intervalSecs: 300, expectedCodes: "200",
-			monitorStatus: "paused", description: "paused — 30 checks recorded before pause",
+			monitorStatus: "paused", description: "paused: 30 checks recorded before pause",
 			baseRespMs: 155,
 		},
 		{
 			name: "CDN edge node", url: "https://cdn.example.com/assets/app.js",
 			method: "HEAD", intervalSecs: 300, expectedCodes: "200,304",
-			monitorStatus: "active", description: "no history yet — state unknown",
+			monitorStatus: "active", description: "no history yet: state unknown",
 			noChecks: true,
 		},
 	}
@@ -2405,30 +2372,31 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 		err := pool.QueryRow(ctx, `
 			INSERT INTO uptime_monitors
 				(project_id, name, url, method, interval_secs, timeout_secs,
-				 expected_codes, body_contains, status)
-			VALUES ($1,$2,$3,$4,$5,10,$6,$7,$8)
+				 expected_codes, body_contains, status, next_check_at)
+			VALUES ($1,$2,$3,$4,$5,10,$6,$7,$8, NOW() + INTERVAL '30 days')
 			RETURNING id`,
-			projectID, spec.name, spec.url, spec.method, spec.intervalSecs,
+			projectID, "Demo: "+spec.name, spec.url, spec.method, spec.intervalSecs,
 			spec.expectedCodes, spec.bodyContains, spec.monitorStatus,
 		).Scan(&monID)
 		if err != nil {
+			failed++
 			fmt.Printf("  FAIL  create monitor %q: %v\n", spec.name, err)
 			continue
 		}
 
 		if spec.noChecks {
-			fmt.Printf("  OK    %q — %s\n", spec.name, spec.description)
+			fmt.Printf("  OK    %q: %s\n", spec.name, spec.description)
 			continue
 		}
 
 		// Generate check history.
 		//
-		// Phase 1 — historical bulk: 168 checks at 1-hour spacing over the past
+		// Phase 1: historical bulk: 168 checks at 1-hour spacing over the past
 		// 7 days. This is enough to populate the 24h / 7d uptime stats and the
 		// 20-check recent-checks strip.
 		// Paused monitors get 30 checks at 1-hour spacing (~1.25 days).
 		//
-		// Phase 2 — fresh probe: one additional check placed at ~intervalSecs ago
+		// Phase 2: fresh probe: one additional check placed at ~intervalSecs ago
 		// so the monitor looks like it was just polled.
 		now := time.Now().UTC()
 		numHistorical := 168
@@ -2439,6 +2407,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 		}
 		spacing := historyDuration / time.Duration(numHistorical)
 
+		var lastError *string
 		var lastCode *int
 		var lastRespMs *int
 		var lastCheckedAt time.Time
@@ -2454,10 +2423,12 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 				monID, status, code, respMs, errMsg, checkedAt,
 			)
 			if ierr != nil {
+				failed++
 				fmt.Printf("    FAIL  check at %s: %v\n", checkedAt.Format(time.RFC3339), ierr)
 				return
 			}
 			totalChecks++
+			lastError = errMsg
 			lastCode = code
 			lastRespMs = respMs
 			lastCheckedAt = checkedAt
@@ -2530,7 +2501,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 			finalState = "down"
 		}
 
-		nextCheckAt := lastCheckedAt.Add(time.Duration(spec.intervalSecs) * time.Second)
+		nextCheckAt := now.Add(30 * 24 * time.Hour)
 		var lastOkAtPtr *time.Time
 		if !lastOkAt.IsZero() {
 			lastOkAtPtr = &lastOkAt
@@ -2544,136 +2515,91 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) {
 				last_ok_at           = $5,
 				next_check_at        = $6,
 				last_status_code     = $7,
-				last_response_ms     = $8
+				last_response_ms     = $8,
+				last_error           = $9,
+				went_down_at         = CASE WHEN $2='down' THEN $4::timestamptz - INTERVAL '3 hours' ELSE NULL END
 			WHERE id = $1`,
 			monID, finalState, consecutiveFailures,
 			lastCheckedAt, lastOkAtPtr, nextCheckAt,
-			lastCode, lastRespMs,
+			lastCode, lastRespMs, lastError,
 		)
 		if err != nil {
+			failed++
 			fmt.Printf("    FAIL  update state: %v\n", err)
 		}
 
-		fmt.Printf("  OK    %q — %s (state=%s, %d checks)\n",
+		fmt.Printf("  OK    %q: %s (state=%s, %d checks)\n",
 			spec.name, spec.description, finalState, totalChecks)
 	}
+	return failed
 }
 
-func seedCronMonitors(target dsn, pool *pgxpool.Pool) {
-	type monitorDef struct {
-		name        string
-		schedule    string
-		graceSecs   int
-		description string
-		seed        func(id string)
+func seedCronMonitors(target dsn, pool *pgxpool.Pool) (failed int) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	specs := []struct{ name, schedule, status string }{
+		{"Daily backup", "0 2 * * *", "ok"},
+		{"Payment processor", "*/15 * * * *", "error"},
+		{"Queue worker heartbeat", "*/5 * * * *", "in_progress"},
+		{"Weekly report", "0 9 * * 1", "unknown"},
+		{"Hourly inventory sync", "0 * * * *", "ok"},
+		{"Email digest", "0 8 * * *", "error"},
+		{"Thumbnail generator", "*/30 * * * *", "ok"},
 	}
-
-	monitors := []monitorDef{
-		{
-			name: "Daily backup", schedule: "0 2 * * *", graceSecs: 600,
-			description: "multiple ok runs → state ok",
-			seed: func(id string) {
-				// Several historical ok runs.
-				for i := range 5 {
-					dur := 8.5 + float64(i)*0.3
-					if err := cronPing(target.baseURL, id, "ok", dur); err != nil {
-						fmt.Printf("    FAIL ping: %v\n", err)
-					}
-					time.Sleep(50 * time.Millisecond)
-				}
-			},
-		},
-		{
-			name: "Payment processor", schedule: "*/15 * * * *", graceSecs: 120,
-			description: "last run errored → state error",
-			seed: func(id string) {
-				// A few ok runs, then an error.
-				for range 3 {
-					cronPing(target.baseURL, id, "ok", 1.2) //nolint:errcheck
-					time.Sleep(50 * time.Millisecond)
-				}
-				cronPing(target.baseURL, id, "error", 0.3) //nolint:errcheck
-			},
-		},
-		{
-			name: "Queue worker heartbeat", schedule: "*/5 * * * *", graceSecs: 90,
-			description: "currently running → state in_progress",
-			seed: func(id string) {
-				// A few completed runs first.
-				for range 2 {
-					cronPing(target.baseURL, id, "ok", 0.8) //nolint:errcheck
-					time.Sleep(50 * time.Millisecond)
-				}
-				// Start a run but never finish it.
-				cronCheckinStart(target.baseURL, id) //nolint:errcheck
-			},
-		},
-		{
-			name: "Weekly report", schedule: "0 9 * * 1", graceSecs: 1800,
-			description: "never ran → state unknown",
-			seed:        func(id string) { /* no check-ins */ },
-		},
-		{
-			name: "Hourly data sync", schedule: "0 * * * *", graceSecs: 300,
-			description: "recent ok run → state ok",
-			seed: func(id string) {
-				// Mix of start/finish and simple pings.
-				for range 3 {
-					checkinID, err := cronCheckinStart(target.baseURL, id)
-					if err != nil {
-						cronPing(target.baseURL, id, "ok", 2.1) //nolint:errcheck
-					} else {
-						time.Sleep(30 * time.Millisecond)
-						cronCheckinFinish(target.baseURL, id, checkinID, "ok", 2.1) //nolint:errcheck
-					}
-					time.Sleep(50 * time.Millisecond)
-				}
-			},
-		},
-		{
-			name: "Email digest", schedule: "0 8 * * *", graceSecs: 600,
-			description: "mixed ok/error history, last error → state error",
-			seed: func(id string) {
-				statuses := []string{"ok", "ok", "error", "ok", "error"}
-				for _, s := range statuses {
-					cronPing(target.baseURL, id, s, 3.0) //nolint:errcheck
-					time.Sleep(50 * time.Millisecond)
-				}
-			},
-		},
-		{
-			name: "Thumbnail generator", schedule: "*/30 * * * *", graceSecs: 180,
-			description: "start/finish cycle history → state ok",
-			seed: func(id string) {
-				for i := range 4 {
-					checkinID, err := cronCheckinStart(target.baseURL, id)
-					if err != nil {
-						fmt.Printf("    FAIL start: %v\n", err)
-						continue
-					}
-					time.Sleep(30 * time.Millisecond)
-					if err := cronCheckinFinish(target.baseURL, id, checkinID, "ok", 0.5+float64(i)*0.1); err != nil {
-						fmt.Printf("    FAIL finish: %v\n", err)
-					}
-					time.Sleep(50 * time.Millisecond)
-				}
-			},
-		},
-	}
-
 	fmt.Println("\n=== Cron Monitors ===")
-	for _, m := range monitors {
-		id, err := dbCreateMonitor(context.Background(), pool, target.projectID, m.name, m.schedule, m.graceSecs)
+	for _, spec := range specs {
+		err := func() error {
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback(ctx) //nolint:errcheck
+			var id string
+			err = tx.QueryRow(ctx, `INSERT INTO cron_monitors(project_id,name,schedule,grace_period_secs,next_expected_at)
+                VALUES($1,$2,$3,300,$4) RETURNING id`, target.projectID, "Demo: "+spec.name, spec.schedule, now.Add(30*24*time.Hour)).Scan(&id)
+			if err != nil {
+				return err
+			}
+			if spec.status != "unknown" {
+				for i := 7; i >= 0; i-- {
+					status := "ok"
+					if i == 0 {
+						status = spec.status
+					} else if i == 3 && spec.status == "error" {
+						status = "error"
+					}
+					at := now.Add(-time.Duration(i)*24*time.Hour - time.Minute)
+					var finished *time.Time
+					var duration *int
+					if status != "in_progress" {
+						end := at.Add(2500 * time.Millisecond)
+						finished = &end
+						ms := 2500
+						duration = &ms
+					}
+					if _, err := tx.Exec(ctx, `INSERT INTO cron_checkins(monitor_id,status,duration_ms,environment,started_at,finished_at,received_at)
+                        VALUES($1,$2,$3,'production',$4,$5,$4)`, id, status, duration, at, finished); err != nil {
+						return err
+					}
+				}
+				_, err = tx.Exec(ctx, `UPDATE cron_monitors SET last_checkin_status=$2,last_checkin_at=$3,is_running=$4,last_ok_at=CASE WHEN $2='ok' THEN $3::timestamptz ELSE $5::timestamptz END WHERE id=$1`, id, spec.status, now.Add(-time.Minute), spec.status == "in_progress", now.Add(-24*time.Hour-time.Minute))
+				if err != nil {
+					return err
+				}
+			}
+			return tx.Commit(ctx)
+		}()
 		if err != nil {
-			fmt.Printf("  FAIL  create monitor %q: %v\n", m.name, err)
-			continue
+			failed++
+			fmt.Printf("  FAIL  %s: %v\n", spec.name, err)
+		} else {
+			fmt.Printf("  OK    %s (%s)\n", spec.name, spec.status)
 		}
-		fmt.Printf("  OK    monitor %q (%s) - %s\n", m.name, m.schedule, m.description)
-		m.seed(id)
 	}
+	return failed
 }
 
-var canonicalSections = []string{"issues", "transactions", "profiles", "logs", "monitors", "alerts"}
+var canonicalSections = []string{"issues", "transactions", "profiles", "logs", "monitors", "alerts", "workflow"}
 
 // sectionAliases maps performance sub-view names to their canonical section.
 var sectionAliases = map[string]string{
@@ -2719,6 +2645,9 @@ func parseSeedSections(s string) (map[string]bool, error) {
 
 // dotenvDBURL looks for DATABASE_URL in .env files walking up from the working directory.
 func dotenvDBURL() string {
+	if value := os.Getenv("DATABASE_URL"); value != "" {
+		return value
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -2752,7 +2681,7 @@ func main() {
 	projectType := flag.String("type", "mixed", "project type to seed")
 	listTypes := flag.Bool("list", false, "list available project types and exit")
 	dbURL := flag.String("db", "", "postgres connection URL for monitors (default: DATABASE_URL from .env)")
-	seedSections := flag.String("seed", "all", `comma-separated sections: issues, transactions, profiles, logs, monitors, alerts (or "all")`)
+	seedSections := flag.String("seed", "all", `comma-separated sections: issues, transactions, profiles, logs, monitors, alerts, workflow (or "all")`)
 	flag.Parse()
 
 	if *listTypes {
@@ -2783,8 +2712,8 @@ func main() {
 	}
 
 	// monitors requires a DB; error early only when explicitly requested.
-	if seed["monitors"] && !seed["issues"] && !seed["transactions"] && !seed["logs"] && resolvedDB == "" {
-		fmt.Fprintf(os.Stderr, "error: --db or DATABASE_URL in .env is required to seed monitors\n")
+	if strings.TrimSpace(*seedSections) != "all" && (seed["monitors"] || seed["alerts"]) && resolvedDB == "" {
+		fmt.Fprintf(os.Stderr, "error: --db or DATABASE_URL in .env is required to seed monitors or alerts\n")
 		os.Exit(1)
 	}
 
@@ -2792,7 +2721,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [--type=TYPE] [--seed=SECTIONS] [--db=POSTGRES_URL] <DSN>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  DSN format:  http://PUBLIC_KEY@HOST/PROJECT_ID\n")
 		fmt.Fprintf(os.Stderr, "  --list       show available project types\n")
-		fmt.Fprintf(os.Stderr, "  --seed       issues, transactions, logs, monitors, alerts (default: all)\n")
+		fmt.Fprintf(os.Stderr, "  --seed       issues, transactions, profiles, logs, monitors, alerts, workflow (default: all)\n")
 		os.Exit(1)
 	}
 
@@ -2806,6 +2735,27 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if resolvedDB != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		pool, err := pgxpool.New(ctx, resolvedDB)
+		if err == nil {
+			var matches bool
+			err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM projects WHERE id::text=$1 AND public_key=$2)`, target.projectID, target.publicKey).Scan(&matches)
+			if err == nil && !matches {
+				err = fmt.Errorf("database does not contain the project and key from the DSN")
+			}
+			if err == nil && (seed["issues"] || seed["transactions"] || seed["profiles"] || seed["workflow"]) {
+				err = seedReleases(ctx, pool, target.projectID, def.releases)
+			}
+			pool.Close()
+		}
+		cancel()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "database preflight: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	sections := make([]string, 0, len(seed))
@@ -2833,6 +2783,7 @@ func main() {
 	// Filled in by the profiles section so the summary can point at the
 	// transactions that actually have a flame graph.
 	var profiledNames []string
+	var workflowIDs []string
 
 	deliverItems := func(label string, items []envelopeItem) {
 		sema <- struct{}{}
@@ -2841,6 +2792,7 @@ func main() {
 			defer deliverWg.Done()
 			defer func() { <-sema }()
 			envelope := buildEnvelope(items)
+			retries := 0
 			for {
 				mu.Lock()
 				pause := time.Until(ratePauseUntil)
@@ -2852,6 +2804,14 @@ func main() {
 				retryWait, err := send(target, envelope)
 				mu.Lock()
 				if retryWait > 0 {
+					retries++
+					if retries > 5 {
+						failed++
+						fmt.Printf("  FAIL  %s: rate limit retry budget exhausted\n", label)
+						mu.Unlock()
+						return
+					}
+					retryWait = min(retryWait, 2*time.Minute)
 					if until := time.Now().Add(retryWait); until.After(ratePauseUntil) {
 						fmt.Printf("  WAIT  rate limited - sleeping %s before retry…\n", retryWait.Round(time.Second))
 						ratePauseUntil = until
@@ -2873,39 +2833,7 @@ func main() {
 	}
 
 	deliver := func(label string, payload any, typ string) {
-		sema <- struct{}{} // blocks when all 20 slots are busy
-		deliverWg.Go(func() {
-			defer func() { <-sema }()
-			envelope := buildEnvelope([]envelopeItem{{typ: typ, payload: payload}})
-			for {
-				mu.Lock()
-				pause := time.Until(ratePauseUntil)
-				mu.Unlock()
-				if pause > 0 {
-					time.Sleep(pause)
-					continue
-				}
-				retryWait, err := send(target, envelope)
-				mu.Lock()
-				if retryWait > 0 {
-					if until := time.Now().Add(retryWait); until.After(ratePauseUntil) {
-						fmt.Printf("  WAIT  rate limited - sleeping %s before retry…\n", retryWait.Round(time.Second))
-						ratePauseUntil = until
-					}
-					mu.Unlock()
-					continue
-				}
-				if err != nil {
-					fmt.Printf("  FAIL  %s: %v\n", label, err)
-					failed++
-				} else {
-					fmt.Printf("  OK    %s\n", label)
-					sent++
-				}
-				mu.Unlock()
-				break
-			}
-		})
+		deliverItems(label, []envelopeItem{{typ: typ, payload: payload}})
 	}
 
 	if seed["issues"] {
@@ -2916,7 +2844,7 @@ func main() {
 				count = def.issueCounts[i]
 			}
 			for j := 0; j < count; j++ {
-				ts := randomPast(7 * 24 * time.Hour)
+				ts := showcaseTime(j, count)
 				evt := buildErrorEvent(tmpl, ts, def.releases, def.environments)
 				label := fmt.Sprintf("[%s] %s: %s", tmpl.platform, tmpl.excType, truncate(tmpl.excValue, 60))
 				deliver(label, evt, "event")
@@ -2943,7 +2871,7 @@ func main() {
 				count = def.txCounts[i]
 			}
 			for j := 0; j < count; j++ {
-				ts := trafficBiasedTime(7 * 24 * time.Hour)
+				ts := showcaseTime(j, count)
 				tx := buildTransaction(tmpl, ts, def.releases, def.environments)
 				label := fmt.Sprintf("[%s] %s", tmpl.platform, tmpl.name)
 				deliver(label, tx, "transaction")
@@ -2951,10 +2879,11 @@ func main() {
 		}
 
 		fmt.Println("\n=== Fresh transactions (last 5 min) ===")
-		freshCount := min(len(def.txs), 6)
+		freshCount := len(def.txs)
 		for _, tmpl := range def.txs[:freshCount] {
-			ts := time.Now().UTC().Add(-time.Duration(rand.Intn(5*60)) * time.Second) //nolint:gosec
+			ts := time.Now().UTC().Add(-time.Duration(30+rand.Intn(4*60)) * time.Second) //nolint:gosec
 			tx := buildTransaction(tmpl, ts, def.releases, def.environments)
+			tx["environment"] = "production"
 			label := fmt.Sprintf("[fresh] [%s] %s", tmpl.platform, tmpl.name)
 			deliver(label, tx, "transaction")
 		}
@@ -3015,6 +2944,17 @@ func main() {
 		deliver("[logs] fresh batch", freshLogs, "log")
 	}
 
+	if seed["workflow"] {
+		fmt.Println("\n=== Linked investigations ===")
+		for i := range 4 {
+			items, eventID := buildInvestigation(def, i)
+			workflowIDs = append(workflowIDs, eventID)
+			deliverItems("[workflow] linked error, transaction and logs", items)
+		}
+	}
+
+	deliverWg.Wait()
+
 	if seed["monitors"] {
 		if resolvedDB != "" {
 			pool, err := pgxpool.New(context.Background(), resolvedDB)
@@ -3023,14 +2963,24 @@ func main() {
 				os.Exit(1)
 			}
 			defer pool.Close()
-			seedCronMonitors(target, pool)
-			seedUptimeMonitors(pool, target.projectID)
+			failed += seedCronMonitors(target, pool)
+			failed += seedUptimeMonitors(pool, target.projectID)
 		} else {
 			fmt.Println("\n(skip monitors - set DATABASE_URL in .env or pass --db=POSTGRES_URL)")
 		}
 	}
 
-	deliverWg.Wait()
+	if len(workflowIDs) > 0 && resolvedDB != "" {
+		pool, err := pgxpool.New(context.Background(), resolvedDB)
+		if err == nil {
+			err = seedWorkflow(context.Background(), pool, target.projectID, workflowIDs)
+			pool.Close()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "workflow: %v\n", err)
+			failed++
+		}
+	}
 
 	if seed["alerts"] {
 		if resolvedDB != "" {
@@ -3040,13 +2990,20 @@ func main() {
 				os.Exit(1)
 			}
 			defer pool.Close()
-			seedAlertRules(pool)
+			failed += seedAlertRules(pool, target.projectID)
 		} else {
-			fmt.Println("\n(skip alerts — set DATABASE_URL in .env or pass --db=POSTGRES_URL)")
+			fmt.Println("\n(skip alerts: set DATABASE_URL in .env or pass --db=POSTGRES_URL)")
 		}
 	}
 
-	fmt.Printf("\nDone. %d sent, %d failed.\n", sent, failed)
+	fmt.Printf("\nDone. %d envelopes sent, %d failures.\n", sent, failed)
+	fmt.Println("Screenshot tour: Dashboard, Issues, Performance (transactions, queries, caches, jobs, browser), Releases, Logs, and Monitors. Use the 24h window; use 7d for the deployment history.")
+	if seed["workflow"] {
+		fmt.Println("Open Checkout payment authorization and PaymentGatewayTimeout to explore linked traces, logs, and the same customer. With --db, the workflow also includes triage states and comments when an existing operator account is available.")
+	}
+	if seed["monitors"] || seed["alerts"] {
+		fmt.Println("Demo monitors defer automatic checks for 30 days. Demo alert rules are disabled and have no pending deliveries.")
+	}
 
 	if len(profiledNames) > 0 {
 		fmt.Println("\nTransactions with a flame graph (Performance → Transactions):")
@@ -3063,7 +3020,7 @@ func main() {
 // Alert rule seeding
 // =============================================================================
 
-func seedAlertRules(pool *pgxpool.Pool) {
+func seedAlertRules(pool *pgxpool.Pool, projectID string) (failed int) {
 	// firingDef describes one alert_firings row to seed for a rule.
 	type firingDef struct {
 		firedAgo   time.Duration
@@ -3098,7 +3055,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 
 	rules := []alertDef{
 		{
-			name: "Error spike — production", enabled: true,
+			name: "Error spike: production", enabled: false,
 			trigger: "event_count", threshold: ip(50), windowMins: ip(60),
 			channel: "email", emailTo: sp("alerts@example.com"),
 			cooldownMins: 60, filterEnv: sp("production"),
@@ -3112,7 +3069,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			},
 		},
 		{
-			name: "New fatal issues", enabled: true,
+			name: "New fatal issues", enabled: false,
 			trigger: "new_issue",
 			channel: "slack", webhookURL: sp("https://hooks.slack.com/services/example/placeholder"),
 			cooldownMins: 30, filterLevel: sp("fatal"),
@@ -3121,13 +3078,13 @@ func seedAlertRules(pool *pgxpool.Pool) {
 				{firedAgo: 3 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(3), attempt: 1},
 				{firedAgo: 6 * time.Hour, status: "failed", statusCode: ip(503), errMsg: sp("Slack returned 503 Service Unavailable"), itemCount: ip(2), attempt: 3},
 				{firedAgo: 11 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(1), attempt: 1},
-				// Pending retry: got 429, scheduled for retry in ~8 minutes.
-				{firedAgo: 27 * time.Hour, status: "pending", statusCode: ip(429), errMsg: sp("Too Many Requests"), itemCount: ip(4), attempt: 2, retryIn: dp(8 * time.Minute)},
+				// Historical failure only; demo data must never schedule real delivery.
+				{firedAgo: 27 * time.Hour, status: "failed", statusCode: ip(429), errMsg: sp("Too Many Requests"), itemCount: ip(4), attempt: 2, retryIn: nil},
 				{firedAgo: 51 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(2), attempt: 1},
 			},
 		},
 		{
-			name: "Production regression", enabled: true,
+			name: "Production regression", enabled: false,
 			trigger: "regressed",
 			channel: "email", emailTo: sp("team@example.com"),
 			cooldownMins: 120, filterEnv: sp("production"),
@@ -3139,21 +3096,21 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			},
 		},
 		{
-			name: "New or regressed — all envs", enabled: true,
+			name: "New or regressed: all envs", enabled: false,
 			trigger: "new_or_regressed",
 			channel: "email", emailTo: sp("oncall@example.com"),
 			cooldownMins: 60,
 			lastFiredAgo: dp(8 * time.Hour),
 			firings: []firingDef{
 				{firedAgo: 8 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(5), attempt: 1},
-				// Pending: first attempt failed with connection refused, retrying shortly.
-				{firedAgo: 30 * time.Hour, status: "pending", errMsg: sp("dial tcp: connection refused"), itemCount: ip(8), attempt: 1, retryIn: dp(3 * time.Minute)},
+				// Historical delivery failure, without a live retry.
+				{firedAgo: 30 * time.Hour, status: "failed", errMsg: sp("dial tcp: connection refused"), itemCount: ip(8), attempt: 1, retryIn: nil},
 				{firedAgo: 54 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(3), attempt: 1},
 				{firedAgo: 96 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(2), attempt: 1},
 			},
 		},
 		{
-			name: "Missed scheduled jobs", enabled: true,
+			name: "Missed scheduled jobs", enabled: false,
 			trigger: "cron_missed",
 			channel: "email", emailTo: sp("alerts@example.com"),
 			cooldownMins: 30,
@@ -3161,7 +3118,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			firings:      nil,
 		},
 		{
-			name: "Error logs — stripe", enabled: true,
+			name: "Error logs: stripe", enabled: false,
 			trigger: "log_count", threshold: ip(10), windowMins: ip(5),
 			channel: "email", emailTo: sp("alerts@example.com"),
 			cooldownMins: 60, filterLevel: sp("error"), filterEnv: sp("production"),
@@ -3201,19 +3158,21 @@ func seedAlertRules(pool *pgxpool.Pool) {
 				 filter_level, filter_environment, min_occurrences, filter_search, last_fired_at)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			RETURNING id`,
-			r.name, r.enabled, r.trigger, r.threshold, r.windowMins,
+			"Demo: "+r.name, r.enabled, r.trigger, r.threshold, r.windowMins,
 			r.channel, r.webhookURL, r.emailTo, r.cooldownMins,
 			r.filterLevel, r.filterEnv, nil, r.filterSearch, lastFiredAt,
 		).Scan(&id)
 		if err != nil {
+			failed++
 			fmt.Printf("  FAIL  create alert %q: %v\n", r.name, err)
 			continue
 		}
-		if r.trigger == "log_count" {
+		{
 			if _, perr := pool.Exec(context.Background(), `
 				INSERT INTO alert_rule_projects (rule_id, project_id)
-				SELECT $1, id FROM projects ORDER BY created_at LIMIT 1
-			`, id); perr != nil {
+				VALUES ($1, $2)
+			`, id, projectID); perr != nil {
+				failed++
 				fmt.Printf("  FAIL  attach project for %q: %v\n", r.name, perr)
 			}
 		}
@@ -3225,7 +3184,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 		if lastFiredAt != nil {
 			fmt.Printf("  OK    %q (%s, %s) last fired %s ago\n", r.name, r.trigger, status, r.lastFiredAgo.Round(time.Minute))
 		} else {
-			fmt.Printf("  OK    %q (%s, %s) — never fired\n", r.name, r.trigger, status)
+			fmt.Printf("  OK    %q (%s, %s): never fired\n", r.name, r.trigger, status)
 		}
 
 		for _, f := range r.firings {
@@ -3246,6 +3205,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 				f.attempt, nextRetryAt,
 			).Scan(&firingID)
 			if ferr != nil {
+				failed++
 				fmt.Printf("    FAIL  firing (%s, -%s): %v\n", f.status, f.firedAgo.Round(time.Minute), ferr)
 			} else {
 				retryNote := ""
@@ -3256,6 +3216,7 @@ func seedAlertRules(pool *pgxpool.Pool) {
 			}
 		}
 	}
+	return failed
 }
 
 // =============================================================================
@@ -3353,7 +3314,7 @@ func logBody(level string) string {
 
 func buildLogRecord(level string, ts time.Time, releases, environments []string) map[string]any {
 	env := randomChoice(environments)
-	release := randomChoice(releases)
+	release := releaseAt(ts, releases)
 
 	attrs := map[string]any{
 		"sentry.environment": env,
@@ -3382,11 +3343,6 @@ func buildLogRecord(level string, ts time.Time, releases, environments []string)
 		"level":      level,
 		"body":       logBody(level),
 		"attributes": attrs,
-	}
-
-	// Occasionally attach a trace_id.
-	if rand.Intn(3) == 0 { //nolint:gosec
-		rec["trace_id"] = newEventID()[:32]
 	}
 
 	return rec
@@ -3421,13 +3377,13 @@ func pickLogLevel() string {
 
 func buildLogBatches(releases, environments []string) [][]map[string]any {
 	// Send historical logs in batches of 20 spread over the past 7 days.
-	total := 80
+	total := 360
 	batchSize := 20
 	var batches [][]map[string]any
 	for i := 0; i < total; i += batchSize {
 		var batch []map[string]any
 		for j := 0; j < batchSize && i+j < total; j++ {
-			ts := randomPast(7 * 24 * time.Hour)
+			ts := showcaseTime(i+j, total)
 			level := pickLogLevel()
 			batch = append(batch, buildLogRecord(level, ts, releases, environments))
 		}
@@ -3438,10 +3394,10 @@ func buildLogBatches(releases, environments []string) [][]map[string]any {
 
 func buildFreshLogs(releases, environments []string) []map[string]any {
 	var batch []map[string]any
-	for range 10 {
+	for i := range 30 {
 		ago := time.Duration(rand.Intn(2*60)) * time.Second //nolint:gosec
 		ts := time.Now().UTC().Add(-ago)
-		level := pickLogLevel()
+		level := []string{"info", "info", "info", "debug", "warning", "error", "fatal", "trace"}[i%8]
 		batch = append(batch, buildLogRecord(level, ts, releases, environments))
 	}
 	return batch
@@ -3725,7 +3681,7 @@ func buildV1Profile(tmpl profileTemplate, ts time.Time, releases, envs []string)
 	eventID := newEventID()
 	traceID := newEventID()[:32]
 	spanID := newEventID()[:16]
-	release := randomChoice(releases)
+	release := releaseAt(ts, releases)
 	env := randomChoice(envs)
 
 	b := newStackBuilder("php")
@@ -3758,7 +3714,7 @@ func buildV1Profile(tmpl profileTemplate, ts time.Time, releases, envs []string)
 				"status":   "ok",
 			},
 		},
-		"spans": buildSpanNodes(tmpl.spans, spanID, ts),
+		"spans": fitSpans(buildSpanNodes(tmpl.spans, spanID, ts), ts, end),
 		"user":  sentryUserMap(randomChoice(seedUsers)),
 	}
 
@@ -3798,7 +3754,7 @@ func buildV1Profile(tmpl profileTemplate, ts time.Time, releases, envs []string)
 func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases, envs []string) (chunk map[string]any, txs []map[string]any) {
 	profilerID := newEventID()
 	threadID := fmt.Sprintf("%d", 8412331008+rand.Intn(4096)) //nolint:gosec
-	release := randomChoice(releases)
+	release := releaseAt(start, releases)
 	env := randomChoice(envs)
 
 	// A 30s window, well inside the 66s ceiling the format allows.
@@ -3842,6 +3798,7 @@ func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases
 		offset := time.Duration(frac * windowSecs * float64(time.Second))
 		txStart := start.Add(offset)
 		txEnd := txStart.Add(time.Duration(durMs * float64(time.Millisecond)))
+		spanID := newEventID()[:16]
 
 		txs = append(txs, map[string]any{
 			"event_id":        newEventID(),
@@ -3854,7 +3811,7 @@ func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases
 			"contexts": map[string]any{
 				"trace": map[string]any{
 					"trace_id": newEventID()[:32],
-					"span_id":  newEventID()[:16],
+					"span_id":  spanID,
 					"op":       tmpl.op,
 					"status":   "ok",
 					// This is how the server picks one thread's samples out of
@@ -3864,16 +3821,192 @@ func buildV2Session(tmpl profileTemplate, start time.Time, txCount int, releases
 				// And this is the only link from a transaction to its chunks.
 				"profile": map[string]any{"profiler_id": profilerID},
 			},
-			"spans": buildSpanNodes(tmpl.spans, newEventID()[:16], txStart),
+			"spans": fitSpans(buildSpanNodes(tmpl.spans, spanID, txStart), txStart, txEnd),
 			"user":  sentryUserMap(randomChoice(seedUsers)),
 		})
 	}
 	return chunk, txs
 }
 
-// profileAge keeps seeded profiles inside the default PROFILE_RETENTION_DAYS
-// of 7. Spreading them over a week like transactions would have the retention
-// worker delete half of them on its first pass.
+// profileAge keeps complete sample windows in the past and inside the default 24h view.
 func profileAge() time.Duration {
-	return time.Duration(rand.Intn(3*24*60)) * time.Minute //nolint:gosec
+	return time.Duration(1+rand.Intn(24*60-1)) * time.Minute //nolint:gosec
+}
+
+// releaseAt models a gradual rollout, with older clients still on prior builds.
+func releaseAt(ts time.Time, releases []string) string {
+	age := max(time.Duration(0), time.Since(ts))
+	index := max(0, len(releases)-1-int(age/(7*24*time.Hour/time.Duration(len(releases)))))
+	return releases[index]
+}
+
+// Keep every screen populated in the default 24h filter and retain a weekly baseline.
+func showcaseTime(index, count int) time.Time {
+	now := time.Now().UTC().Add(-time.Minute)
+	if index < max(1, count*2/3) {
+		return now.Add(-time.Duration(index) * 23 * time.Hour / time.Duration(max(1, count*2/3)))
+	}
+	return trafficBiasedTime(7 * 24 * time.Hour).Add(-time.Minute)
+}
+
+func spanData(op, description string) map[string]any {
+	switch {
+	case strings.HasPrefix(op, "cache"):
+		data := map[string]any{"cache.item_size": 2048, "cache.key": strings.TrimPrefix(description, "GET ")}
+		if op == "cache.get" {
+			hit := rand.Intn(5) != 0 //nolint:gosec
+			if strings.Contains(description, "(miss)") {
+				hit = false
+			}
+			data["cache.hit"] = hit
+		}
+		return data
+	case strings.HasPrefix(op, "db"):
+		system := "postgresql"
+		if strings.Contains(description, "`") {
+			system = "mysql"
+		}
+		return map[string]any{"db.system": system, "db.name": "commerce", "db.rows_affected": 24}
+	case strings.HasPrefix(op, "queue"), strings.HasPrefix(op, "task"), strings.HasPrefix(op, "job"), strings.HasPrefix(op, "celery"):
+		return map[string]any{"messaging.destination.name": "orders", "messaging.message.retry.count": 0}
+	default:
+		return map[string]any{}
+	}
+}
+
+// Preserve nested and parallel relationships while fitting the entire tree to its transaction.
+func fitSpans(spans []map[string]any, start, end time.Time) []map[string]any {
+	latest := end
+	for _, span := range spans {
+		at, _ := time.Parse(time.RFC3339Nano, span["timestamp"].(string))
+		if at.After(latest) {
+			latest = at
+		}
+	}
+	if !latest.After(end) {
+		return spans
+	}
+	ratio := float64(end.Sub(start)) / float64(latest.Sub(start))
+	for _, span := range spans {
+		for _, key := range []string{"start_timestamp", "timestamp"} {
+			at, _ := time.Parse(time.RFC3339Nano, span[key].(string))
+			span[key] = start.Add(time.Duration(float64(at.Sub(start)) * ratio)).Format(time.RFC3339Nano)
+		}
+	}
+	return spans
+}
+
+func buildInvestigation(def projectDef, index int) ([]envelopeItem, string) {
+	names := []string{"Checkout payment authorization", "Inventory reservation", "Receipt delivery", "Discount validation"}
+	ts := time.Now().UTC().Add(-time.Duration(3+index*4) * time.Minute)
+	u := seedUsers[0]
+	tmpl := def.issues[index%len(def.issues)]
+	tmpl.excType = []string{"PaymentGatewayTimeout", "InventoryConflict", "ReceiptDeliveryError", "ExpiredPromotion"}[index]
+	tmpl.excValue = []string{"Payment provider did not respond within 3 seconds", "Reserved quantity exceeds available inventory", "Receipt delivery exhausted its retry budget", "Promotion expired before checkout completed"}[index]
+	tmpl.transaction = "POST /api/checkout"
+	tmpl.fingerprint = []string{"tindra-demo", def.name, names[index]}
+	event := buildErrorEvent(tmpl, ts.Add(3100*time.Millisecond), def.releases, []string{"production"})
+	eventID := newEventID()
+	event["event_id"] = eventID
+	event["user"] = sentryUserMap(u)
+	event["request"] = map[string]any{"url": "https://shop.example.com/api/checkout", "method": "POST", "headers": map[string]string{"Content-Type": "application/json"}, "data": map[string]any{"currency": "USD", "items": 3, "order_id": "ORD-10482"}}
+	tx := buildTransaction(txTemplate{name: names[index], platform: tmpl.platform, op: "http.server", durationMs: [2]int{3200, 3200}, spans: []spanNode{
+		{op: "cache.get", description: "GET catalog:featured", durationMs: [2]int{4, 4}},
+		{op: "db.query", description: "SELECT id, quantity FROM inventory WHERE product_id = $1 FOR UPDATE", durationMs: [2]int{95, 95}},
+		{op: "http.client", description: "POST https://payments.example.com/authorize", durationMs: [2]int{3000, 3000}},
+		{op: "queue.publish", description: "orders.payment_retry", durationMs: [2]int{18, 18}},
+	}}, ts, def.releases, []string{"production"})
+	tx["event_id"] = newEventID()
+	tx["user"] = sentryUserMap(u)
+	trace := tx["contexts"].(map[string]any)["trace"].(map[string]any)
+	trace["status"] = "internal_error"
+	event["contexts"].(map[string]any)["trace"] = trace
+	spans := tx["spans"].([]map[string]any)
+	spans[0]["data"].(map[string]any)["cache.hit"] = index%2 == 0
+	spans[[]int{2, 1, 3, 0}[index]]["status"] = "internal_error"
+	var logs []map[string]any
+	for i, body := range []string{"Checkout started for order ORD-10482", "Inventory reserved for 3 items", tmpl.excValue} {
+		record := buildLogRecord([]string{"info", "debug", "error"}[i], ts.Add(time.Duration(i)*time.Second), def.releases, []string{"production"})
+		record["body"], record["trace_id"], record["span_id"] = body, trace["trace_id"], trace["span_id"]
+		attrs := record["attributes"].(map[string]any)
+		for key := range attrs {
+			if strings.HasPrefix(key, "user.") {
+				delete(attrs, key)
+			}
+		}
+		for key, value := range sentryUserAttrs(u) {
+			attrs[key] = value
+		}
+		attrs["http.status_code"] = []int{200, 200, 500}[i]
+		attrs["order.id"], attrs["http.route"], attrs["http.method"] = "ORD-10482", "/api/checkout", "POST"
+		logs = append(logs, record)
+	}
+	return []envelopeItem{{typ: "event", payload: event}, {typ: "transaction", payload: tx}, {typ: "log", payload: logs}}, eventID
+}
+
+// Only touch the four events created by this run, after asynchronous grouping finishes.
+func seedWorkflow(ctx context.Context, pool *pgxpool.Pool, projectID string, eventIDs []string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		var grouped int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE project_id=$1 AND event_id=ANY($2) AND issue_id IS NOT NULL`, projectID, eventIDs).Scan(&grouped); err != nil {
+			return err
+		}
+		if grouped == len(eventIDs) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for seeded issues: %w", ctx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	for i, eventID := range eventIDs {
+		status := []string{"regressed", "open", "resolved", "ignored"}[i%4]
+		var issueID, previousStatus string
+		if err := tx.QueryRow(ctx, `WITH previous AS (
+            SELECT id,status FROM issues WHERE id=(SELECT issue_id FROM events WHERE project_id=$1 AND event_id=$2) FOR UPDATE
+        ) UPDATE issues i SET status=$3,regressed_at=CASE WHEN $3='regressed' THEN i.last_seen ELSE NULL END
+          FROM previous p WHERE i.id=p.id RETURNING i.id,p.status`, projectID, eventID, status).Scan(&issueID, &previousStatus); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO issue_history(issue_id,event_type,details,created_at)
+            SELECT $1,CASE WHEN $2='regressed' THEN 'regressed' ELSE 'status_changed' END,
+                jsonb_build_object('from',$3::text,'to',$2::text),NOW()-INTERVAL '30 seconds'
+            WHERE $2<>$3`, issueID, status, previousStatus)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE issues SET assignee_id=(SELECT id FROM users WHERE perm_manage_issues OR perm_manage_users ORDER BY created_at LIMIT 1) WHERE id=$1`, issueID)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(ctx, `INSERT INTO issue_comments(issue_id,user_id,body)
+            SELECT $1,id,$2 FROM users WHERE perm_manage_issues OR perm_manage_users ORDER BY created_at LIMIT 1`, issueID,
+			[]string{"Reproduced after the latest deployment. The linked trace shows the payment timeout; retry handling is under investigation.", "Inventory contention is isolated to the checkout path. Checking the query plan before changing the lock strategy.", "Fixed in the latest release and verified with a replay of the affected order.", "Expected validation failure for expired promotions. Ignored while the checkout copy is updated."}[i%4])
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// Register deployment dates before ingest creates releases with today's date.
+// Existing releases retain their metadata when a demo is topped up.
+func seedReleases(ctx context.Context, pool *pgxpool.Pool, projectID string, releases []string) error {
+	now := time.Now().UTC()
+	for i, version := range releases {
+		deployed := now.Add(-time.Duration(len(releases)-i) * 7 * 24 * time.Hour / time.Duration(len(releases)))
+		if _, err := pool.Exec(ctx, `INSERT INTO releases(project_id,version,deployed_at) VALUES($1,$2,$3) ON CONFLICT(project_id,version) DO NOTHING`, projectID, version, deployed); err != nil {
+			return err
+		}
+	}
+	return nil
 }
