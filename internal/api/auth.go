@@ -91,6 +91,7 @@ func (ro *router) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ro *router) handleLogout(w http.ResponseWriter, r *http.Request) {
+	clearMFAChallengeCookie(w, ro.cookieSecure)
 	cookie, err := r.Cookie("tindra_session")
 	if err == nil {
 		userID, _ := storage.DeleteSessionReturningUserID(r.Context(), ro.pool, cookie.Value)

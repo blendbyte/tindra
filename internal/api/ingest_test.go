@@ -67,7 +67,7 @@ func truncateEvents(t *testing.T) {
 }
 
 func newHandler(buf *ingest.Buffer) http.Handler {
-	return api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 }
 
 func eventEnvelope(eventID, payload string) string {
@@ -322,7 +322,7 @@ func postLogEnvelopeAs(t *testing.T, projectID, publicKey, body string) *httptes
 	defer cancel()
 	go logBuf.Run(ctx, testPool)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/"+projectID+"/envelope/",
 		bytes.NewBufferString(body))
@@ -591,7 +591,7 @@ func TestHandleEnvelope_gzipLargeProfileItem(t *testing.T) {
 	_, _ = w.Write([]byte(body))
 	w.Close()
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
@@ -656,7 +656,7 @@ func profileEnvelope(t *testing.T, itemType, fixtureFile string) string {
 
 func newProfileHandler(profBuf *ingest.ProfileBuffer) http.Handler {
 	return api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, profBuf, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 }
 
 func postEnvelope(t *testing.T, h http.Handler, body string) *httptest.ResponseRecorder {
@@ -815,7 +815,7 @@ func TestHandleEnvelope_transactionCarriesProfileLink(t *testing.T) {
 		compact.String() + "\n"
 
 	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	rec := postEnvelope(t, h, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -863,7 +863,7 @@ func TestHandleGetTransactionFlameGraph(t *testing.T) {
 	go txBuf.Run(bufCtx, testPool)
 
 	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 
 	// Ingest the profile and a transaction naming it, exactly as an SDK would.
 	rec := postEnvelope(t, h, profileEnvelope(t, "profile", "v1_php_laravel.json"))
@@ -964,7 +964,7 @@ func TestHandleGetTransactionFlameGraph(t *testing.T) {
 func TestHandleGetTransactionFlameGraph_errorPaths(t *testing.T) {
 	ctx := context.Background()
 	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 
 	get := func(t *testing.T, id string) int {
 		t.Helper()
@@ -1038,7 +1038,7 @@ func TestHandleEnvelope_transactionWithMixedTypeTraceData(t *testing.T) {
 		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
 
 	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1076,7 +1076,7 @@ func TestHandleEnvelope_numericThreadIDInTraceData(t *testing.T) {
 		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
 
 	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-		0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -1125,7 +1125,7 @@ func TestHandleEnvelope_profileBufferFullDropsOnlyTheProfile(t *testing.T) {
 	go txBuf.Run(bufCtx, testPool)
 
 	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 
 	// One envelope carrying both, as the PHP SDK sends it.
 	const txName = "/buffer-full"
@@ -1196,7 +1196,7 @@ func TestHandleGetTransactionFlameGraph_tokenScopedToAnotherProject(t *testing.T
 	}
 
 	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
 	req.Header.Set("Authorization", "Bearer "+plaintext)
 	rec := httptest.NewRecorder()
@@ -1237,7 +1237,7 @@ func TestHandleEnvelope_oddlyShapedTraceData(t *testing.T) {
 				fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
 
 			h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-				0, 0, 0, 0, 0, 0, nil, false, true, nil)
+				0, 0, 0, 0, 0, 0, nil, false, false, nil)
 			if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d", rec.Code)
 			}
@@ -1310,7 +1310,7 @@ func TestHandleEnvelope_longTransactionUserIdentity(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	payload := fmt.Sprintf(`{"transaction":"/long-user-review","user":{"id":%q},"start_timestamp":1704067200,"timestamp":1704067201}`, identity)
 	body := "{}\n{\"type\":\"transaction\"}\n" + payload + "\n"
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", strings.NewReader(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
 	rec := httptest.NewRecorder()

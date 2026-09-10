@@ -356,6 +356,21 @@ func (ro *router) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.MFAEnabled {
+		token, err := storage.CreateMFAChallenge(r.Context(), ro.pool, user.ID)
+		if err != nil {
+			slog.Error("create oauth mfa challenge", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name: "tindra_mfa", Value: token, Path: "/api/auth/mfa/verify",
+			HttpOnly: true, Secure: ro.cookieSecure, SameSite: http.SameSiteStrictMode, MaxAge: 600,
+		})
+		http.Redirect(w, r, "/login?mfa=1", http.StatusFound)
+		return
+	}
+
 	session, err := storage.CreateSession(r.Context(), ro.pool, user.ID)
 	if err != nil {
 		slog.Error("create session", "err", err)

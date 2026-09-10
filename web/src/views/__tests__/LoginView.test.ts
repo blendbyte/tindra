@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
+const routeMock = { query: {} as Record<string, string> }
 const pushMock = vi.fn()
 const resetQueriesMock = vi.fn()
 const authStoreMock = { ready: true as boolean }
@@ -11,6 +12,7 @@ vi.mock('@/stores/auth', () => ({
 }))
 
 vi.mock('vue-router', () => ({
+  useRoute: vi.fn(() => routeMock),
   useRouter: vi.fn(() => ({ push: pushMock })),
 }))
 
@@ -36,6 +38,7 @@ function mountLogin(providers: string[] = []) {
 }
 
 beforeEach(() => {
+  routeMock.query = {}
   pushMock.mockReset()
   resetQueriesMock.mockReset()
   vi.mocked(apiFetch).mockReset()
@@ -277,4 +280,45 @@ describe('LoginView', () => {
       expect(wrapper.find('.login__sso').attributes('href')).toBe('/api/auth/google/redirect')
     })
   })
+})
+
+
+describe('SSO MFA challenge', () => {
+  it('verifies the cookie challenge before navigating', async () => {
+    routeMock.query = { mfa: '1' }
+    vi.mocked(apiFetch).mockResolvedValue({})
+    const wrapper = mountLogin(['google'])
+    expect(wrapper.find('.login__mfa').exists()).toBe(true)
+    expect(wrapper.find('.login__sso').exists()).toBe(false)
+    await wrapper.find('.login__mfa-code').setValue('123456')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(apiFetch).toHaveBeenCalledWith('/api/auth/mfa/verify', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ mfa_token: '', code: '123456' }),
+    }))
+    expect(authStoreMock.ready).toBe(false)
+    expect(resetQueriesMock).toHaveBeenCalled()
+    expect(pushMock).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('keeps failed challenges on the MFA screen and allows restarting SSO', async () => {
+    routeMock.query = { mfa: '1' }
+    vi.mocked(apiFetch).mockRejectedValue(new Error('expired'))
+    const wrapper = mountLogin(['google'])
+    await wrapper.find('.login__mfa-code').setValue('123456')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(wrapper.find('.login__error-title').text()).toBe('Session expired.')
+    expect(pushMock).not.toHaveBeenCalled()
+    await wrapper.find('.login__back').trigger('click')
+    expect(wrapper.find('.login__mfa').exists()).toBe(false)
+    expect(wrapper.find('.login__sso').exists()).toBe(true)
+  })
+})
+
+it('loads SSO providers with the query cancellation signal', async () => {
+  mountLogin()
+  const options = vi.mocked(useQuery).mock.calls[0]![0] as any
+  const signal = new AbortController().signal
+  vi.mocked(apiFetch).mockResolvedValue({ providers: ['google'] })
+  await expect(options.queryFn({ signal })).resolves.toEqual({ providers: ['google'] })
+  expect(apiFetch).toHaveBeenCalledWith('/api/auth/providers', { signal })
 })

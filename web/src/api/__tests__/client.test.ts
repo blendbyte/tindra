@@ -136,3 +136,28 @@ describe('apiFetch', () => {
     expect(result).toBeUndefined()
   })
 })
+
+
+describe('required MFA enrollment redirect', () => {
+  it.each([
+    ['/issues', 'setup', '/setup-mfa'],
+    ['/setup-mfa', 'setup', ''],
+    ['/issues', '', ''],
+  ])('handles 403 on %s with enrollment header %s', async (pathname, header, expected) => {
+    Object.defineProperty(window, 'location', { writable: true, value: { pathname, href: '' } })
+    vi.mocked(fetch).mockResolvedValue(new Response('forbidden', {
+      status: 403, headers: { 'X-Tindra-MFA-Required': header },
+    }))
+    await expect(apiFetch('/api/projects')).rejects.toBeInstanceOf(ApiError)
+    expect(window.location.href).toBe(expected)
+  })
+})
+
+it('preserves the HTTP error when reading its body fails', async () => {
+  const response = new Response(null, { status: 503, statusText: 'Service Unavailable' })
+  vi.spyOn(response, 'text').mockRejectedValue(new Error('stream closed'))
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+  await expect(apiFetch('/api/projects')).rejects.toMatchObject({
+    status: 503, message: 'Service Unavailable',
+  })
+})

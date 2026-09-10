@@ -390,6 +390,7 @@ func CreateSession(ctx context.Context, pool *pgxpool.Pool, userID string) (*Ses
 
 // SessionIdentity contains only the fields required by authentication middleware.
 type SessionIdentity struct {
+	MFAEnabled  bool
 	UserID      string
 	Permissions UserPermissions
 }
@@ -397,11 +398,11 @@ type SessionIdentity struct {
 func GetSessionIdentity(ctx context.Context, pool *pgxpool.Pool, token string) (*SessionIdentity, error) {
 	var identity SessionIdentity
 	err := pool.QueryRow(ctx, `
-		SELECT s.user_id, u.perm_manage_projects, u.perm_manage_users,
+		SELECT s.user_id, u.mfa_enabled, u.perm_manage_projects, u.perm_manage_users,
 			u.perm_manage_alerts, u.perm_manage_issues
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND s.expires_at > NOW()
-	`, tokenHash(token)).Scan(&identity.UserID, &identity.Permissions.ManageProjects,
+	`, tokenHash(token)).Scan(&identity.UserID, &identity.MFAEnabled, &identity.Permissions.ManageProjects,
 		&identity.Permissions.ManageUsers, &identity.Permissions.ManageAlerts, &identity.Permissions.ManageIssues)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

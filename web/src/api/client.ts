@@ -14,6 +14,9 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   if (!res.ok) {
+    if (res.status === 403 && res.headers.get('X-Tindra-MFA-Required') === 'setup' && window.location.pathname !== '/setup-mfa') {
+      window.location.href = '/setup-mfa'
+    }
     if (res.status === 401 && !path.includes('/api/auth/')) {
       const here = window.location.pathname
       const isPublic =

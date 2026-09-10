@@ -178,13 +178,24 @@ func (ro *router) handleMFADisable(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMFAVerify completes a login for users with MFA enabled.
-// Called with the mfa_token issued during handleLogin when mfa_required is true.
+// Accepts the password-login mfa_token or the HttpOnly OAuth challenge cookie.
 func (ro *router) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		MFAToken string `json:"mfa_token"`
 		Code     string `json:"code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MFAToken == "" || req.Code == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// OAuth challenges are carried in an HttpOnly cookie, never a redirect URL.
+	if req.MFAToken == "" {
+		if cookie, err := r.Cookie("tindra_mfa"); err == nil {
+			req.MFAToken = cookie.Value
+		}
+	}
+	if req.MFAToken == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -235,5 +246,11 @@ func (ro *router) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  session.ExpiresAt,
 	})
+	clearMFAChallengeCookie(w, ro.cookieSecure)
 	w.WriteHeader(http.StatusOK)
+}
+
+func clearMFAChallengeCookie(w http.ResponseWriter, secure bool) {
+	http.SetCookie(w, &http.Cookie{Name: "tindra_mfa", Value: "", Path: "/api/auth/mfa/verify",
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 }

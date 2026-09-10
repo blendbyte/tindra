@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -9,6 +9,8 @@ import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
 
 const router = useRouter()
+const route = useRoute()
+const cookieMfa = ref(route.query.mfa === '1')
 const qc = useQueryClient()
 const auth = useAuthStore()
 const email = ref('')
@@ -91,13 +93,13 @@ async function submit() {
 }
 
 async function submitMFA() {
-  if (mfaCode.value.length < 6 || !mfaToken.value || mfaLoading.value) return
+  if (mfaCode.value.length < 6 || (!mfaToken.value && !cookieMfa.value) || mfaLoading.value) return
   error.value = null
   mfaLoading.value = true
   try {
     await apiFetch<void>('/api/auth/mfa/verify', {
       method: 'POST',
-      body: JSON.stringify({ mfa_token: mfaToken.value, code: mfaCode.value }),
+      body: JSON.stringify({ mfa_token: mfaToken.value ?? '', code: mfaCode.value }),
     })
     await qc.resetQueries()
     auth.ready = false
@@ -116,6 +118,7 @@ watch(mfaCode, (v) => {
 })
 
 function backToLogin() {
+  cookieMfa.value = false
   mfaToken.value = null
   mfaCode.value = ''
   error.value = null
@@ -130,7 +133,7 @@ function backToLogin() {
       <img :src="logoDark" alt="Tindra" class="login__logo login__logo--dark" />
 
       <!-- MFA step -->
-      <template v-if="mfaToken">
+      <template v-if="mfaToken || cookieMfa">
         <div class="login__mfa">
           <div class="login__mfa-icon">
             <Icon name="shield" :size="22" />

@@ -51,7 +51,7 @@ func oauthDB(t *testing.T) *pgxpool.Pool {
 // or more mock OAuth providers configured. This lets us exercise the full
 // redirect / callback flow including state storage.
 func routerWithSSOAndPool(pool *pgxpool.Pool, providers ...oauthProvider) http.Handler {
-	return NewRouter(pool, ingest.NewBuffer(1), nil, nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return NewRouter(pool, ingest.NewBuffer(1), nil, nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ func TestHandleOAuthCallbackAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h := NewRouter(pool, nil, nil, nil, nil, nil, []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+			h := NewRouter(pool, nil, nil, nil, nil, nil, []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 			if scenario.full {
 				count, err := storage.CountUsers(t.Context(), pool)
 				if err != nil {
@@ -293,11 +293,20 @@ func TestHandleOAuthCallbackAdmission(t *testing.T) {
 
 func TestHandleOAuthCallbackAdmissionDatabaseFailure(t *testing.T) {
 	pool := oauthDB(t)
-	for _, stage := range []string{"DELETE FROM oauth_states", "SELECT user_id FROM oauth_identities", "INSERT INTO sessions"} {
+	for _, stage := range []string{"DELETE FROM oauth_states", "SELECT user_id FROM oauth_identities", "INSERT INTO sessions", "INSERT INTO mfa_challenges"} {
 		t.Run(stage, func(t *testing.T) {
 			email := uuid.NewString() + "@example.com"
 			if _, err := storage.CreateInvite(t.Context(), pool, "", email, "Invited"); err != nil {
 				t.Fatal(err)
+			}
+			if stage == "INSERT INTO mfa_challenges" {
+				user, err := storage.CreateOAuthUser(t.Context(), pool, email)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := storage.EnableMFA(t.Context(), pool, user.ID); err != nil {
+					t.Fatal(err)
+				}
 			}
 			state, err := storage.CreateOAuthState(t.Context(), pool, "admission", "verifier")
 			if err != nil {

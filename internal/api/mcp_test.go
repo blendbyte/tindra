@@ -16,7 +16,7 @@ import (
 )
 
 func mcpHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 }
 
 type rpcResp struct {
@@ -540,7 +540,7 @@ func TestMCP_getIssue_resolvesSourceMaps(t *testing.T) {
 	iss := seedIssue(t, "mcp-sm-fp", "SM Error")
 	evID := seedMCPIssueEvent(t, iss.ID, "mcp-sm-fp", `{"exception":{"values":[{"stacktrace":{"frames":[{"filename":"app.js","lineno":1}]}}]},"release":"v1"}`, time.Now().UTC())
 	store, _ := newSmStore(t)
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 
 	result := toolCall(t, h, "get_issue", map[string]any{"id": iss.ID}, authCookie())
 	isErr, _ := result["isError"].(bool)

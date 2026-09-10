@@ -185,6 +185,9 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if !ro.allowMFAEnrollmentRequest(w, r, session) {
+			return
+		}
 		ctx := context.WithValue(r.Context(), ctxUserID, session.UserID)
 		ctx = context.WithValue(ctx, ctxUserPerms, &session.Permissions)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -209,10 +212,29 @@ func (ro *router) requireSessionAuth(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if !ro.allowMFAEnrollmentRequest(w, r, session) {
+			return
+		}
 		ctx := context.WithValue(r.Context(), ctxUserID, session.UserID)
 		ctx = context.WithValue(ctx, ctxUserPerms, &session.Permissions)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// Enrollment sessions can only inspect/update their own account and enroll MFA.
+// Check current user state on every request so disabling MFA takes effect at once.
+func (ro *router) allowMFAEnrollmentRequest(w http.ResponseWriter, r *http.Request, session *storage.SessionIdentity) bool {
+	if !ro.requireMFA || session.MFAEnabled {
+		return true
+	}
+	switch r.Method + " " + r.URL.Path {
+	case "GET /api/me", "PATCH /api/me", "PATCH /api/me/password",
+		"GET /api/auth/mfa/setup", "POST /api/auth/mfa/confirm":
+		return true
+	}
+	w.Header().Set("X-Tindra-MFA-Required", "setup")
+	http.Error(w, "MFA setup required", http.StatusForbidden)
+	return false
 }
 
 // requirePerm returns a middleware that enforces a named permission.

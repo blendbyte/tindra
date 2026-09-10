@@ -104,7 +104,7 @@ func TestSetupEnvelopePersistsTheSDKTestMarker(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); buf.Run(ctx, testPool) }()
 	defer func() { cancel(); <-done }()
-	h := api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	payload := fmt.Sprintf(`{"platform":"javascript","level":"error","tags":{"tindra_setup":%q},"exception":{"values":[{"type":"Error","value":"Hello, Tindra!"}]}}`, check.ID)
 	req := httptest.NewRequest("POST", "/api/"+p.ID+"/envelope/", strings.NewReader(eventEnvelope(strings.ReplaceAll(uuid.NewString(), "-", ""), payload)))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(p.PublicKey))
@@ -212,7 +212,7 @@ func TestSetupMixedEnvelopeReportsDroppedProfileAndQueuedError(t *testing.T) {
 	_, err := testPool.Exec(t.Context(), `UPDATE projects SET profiling_enabled=false WHERE id=$1`, p.ID)
 	require.NoError(t, err)
 	buf := ingest.NewBuffer(5)
-	h := api.NewRouter(testPool, buf, nil, nil, ingest.NewProfileBuffer(5), nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, buf, nil, nil, ingest.NewProfileBuffer(5), nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	body := eventEnvelope(uuid.NewString(), `{"message":"test"}`) + "{\"type\":\"profile\"}\n{}\n"
 	req := httptest.NewRequest("POST", "/api/"+p.ID+"/envelope/", bytes.NewBufferString(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(p.PublicKey))
@@ -242,7 +242,7 @@ func TestSetupSourceMapsVerifyRealFramesAndExactEventLink(t *testing.T) {
 	require.NoError(t, err)
 	var eventID string
 	require.NoError(t, testPool.QueryRow(t.Context(), `INSERT INTO events(project_id,issue_id,timestamp,payload) VALUES($1,$2,now(),$3) RETURNING id`, p.ID, issue.ID, `{"release":"release-1","platform":"javascript","exception":{"values":[{"stacktrace":{"frames":[{"abs_path":"https://app.test/app.js","lineno":1,"colno":0}]}}]}}`).Scan(&eventID))
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
 	res := setupRequest(t, h, "GET", "/api/projects/"+p.Slug+"/setup-sourcemaps?event_id="+eventID)
 	require.Equal(t, 200, res.Code, res.Body.String())
 	var verification sourcemaps.Verification
