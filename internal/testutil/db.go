@@ -4,8 +4,10 @@ package testutil
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"time"
@@ -20,7 +22,7 @@ import (
 	"github.com/blendbyte/tindra/migrations"
 )
 
-const templateDB = "tindra_test_template"
+const templateReady = "tindra test template ready"
 
 // advisory lock key used to serialize template creation across parallel test
 // binaries sharing the same postgres instance.
@@ -40,52 +42,93 @@ func SetupDB(ctx context.Context) (*pgxpool.Pool, func()) {
 	return setupContainer(ctx)
 }
 
-// ensureTemplateDB creates tindra_test_template with all migrations applied if
-// it does not already exist. An advisory lock serializes concurrent calls from
-// parallel test binaries so only the first one does the work; the rest return
-// immediately once the lock is released and the template already exists.
-func ensureTemplateDB(ctx context.Context, adminDSN string) {
+// templateName changes whenever a migration is added, renamed, or edited.
+// Separate names let test binaries from different revisions safely share a server.
+func templateName(files fs.FS) (string, error) {
+	names, err := fs.Glob(files, "*.sql")
+	if err != nil {
+		return "", fmt.Errorf("list migrations: %w", err)
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("no migrations found")
+	}
+	hash := sha256.New()
+	for _, name := range names {
+		sql, err := fs.ReadFile(files, name)
+		if err != nil {
+			return "", fmt.Errorf("read migration %s: %w", name, err)
+		}
+		fmt.Fprintf(hash, "%d:%s%d:%s", len(name), name, len(sql), sql)
+	}
+	return "tindra_test_template_" + hex.EncodeToString(hash.Sum(nil)[:16]), nil
+}
+
+// ensureTemplateDB publishes a reusable template only after every migration
+// succeeds. Incomplete builds are rebuilt under a session-scoped advisory lock.
+func ensureTemplateDB(ctx context.Context, adminDSN string, files fs.FS) (string, error) {
+	name, err := templateName(files)
+	if err != nil {
+		return "", err
+	}
 	admin, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
-		log.Fatalf("testutil: connect admin for template: %v", err)
+		return "", fmt.Errorf("connect admin for template: %w", err)
 	}
 	defer admin.Close()
-
-	if _, err := admin.Exec(ctx, "SELECT pg_advisory_lock($1)", templateLockKey); err != nil {
-		log.Fatalf("testutil: advisory lock: %v", err)
+	conn, err := admin.Acquire(ctx)
+	if err != nil {
+		return "", fmt.Errorf("acquire template connection: %w", err)
 	}
-	defer admin.Exec(ctx, "SELECT pg_advisory_unlock($1)", templateLockKey) //nolint:errcheck
-
-	var exists bool
-	if err := admin.QueryRow(ctx,
-		"SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", templateDB,
-	).Scan(&exists); err != nil {
-		log.Fatalf("testutil: check template existence: %v", err)
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", templateLockKey); err != nil {
+		return "", fmt.Errorf("lock template: %w", err)
+	}
+	// Closing the admin pool also releases this session lock if cancellation
+	// prevents explicit unlock. No other operation borrows this connection.
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", templateLockKey)
+	}()
+	var exists, ready bool
+	err = conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1),
+  EXISTS(SELECT 1 FROM pg_database WHERE datname=$1 AND shobj_description(oid,'pg_database')=$2)`, name, templateReady).Scan(&exists, &ready)
+	if err != nil {
+		return "", fmt.Errorf("check template: %w", err)
+	}
+	if ready {
+		return name, nil
 	}
 	if exists {
-		return
+		if _, err := conn.Exec(ctx, "DROP DATABASE "+name); err != nil {
+			return "", fmt.Errorf("drop incomplete template: %w", err)
+		}
 	}
-
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+templateDB); err != nil {
-		log.Fatalf("testutil: create template DB: %v", err)
+	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		return "", fmt.Errorf("create template: %w", err)
 	}
-
-	cfg, err := pgxpool.ParseConfig(adminDSN)
-	if err != nil {
-		log.Fatalf("testutil: parse DSN: %v", err)
-	}
-	cfg.ConnConfig.Database = templateDB
-
+	cfg := admin.Config()
+	cfg.ConnConfig.Database = name
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		log.Fatalf("testutil: connect template DB: %v", err)
+		return "", fmt.Errorf("connect template: %w", err)
 	}
-	runMigrations(ctx, pool)
-	pool.Close()
+	err = applyMigrations(ctx, pool, files)
+	pool.Close() // Cloning requires the source database to have no open sessions.
+	if err != nil {
+		return "", err
+	}
+	if _, err := conn.Exec(ctx, "COMMENT ON DATABASE "+name+" IS '"+templateReady+"'"); err != nil {
+		return "", fmt.Errorf("mark template ready: %w", err)
+	}
+	return name, nil
 }
 
 func setupFromDSN(ctx context.Context, adminDSN string) (*pgxpool.Pool, func()) {
-	ensureTemplateDB(ctx, adminDSN)
+	templateDB, err := ensureTemplateDB(ctx, adminDSN, migrations.FS)
+	if err != nil {
+		log.Fatalf("testutil: prepare template: %v", err)
+	}
 
 	suffix := randomHex(4)
 	dbName := "tindra_test_" + suffix
@@ -124,8 +167,10 @@ func setupFromDSN(ctx context.Context, adminDSN string) (*pgxpool.Pool, func()) 
 	return pool, cleanup
 }
 
+var startPostgres = tcpostgres.Run
+
 func setupContainer(ctx context.Context) (*pgxpool.Pool, func()) {
-	ctr, err := tcpostgres.Run(ctx, "postgres:18",
+	ctr, err := startPostgres(ctx, "postgres:18",
 		tcpostgres.WithDatabase("tindra_test"),
 		tcpostgres.WithUsername("tindra"),
 		tcpostgres.WithPassword("tindra"),
@@ -136,8 +181,7 @@ func setupContainer(ctx context.Context) (*pgxpool.Pool, func()) {
 		),
 	)
 	if err != nil {
-		log.Printf("testutil: no postgres container available, skipping db tests: %v", err)
-		os.Exit(0)
+		log.Fatalf("testutil: postgres container is required for database tests: %v", err)
 	}
 
 	connStr, err := ctr.ConnectionString(ctx, "sslmode=disable")
@@ -159,21 +203,31 @@ func setupContainer(ctx context.Context) (*pgxpool.Pool, func()) {
 }
 
 func runMigrations(ctx context.Context, pool *pgxpool.Pool) {
-	names, err := migrations.Files()
+	if err := applyMigrations(ctx, pool, migrations.FS); err != nil {
+		log.Fatalf("testutil: %v", err)
+	}
+}
+
+func applyMigrations(ctx context.Context, pool *pgxpool.Pool, files fs.FS) error {
+	names, err := fs.Glob(files, "*.sql")
 	if err != nil {
-		log.Fatalf("testutil: list migrations: %v", err)
+		return fmt.Errorf("list migrations: %w", err)
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("no migrations found")
 	}
 	for _, name := range names {
-		sql, err := migrations.FS.ReadFile(name)
+		sql, err := fs.ReadFile(files, name)
 		if err != nil {
-			log.Fatalf("testutil: read migration %s: %v", name, err)
+			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 		for i, batch := range migrations.Batches(string(sql)) {
 			if _, err := pool.Exec(ctx, batch); err != nil {
-				log.Fatalf("testutil: apply migration %s batch %d: %v", name, i+1, err)
+				return fmt.Errorf("apply migration %s batch %d: %w", name, i+1, err)
 			}
 		}
 	}
+	return nil
 }
 
 // SetupDBWithDSN is like SetupDB but also returns the connection string for the
