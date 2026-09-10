@@ -318,3 +318,41 @@ it.each([true, false])('ignores a stale upload result (success: %s)', async succ
  expect(showToast).not.toHaveBeenCalled()
  expect(wrapper!.text()).not.toContain('Could not upload the source map')
 })
+
+it('links received transactions and matching profiles to their exact records', async () => {
+ status.examples.transactions = { id: 'stored-transaction', received_at: status.checked_at }
+ status.profile_transaction_id = 'profiled-transaction'
+ status.receipts = ['transactions', 'profile_chunks'].map(kind => ({ kind: kind as 'transactions' | 'profile_chunks', first_received_at: status.checked_at, last_received_at: status.checked_at, latest_id: 'stored-record' }))
+ await render()
+ await wrapper!.setProps({ focus: 'profiles' })
+ expect(wrapper!.find('a[href="/transactions/stored-transaction"]').text()).toBe('View transaction')
+ expect(wrapper!.find('a[href="/transactions/profiled-transaction"]').text()).toBe('Open profiled transaction')
+ expect(wrapper!.findAll('details').find(d => d.find('summary').text().includes('Profiles'))!.attributes('open')).toBeDefined()
+ status.profile_transaction_id = null
+ await click('Check again')
+ expect(wrapper!.text()).toContain('no matching transaction was found')
+})
+
+it('can replace a saved setup check that the server no longer has', async () => {
+ sessionStorage.setItem(`tindra:setup:${project.id}`, '00000000-0000-4000-8000-000000000001')
+ vi.mocked(apiFetch).mockRejectedValueOnce(new ApiError(404, 'check not found'))
+ await render()
+ await click('Start a new check')
+ expect(wrapper!.find('h2').text()).toBe('Waiting for your test event')
+ expect(wrapper!.find('pre').text()).toContain(check.id)
+})
+
+it('distinguishes a stored event awaiting issue processing from an expired event', async () => {
+ status.check = { ...check, received_at: status.checked_at, event_id: 'processing-event' }
+ status.examples.test = { id: 'processing-event', received_at: status.checked_at }
+ await render()
+ expect(wrapper!.text()).toContain('Its issue link will appear once processing finishes')
+ expect(wrapper!.text()).not.toContain('event has been removed or expired')
+})
+
+it('explains when source map storage is unavailable', async () => {
+ status.sourcemaps_available = false
+ await render()
+ expect(wrapper!.text()).toContain('Source map storage is not configured on this server')
+ expect(wrapper!.find('input[id$="-event"]').exists()).toBe(false)
+})

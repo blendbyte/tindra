@@ -337,3 +337,35 @@ func TestGetIssueHistogram_weekBuckets(t *testing.T) {
 		t.Error("expected at least one week bucket")
 	}
 }
+
+func TestGetEventForIssueByIDPreservesExactScopedEvent(t *testing.T) {
+	ctx := t.Context()
+	project, _ := setupProjectAndEvent(t)
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "exact-event", "Error", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	other, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "other-exact-event", "Other", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	var original, newer string
+	require.NoError(t, testPool.QueryRow(ctx, `INSERT INTO events(project_id,issue_id,timestamp,received_at,trace_id,payload) VALUES($1,$2,now(),now()-interval '1 minute','trace-original','{"message":"original","release":"v1"}') RETURNING id`, project.ID, issue.ID).Scan(&original))
+	require.NoError(t, testPool.QueryRow(ctx, `INSERT INTO events(project_id,issue_id,timestamp,payload) VALUES($1,$2,now(),'{}') RETURNING id`, project.ID, issue.ID).Scan(&newer))
+	event, err := storage.GetEventForIssueByID(ctx, testPool, issue.ID, original)
+	require.NoError(t, err)
+	require.NotNil(t, event)
+	require.Equal(t, original, event.ID)
+	require.NotEqual(t, newer, event.ID)
+	require.Equal(t, "v1", *event.Release)
+	require.Equal(t, "trace-original", *event.TraceID)
+	require.JSONEq(t, `{"message":"original","release":"v1"}`, string(event.Payload))
+	event, err = storage.GetEventForIssueByID(ctx, testPool, other.ID, original)
+	require.NoError(t, err)
+	require.Nil(t, event, "an event from another issue must not be returned")
+	_, err = testPool.Exec(ctx, `DELETE FROM events WHERE id=$1`, original)
+	require.NoError(t, err)
+	event, err = storage.GetEventForIssueByID(ctx, testPool, issue.ID, original)
+	require.NoError(t, err)
+	require.Nil(t, event, "a removed event must not fall back to the latest event")
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = storage.GetEventForIssueByID(cancelled, testPool, issue.ID, newer)
+	require.ErrorIs(t, err, context.Canceled)
+}

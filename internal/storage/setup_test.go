@@ -74,3 +74,45 @@ func TestSetupObservationWindowAndReplacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "storage_failed", rows[0].Reason)
 }
+
+func TestSetupCheckLookupIsProjectScoped(t *testing.T) {
+	ctx := t.Context()
+	project, err := storage.CreateProject(ctx, testPool, "check-owner-"+uuid.NewString(), "Owner")
+	require.NoError(t, err)
+	other, err := storage.CreateProject(ctx, testPool, "check-other-"+uuid.NewString(), "Other")
+	require.NoError(t, err)
+	check, err := storage.StartSetupCheck(ctx, testPool, project.ID)
+	require.NoError(t, err)
+	found, err := storage.GetSetupCheck(ctx, testPool, project.ID, check.ID)
+	require.NoError(t, err)
+	require.Equal(t, check, found)
+	found, err = storage.GetSetupCheck(ctx, testPool, other.ID, check.ID)
+	require.NoError(t, err)
+	require.Nil(t, found)
+	found, err = storage.GetSetupCheck(ctx, testPool, project.ID, uuid.NewString())
+	require.NoError(t, err)
+	require.Nil(t, found)
+}
+
+func TestSetupReceiptsSurviveEventRetention(t *testing.T) {
+	ctx := t.Context()
+	project, err := storage.CreateProject(ctx, testPool, "receipt-owner-"+uuid.NewString(), "Owner")
+	require.NoError(t, err)
+	receipts, err := storage.ListSetupReceipts(ctx, testPool, project.ID)
+	require.NoError(t, err)
+	require.Empty(t, receipts)
+	var eventID string
+	require.NoError(t, testPool.QueryRow(ctx, `INSERT INTO events(project_id,timestamp,payload) VALUES($1,now(),'{}') RETURNING id`, project.ID).Scan(&eventID))
+	receipts, err = storage.ListSetupReceipts(ctx, testPool, project.ID)
+	require.NoError(t, err)
+	require.Len(t, receipts, 1)
+	require.Equal(t, "events", receipts[0].Kind)
+	require.Equal(t, eventID, receipts[0].LatestID)
+	require.False(t, receipts[0].FirstReceivedAt.IsZero())
+	require.Equal(t, receipts[0].FirstReceivedAt, receipts[0].LastReceivedAt)
+	_, err = testPool.Exec(ctx, `DELETE FROM events WHERE id=$1`, eventID)
+	require.NoError(t, err)
+	after, err := storage.ListSetupReceipts(ctx, testPool, project.ID)
+	require.NoError(t, err)
+	require.Equal(t, receipts, after)
+}

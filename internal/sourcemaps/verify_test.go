@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/blendbyte/tindra/internal/sourcemaps"
@@ -63,4 +64,14 @@ func TestVerifySourceMapsHandlesIncompleteAndMalformedStacks(t *testing.T) {
 	require.True(t, result.Truncated)
 	require.Len(t, result.Frames, 40)
 	require.Equal(t, "needs_attention", result.Status)
+}
+
+func TestVerificationReturnsDatabaseFailureWithoutClaimingMissingMap(t *testing.T) {
+	pool, err := pgxpool.NewWithConfig(t.Context(), testPool.Config())
+	require.NoError(t, err)
+	pool.Close()
+	store := sourcemaps.NewStore(t.TempDir(), pool)
+	result, err := store.VerifyEvent(t.Context(), testProject.ID, json.RawMessage(`{"release":"v1","platform":"javascript","exception":{"values":[{"stacktrace":{"frames":[{"filename":"~/app.js","lineno":1}]}}]}}`))
+	require.Error(t, err)
+	require.Nil(t, result)
 }
