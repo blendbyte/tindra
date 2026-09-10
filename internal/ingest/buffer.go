@@ -43,7 +43,15 @@ func (b *Buffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 			stats := b.Stats()
 			b.logger.Debug("event flush", "attempted", len(batch), "write_ms", time.Since(start).Milliseconds(), "queued", stats.Queued, "rejected", stats.Rejected)
 		}()
-		return atomicWrite(ctx, pool, func(db batchSender) error { return writeBatch(ctx, db, batch) })
+		err := atomicWrite(ctx, pool, func(db batchSender) error { return writeBatch(ctx, db, batch) })
+		if err != nil {
+			ids := make([]string, 0, len(batch))
+			for _, event := range batch {
+				ids = append(ids, event.ProjectID)
+			}
+			recordSetupWriteFailure(ctx, pool, "events", ids, err)
+		}
+		return err
 	})
 }
 

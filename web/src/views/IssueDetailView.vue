@@ -74,6 +74,8 @@ function copyStack() {
   })
 }
 const eventIndex = ref(0)
+const pinnedEvent = computed(() => typeof route.query?.event_id === 'string' ? route.query.event_id : '')
+const eventParams = computed(() => pinnedEvent.value ? `event_id=${encodeURIComponent(pinnedEvent.value)}` : `offset=${eventIndex.value}`)
 const commentBody = ref('')
 const assignOpen = ref(false)
 const assignEl = ref<HTMLElement | null>(null)
@@ -94,9 +96,9 @@ watchEffect(() => {
   if (issue.value?.title) document.title = `${issue.value.title} - Tindra`
 })
 
-const { data: currentEvent } = useQuery({
-  queryKey: computed(() => ['issues', issueId.value, 'events', eventIndex.value]),
-  queryFn: ({ signal }) => apiFetch<TindraEvent>(`/api/issues/${issueId.value}/events/latest?offset=${eventIndex.value}`, { signal }),
+const { data: currentEvent, error: currentEventError } = useQuery({
+  queryKey: computed(() => ['issues', issueId.value, 'events', eventIndex.value, pinnedEvent.value]),
+  queryFn: ({ signal }) => apiFetch<TindraEvent>(`/api/issues/${issueId.value}/events/latest?${eventParams.value}`, { signal }),
   enabled: computed(() => !!issueId.value && !!issue.value && issue.value.kind !== 'n1_query'),
   placeholderData: keepPreviousData,
 })
@@ -476,8 +478,8 @@ const traceId = computed(() => {
 })
 
 const { data: linkedTransaction } = useQuery({
-  queryKey: computed(() => ['issues', issueId.value, 'trace', eventIndex.value]),
-  queryFn: ({ signal }) => apiFetch<import('@/api/types').Transaction | null>(`/api/issues/${issueId.value}/trace?offset=${eventIndex.value}`, { signal }),
+  queryKey: computed(() => ['issues', issueId.value, 'trace', eventIndex.value, pinnedEvent.value]),
+  queryFn: ({ signal }) => apiFetch<import('@/api/types').Transaction | null>(`/api/issues/${issueId.value}/trace?${eventParams.value}`, { signal }),
   enabled: computed(() => !!issueId.value && !!traceId.value),
 })
 
@@ -714,6 +716,7 @@ function toggleEventList() {
 }
 
 function selectEvent(ev: EventSummary) {
+  if (pinnedEvent.value) { router.replace({ query: { ...route.query, event_id: ev.id } }); return }
   const idx = sortedEvents.value.findIndex(e => e.id === ev.id)
   if (idx !== -1) eventIndex.value = idx
 }
@@ -739,8 +742,8 @@ function onKey(e: KeyboardEvent) {
   else if (e.key.toLowerCase() === 'e' && !updatingStatus.value && issue.value?.status !== 'resolved') setStatus('resolved', 'open')
   else if (e.key.toLowerCase() === 'i' && !updatingStatus.value && issue.value?.status !== 'ignored') setStatus('ignored', 'open')
   else if (e.key.toLowerCase() === 'a') { e.preventDefault(); assignOpen.value = !assignOpen.value }
-  else if (e.key === 'ArrowLeft') eventIndex.value = Math.max(0, eventIndex.value - 1)
-  else if (e.key === 'ArrowRight') eventIndex.value = Math.min((issue.value?.event_count ?? 1) - 1, eventIndex.value + 1)
+  else if (e.key === 'ArrowLeft' && !pinnedEvent.value) eventIndex.value = Math.max(0, eventIndex.value - 1)
+  else if (e.key === 'ArrowRight' && !pinnedEvent.value) eventIndex.value = Math.min((issue.value?.event_count ?? 1) - 1, eventIndex.value + 1)
 }
 
 onMounted(() => {
@@ -957,7 +960,13 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-        <div class="eventnav">
+        <p v-if="pinnedEvent && currentEventError" role="alert" style="padding: 12px 16px">Could not load this linked event. It may have expired; you can still view the latest event below.</p>
+        <div v-if="pinnedEvent" class="eventnav">
+          <span class="eventnav__cur">Viewing linked event</span>
+          <button class="btn" @click="router.replace({ query: { ...route.query, event_id: undefined } })">View latest event</button>
+          <a v-if="currentEvent" class="eventnav__raw" :href="`/api/issues/${issueId}/events/latest?${eventParams}`" target="_blank" rel="noopener">Raw</a>
+        </div>
+        <div v-else class="eventnav">
           <button
             class="eventnav__btn"
             :class="{ 'eventnav__btn--dis': eventIndex >= issue.event_count - 1 }"
@@ -1059,7 +1068,7 @@ onUnmounted(() => {
                 v-for="ev in sortedEvents"
                 :key="ev.id"
                 class="evttable__row"
-                :class="{ 'evttable__row--active': sortedEvents[eventIndex]?.id === ev.id }"
+                :class="{ 'evttable__row--active': (pinnedEvent || sortedEvents[eventIndex]?.id) === ev.id }"
                 @click="selectEvent(ev)"
               >
                 <td class="evttable__time mono" :title="new Date(ev.received_at).toUTCString()">

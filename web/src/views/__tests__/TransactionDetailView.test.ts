@@ -14,7 +14,8 @@ vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
 }))
 
-vi.mock('@/api/client', () => ({
+vi.mock('@/api/client', async importOriginal => ({
+  ...await importOriginal<typeof import('@/api/client')>(),
   apiFetch: vi.fn(),
 }))
 
@@ -29,7 +30,7 @@ vi.mock('@/stores/auth', () => ({
 import TransactionDetailView from '../TransactionDetailView.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useAuthStore } from '@/stores/auth'
-import { apiFetch } from '@/api/client'
+import { ApiError, apiFetch } from '@/api/client'
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -339,12 +340,14 @@ describe('TransactionDetailView', () => {
 
     // Most transactions were never profiled, so the 404 must not surface as a
     // failed query and turn the panel into an error state.
-    it('turns a rejection into no profile', async () => {
+    it('treats only a 404 as no profile', async () => {
       setupMocks()
       mount(TransactionDetailView, { global: { stubs } })
 
-      vi.mocked(apiFetch).mockRejectedValueOnce(new Error('404 not found'))
+      vi.mocked(apiFetch).mockRejectedValueOnce(new ApiError(404, 'no profile'))
       await expect(flameQueryFn()()).resolves.toBeNull()
+      vi.mocked(apiFetch).mockRejectedValueOnce(new ApiError(500, 'database unavailable'))
+      await expect(flameQueryFn()()).rejects.toMatchObject({ status: 500 })
     })
   })
 
@@ -1217,4 +1220,20 @@ describe('expanded waterfall chains', () => {
     expect(wrapper.findAll('.span-row:not(.span-row--header)')).toHaveLength(1)
     wrapper.unmount()
   })
+})
+
+it('offers a retry when the profile request fails', async () => {
+ const retry = vi.fn()
+ vi.mocked(useQuery)
+  .mockReturnValueOnce({ data: ref(baseTx), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+  .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+  .mockReturnValueOnce({ data: ref(undefined) } as any)
+  .mockReturnValueOnce({ data: ref(undefined) } as any)
+  .mockReturnValueOnce({ data: ref(null), isPending: ref(false), isError: ref(true), refetch: retry } as any)
+ const wrapper = mount(TransactionDetailView, { global: { stubs } })
+ expect(wrapper.text()).toContain('Could not load the profile.')
+ await wrapper.findAll('button').find(b => b.text() === 'Try again')!.trigger('click')
+ expect(retry).toHaveBeenCalledOnce()
+ expect(wrapper.find('a[href*="check=profiles"]').exists()).toBe(true)
+ wrapper.unmount()
 })

@@ -428,6 +428,7 @@ function apdexClass(score: number): string {
           </div>
           <h2 class="empty-state__title">{{ userMode ? `No traces for ${appUser.label || lensIdentity} in this window` : 'No transactions in this window' }}</h2>
           <p class="empty-state__body">{{ userMode ? 'Try a wider window, or check that set_user() runs before the transaction starts.' : 'Try a wider time window or check your SDK configuration.' }}</p>
+          <a v-if="projects.projects.length" class="btn" :href="`/projects/${encodeURIComponent((projects.projects.find(p => projects.selectedIds.includes(p.id)) ?? projects.projects[0])!.slug)}/setup?check=transactions`">Check transaction setup</a>
         </div>
       </div>
 

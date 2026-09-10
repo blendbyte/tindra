@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -10,7 +10,6 @@ import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
 import { useTimezone } from '@/composables/useTimezone'
 import type {
-  Project,
   DashboardIssuePage,
   TransactionSummary,
   TxCountTimeseries,
@@ -37,8 +36,7 @@ interface ProjectStatRow {
 import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import BrandMark from '@/components/BrandMark.vue'
-import { useConfig } from '@/composables/useConfig'
-import { useToast } from '@/composables/useToast'
+import ProjectSetup from '@/components/ProjectSetup.vue'
 
 const router = useRouter()
 const projects = useProjectsStore()
@@ -46,8 +44,6 @@ const investigation = useInvestigationStore()
 const windowLabel = computed(() => investigation.absolute ? 'selected range' : investigation.range)
 const { formatRel } = useFormatters()
 const timezone = useTimezone()
-const { dsnFor } = useConfig()
-const { show: showToast } = useToast()
 
 const { data: me } = useQuery({
   queryKey: ['me'],
@@ -76,11 +72,10 @@ function buildQs(extra: Record<string, string> = {}) {
 
 const pKey = computed(() => [...projects.selectedIds].sort().join(','))
 
-// Usage remains separate from navigation metadata. Share it with quota/settings
-// readers, and wait for it before deciding whether to show onboarding.
-const { data: projectUsage } = useQuery({
-  queryKey: ['projects', 'usage'],
-  queryFn: ({ signal }) => apiFetch<Project[]>('/api/projects', { signal }),
+// Durable setup milestones are independent of monthly usage and retention.
+const { data: projectSetup, refetch: refetchSetup } = useQuery({
+  queryKey: ['projects', 'setup'],
+  queryFn: ({ signal }) => apiFetch<{ id: string; setup_complete: boolean }[]>('/api/setup-status', { signal }),
 })
 
 // ── Queries ───────────────────────────────────────────────────────────────────
@@ -440,35 +435,33 @@ const firstProject = computed(() => {
   return projects.projects[0] ?? null
 })
 
-const firstDsn = computed(() => {
-  const p = firstProject.value
-  if (!p) return null
-  return dsnFor(p.public_key, p.id)
-})
-
 const visibleProjects = computed(() =>
   projects.selectedIds.length > 0
-    ? projectUsage.value?.filter(p => projects.selectedIds.includes(p.id))
-    : projectUsage.value,
+    ? projectSetup.value?.filter(p => projects.selectedIds.includes(p.id))
+    : projectSetup.value,
 )
-
+const setupOpen = ref(false)
+const setupDismissed = ref(false)
+function setupWasDismissed(projectID: string) {
+  try { return sessionStorage.getItem(`tindra:setup-dismissed:${projectID}`) === '1' } catch { return false }
+}
 const isFirstRun = computed(() => {
-  if (loading.value) return false
+  if (loading.value || setupDismissed.value) return false
   if (noProjects.value) return true
-  return visibleProjects.value?.every(p => p.event_count === 0) ?? false
+  return !!visibleProjects.value?.length && visibleProjects.value.every(p => p.setup_complete === false && !setupWasDismissed(p.id))
 })
-
-function copyDsn() {
-  const dsn = firstDsn.value
-  if (!dsn) return
-  navigator.clipboard?.writeText(dsn).catch(() => {})
-  showToast('DSN copied')
+watch(pKey, () => { setupDismissed.value = false; setupOpen.value = false })
+watch(isFirstRun, (value) => { if (value && !noProjects.value) setupOpen.value = true }, { immediate: true })
+function finishSetup() {
+  setupDismissed.value = true
+  setupOpen.value = false
+  refetchSetup()
 }
 </script>
 
 <template>
   <!-- First-run / empty state ───────────────────────────────────────────────── -->
-  <div v-if="isFirstRun" class="empty-state">
+  <div v-if="isFirstRun || setupOpen" class="empty-state" :class="{ 'empty-state--setup': !noProjects }">
     <div class="empty-state__ghosts" aria-hidden="true">
       <div
         v-for="(w, i) in ['72%','58%','81%','64%','76%','53%','69%','44%']"
@@ -506,36 +499,7 @@ function copyDsn() {
       </div>
     </div>
 
-    <div v-else class="empty-state__card">
-      <div class="empty-state__icon">
-        <Icon name="zap" :size="26" />
-      </div>
-      <h2 class="empty-state__title">Waiting for your first event</h2>
-      <p class="empty-state__body">
-        Point any Sentry-compatible SDK at Tindra using your project DSN.
-        Errors, transactions, and releases will appear on this dashboard automatically.
-      </p>
-      <div v-if="firstDsn" class="empty-state__endpoint">
-        <span class="empty-state__endpoint-label">Your DSN</span>
-        <code class="mono">{{ firstDsn }}</code>
-      </div>
-      <div class="es-snippet">
-        <span class="es-snippet__label">Quick start</span>
-        <pre class="es-snippet__code">import * as Sentry from "@sentry/node"
-
-Sentry.init({ dsn: "{{ firstDsn ?? 'YOUR_DSN' }}" })
-Sentry.captureException(new Error("Hello, Tindra!"))</pre>
-      </div>
-      <div class="empty-state__actions">
-        <button class="btn btn--primary" @click="copyDsn">
-          <Icon name="copy" :size="12" />
-          Copy DSN
-        </button>
-        <button class="btn" @click="router.push('/settings/projects')">
-          Project settings
-        </button>
-      </div>
-    </div>
+    <ProjectSetup v-else-if="firstProject" :key="firstProject.id" :project="firstProject" @continue="finishSetup" />
   </div>
 
   <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
@@ -986,6 +950,9 @@ Sentry.captureException(new Error("Hello, Tindra!"))</pre>
 </template>
 
 <style scoped>
+.empty-state--setup { display: block; padding: 32px 24px 48px; }
+.empty-state--setup > .empty-state__ghosts { display: none; }
+@media (max-width: 600px) { .empty-state--setup { padding: 24px 12px; } }
 /* ── KPI strip ──────────────────────────────────────────────────────────────── */
 
 .db-kpis {

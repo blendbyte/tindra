@@ -73,6 +73,13 @@ func (b *TransactionBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 			ids, err = writeTxBatch(ctx, db, batch)
 			return err
 		})
+		if err != nil {
+			ids := make([]string, 0, len(batch))
+			for _, tx := range batch {
+				ids = append(ids, tx.ProjectID)
+			}
+			recordSetupWriteFailure(ctx, pool, "transactions", ids, err)
+		}
 		writtenAt := time.Now()
 		if err == nil && b.Hook != nil {
 			b.Hook(ctx, pool, batch, ids)

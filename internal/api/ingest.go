@@ -110,6 +110,23 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep a bounded observation per kind/outcome, even for mixed envelopes.
+	observations := map[string]storage.SetupObservation{}
+	observe := func(kind, outcome, reason string) {
+		observations[kind+":"+outcome] = storage.SetupObservation{Kind: kind, Outcome: outcome, Reason: reason, ObservedAt: time.Now().UTC()}
+	}
+	defer func() {
+		items := make([]storage.SetupObservation, 0, len(observations))
+		for _, observation := range observations {
+			items = append(items, observation)
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 200*time.Millisecond)
+		defer cancel()
+		if err := storage.RecordSetupObservations(ctx, ro.pool, project.ID, items); err != nil {
+			slog.Debug("record setup observations", "err", err)
+		}
+	}()
+
 	if lim := ro.eventLimit.Load(); lim > 0 {
 		count, err := storage.CountMonthlyEvents(r.Context(), ro.pool)
 		if err != nil {
@@ -118,6 +135,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if count >= int64(lim) {
+			observe("envelope", "rejected", "event_limit")
 			http.Error(w, "event limit reached", http.StatusTooManyRequests)
 			return
 		}
@@ -129,6 +147,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
 		gz, err := gzip.NewReader(body)
 		if err != nil {
+			observe("envelope", "rejected", "bad_gzip")
 			http.Error(w, "bad gzip", http.StatusBadRequest)
 			return
 		}
@@ -157,10 +176,12 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 	// mid-item, so it always surfaces as a parse failure; reporting that as a
 	// malformed envelope sends the operator hunting for a bug in their SDK.
 	if rawLimit.exceeded() || sizeLimit.exceeded() {
+		observe("envelope", "rejected", "envelope_too_large")
 		http.Error(w, "envelope too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	if err != nil {
+		observe("envelope", "rejected", "bad_envelope")
 		http.Error(w, "bad envelope", http.StatusBadRequest)
 		return
 	}
@@ -187,17 +208,22 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 				SpanID:    trunc(spanID, maxFieldLen),
 			}
 			if !ro.buf.Push(ev) {
+				observe("events", "rejected", "buffer_full")
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "buffer full", http.StatusTooManyRequests)
 				return
 			}
 
+			observe("events", "queued", "queued")
+
 		case "transaction":
 			if ro.txBuf == nil {
+				observe("transactions", "rejected", "unavailable")
 				continue
 			}
 			tx := parseTransaction(project.ID, item.Payload)
 			if tx == nil {
+				observe("transactions", "rejected", "invalid_transaction")
 				continue
 			}
 			// Some SDKs put the id only in the envelope header. It is the same
@@ -208,10 +234,13 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			}
 			ingest.ScrubTransaction(tx, scrubCfg)
 			if !ro.txBuf.Push(*tx) {
+				observe("transactions", "rejected", "buffer_full")
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "buffer full", http.StatusTooManyRequests)
 				return
 			}
+
+			observe("transactions", "queued", "queued")
 
 		case "log":
 			if ro.logBuf == nil {
@@ -223,11 +252,17 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			})
 
 		case "profile", "profile_chunk":
-			if ro.profBuf == nil || !project.ProfilingEnabled {
+			if !project.ProfilingEnabled {
+				observe("profile_chunks", "rejected", "profiling_disabled")
+				continue
+			}
+			if ro.profBuf == nil {
+				observe("profile_chunks", "rejected", "unavailable")
 				continue
 			}
 			prof, err := ingest.ParseProfileItem(item.Header.Type, item.Payload)
 			if err != nil {
+				observe("profile_chunks", "rejected", "invalid_profile")
 				// A malformed or over-long profile is dropped on its own. The
 				// transaction it travels with is still good data.
 				ro.profBuf.RecordDrop("invalid_record")
@@ -238,9 +273,10 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			ingest.ScrubProfile(prof, scrubCfg)
 			// Compressed here rather than in the writer so the buffer holds
 			// bounded memory even when profiles arrive faster than they drain.
-			buffered, err := ingest.NewBufferedProfile(project.ID, prof)
+			buffered, err := ro.encodeProfile(project.ID, prof)
 			if err != nil {
 				ro.profBuf.RecordDrop("encode_failed")
+				observe("profile_chunks", "rejected", "profile_encoding_failed")
 				slog.Error("encode profile", "project", project.Slug, "err", err)
 				continue
 			}
@@ -251,8 +287,11 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			// parse-error branch above drops the profile alone for the same
 			// reason.
 			if !ro.profBuf.Push(buffered) {
+				observe("profile_chunks", "rejected", "buffer_full")
 				slog.Debug("profile buffer full, dropping profile",
 					"project", project.Slug, "type", item.Header.Type)
+			} else {
+				observe("profile_chunks", "queued", "queued")
 			}
 
 		case "check_in":

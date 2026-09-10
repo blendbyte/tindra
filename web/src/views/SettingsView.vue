@@ -1632,6 +1632,7 @@ function actionKindOf(action: string) {
               </button>
             </div>
             <div class="proj-success__hint">
+              <a class="btn btn--primary" :href="`/projects/${encodeURIComponent(createdProject.slug)}/setup`">Verify setup</a>
               Any Sentry-compatible SDK works. Set <code class="mono">dsn</code> to this value and errors will start arriving.
             </div>
           </div>
@@ -1850,6 +1851,7 @@ function actionKindOf(action: string) {
 
               <!-- Read-only view -->
               <template v-else>
+                <a class="btn" style="margin-bottom: 16px" :href="`/projects/${encodeURIComponent(p.slug)}/setup`">Check setup</a>
                 <div class="proj-config-grid">
                   <template v-if="canManageProjects">
                     <div class="field" style="grid-column: 1 / -1">

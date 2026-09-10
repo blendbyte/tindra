@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 
 // Provide a localStorage shim for happy-dom (which requires --localstorage-file)
 let lsStore: Record<string, string> = {}
@@ -51,11 +51,13 @@ vi.mock('@/composables/useToast', () => ({
 
 import { apiFetch } from '@/api/client'
 import DashboardView from '../DashboardView.vue'
+import ProjectSetup from '@/components/ProjectSetup.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
 
 const stubs = {
+  ProjectSetup: true,
   RouterLink: { template: '<a><slot /></a>' },
   Icon: { template: '<span />' },
   Sparkline: { template: '<span />' },
@@ -75,14 +77,14 @@ function setupQueries({
   uptimeMonitors = [] as unknown[],
   cronMonitors = [] as unknown[],
   projects = [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 1 }] as Array<{ id: string; name: string; slug: string; public_key?: string; event_count?: number }>,
-  projectUsage = projects as typeof projects | null,
+  projectSetup = projects.map(p => ({ id: p.id, setup_complete: true })) as { id: string; setup_complete: boolean }[] | null,
   projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
   projStatsFetching = false,
 } = {}) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects } as any)
   vi.mocked(useQuery)
     .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: manageAlerts } }) } as any)
-    .mockReturnValueOnce({ data: ref(projectUsage ?? undefined) } as any)
+    .mockReturnValueOnce({ data: ref(projectSetup ?? undefined), refetch: vi.fn() } as any)
     .mockReturnValueOnce({ data: ref(issues), isFetching: ref(issuesFetching) } as any)
     .mockReturnValueOnce({ data: ref(txSummaries), isFetching: ref(txFetching) } as any)
     .mockReturnValueOnce({ data: ref(undefined) } as any)
@@ -104,6 +106,7 @@ beforeEach(() => {
   vi.mocked(useAuthStore).mockReset()
   vi.mocked(useAuthStore).mockReturnValue({ user: { timezone: 'UTC' }, setUser: vi.fn() } as any)
   pushMock.mockReset()
+  sessionStorage.clear()
   localStorage.clear()
 })
 
@@ -738,105 +741,58 @@ describe('DashboardView', () => {
       expect(pushMock).toHaveBeenCalledWith('/settings/projects?new=1')
     })
 
-    it('shows waiting-for-event card when project has zero event_count', () => {
-      const wrapper = makeWrapper({
-        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
-      })
-      expect(wrapper.text()).toContain('Waiting for your first event')
+    it('opens setup only when durable status says no data has arrived', () => {
+      const wrapper = makeWrapper({ projectSetup: [{ id: 'p1', setup_complete: false }] })
+      expect(wrapper.findComponent(ProjectSetup).exists()).toBe(true)
       expect(wrapper.find('.db-kpis').exists()).toBe(false)
     })
 
-    it('does not mistake loaded metadata for zero usage while usage is pending', () => {
-      const wrapper = makeWrapper({
-        projects: [{ id: 'p1', name: 'App', slug: 'app', public_key: 'key1' }],
-        projectUsage: null,
-      })
-      expect(wrapper.text()).not.toContain('Waiting for your first event')
+    it('does not show onboarding while setup status is unavailable', () => {
+      const wrapper = makeWrapper({ projectSetup: null })
+      expect(wrapper.findComponent(ProjectSetup).exists()).toBe(false)
       expect(wrapper.find('.db-kpis').exists()).toBe(true)
     })
 
-    it('shows the DSN in the waiting card', () => {
+    it('keeps the dashboard for a connected project with zero monthly events', () => {
       const wrapper = makeWrapper({
-        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
-      })
-      expect(wrapper.text()).toContain('https://key1@tindra.test/p1')
-    })
-
-    it('does not show empty state when data is still loading', () => {
-      const wrapper = makeWrapper({
-        issuesFetching: true,
-        issues: undefined,
-        txSummaries: undefined,
-        releases: undefined,
+        projects: [{ id: 'p1', name: 'Quiet', slug: 'quiet', public_key: 'key1', event_count: 0 }],
+        projectSetup: [{ id: 'p1', setup_complete: true }],
       })
       expect(wrapper.find('.db-kpis').exists()).toBe(true)
-      expect(wrapper.text()).not.toContain('Waiting for your first event')
+      expect(wrapper.findComponent(ProjectSetup).exists()).toBe(false)
     })
 
-    it('does not show empty state when project has event_count > 0', () => {
-      const wrapper = makeWrapper({
-        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 50_000 }],
-        txSummaries: [],
-        releases: { releases: [], total: 0, has_more: false },
-      })
-      expect(wrapper.find('.db-kpis').exists()).toBe(true)
-      expect(wrapper.text()).not.toContain('Waiting for your first event')
-    })
-
-    it('does not show empty state when project has events even with no recent tx, issues, or releases', () => {
-      // Covers the rate-limit / locked-instance case: events exist historically but nothing recent
-      const wrapper = makeWrapper({
-        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 50_000 }],
-        issues: { issues: [], total: 0, has_more: false },
-        txSummaries: [],
-        releases: { releases: [], total: 0, has_more: false },
-      })
-      expect(wrapper.find('.db-kpis').exists()).toBe(true)
-      expect(wrapper.text()).not.toContain('Waiting for your first event')
-    })
-
-    it('shows empty state when selected project has no events even if other projects do', () => {
-      const wrapper = makeWrapper({
-        projects: [
-          { id: 'p1', name: 'Empty', slug: 'empty', public_key: 'key1', event_count: 0 },
-          { id: 'p2', name: 'Active', slug: 'active', public_key: 'key2', event_count: 999 },
-        ],
-      })
-      // selectedIds is [] so all projects are visible — p2 has events, so not first-run
+    it('passes the explicit project to setup and lets users continue', async () => {
+      const wrapper = makeWrapper({ projectSetup: [{ id: 'p1', setup_complete: false }] })
+      const setup = wrapper.findComponent(ProjectSetup)
+      expect(setup.props('project').id).toBe('p1')
+      setup.vm.$emit('continue')
+      await wrapper.vm.$nextTick()
       expect(wrapper.find('.db-kpis').exists()).toBe(true)
     })
 
-    it('copies DSN to clipboard and shows toast when Copy DSN is clicked', async () => {
-      const writeText = vi.fn().mockResolvedValue(undefined)
-      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-      const wrapper = makeWrapper({
-        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
-        issues: { issues: [], total: 0, has_more: false },
-        txSummaries: [],
-        releases: { releases: [], total: 0, has_more: false },
+    it('uses a selected project even when another project is connected', () => {
+      setupQueries({
+        projects: [{ id: 'p1', name: 'Active', slug: 'active' }, { id: 'p2', name: 'New', slug: 'new' }],
+        projectSetup: [{ id: 'p1', setup_complete: true }, { id: 'p2', setup_complete: false }],
       })
-      await wrapper.find('.btn--primary').trigger('click')
-      expect(writeText).toHaveBeenCalledWith('https://key1@tindra.test/p1')
-    })
-
-    it('picks the selected project DSN when selectedIds is non-empty', () => {
-      vi.mocked(useProjectsStore).mockReturnValue({
-        selectedIds: ['p1'],
-        projects: [{ id: 'p1', name: 'Default', slug: 'default', public_key: 'key1', event_count: 0 }],
-      } as any)
-      vi.mocked(useQuery)
-        .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
-        .mockReturnValueOnce({ data: ref([{ id: 'p1', event_count: 0 }]) } as any)
-        .mockReturnValueOnce({ data: ref({ issues: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref(undefined) } as any)
-        .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }), isFetching: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref([]) } as any) // uptime monitors
-        .mockReturnValueOnce({ data: ref([]) } as any) // cron monitors
-        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
+      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: ['p2'], projects: [{ id: 'p1', name: 'Active', slug: 'active' }, { id: 'p2', name: 'New', slug: 'new' }] } as any)
       const wrapper = mount(DashboardView, { global: { stubs } })
-      expect(wrapper.text()).toContain('https://key1@tindra.test/p1')
+      expect(wrapper.findComponent(ProjectSetup).props('project').id).toBe('p2')
+    })
+
+    it('respects setup dismissed elsewhere in this tab', () => {
+      sessionStorage.setItem('tindra:setup-dismissed:p1', '1')
+      const wrapper = makeWrapper({ projectSetup: [{ id: 'p1', setup_complete: false }] })
+      expect(wrapper.findComponent(ProjectSetup).exists()).toBe(false)
+    })
+
+    it('requests setup milestones instead of monthly usage', async () => {
+      const wrapper = makeWrapper()
+      const query = vi.mocked(useQuery).mock.calls[1]?.[0] as any
+      await query.queryFn({ signal: new AbortController().signal })
+      expect(apiFetch).toHaveBeenCalledWith('/api/setup-status', { signal: expect.any(AbortSignal) })
+      wrapper.unmount()
     })
   })
 })
@@ -967,4 +923,23 @@ describe('DashboardView — monitor summary widget', () => {
     expect(text).toContain('uptime')
     expect(text).toContain('cron')
   })
+})
+
+it('reopens setup for another project after continuing when session storage is blocked', async () => {
+ const projects = [{ id: 'p1', name: 'First', slug: 'first' }, { id: 'p2', name: 'Second', slug: 'second' }]
+ setupQueries({ projects, projectSetup: projects.map(p => ({ id: p.id, setup_complete: false })) })
+ const store = reactive({ projects, selectedIds: ['p1'] })
+ vi.mocked(useProjectsStore).mockReturnValue(store as any)
+ const read = vi.fn().mockImplementation(() => { throw new Error('blocked') })
+ vi.stubGlobal('sessionStorage', { getItem: read })
+ const wrapper = mount(DashboardView, { global: { stubs } })
+ try {
+  expect(read).toHaveBeenCalled()
+  wrapper.findComponent(ProjectSetup).vm.$emit('continue')
+  await wrapper.vm.$nextTick()
+  expect(wrapper.findComponent(ProjectSetup).exists()).toBe(false)
+  store.selectedIds = ['p2']
+  await wrapper.vm.$nextTick()
+  expect(wrapper.findComponent(ProjectSetup).props('project').id).toBe('p2')
+ } finally { vi.unstubAllGlobals(); wrapper.unmount() }
 })
