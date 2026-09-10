@@ -52,6 +52,7 @@ func TestHandleOAuthCallback_exchangeErrorReturns401(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/auth/google/callback?state="+stateToken+"&code=badcode", nil)
+	req.AddCookie(oauthBindingCookie(stateToken, "pkce-cov9-exchange-err", false))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

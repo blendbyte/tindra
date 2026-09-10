@@ -141,3 +141,21 @@ func ConsumeOAuthState(ctx context.Context, pool *pgxpool.Pool, token string) (*
 	}
 	return &s, nil
 }
+
+// ConsumeBoundOAuthState consumes a state only when both its provider and
+// browser-held PKCE verifier match. Failed binding checks leave it untouched.
+func ConsumeBoundOAuthState(ctx context.Context, pool *pgxpool.Pool, token, provider, verifier string) (*oauthState, error) {
+	var s oauthState
+	err := pool.QueryRow(ctx, `
+		DELETE FROM oauth_states
+		WHERE token_hash = $1 AND provider = $2 AND verifier = $3 AND expires_at > NOW()
+		RETURNING provider, verifier
+	`, tokenHash(token), provider, verifier).Scan(&s.Provider, &s.Verifier)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("consume bound state: %w", err)
+	}
+	return &s, nil
+}

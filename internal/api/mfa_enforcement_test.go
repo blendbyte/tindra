@@ -124,11 +124,11 @@ func TestOAuthMFAChallenge(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/admission/callback?state="+state+"&code=code", nil))
+		h.ServeHTTP(rec, boundOAuthRequest("/api/auth/admission/callback?state="+state+"&code=code", "verifier", true))
 		if rec.Code != 302 || rec.Header().Get("Location") != "/login?mfa=1" {
 			t.Fatalf("callback: %d %s", rec.Code, rec.Body.String())
 		}
-		cookies := rec.Result().Cookies()
+		cookies := activeOAuthResponseCookies(rec)
 		if len(cookies) != 1 || cookies[0].Name != "tindra_mfa" {
 			t.Fatalf("unexpected callback cookies: %v", cookies)
 		}
@@ -192,11 +192,11 @@ func TestUnenrolledOAuthSessionIsRestricted(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/admission/callback?state="+state+"&code=code", nil))
+	h.ServeHTTP(rec, boundOAuthRequest("/api/auth/admission/callback?state="+state+"&code=code", "verifier", false))
 	if rec.Code != 302 {
 		t.Fatalf("callback: %d %s", rec.Code, rec.Body.String())
 	}
-	cookies := rec.Result().Cookies()
+	cookies := activeOAuthResponseCookies(rec)
 	if len(cookies) != 1 || cookies[0].Name != "tindra_session" {
 		t.Fatal("missing enrollment session")
 	}

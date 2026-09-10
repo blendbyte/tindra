@@ -141,6 +141,7 @@ func TestHandleOAuthCallback_invalidState(t *testing.T) {
 	// nil, which the handler treats as an invalid/expired state.
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/auth/google/callback?state=doesnotexist&code=somecode", nil)
+	req.AddCookie(oauthBindingCookie("doesnotexist", "invalid", false))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -166,11 +167,11 @@ func TestHandleOAuthCallback_providerMismatch(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/auth/google/callback?state="+stateToken+"&code=somecode", nil)
+	req.AddCookie(oauthBindingCookie(stateToken, "verifier-abc", false))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	// State token was consumed for provider "github" but callback is for
-	// "google" — oauthState.Provider != name → 400.
+	// The wrong provider must be rejected without consuming the attempt.
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for provider mismatch, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -195,6 +196,7 @@ func TestHandleOAuthCallback_fullFlow(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/auth/google/callback?state="+stateToken+"&code=fakecode", nil)
+	req.AddCookie(oauthBindingCookie(stateToken, "pkce-verifier", false))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -271,12 +273,12 @@ func TestHandleOAuthCallbackAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/auth/admission/callback?state="+state+"&code=code", nil))
+			h.ServeHTTP(rec, boundOAuthRequest("/api/auth/admission/callback?state="+state+"&code=code", "verifier", false))
 			if rec.Code != scenario.status {
 				t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
 			}
 			if scenario.status != http.StatusFound {
-				if len(rec.Result().Cookies()) != 0 {
+				if len(activeOAuthResponseCookies(rec)) != 0 {
 					t.Fatal("rejected callback must not issue a session")
 				}
 				user, err := storage.GetUserByEmail(t.Context(), pool, email)
@@ -322,7 +324,7 @@ func TestHandleOAuthCallbackAdmissionDatabaseFailure(t *testing.T) {
 			defer failing.Close()
 			h := routerWithSSOAndPool(failing, admissionProvider{mockProvider{name: "admission"}, email})
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/auth/admission/callback?state="+state+"&code=code", nil))
+			h.ServeHTTP(rec, boundOAuthRequest("/api/auth/admission/callback?state="+state+"&code=code", "verifier", false))
 			if !trace.hit.Load() {
 				t.Fatal("failure query was not reached")
 			}
@@ -332,7 +334,7 @@ func TestHandleOAuthCallbackAdmissionDatabaseFailure(t *testing.T) {
 			if rec.Body.String() != "internal error\n" {
 				t.Fatalf("unexpected error disclosure: %s", rec.Body.String())
 			}
-			if len(rec.Result().Cookies()) != 0 {
+			if len(activeOAuthResponseCookies(rec)) != 0 {
 				t.Fatal("failed callback must not issue a session")
 			}
 		})

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,7 +110,7 @@ func newGitHubProvider(clientID, clientSecret, redirectBase string) *githubProvi
 func (p *githubProvider) Name() string { return "github" }
 
 func (p *githubProvider) AuthCodeURL(state, pkceVerifier string) string {
-	// GitHub does not support PKCE - state alone provides CSRF protection.
+	// This flow uses state plus the browser binding for CSRF protection.
 	return p.cfg.AuthCodeURL(state)
 }
 
@@ -289,6 +290,17 @@ func (ro *router) providerByName(name string) oauthProvider {
 	return nil
 }
 
+// Each attempt gets its own cookie so concurrent login tabs do not overwrite
+// each other. The URL carries only state, never the secret verifier.
+func oauthBindingCookie(state, verifier string, secure bool) *http.Cookie {
+	digest := sha256.Sum256([]byte(state))
+	name := fmt.Sprintf("tindra_oauth_%x", digest[:16])
+	if secure {
+		name = "__Host-" + name
+	}
+	return &http.Cookie{Name: name, Value: verifier, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: 600}
+}
+
 func (ro *router) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "provider")
 	p := ro.providerByName(name)
@@ -305,6 +317,7 @@ func (ro *router) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	http.SetCookie(w, oauthBindingCookie(state, verifier, ro.cookieSecure))
 	http.Redirect(w, r, p.AuthCodeURL(state, verifier), http.StatusFound)
 }
 
@@ -323,16 +336,26 @@ func (ro *router) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oauthState, err := storage.ConsumeOAuthState(r.Context(), ro.pool, stateToken)
+	binding := oauthBindingCookie(stateToken, "", ro.cookieSecure)
+	cookie, err := r.Cookie(binding.Name)
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "login attempt does not match this browser; restart sign-in", http.StatusBadRequest)
+		return
+	}
+	oauthState, err := storage.ConsumeBoundOAuthState(r.Context(), ro.pool, stateToken, name, cookie.Value)
 	if err != nil {
 		slog.Error("consume oauth state", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if oauthState == nil || oauthState.Provider != name {
+	if oauthState == nil {
 		http.Error(w, "invalid or expired state", http.StatusBadRequest)
 		return
 	}
+
+	// Clear only the successfully matched attempt, including on later failures.
+	binding.MaxAge = -1
+	http.SetCookie(w, binding)
 
 	email, sub, err := p.Exchange(r.Context(), code, oauthState.Verifier)
 	if err != nil {
