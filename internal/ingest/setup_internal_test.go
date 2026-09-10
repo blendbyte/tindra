@@ -3,9 +3,12 @@ package ingest
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -92,5 +95,47 @@ func TestSetupDiagnosticsFollowAtomicWriteOutcome(t *testing.T) {
 			}
 			require.True(t, found, "diagnostics must survive the rollback")
 		})
+	}
+}
+
+type setupObservationCounter struct {
+	writes atomic.Int32
+}
+
+func (c *setupObservationCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(data.SQL, "INSERT INTO project_setup_observations") {
+		c.writes.Add(1)
+	}
+	return ctx
+}
+
+func (*setupObservationCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestSetupFailureRecordsEachProjectOncePerBatch(t *testing.T) {
+	ctx := t.Context()
+	pool, cleanup := testutil.SetupDB(ctx)
+	defer cleanup()
+	p, err := storage.CreateProject(ctx, pool, "deduplicated-setup", "Setup")
+	require.NoError(t, err)
+	other, err := storage.CreateProject(ctx, pool, "other-setup", "Other")
+	require.NoError(t, err)
+	counter := &setupObservationCounter{}
+	config := pool.Config()
+	config.ConnConfig.Tracer = counter
+	observed, err := pgxpool.NewWithConfig(ctx, config)
+	require.NoError(t, err)
+	defer observed.Close()
+	recordSetupWriteFailure(ctx, observed, "events", []string{p.ID, p.ID, other.ID, p.ID, other.ID}, errors.New("batch rolled back"))
+	require.EqualValues(t, 2, counter.writes.Load(), "each affected project should incur exactly one diagnostics write")
+	for _, id := range []string{p.ID, other.ID} {
+		observations, err := storage.ListSetupObservations(ctx, pool, id)
+		require.NoError(t, err)
+		require.Len(t, observations, 1)
+		require.Equal(t, "events", observations[0].Kind)
+		require.Equal(t, "rejected", observations[0].Outcome)
+		require.Equal(t, "storage_failed", observations[0].Reason)
+		receipts, err := storage.ListSetupReceipts(ctx, pool, id)
+		require.NoError(t, err)
+		require.Empty(t, receipts)
 	}
 }
