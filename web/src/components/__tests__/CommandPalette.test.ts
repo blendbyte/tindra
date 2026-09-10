@@ -40,6 +40,7 @@ vi.mock('@/stores/appUser', () => ({
 }))
 
 import CommandPalette from '../CommandPalette.vue'
+import ShortcutsModal from '../ShortcutsModal.vue'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
@@ -326,6 +327,29 @@ describe('CommandPalette', () => {
   })
 
   describe('global keyboard shortcuts', () => {
+    it('opens shortcut help once when both keyboard components are mounted', async () => {
+      makeWrapper(false)
+      const help = mount(ShortcutsModal, {
+        attachTo: document.body,
+        global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+      })
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))
+      await nextTick()
+      expect(help.find('dialog').exists()).toBe(true)
+      await help.get('dialog').trigger('keydown', { key: '?' })
+      expect(help.find('dialog').exists()).toBe(true)
+      await help.get('dialog').trigger('keydown', { key: 'Escape' })
+      expect(help.find('dialog').exists()).toBe(false)
+      for (const tag of ['input', 'textarea']) {
+        const field = document.createElement(tag)
+        document.body.append(field)
+        field.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
+        await nextTick()
+        expect(help.find('dialog').exists()).toBe(false)
+        field.remove()
+      }
+    })
+
     function mountWithStore(cmdOpen: boolean) {
       const openCmd = vi.fn()
       const closeCmd = vi.fn()

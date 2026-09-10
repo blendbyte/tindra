@@ -1,19 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import ModalDialog from './ModalDialog.vue'
 
 const ui = useUiStore()
 
 function close() { ui.shortcutsOpen = false }
-
-function onKey(e: KeyboardEvent) {
-  if (!ui.shortcutsOpen) return
-  if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); close() }
-}
-
-onMounted(() => document.addEventListener('keydown', onKey))
-onUnmounted(() => document.removeEventListener('keydown', onKey))
 
 interface Shortcut { keys: string[]; label: string }
 interface Group { title: string; shortcuts: Shortcut[] }
@@ -74,7 +65,7 @@ const groups: Group[] = [
 
 <template>
   <Teleport to="body">
-    <ModalDialog v-if="ui.shortcutsOpen" aria-label="Keyboard shortcuts" @close="close" @keydown="onKey">
+    <ModalDialog v-if="ui.shortcutsOpen" aria-label="Keyboard shortcuts" @close="close">
     <div class="shortcuts-overlay" @mousedown.self.prevent="close">
       <div class="shortcuts-modal">
         <div class="shortcuts-modal__header">

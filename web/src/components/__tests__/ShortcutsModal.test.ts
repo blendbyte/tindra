@@ -51,48 +51,24 @@ describe('ShortcutsModal', () => {
   })
 
   describe('keyboard dismissal', () => {
-    it('closes on Escape key', async () => {
-      const ui = { shortcutsOpen: true }
-      vi.mocked(useUiStore).mockReturnValue(ui as any)
-      mount(ShortcutsModal, {
-        global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
-        attachTo: document.body,
-      })
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-      expect(ui.shortcutsOpen).toBe(false)
+    it('closes on Escape inside the modal', async () => {
+      const wrapper = makeWrapper(true)
+      await wrapper.get('dialog').trigger('keydown', { key: 'Escape' })
+      expect(vi.mocked(useUiStore).mock.results.at(-1)!.value.shortcutsOpen).toBe(false)
     })
 
-    it('closes on ? key', async () => {
-      const ui = { shortcutsOpen: true }
-      vi.mocked(useUiStore).mockReturnValue(ui as any)
-      mount(ShortcutsModal, {
-        global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
-        attachTo: document.body,
-      })
+    it('does not dismiss help for the opening question-mark event or repeated keys', async () => {
+      const wrapper = makeWrapper(true)
       document.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))
-      expect(ui.shortcutsOpen).toBe(false)
+      await wrapper.get('dialog').trigger('keydown', { key: '?', repeat: true })
+      await wrapper.get('dialog').trigger('keydown', { key: 'Enter' })
+      expect(vi.mocked(useUiStore).mock.results.at(-1)!.value.shortcutsOpen).toBe(true)
     })
 
-    it('does not close for other keys', () => {
-      const ui = { shortcutsOpen: true }
-      vi.mocked(useUiStore).mockReturnValue(ui as any)
-      mount(ShortcutsModal, {
-        global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
-        attachTo: document.body,
-      })
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
-      expect(ui.shortcutsOpen).toBe(true)
-    })
-
-    it('does not fire when shortcutsOpen is false', () => {
-      const ui = { shortcutsOpen: false }
-      vi.mocked(useUiStore).mockReturnValue(ui as any)
-      mount(ShortcutsModal, {
-        global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
-        attachTo: document.body,
-      })
+    it('does not handle document keys while closed', () => {
+      makeWrapper(false)
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-      expect(ui.shortcutsOpen).toBe(false)
+      expect(vi.mocked(useUiStore).mock.results.at(-1)!.value.shortcutsOpen).toBe(false)
     })
   })
 

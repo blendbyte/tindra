@@ -58,5 +58,18 @@ for (const width of [375, 1280]) {
     await page.locator('.shortcuts-overlay').click({ position: { x: 2, y: 2 } })
     await expect(shortcuts).toHaveCount(0)
     await expect(trigger).toBeFocused()
+
+    // One question-mark press opens help and cannot close it again in the
+    // same event dispatch. Subsequent held-key events must leave it open.
+    await page.keyboard.press('?')
+    await expect(shortcuts).toBeVisible()
+    await expect(close).toBeFocused()
+    await page.keyboard.down('?')
+    await page.keyboard.down('?')
+    await page.keyboard.up('?')
+    await expect(shortcuts).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(shortcuts).toHaveCount(0)
+    await expect(trigger).toBeFocused()
   })
 }
