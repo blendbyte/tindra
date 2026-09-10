@@ -76,6 +76,7 @@ func TestRetentionUnavailableDatabaseStopsWithoutReportingDeletes(t *testing.T) 
 	require.Zero(t, e)
 	require.Zero(t, i)
 	require.Zero(t, w.purgeTransactions(ctx, time.Now()))
+	require.Zero(t, w.purgeCronCheckins(ctx, time.Now()))
 	require.Zero(t, w.purgeAlertFirings(ctx))
 	require.Zero(t, w.purgeLogsRowCap(ctx))
 	w.purgeExpiredAuthTokens(ctx)
@@ -83,6 +84,7 @@ func TestRetentionUnavailableDatabaseStopsWithoutReportingDeletes(t *testing.T) 
 	cancel()
 	require.Zero(t, w.purgeAlertFirings(cancelled))
 	require.Zero(t, w.purgeLogsRowCap(cancelled))
+	require.Zero(t, w.purgeCronCheckins(cancelled, time.Now()))
 }
 
 func TestTokenRetentionDeleteFailurePreservesTokenForRetry(t *testing.T) {

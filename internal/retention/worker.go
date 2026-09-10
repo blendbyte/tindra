@@ -117,6 +117,7 @@ func (w *Worker) purge(ctx context.Context) bool {
 		uptimeChecksDeleted, firingsDeleted int64
 		logsCapDeleted, txCapDeleted        int64
 		profilesDeleted, profilesCapDeleted int64
+		cronCheckinsDeleted                 int64
 	)
 
 	// Row caps and profile policies run independently of the general age window.
@@ -128,6 +129,7 @@ func (w *Worker) purge(ctx context.Context) bool {
 		txDeleted = w.purgeTransactions(ctx, cutoff)
 		logsDeleted = w.purgeLogs(ctx, cutoff)
 		uptimeChecksDeleted = w.purgeUptimeChecks(ctx, cutoff)
+		cronCheckinsDeleted = w.purgeCronCheckins(ctx, cutoff)
 		firingsDeleted = w.purgeAlertFirings(ctx)
 		w.purgeExpiredAuthTokens(ctx)
 	}
@@ -144,13 +146,14 @@ func (w *Worker) purge(ctx context.Context) bool {
 		logsDeleted >= maxAgeDeletesPerPass || uptimeChecksDeleted >= maxAgeDeletesPerPass ||
 		profilesDeleted >= maxAgeDeletesPerPass || firingsDeleted >= maxRowCapDeletesPerPass ||
 		logsCapDeleted >= maxRowCapDeletesPerPass || txCapDeleted >= maxRowCapDeletesPerPass ||
-		profilesCapDeleted >= maxStorageCapIDsPerPass
+		profilesCapDeleted >= maxStorageCapIDsPerPass || cronCheckinsDeleted >= maxAgeDeletesPerPass
 	slog.Info("retention: done",
 		"events", eventsDeleted,
 		"issues_removed", issuesDeleted,
 		"transactions", txDeleted,
 		"logs", logsDeleted,
 		"uptime_checks", uptimeChecksDeleted,
+		"cron_checkins", cronCheckinsDeleted,
 		"alert_firings", firingsDeleted,
 		"logs_row_cap", logsCapDeleted,
 		"tx_row_cap", txCapDeleted,
@@ -375,6 +378,30 @@ func (w *Worker) purgeByAge(ctx context.Context, table, timeColumn string, cutof
 
 func (w *Worker) purgeUptimeChecks(ctx context.Context, cutoff time.Time) int64 {
 	return w.purgeByAge(ctx, "uptime_checks", "checked_at", cutoff)
+}
+
+// Retain running jobs regardless of age. Completion time keeps recently finished
+// long-running jobs available to alerts; legacy terminal pings use receipt time.
+func (w *Worker) purgeCronCheckins(ctx context.Context, cutoff time.Time) int64 {
+	var total int64
+	for total < maxAgeDeletesPerPass && ctx.Err() == nil {
+		batch := min(int64(agePurgeBatch), int64(maxAgeDeletesPerPass)-total)
+		tag, err := w.pool.Exec(ctx, `
+			DELETE FROM cron_checkins WHERE id = ANY(ARRAY(
+				SELECT id FROM cron_checkins
+				WHERE status IN ('ok', 'error') AND COALESCE(finished_at, received_at) < $1
+				ORDER BY COALESCE(finished_at, received_at), id LIMIT $2
+			))`, cutoff, batch)
+		if err != nil {
+			slog.Error("retention: delete completed cron check-ins", "err", err)
+			return total
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < batch {
+			break
+		}
+	}
+	return total
 }
 
 // purgeAlertFirings retains the newest 1000 firings per rule. Rank once per
