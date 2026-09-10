@@ -145,25 +145,26 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	r.Options("/api/{projectID}/envelope/", ro.handleEnvelopeCORS)
 	r.Post("/api/{projectID}/envelope/", ro.handleEnvelope)
 
-	r.With(loginRL.limitByIP()).Post("/api/auth/login", ro.handleLogin)
-	r.Post("/api/auth/logout", ro.handleLogout)
-	r.With(loginRL.limitByIP()).Post("/api/auth/mfa/verify", ro.handleMFAVerify)
+	authBody := limitAuthBody(authBodyReadTimeout)
+	r.With(authBody, loginRL.limitByIP()).Post("/api/auth/login", ro.handleLogin)
+	r.With(authBody).Post("/api/auth/logout", ro.handleLogout)
+	r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/verify", ro.handleMFAVerify)
 
 	// Invite accept - public, no auth required.
-	r.Get("/api/auth/invite/{token}", ro.handleGetInvite)
-	r.Post("/api/auth/invite/{token}/accept", ro.handleAcceptInvite)
+	r.With(authBody).Get("/api/auth/invite/{token}", ro.handleGetInvite)
+	r.With(authBody).Post("/api/auth/invite/{token}/accept", ro.handleAcceptInvite)
 
 	// Password reset - public, no auth required.
-	r.With(resetRL.limitByIP()).Get("/api/auth/password-reset/{token}", ro.handleGetPasswordReset)
-	r.With(resetRL.limitByIP()).Post("/api/auth/password-reset/{token}", ro.handleDoPasswordReset)
+	r.With(authBody, resetRL.limitByIP()).Get("/api/auth/password-reset/{token}", ro.handleGetPasswordReset)
+	r.With(authBody, resetRL.limitByIP()).Post("/api/auth/password-reset/{token}", ro.handleDoPasswordReset)
 
 	// Public config (no auth needed).
 	r.Get("/api/config", ro.handleGetConfig)
 
 	// OAuth/OIDC - no prior auth needed.
-	r.Get("/api/auth/providers", ro.handleListProviders)
-	r.Get("/api/auth/{provider}/redirect", ro.handleOAuthRedirect)
-	r.Get("/api/auth/{provider}/callback", ro.handleOAuthCallback)
+	r.With(authBody).Get("/api/auth/providers", ro.handleListProviders)
+	r.With(authBody).Get("/api/auth/{provider}/redirect", ro.handleOAuthRedirect)
+	r.With(authBody).Get("/api/auth/{provider}/callback", ro.handleOAuthCallback)
 
 	// Stats endpoint - authenticated by STATS_API_KEY bearer token, no session required.
 	r.Get("/api/stats", ro.handleGetStats)
@@ -291,9 +292,9 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 
 		r.Patch("/api/me/password", ro.handleChangePassword)
 
-		r.With(loginRL.limitByIP()).Post("/api/auth/mfa/setup", ro.handleMFASetup)
-		r.With(loginRL.limitByIP()).Post("/api/auth/mfa/confirm", ro.handleMFAConfirm)
-		r.Delete("/api/auth/mfa", ro.handleMFADisable)
+		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/setup", ro.handleMFASetup)
+		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/confirm", ro.handleMFAConfirm)
+		r.With(authBody).Delete("/api/auth/mfa", ro.handleMFADisable)
 	})
 
 	// Alert rules - session or Bearer, top-level (not scoped to a single project).
