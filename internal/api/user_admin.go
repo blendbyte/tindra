@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -137,16 +139,40 @@ func (ro *router) handleGetPasswordReset(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]string{"email": u.Email})
 }
 
+const (
+	maxPasswordResetBodyBytes   = 4 * 1024
+	maxConcurrentPasswordResets = 4
+)
+
 // handleDoPasswordReset redeems the token, sets the new password, and opens a session. Public endpoint.
 func (ro *router) handleDoPasswordReset(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	var req struct {
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPasswordResetBodyBytes))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "unable to read request", http.StatusBadRequest)
+		}
+		return
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Password == "" {
 		http.Error(w, "password is required", http.StatusBadRequest)
 		return
 	}
+
+	// Bound reset work independently of the optional per-IP rate limit.
+	if ro.passwordResetActive.Add(1) > maxConcurrentPasswordResets {
+		ro.passwordResetActive.Add(-1)
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "too many password resets in progress", http.StatusTooManyRequests)
+		return
+	}
+	defer ro.passwordResetActive.Add(-1)
 
 	u, session, err := storage.UsePasswordResetTokenWithSession(r.Context(), ro.pool, token, req.Password)
 	if err != nil {

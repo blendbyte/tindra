@@ -65,6 +65,7 @@ type router struct {
 	loginEmailRL           *rateLimiter
 	envelopeRL             *rateLimiter
 	cronPingRL             *rateLimiter
+	passwordResetActive    atomic.Int32
 	startedAt              time.Time
 	versionMu              sync.RWMutex
 	latestVersion          string
@@ -121,6 +122,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	ro.userLimit.Store(int32(userLimit))
 
 	loginRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
+	resetRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
 	ro.envelopeRL = newRateLimiter(rateLimitEnvelope, time.Minute)
 	ro.loginEmailRL = newRateLimiter(rateLimitLogin, 15*time.Minute)
 	ro.cronPingRL = newRateLimiter(5, time.Minute)
@@ -150,8 +152,8 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	r.Post("/api/auth/invite/{token}/accept", ro.handleAcceptInvite)
 
 	// Password reset - public, no auth required.
-	r.Get("/api/auth/password-reset/{token}", ro.handleGetPasswordReset)
-	r.Post("/api/auth/password-reset/{token}", ro.handleDoPasswordReset)
+	r.With(resetRL.limitByIP()).Get("/api/auth/password-reset/{token}", ro.handleGetPasswordReset)
+	r.With(resetRL.limitByIP()).Post("/api/auth/password-reset/{token}", ro.handleDoPasswordReset)
 
 	// Public config (no auth needed).
 	r.Get("/api/config", ro.handleGetConfig)

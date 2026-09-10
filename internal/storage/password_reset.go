@@ -68,10 +68,6 @@ func usePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 	if len(newPassword) > maxPasswordLen {
 		return nil, nil, fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), BcryptCost)
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash password: %w", err)
-	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin: %w", err)
@@ -101,6 +97,12 @@ func usePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, nil, nil
+	}
+	// Validate and claim the token before paying the bcrypt cost. The claim is
+	// rolled back with the transaction if hashing or a later write fails.
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), BcryptCost)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash password: %w", err)
 	}
 	// Recovery links are administrator-issued and require MFA re-enrollment.
 	var u User
