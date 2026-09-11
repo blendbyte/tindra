@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="logo.png" width="280" alt="Tindra">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo-dark.png">
+    <img src="logo.png" width="280" alt="Tindra">
+  </picture>
 </p>
 
 <p align="center">Self-hosted error tracking, performance monitoring, uptime monitoring and cron monitoring.</p>
