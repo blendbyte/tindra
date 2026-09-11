@@ -1,4 +1,4 @@
-.PHONY: run build test lint migrate migrate-create web db db-stop db-logs cli
+.PHONY: run build test lint migrate migrate-create web db db-stop db-destroy db-logs cli
 
 BINARY  := bin/tindra
 COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
@@ -54,6 +54,10 @@ db:
 
 db-stop:
 	$(DEV_COMPOSE) stop postgres
+
+# Permanently remove the local development database and its stored data.
+db-destroy:
+	$(DEV_COMPOSE) down --volumes --remove-orphans
 
 db-logs:
 	$(DEV_COMPOSE) logs -f postgres
