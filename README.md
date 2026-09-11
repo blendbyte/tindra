@@ -24,7 +24,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="dashboard-dark.png">
-    <img src="dashboard-light.png" alt="Tindra dashboard">
+    <img src="dashboard-light.png" width="1440" height="1000" alt="Tindra dashboard showing error and latency metrics, transaction activity, monitors, issues, and release health">
   </picture>
 </p>
 
