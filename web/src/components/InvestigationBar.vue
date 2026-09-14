@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import { useProjectsStore } from '@/stores/projects'
@@ -30,7 +30,6 @@ onUnmounted(() => {
   document.removeEventListener('keydown', dismissDetails)
 })
 const route = useRoute()
-const router = useRouter()
 const state = useInvestigationStore()
 const projects = useProjectsStore()
 const telemetry = computed(() => isTelemetry(route.path))
@@ -58,7 +57,6 @@ const scopeNote = computed(() => {
 
 <template>
   <section class="investigation-bar" aria-label="Investigation filters and freshness">
-    <button v-if="state.routeError" class="btn" @click="router.replace({ query: { project_id: 'all', environment: 'all', range: '24h' } })">Reset invalid link</button>
     <div v-if="telemetry" class="investigation-bar__filters">
       <FilterChip label="Time range" icon="clock" :value="state.absolute ? 'Custom' : state.range" :options="ranges" @change="state.setRange($event)" />
       <FilterChip label="Environment" icon="globe" :value="state.environment" :options="envOptions" @change="state.environment = $event" />

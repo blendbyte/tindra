@@ -3,6 +3,7 @@ import { watch } from 'vue'
 import type { Pinia } from 'pinia'
 import type { LocationQuery, LocationQueryRaw, Router } from 'vue-router'
 import { RANGE_HOURS, useInvestigationStore } from '@/stores/investigation'
+import { useToast } from '@/composables/useToast'
 
 const first = (value: LocationQuery[string]) => Array.isArray(value) ? value[0] : value
 export function hasInvestigation(path: string) {
@@ -32,25 +33,25 @@ export function installInvestigationRouter(router: Router, pinia: Pinia) {
     state.routeError = ''
     const ids = q.project_id === undefined ? [] : Array.isArray(q.project_id) ? q.project_id : [q.project_id]
     if (ids.some(id => id !== 'all' && (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) || (ids.includes('all') && ids.length > 1)) {
-      state.routeError = 'This link contains an invalid project selection. Choose projects in the navigation bar to continue.'
+      state.routeError = 'The project selection in this link is invalid. Reset the filters or choose projects in the navigation bar.'
       navigating = false
       return
     }
     const rawRange = first(q.range) ?? (q.from !== undefined || q.to !== undefined ? 'custom' : undefined) ?? first(q.window) ?? (to.path === '/issues' ? first(q.since) : undefined)
     if (rawRange && !['all', 'All', 'custom'].includes(rawRange) && !Object.hasOwn(RANGE_HOURS, rawRange)) {
-      state.routeError = 'This link contains an unsupported time range. Choose a time range above to continue.'
+      state.routeError = 'The time range in this link is not supported. Reset the filters or choose a time range above.'
       navigating = false
       return
     }
     if ((q.from !== undefined || q.to !== undefined) && rawRange !== 'custom') {
-      state.routeError = 'This link combines a preset with custom time bounds. Choose a time range above to continue.'
+      state.routeError = 'This link combines a preset time range with custom dates. Reset the filters or choose one time range above.'
       navigating = false
       return
     }
     if (rawRange === 'custom' || q.from !== undefined || q.to !== undefined) {
       const from = first(q.from), end = first(q.to)
       if (!from || !end || !/T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(from) || !/T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(end) || !Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(end)) || Date.parse(from) >= Date.parse(end) || Date.parse(end) - Date.parse(from) > 90 * 86400000) {
-        state.routeError = 'This link contains invalid time bounds. Choose a time range above to continue.'
+        state.routeError = 'The dates in this link are missing, invalid, or more than 90 days apart. Reset the filters or choose a time range above.'
         navigating = false
         return
       }
@@ -67,7 +68,14 @@ export function installInvestigationRouter(router: Router, pinia: Pinia) {
     }
     const env = first(q.environment) ?? first(q.env)
     if (env) state.environment = env === 'all' || env === 'All' ? 'All' : env
-    const range = rawRange
+    // All-time issues can be carried by navigation links or restored from the
+    // session. Resolve them before mounting a view that needs bounded queries.
+    let range = rawRange
+    const allTime = range === 'all' || range === 'All' || (!range && !state.absolute && state.range === 'All')
+    if (allTime && isTelemetry(to.path) && to.path !== '/issues') {
+      range = '90d'
+      useToast().show('All time is only available for Issues. Showing the last 90 days here.', 'info')
+    }
     if (range && (Object.hasOwn(RANGE_HOURS, range) || range === 'all' || range === 'All')) state.setRange(range.toLowerCase() === 'all' ? 'All' : range)
     if (range === 'custom') {
       const from = first(q.from), end = first(q.to)

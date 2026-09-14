@@ -11,6 +11,7 @@ import QuotaBanner from '@/components/QuotaBanner.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import ShortcutsModal from '@/components/ShortcutsModal.vue'
 import ToastStack from '@/components/ToastStack.vue'
+import InvestigationError from '@/components/InvestigationError.vue'
 
 const route = useRoute()
 const ui = useUiStore()
@@ -37,8 +38,7 @@ watch(
     <Navbar v-if="!isLogin" />
     <QuotaBanner v-if="!isLogin" />
     <InvestigationBar v-if="!isLogin && route.name !== 'issue-detail' && hasInvestigation(route.path)" />
-    <p v-if="hasInvestigation(route.path) && investigation.routeError" class="page" role="alert">{{ investigation.routeError }}</p>
-    <p v-else-if="unsupported" class="page" role="status">This view supports time ranges up to 90 days. Choose a supported time range above to load its data.</p>
+    <InvestigationError v-if="hasInvestigation(route.path) && (investigation.routeError || unsupported)" />
     <RouterView v-else />
     <CommandPalette v-if="!isLogin" />
     <ShortcutsModal v-if="!isLogin" />

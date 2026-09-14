@@ -68,14 +68,13 @@ describe('investigation bar', () => {
     expect(wrapper.text()).toContain(note)
     expect(mocks.api).not.toHaveBeenCalled()
   })
-  it('offers issue-only ranges and resets invalid links', async () => {
+  it('offers issue-only ranges and skips metadata for invalid links', async () => {
     mocks.route.path = '/issues'
     const state = useInvestigationStore()
     state.routeError = 'Invalid project'
     const wrapper = setup()
     expect(wrapper.findComponent({ name: 'FilterChip' }).props('options')).toContain('All')
-    await wrapper.find('button').trigger('click')
-    expect(mocks.replace).toHaveBeenCalledWith({ query: { project_id: 'all', environment: 'all', range: '24h' } })
+    expect(wrapper.text()).not.toContain('Reset invalid link')
     expect(mocks.api).not.toHaveBeenCalled()
   })
   it('reports loading, partial failures, age, offline and paused pagination accurately', async () => {

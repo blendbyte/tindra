@@ -3,8 +3,9 @@ import { createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
-import { installInvestigationRouter } from '../investigation'
+import { installInvestigationRouter, investigationQuery } from '../investigation'
 import { useInvestigationStore } from '@/stores/investigation'
+import { useToast } from '@/composables/useToast'
 
 function setup() {
   const pinia = createPinia()
@@ -13,6 +14,56 @@ function setup() {
   return { router, state: useInvestigationStore(pinia) }
 }
 describe('investigation navigation', () => {
+  it.each([
+    '/performance/transactions', '/performance/queries', '/performance/caches',
+    '/performance/jobs', '/performance/browser', '/dashboard', '/logs', '/transactions/profile',
+  ])('resolves all-time issues to bounded requests on %s', async path => {
+    const { router, state } = setup()
+    await router.push('/issues?range=all&environment=production&user=alice&project_id=11111111-1111-4111-8111-111111111111')
+    const notices = useToast().toasts.value.length
+    await router.push({ path, query: { ...investigationQuery(state), op: 'http.server' }, hash: '#results' })
+    expect(state.range).toBe('90d')
+    expect(state.routeError).toBe('')
+    expect(router.currentRoute.value.query).toMatchObject({ range: '90d', environment: 'production', user: 'alice', project_id: ['11111111-1111-4111-8111-111111111111'], op: 'http.server' })
+    expect(router.currentRoute.value.hash).toBe('#results')
+    const request = new URL(state.request('/api/transactions/summaries?hours=24'), 'http://test')
+    expect(Date.parse(request.searchParams.get('to')!) - Date.parse(request.searchParams.get('from')!)).toBe(90 * 86400000)
+    expect(request.searchParams.get('hours')).toBe('2160')
+    expect(useToast().toasts.value.length).toBe(notices + 1)
+    expect(useToast().toasts.value.at(-1)?.type).toBe('info')
+    router.back(); await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/issues')
+    expect(state.range).toBe('All')
+    router.forward(); await flushPromises()
+    expect(state.range).toBe('90d')
+    expect(useToast().toasts.value.length).toBe(notices + 1)
+  })
+  it.each(['range=all', 'range=All', 'window=All', ''])('recovers an all-time session or direct link with %s', async query => {
+    sessionStorage.setItem('tindra:investigation', JSON.stringify({ range: 'All' }))
+    const { router, state } = setup()
+    await router.push('/performance/queries?' + query)
+    expect(state.range).toBe('90d')
+    expect(router.currentRoute.value.query.range).toBe('90d')
+    expect(router.currentRoute.value.query.window).toBeUndefined()
+    expect(JSON.parse(sessionStorage.getItem('tindra:investigation')!).range).toBe('90d')
+  })
+  it('keeps all-time context on record and non-telemetry pages', async () => {
+    const { router, state } = setup()
+    await router.push('/issues?range=all')
+    for (const path of ['/issues/abc', '/transactions/abc', '/releases', '/monitors/uptime']) {
+      await router.push(path)
+      expect(state.range).toBe('All')
+    }
+  })
+  it('preserves a custom interval selected after All when navigating without query parameters', async () => {
+    const { router, state } = setup()
+    await router.push('/issues?range=all')
+    await router.push('/issues?range=custom&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z')
+    await router.push('/performance/queries')
+    expect(state.range).toBe('All')
+    expect(state.absolute).toEqual({ from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' })
+    expect(router.currentRoute.value.query.range).toBe('custom')
+  })
   it('inherits legacy URL context and carries it across telemetry views', async () => {
     const { router, state } = setup()
     await router.push('/performance/transactions?project_id=11111111-1111-4111-8111-111111111111&env=eu-west&window=7d&op=http.server')

@@ -6,6 +6,7 @@ const routeState = { name: 'issues', path: '/issues' }
 
 vi.mock('vue-router', () => ({
   useRoute: vi.fn(() => routeState),
+  useRouter: vi.fn(() => ({ replace: vi.fn() })),
   RouterView: { template: '<div class="router-view" />' },
 }))
 
