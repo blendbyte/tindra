@@ -160,83 +160,87 @@ function formatCount(n: number) {
 
     <template v-else>
       <!-- Header row with sortable columns -->
-      <div class="relrow relrow--header">
-        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'version' }" @click="toggleSort('version')">
-          Version <em class="col-sort__icon">{{ sortIcon('version') }}</em>
-        </button>
-        <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_count' }" @click="toggleSort('tx_count')">
-          Txns <em class="col-sort__icon">{{ sortIcon('tx_count') }}</em>
-        </button>
-        <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_p50' }" @click="toggleSort('tx_p50')">
-          P50 <em class="col-sort__icon">{{ sortIcon('tx_p50') }}</em>
-        </button>
-        <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_error_rate' }" @click="toggleSort('tx_error_rate')">
-          Errors <em class="col-sort__icon">{{ sortIcon('tx_error_rate') }}</em>
-        </button>
-        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'new_issues' }" @click="toggleSort('new_issues')">
-          Issues <em class="col-sort__icon">{{ sortIcon('new_issues') }}</em>
-        </button>
-        <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'deployed_at' }" @click="toggleSort('deployed_at')">
-          Deployed <em class="col-sort__icon">{{ sortIcon('deployed_at') }}</em>
-        </button>
-      </div>
+      <div class="data-list-scroll" tabindex="0" role="region" aria-label="Releases">
+        <div class="release-list">
+          <div class="relrow relrow--header">
+            <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'version' }" @click="toggleSort('version')">
+              Version <em class="col-sort__icon">{{ sortIcon('version') }}</em>
+            </button>
+            <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_count' }" @click="toggleSort('tx_count')">
+              Txns <em class="col-sort__icon">{{ sortIcon('tx_count') }}</em>
+            </button>
+            <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_p50' }" @click="toggleSort('tx_p50')">
+              P50 <em class="col-sort__icon">{{ sortIcon('tx_p50') }}</em>
+            </button>
+            <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_error_rate' }" @click="toggleSort('tx_error_rate')">
+              Errors <em class="col-sort__icon">{{ sortIcon('tx_error_rate') }}</em>
+            </button>
+            <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'new_issues' }" @click="toggleSort('new_issues')">
+              Issues <em class="col-sort__icon">{{ sortIcon('new_issues') }}</em>
+            </button>
+            <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'deployed_at' }" @click="toggleSort('deployed_at')">
+              Deployed <em class="col-sort__icon">{{ sortIcon('deployed_at') }}</em>
+            </button>
+          </div>
 
-      <!-- Skeleton rows while loading -->
-      <template v-if="isFetching && allReleases.length === 0">
-        <div v-for="i in 8" :key="i" class="relrow">
-          <div class="rel-version">
-            <div class="rel-version__icon skel" style="width:28px;height:28px;border-radius:6px" />
-            <div class="rel-version__text">
-              <span class="skel" style="width:120px;height:10px;display:block" />
+          <!-- Skeleton rows while loading -->
+          <template v-if="isFetching && allReleases.length === 0">
+            <div v-for="i in 8" :key="i" class="relrow">
+              <div class="rel-version">
+                <div class="rel-version__icon skel" style="width:28px;height:28px;border-radius:6px" />
+                <div class="rel-version__text">
+                  <span class="skel" style="width:120px;height:10px;display:block" />
+                </div>
+              </div>
+              <span class="skel relrow__num" style="width:36px;height:10px;display:block;margin-left:auto" />
+              <span class="skel relrow__num" style="width:44px;height:10px;display:block;margin-left:auto" />
+              <span class="skel relrow__num" style="width:28px;height:10px;display:block;margin-left:auto" />
+              <span class="skel" style="width:56px;height:20px;display:block;border-radius:10px" />
+              <span class="skel relrow__num" style="width:52px;height:10px;display:block;margin-left:auto" />
+            </div>
+          </template>
+
+          <!-- Data rows -->
+          <div
+            v-for="r in sorted"
+            :key="r.id"
+            class="relrow"
+            @click="router.push(`/releases/${r.id}`)"
+          >
+            <div class="rel-version">
+              <div class="rel-version__icon">
+                <Icon name="package" :size="12" />
+              </div>
+              <div class="rel-version__text">
+                <span class="rel-version__label mono" :title="r.version">{{ r.version }}</span>
+                <span v-if="projectName(r.project_id)" class="rel-version__project" :title="projectName(r.project_id)">{{ projectName(r.project_id) }}</span>
+              </div>
+            </div>
+
+            <span class="relrow__num mono">{{ formatCount(r.tx_count) }}</span>
+
+            <span class="relrow__num mono" :class="{ muted: r.tx_count === 0 }">
+              {{ r.tx_p50 === 0 ? '–' : formatDuration(r.tx_p50) }}
+            </span>
+
+            <span class="relrow__num mono" :class="r.tx_error_rate > 0 ? 'tx-failure' : 'muted'">
+              {{ r.tx_count > 0 ? (r.tx_error_rate > 0 ? r.tx_error_rate.toFixed(1) + '%' : '–') : '–' }}
+            </span>
+
+            <div class="rel-issues-cell">
+              <span v-if="r.new_issues > 0" class="rel-issues-pill rel-issues-pill--active">
+                {{ r.new_issues }} new
+              </span>
+              <span v-else class="rel-issues-pill rel-issues-pill--clean">
+                Clean
+              </span>
+            </div>
+
+            <div class="rel-deployed relrow__num">
+              <Icon name="clock" :size="11" style="color: var(--text-3); flex: 0 0 auto" />
+              <span>{{ formatRel(r.deployed_at) }}</span>
             </div>
           </div>
-          <span class="skel relrow__num" style="width:36px;height:10px;display:block;margin-left:auto" />
-          <span class="skel relrow__num" style="width:44px;height:10px;display:block;margin-left:auto" />
-          <span class="skel relrow__num" style="width:28px;height:10px;display:block;margin-left:auto" />
-          <span class="skel" style="width:56px;height:20px;display:block;border-radius:10px" />
-          <span class="skel relrow__num" style="width:52px;height:10px;display:block;margin-left:auto" />
-        </div>
-      </template>
-
-      <!-- Data rows -->
-      <div
-        v-for="r in sorted"
-        :key="r.id"
-        class="relrow"
-        @click="router.push(`/releases/${r.id}`)"
-      >
-        <div class="rel-version">
-          <div class="rel-version__icon">
-            <Icon name="package" :size="12" />
-          </div>
-          <div class="rel-version__text">
-            <span class="rel-version__label mono">{{ r.version }}</span>
-            <span v-if="projectName(r.project_id)" class="rel-version__project">{{ projectName(r.project_id) }}</span>
-          </div>
-        </div>
-
-        <span class="relrow__num mono">{{ formatCount(r.tx_count) }}</span>
-
-        <span class="relrow__num mono" :class="{ muted: r.tx_count === 0 }">
-          {{ r.tx_p50 === 0 ? '–' : formatDuration(r.tx_p50) }}
-        </span>
-
-        <span class="relrow__num mono" :class="r.tx_error_rate > 0 ? 'tx-failure' : 'muted'">
-          {{ r.tx_count > 0 ? (r.tx_error_rate > 0 ? r.tx_error_rate.toFixed(1) + '%' : '–') : '–' }}
-        </span>
-
-        <div class="rel-issues-cell">
-          <span v-if="r.new_issues > 0" class="rel-issues-pill rel-issues-pill--active">
-            {{ r.new_issues }} new
-          </span>
-          <span v-else class="rel-issues-pill rel-issues-pill--clean">
-            Clean
-          </span>
-        </div>
-
-        <div class="rel-deployed relrow__num">
-          <Icon name="clock" :size="11" style="color: var(--text-3); flex: 0 0 auto" />
-          <span>{{ formatRel(r.deployed_at) }}</span>
         </div>
       </div>
 

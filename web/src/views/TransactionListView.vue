@@ -466,37 +466,41 @@ function apdexClass(score: number): string {
 
         <!-- This person's traces -->
         <template v-if="userMode">
-          <div class="txrow txrow--header txrow--trace">
-            <span>Time</span>
-            <span>Op</span>
-            <span>Transaction</span>
-            <span>Project</span>
-            <span>Duration</span>
-            <span>Status</span>
-          </div>
-          <template v-if="isLoading">
-            <div v-for="i in 6" :key="i" class="txrow txrow--trace" aria-hidden="true">
-              <span class="ghost ghost--bar" style="width:70px" />
-              <span class="ghost ghost--pill" style="width:40px;height:20px" />
-              <span class="ghost ghost--bar" :style="{ width: ['72%','55%','83%','61%','78%','68%'][i-1] }" />
-              <span class="ghost ghost--bar" style="width:70px" />
-              <span class="ghost ghost--bar" style="width:40px" />
-              <span class="ghost ghost--pill" style="width:36px" />
+          <div class="data-list-scroll" tabindex="0" role="region" aria-label="Traces">
+            <div class="tx-list tx-list--trace">
+              <div class="txrow txrow--header txrow--trace">
+                <span>Time</span>
+                <span>Op</span>
+                <span>Transaction</span>
+                <span>Project</span>
+                <span>Duration</span>
+                <span>Status</span>
+              </div>
+              <template v-if="isLoading">
+                <div v-for="i in 6" :key="i" class="txrow txrow--trace" aria-hidden="true">
+                  <span class="ghost ghost--bar" style="width:70px" />
+                  <span class="ghost ghost--pill" style="width:40px;height:20px" />
+                  <span class="ghost ghost--bar" :style="{ width: ['72%','55%','83%','61%','78%','68%'][i-1] }" />
+                  <span class="ghost ghost--bar" style="width:70px" />
+                  <span class="ghost ghost--bar" style="width:40px" />
+                  <span class="ghost ghost--pill" style="width:36px" />
+                </div>
+              </template>
+              <RouterLink
+                v-for="t in traces"
+                :key="t.id"
+                class="txrow txrow--trace"
+                :to="{ name: 'transaction-detail', params: { id: t.id }, query: investigationQuery(investigation) }"
+              >
+                <span class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatRel(t.start_timestamp) }}</span>
+                <span class="optag" :class="opClass(t.op)">{{ (t.op || 'txn').split('.')[0] }}</span>
+                <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="t.transaction">{{ t.transaction }}</span>
+                <span class="projtag" :title="projectName(t.project_id)">{{ projectName(t.project_id) }}</span>
+                <span class="tx-num-cell">{{ formatDuration(t.duration_ms) }}</span>
+                <span class="statuspill" :class="t.status === 'ok' ? 'statuspill--resolved' : 'statuspill--open'">{{ t.status }}</span>
+              </RouterLink>
             </div>
-          </template>
-          <RouterLink
-            v-for="t in traces"
-            :key="t.id"
-            class="txrow txrow--trace"
-            :to="{ name: 'transaction-detail', params: { id: t.id }, query: investigationQuery(investigation) }"
-          >
-            <span class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatRel(t.start_timestamp) }}</span>
-            <span class="optag" :class="opClass(t.op)">{{ (t.op || 'txn').split('.')[0] }}</span>
-            <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ t.transaction }}</span>
-            <span class="projtag">{{ projectName(t.project_id) }}</span>
-            <span class="tx-num-cell">{{ formatDuration(t.duration_ms) }}</span>
-            <span class="statuspill" :class="t.status === 'ok' ? 'statuspill--resolved' : 'statuspill--open'">{{ t.status }}</span>
-          </RouterLink>
+          </div>
           <div v-if="traces.length > 0" class="list-footer">
             <span class="list-footer__count">{{ traces.length.toLocaleString() }} trace{{ traces.length === 1 ? '' : 's' }}</span>
             <button v-if="tracesHasMore" class="btn" :disabled="loadingMoreTraces" @click="loadMoreTraces">
@@ -506,76 +510,78 @@ function apdexClass(score: number): string {
         </template>
 
         <!-- Fleet summary table -->
-        <template v-else>
-        <div class="txrow txrow--header">
-          <span>Op</span>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'transaction' }" @click="toggleSort('transaction')">
-            Transaction <em class="col-sort__icon">{{ sortIcon('transaction') }}</em>
-          </button>
-          <span>Project</span>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'sample_count' }" @click="toggleSort('sample_count')">
-            Count <em class="col-sort__icon">{{ sortIcon('sample_count') }}</em>
-          </button>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'tpm' }" @click="toggleSort('tpm')">
-            TPM <em class="col-sort__icon">{{ sortIcon('tpm') }}</em>
-          </button>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'p50' }" @click="toggleSort('p50')">
-            P50 <em class="col-sort__icon">{{ sortIcon('p50') }}</em>
-          </button>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'p95' }" @click="toggleSort('p95')">
-            P95 <em class="col-sort__icon">{{ sortIcon('p95') }}</em>
-          </button>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'apdex' }" @click="toggleSort('apdex')">
-            Apdex <em class="col-sort__icon">{{ sortIcon('apdex') }}</em>
-          </button>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'failure_rate' }" @click="toggleSort('failure_rate')">
-            Failure % <em class="col-sort__icon">{{ sortIcon('failure_rate') }}</em>
-          </button>
-          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'time_spent_ms' }" style="justify-content: flex-end" @click="toggleSort('time_spent_ms')">
-            Time spent <em class="col-sort__icon">{{ sortIcon('time_spent_ms') }}</em>
-          </button>
-        </div>
+        <div v-else class="data-list-scroll" tabindex="0" role="region" aria-label="Transactions">
+          <div class="tx-list">
+            <div class="txrow txrow--header">
+              <span>Op</span>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'transaction' }" @click="toggleSort('transaction')">
+                Transaction <em class="col-sort__icon">{{ sortIcon('transaction') }}</em>
+              </button>
+              <span>Project</span>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'sample_count' }" @click="toggleSort('sample_count')">
+                Count <em class="col-sort__icon">{{ sortIcon('sample_count') }}</em>
+              </button>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'tpm' }" @click="toggleSort('tpm')">
+                TPM <em class="col-sort__icon">{{ sortIcon('tpm') }}</em>
+              </button>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'p50' }" @click="toggleSort('p50')">
+                P50 <em class="col-sort__icon">{{ sortIcon('p50') }}</em>
+              </button>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'p95' }" @click="toggleSort('p95')">
+                P95 <em class="col-sort__icon">{{ sortIcon('p95') }}</em>
+              </button>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'apdex' }" @click="toggleSort('apdex')">
+                Apdex <em class="col-sort__icon">{{ sortIcon('apdex') }}</em>
+              </button>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'failure_rate' }" @click="toggleSort('failure_rate')">
+                Failure % <em class="col-sort__icon">{{ sortIcon('failure_rate') }}</em>
+              </button>
+              <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'time_spent_ms' }" style="justify-content: flex-end" @click="toggleSort('time_spent_ms')">
+                Time spent <em class="col-sort__icon">{{ sortIcon('time_spent_ms') }}</em>
+              </button>
+            </div>
 
-        <template v-if="isLoading">
-          <div v-for="i in 6" :key="i" class="txrow" aria-hidden="true">
-            <span class="ghost ghost--pill" style="width:40px;height:20px" />
-            <span class="ghost ghost--bar" :style="{ width: ['72%','55%','83%','61%','78%','68%'][i-1] }" />
-            <span class="ghost ghost--bar" style="width:70px" />
-            <span class="ghost ghost--bar" style="width:32px" />
-            <span class="ghost ghost--bar" style="width:48px" />
-            <span class="ghost ghost--bar" style="width:32px" />
-            <span class="ghost ghost--bar" style="width:32px" />
-            <span class="ghost ghost--bar" style="width:28px" />
-            <span class="ghost ghost--bar" style="width:24px" />
-            <span class="ghost ghost--bar" style="width:40px" />
+            <template v-if="isLoading">
+              <div v-for="i in 6" :key="i" class="txrow" aria-hidden="true">
+                <span class="ghost ghost--pill" style="width:40px;height:20px" />
+                <span class="ghost ghost--bar" :style="{ width: ['72%','55%','83%','61%','78%','68%'][i-1] }" />
+                <span class="ghost ghost--bar" style="width:70px" />
+                <span class="ghost ghost--bar" style="width:32px" />
+                <span class="ghost ghost--bar" style="width:48px" />
+                <span class="ghost ghost--bar" style="width:32px" />
+                <span class="ghost ghost--bar" style="width:32px" />
+                <span class="ghost ghost--bar" style="width:28px" />
+                <span class="ghost ghost--bar" style="width:24px" />
+                <span class="ghost ghost--bar" style="width:40px" />
+              </div>
+            </template>
+            <template v-else>
+              <RouterLink
+                v-for="(s, i) in summaries"
+                :key="`${s.transaction}-${s.op}-${s.project_id}-${i}`"
+                class="txrow"
+                :to="{ name: 'transaction-profile', query: { ...investigationQuery(investigation), name: s.transaction, op: s.op, project_id: s.project_id } }"
+              >
+                <span class="optag" :class="opClass(s.op)">{{ s.op.split('.')[0] }}</span>
+                <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="s.transaction">{{ s.transaction }}</span>
+                <span class="projtag" :title="projectName(s.project_id)">{{ projectName(s.project_id) }}</span>
+                <span class="tx-num-cell">{{ s.sample_count.toLocaleString() }}</span>
+                <span class="tx-num-cell">{{ formatTPM(s.tpm) }}</span>
+                <span class="tx-num-cell tx-num-cell--stat">
+                  <span>{{ formatDuration(s.p50) }}</span>
+                  <span v-if="getDelta(s, 'p50')" class="tx-delta" :class="getDelta(s, 'p50')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p50')!.label }}</span>
+                </span>
+                <span class="tx-num-cell tx-num-cell--stat">
+                  <span>{{ formatDuration(s.p95) }}</span>
+                  <span v-if="getDelta(s, 'p95')" class="tx-delta" :class="getDelta(s, 'p95')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p95')!.label }}</span>
+                </span>
+                <span class="tx-num-cell" :class="apdexClass(s.apdex)">{{ s.apdex.toFixed(2) }}</span>
+                <span class="tx-num-cell" :class="s.failure_rate > 0 ? 'tx-failure' : ''">{{ formatFailureRate(s.failure_rate) }}</span>
+                <span class="tx-num-cell tx-num-cell--right">{{ formatTimeSpent(s.time_spent_ms) }}</span>
+              </RouterLink>
+            </template>
           </div>
-        </template>
-        <template v-else>
-          <RouterLink
-            v-for="(s, i) in summaries"
-            :key="`${s.transaction}-${s.op}-${s.project_id}-${i}`"
-            class="txrow"
-            :to="{ name: 'transaction-profile', query: { ...investigationQuery(investigation), name: s.transaction, op: s.op, project_id: s.project_id } }"
-          >
-            <span class="optag" :class="opClass(s.op)">{{ s.op.split('.')[0] }}</span>
-            <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ s.transaction }}</span>
-            <span class="projtag">{{ projectName(s.project_id) }}</span>
-            <span class="tx-num-cell">{{ s.sample_count.toLocaleString() }}</span>
-            <span class="tx-num-cell">{{ formatTPM(s.tpm) }}</span>
-            <span class="tx-num-cell tx-num-cell--stat">
-              <span>{{ formatDuration(s.p50) }}</span>
-              <span v-if="getDelta(s, 'p50')" class="tx-delta" :class="getDelta(s, 'p50')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p50')!.label }}</span>
-            </span>
-            <span class="tx-num-cell tx-num-cell--stat">
-              <span>{{ formatDuration(s.p95) }}</span>
-              <span v-if="getDelta(s, 'p95')" class="tx-delta" :class="getDelta(s, 'p95')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p95')!.label }}</span>
-            </span>
-            <span class="tx-num-cell" :class="apdexClass(s.apdex)">{{ s.apdex.toFixed(2) }}</span>
-            <span class="tx-num-cell" :class="s.failure_rate > 0 ? 'tx-failure' : ''">{{ formatFailureRate(s.failure_rate) }}</span>
-            <span class="tx-num-cell tx-num-cell--right">{{ formatTimeSpent(s.time_spent_ms) }}</span>
-          </RouterLink>
-        </template>
-        </template>
+        </div>
       </template>
     </template>
   </div>

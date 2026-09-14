@@ -692,19 +692,20 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
               </div>
               <div class="issue__sub">
                 <span v-if="sorted[vRow.index]?.kind === 'n1_query'" class="kindbadge">N+1</span>
-                <span class="projtag">{{ projectName(sorted[vRow.index]?.project_id) }}</span>
+                <span class="projtag" :title="projectName(sorted[vRow.index]?.project_id)">{{ projectName(sorted[vRow.index]?.project_id) }}</span>
               </div>
             </div>
           </a>
           <span
             class="envbadge"
+            :title="sorted[vRow.index]?.environment ?? '-'"
             :class="sorted[vRow.index]?.environment === 'production' ? 'envbadge--prod' : sorted[vRow.index]?.environment === 'staging' ? 'envbadge--staging' : ''"
           >{{ sorted[vRow.index]?.environment ?? '-' }}</span>
           <div class="events-cell">
             <span v-if="sorted[vRow.index]?.kind !== 'n1_query'" class="events-cell__spark" :style="{ color: levelColor(sorted[vRow.index]?.level) }">
               <Sparkline :data="sorted[vRow.index]?.sparkline ?? []" :width="36" :height="14" />
             </span>
-            <span class="events-cell__num">{{ sorted[vRow.index]?.event_count.toLocaleString() }}</span>
+            <span class="events-cell__num" :title="sorted[vRow.index]?.event_count.toLocaleString()">{{ sorted[vRow.index]?.event_count.toLocaleString() }}</span>
           </div>
           <span class="users-cell"><Icon name="user" :size="11" class="users-cell__icon" />{{ (sorted[vRow.index]?.user_count ?? 0).toLocaleString() }}</span>
           <span class="time-cell">{{ formatRel(sorted[vRow.index]?.last_seen) }}</span>

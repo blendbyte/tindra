@@ -307,49 +307,53 @@ function projectName(projectId: string) {
         <button class="btn btn--ghost" @click="refetchSamples()">Retry</button>
       </div>
 
-      <div class="tx-sample-row tx-sample-row--head">
-        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'time' }" @click="toggleSort('time')">
-          Time <em class="col-sort__icon">{{ sortIcon('time') }}</em>
-        </button>
-        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'duration' }" @click="toggleSort('duration')">
-          Duration <em class="col-sort__icon">{{ sortIcon('duration') }}</em>
-        </button>
-        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'status' }" @click="toggleSort('status')">
-          Status <em class="col-sort__icon">{{ sortIcon('status') }}</em>
-        </button>
-        <span class="col-label">Project</span>
-        <span class="col-label">Trace ID</span>
-      </div>
+      <div class="data-list-scroll" tabindex="0" role="region" aria-label="Transaction samples">
+        <div class="tx-sample-list">
+          <div class="tx-sample-row tx-sample-row--head">
+            <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'time' }" @click="toggleSort('time')">
+              Time <em class="col-sort__icon">{{ sortIcon('time') }}</em>
+            </button>
+            <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'duration' }" @click="toggleSort('duration')">
+              Duration <em class="col-sort__icon">{{ sortIcon('duration') }}</em>
+            </button>
+            <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'status' }" @click="toggleSort('status')">
+              Status <em class="col-sort__icon">{{ sortIcon('status') }}</em>
+            </button>
+            <span class="col-label">Project</span>
+            <span class="col-label">Trace ID</span>
+          </div>
 
-      <template v-if="isLoadingSamples">
-        <div v-for="i in 8" :key="i" class="tx-sample-row tx-sample-row--skeleton">
-          <span class="skel" style="width: 120px; height: 10px" />
-          <span class="skel" style="width: 60px; height: 10px" />
-          <span class="skel" style="width: 40px; height: 10px" />
-          <span class="skel" style="width: 70px; height: 10px" />
-          <span class="skel" style="width: 140px; height: 10px" />
+          <template v-if="isLoadingSamples">
+            <div v-for="i in 8" :key="i" class="tx-sample-row tx-sample-row--skeleton">
+              <span class="skel" style="width: 120px; height: 10px" />
+              <span class="skel" style="width: 60px; height: 10px" />
+              <span class="skel" style="width: 40px; height: 10px" />
+              <span class="skel" style="width: 70px; height: 10px" />
+              <span class="skel" style="width: 140px; height: 10px" />
+            </div>
+          </template>
+
+          <div
+            v-for="(s, i) in sortedSamples"
+            :key="s.id"
+            class="tx-sample-row"
+            :class="{ 'tx-sample-row--selected': selectedIdx === i }"
+            @click="router.push(`/transactions/${s.id}`)"
+          >
+            <span class="tx-sample-row__time">{{ formatTime(s.start_timestamp) }}</span>
+            <span class="tx-sample-dur">
+              <span
+                class="tx-sample-dur__bar"
+                :class="s.status !== 'ok' ? 'tx-sample-dur__bar--err' : ''"
+                :style="{ transform: `scaleX(${s.duration_ms / maxSampleDuration})` }"
+              />
+              <span class="tx-sample-dur__val">{{ formatDuration(s.duration_ms) }}</span>
+            </span>
+            <span><span class="tx-status" :class="`tx-status--${s.status}`">{{ s.status }}</span></span>
+            <span class="tx-sample-row__project" :title="projectName(s.project_id)">{{ projectName(s.project_id) }}</span>
+            <span class="tx-sample-row__trace" :title="s.trace_id || s.id">{{ s.trace_id || s.id }}</span>
+          </div>
         </div>
-      </template>
-
-      <div
-        v-for="(s, i) in sortedSamples"
-        :key="s.id"
-        class="tx-sample-row"
-        :class="{ 'tx-sample-row--selected': selectedIdx === i }"
-        @click="router.push(`/transactions/${s.id}`)"
-      >
-        <span class="tx-sample-row__time">{{ formatTime(s.start_timestamp) }}</span>
-        <span class="tx-sample-dur">
-          <span
-            class="tx-sample-dur__bar"
-            :class="s.status !== 'ok' ? 'tx-sample-dur__bar--err' : ''"
-            :style="{ transform: `scaleX(${s.duration_ms / maxSampleDuration})` }"
-          />
-          <span class="tx-sample-dur__val">{{ formatDuration(s.duration_ms) }}</span>
-        </span>
-        <span><span class="tx-status" :class="`tx-status--${s.status}`">{{ s.status }}</span></span>
-        <span class="tx-sample-row__project">{{ projectName(s.project_id) }}</span>
-        <span class="tx-sample-row__trace">{{ s.trace_id || s.id }}</span>
       </div>
 
       <div v-if="!isLoadingSamples && !isSamplesError && allSamples.length === 0" class="tx-samples__empty">

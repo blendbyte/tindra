@@ -620,7 +620,7 @@ function finishSetup() {
           :key="row.projectId"
           class="db-proj-row"
         >
-          <span class="db-proj-row__name">{{ row.projectName }}</span>
+          <span class="db-proj-row__name" :title="row.projectName">{{ row.projectName }}</span>
           <RouterLink
             class="db-proj-row__val db-proj-row__link"
             :class="{ 'db-proj-row__val--bad': row.openIssues > 0 }"

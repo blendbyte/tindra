@@ -1739,7 +1739,7 @@ function actionKindOf(action: string) {
           >
             <div class="proj-card__head proj-card__head--row" @click="expandedProject = expandedProject === p.id ? null : p.id">
               <div style="min-width: 0">
-                <div class="proj-card__name">{{ p.name }}</div>
+                <div class="proj-card__name" :title="p.name">{{ p.name }}</div>
                 <div class="proj-card__meta mono">{{ p.slug }}</div>
               </div>
               <span class="proj-card__stat mono">{{ (p.event_count ?? 0).toLocaleString() }}</span>

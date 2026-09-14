@@ -493,7 +493,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
           >
             <span class="mon-dot" :style="{ background: m.status === 'paused' ? 'var(--text-3)' : stateColor(m.state) }" :title="stateLabel(m.state)" />
             <div class="monrow__main">
-              <div class="monrow__name">{{ m.name }}</div>
+              <div class="monrow__name" :title="m.name">{{ m.name }}</div>
               <div class="monrow__sub">
                 <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : stateColor(m.state) }" class="monrow__state">{{ stateLabel(m.state) }}</span>
                 <template v-if="m.status === 'paused'">
@@ -501,9 +501,9 @@ function confirmDeleteUptime(m: UptimeMonitor) {
                   <span class="mon-paused-badge">Paused</span>
                 </template>
                 <span class="monrow__sep">·</span>
-                <span class="monrow__sched">{{ humanSchedule(m.schedule) }}</span>
+                <span class="monrow__sched" :title="humanSchedule(m.schedule)">{{ humanSchedule(m.schedule) }}</span>
                 <span class="monrow__sep">·</span>
-                <span class="projtag">{{ projectName(m.project_id) }}</span>
+                <span class="projtag" :title="projectName(m.project_id)">{{ projectName(m.project_id) }}</span>
               </div>
             </div>
             <div class="mon-timeline">
@@ -609,7 +609,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
                     <span :style="{ color: checkinStateColor(ci.status) }">{{ ci.status }}</span>
                   </div>
                   <span style="color:var(--text-2)">{{ ci.duration_ms != null ? formatDuration(ci.duration_ms) : '–' }}</span>
-                  <span style="color:var(--text-3)">{{ ci.environment ?? '–' }}</span>
+                  <span class="mon-ci-environment" :title="ci.environment ?? '–'" style="color:var(--text-3)">{{ ci.environment ?? '–' }}</span>
                   <span style="color:var(--text-3)">{{ formatRel(ci.received_at) }}</span>
                 </div>
               </template>
@@ -744,7 +744,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
           >
             <span class="mon-dot" :style="{ background: m.status === 'paused' ? 'var(--text-3)' : uptimeStateColor(m.state) }" :title="uptimeStateLabel(m.state)" />
             <div class="monrow__main">
-              <div class="monrow__name">{{ m.name }}</div>
+              <div class="monrow__name" :title="m.name">{{ m.name }}</div>
               <div class="monrow__sub">
                 <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : uptimeStateColor(m.state) }" class="monrow__state">{{ uptimeStateLabel(m.state) }}</span>
                 <template v-if="m.status === 'paused'">
@@ -752,9 +752,9 @@ function confirmDeleteUptime(m: UptimeMonitor) {
                   <span class="mon-paused-badge">Paused</span>
                 </template>
                 <span class="monrow__sep">·</span>
-                <span class="monrow__sched mono" style="font-size:10px">{{ m.url }}</span>
+                <span class="monrow__sched mono" :title="m.url" style="font-size:10px">{{ m.url }}</span>
                 <span class="monrow__sep">·</span>
-                <span class="projtag">{{ projectName(m.project_id) }}</span>
+                <span class="projtag" :title="projectName(m.project_id)">{{ projectName(m.project_id) }}</span>
               </div>
             </div>
             <div class="mon-timeline">
@@ -1035,9 +1035,13 @@ function confirmDeleteUptime(m: UptimeMonitor) {
   align-items: center;
   gap: 5px;
   margin-top: 2px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .monrow__state {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: var(--text-xs);
   font-weight: 500;
 }
@@ -1048,6 +1052,10 @@ function confirmDeleteUptime(m: UptimeMonitor) {
 }
 
 .monrow__sched {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-xs);
   color: var(--text-3);
 }
@@ -1214,6 +1222,13 @@ function confirmDeleteUptime(m: UptimeMonitor) {
   grid-template-columns: 80px 60px 80px minmax(0,1fr) 100px;
 }
 
+.mon-ci-environment {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mon-ci-row--header {
   height: 28px;
   font-size: 10px;
@@ -1296,6 +1311,11 @@ function confirmDeleteUptime(m: UptimeMonitor) {
 .mon-field__input:focus { border-color: var(--accent); }
 .mon-field__input::placeholder { color: var(--text-3); }
 select.mon-field__input { cursor: pointer; }
+
+@media (max-width: 1023px) {
+  .monrow { grid-template-columns: 14px minmax(0, 1fr) 110px 110px 32px; }
+  .mon-timeline { display: none; }
+}
 
 @media (max-width: 900px) {
   .mon-createbar__fields--uptime {

@@ -287,10 +287,10 @@ onUnmounted(() => clearTimeout(debounceTimer))
                 </div>
               </td>
               <td v-if="showProject" class="perf-table__num log-proj-col">
-                <span class="projtag">{{ projectName(log.project_id) }}</span>
+                <span class="projtag" :title="projectName(log.project_id)">{{ projectName(log.project_id) }}</span>
               </td>
               <td class="perf-table__num log-env-col">
-                <span v-if="log.environment" class="envbadge" :class="envBadgeClass(log.environment)">{{ log.environment }}</span>
+                <span v-if="log.environment" class="envbadge" :title="log.environment" :class="envBadgeClass(log.environment)">{{ log.environment }}</span>
               </td>
             </tr>
 

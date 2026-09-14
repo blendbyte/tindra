@@ -216,59 +216,63 @@ const sortedPages = computed(() => {
     </div>
 
     <template v-else-if="userMode">
-      <div v-if="pageloadsLoading" class="txrow txrow--header txrow--pageload">
-        <span>Time</span>
-        <span>Page</span>
-        <span>LCP</span>
-        <span>INP</span>
-        <span>CLS</span>
-        <span>Duration</span>
-      </div>
-      <div v-if="pageloadsLoading">
-        <div v-for="i in 6" :key="i" class="txrow txrow--pageload" aria-hidden="true">
-          <span class="ghost ghost--bar" style="width:70px" />
-          <span class="ghost ghost--bar" style="width:60%" />
-          <span class="ghost ghost--bar" style="width:40px" />
-          <span class="ghost ghost--bar" style="width:40px" />
-          <span class="ghost ghost--bar" style="width:40px" />
-          <span class="ghost ghost--bar" style="width:40px" />
+      <div class="data-list-scroll" tabindex="0" role="region" aria-label="Page loads">
+        <div class="tx-list tx-list--pageload">
+          <div v-if="pageloadsLoading" class="txrow txrow--header txrow--pageload">
+            <span>Time</span>
+            <span>Page</span>
+            <span>LCP</span>
+            <span>INP</span>
+            <span>CLS</span>
+            <span>Duration</span>
+          </div>
+          <template v-if="pageloadsLoading">
+            <div v-for="i in 6" :key="i" class="txrow txrow--pageload" aria-hidden="true">
+              <span class="ghost ghost--bar" style="width:70px" />
+              <span class="ghost ghost--bar" style="width:60%" />
+              <span class="ghost ghost--bar" style="width:40px" />
+              <span class="ghost ghost--bar" style="width:40px" />
+              <span class="ghost ghost--bar" style="width:40px" />
+              <span class="ghost ghost--bar" style="width:40px" />
+            </div>
+          </template>
+          <template v-else>
+            <div class="txrow txrow--header txrow--pageload">
+              <span>Time</span>
+              <span>Page</span>
+              <span>LCP</span>
+              <span>INP</span>
+              <span>CLS</span>
+              <span>Duration</span>
+            </div>
+            <RouterLink
+              v-for="t in pageloads"
+              :key="t.id"
+              class="txrow txrow--pageload"
+              :to="{ name: 'transaction-detail', params: { id: t.id }, query: investigationQuery(investigation) }"
+            >
+              <span class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatRel(t.start_timestamp) }}</span>
+              <span :title="t.transaction" class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ t.transaction }}</span>
+              <span class="tx-num-cell">
+                <span class="vital-pill" :class="`vital-pill--${vitalStatus('lcp', measurementValue(t, 'lcp'))}`">{{ formatVital('lcp', measurementValue(t, 'lcp')) }}</span>
+              </span>
+              <span class="tx-num-cell">
+                <span class="vital-pill" :class="`vital-pill--${vitalStatus('inp', measurementValue(t, 'inp'))}`">{{ formatVital('inp', measurementValue(t, 'inp')) }}</span>
+              </span>
+              <span class="tx-num-cell">
+                <span class="vital-pill" :class="`vital-pill--${vitalStatus('cls', measurementValue(t, 'cls'))}`">{{ formatVital('cls', measurementValue(t, 'cls')) }}</span>
+              </span>
+              <span class="tx-num-cell">{{ formatDuration(t.duration_ms) }}</span>
+            </RouterLink>
+          </template>
         </div>
       </div>
-      <template v-else>
-        <div class="txrow txrow--header txrow--pageload">
-          <span>Time</span>
-          <span>Page</span>
-          <span>LCP</span>
-          <span>INP</span>
-          <span>CLS</span>
-          <span>Duration</span>
-        </div>
-        <RouterLink
-          v-for="t in pageloads"
-          :key="t.id"
-          class="txrow txrow--pageload"
-          :to="{ name: 'transaction-detail', params: { id: t.id }, query: investigationQuery(investigation) }"
-        >
-          <span class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatRel(t.start_timestamp) }}</span>
-          <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ t.transaction }}</span>
-          <span class="tx-num-cell">
-            <span class="vital-pill" :class="`vital-pill--${vitalStatus('lcp', measurementValue(t, 'lcp'))}`">{{ formatVital('lcp', measurementValue(t, 'lcp')) }}</span>
-          </span>
-          <span class="tx-num-cell">
-            <span class="vital-pill" :class="`vital-pill--${vitalStatus('inp', measurementValue(t, 'inp'))}`">{{ formatVital('inp', measurementValue(t, 'inp')) }}</span>
-          </span>
-          <span class="tx-num-cell">
-            <span class="vital-pill" :class="`vital-pill--${vitalStatus('cls', measurementValue(t, 'cls'))}`">{{ formatVital('cls', measurementValue(t, 'cls')) }}</span>
-          </span>
-          <span class="tx-num-cell">{{ formatDuration(t.duration_ms) }}</span>
-        </RouterLink>
-        <div v-if="pageloads.length > 0" class="list-footer">
-          <span class="list-footer__count">{{ pageloads.length.toLocaleString() }} page load{{ pageloads.length === 1 ? '' : 's' }}</span>
-          <button v-if="pageloadsHasMore" class="btn" :disabled="loadingMorePageloads" @click="loadMorePageloads">
-            {{ loadingMorePageloads ? 'Loading…' : 'Load more' }}
-          </button>
-        </div>
-      </template>
+      <div v-if="pageloads.length > 0" class="list-footer">
+        <span class="list-footer__count">{{ pageloads.length.toLocaleString() }} page load{{ pageloads.length === 1 ? '' : 's' }}</span>
+        <button v-if="pageloadsHasMore" class="btn" :disabled="loadingMorePageloads" @click="loadMorePageloads">
+          {{ loadingMorePageloads ? 'Loading…' : 'Load more' }}
+        </button>
+      </div>
     </template>
 
     <template v-else>

@@ -927,24 +927,26 @@ onUnmounted(() => {
           </div>
           <div v-if="perfEventsLoading" class="section-empty">Loading...</div>
           <div v-else-if="!perfEvents?.length" class="section-empty">No transactions recorded yet.</div>
-          <table v-else class="perf-table">
-            <thead>
-              <tr>
-                <th>Transaction</th>
-                <th>Repeated queries</th>
-                <th>Time wasted</th>
-                <th>Detected</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="pe in perfEvents" :key="pe.id">
-                <td><RouterLink :to="`/transactions/${pe.transaction_id}`" class="link mono">{{ pe.transaction }}</RouterLink></td>
-                <td>{{ pe.span_count }}×</td>
-                <td>{{ pe.total_ms }}ms</td>
-                <td :title="new Date(pe.created_at).toUTCString()">{{ formatRel(pe.created_at) }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else class="data-list-scroll">
+            <table class="perf-table">
+              <thead>
+                <tr>
+                  <th>Transaction</th>
+                  <th>Repeated queries</th>
+                  <th>Time wasted</th>
+                  <th>Detected</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="pe in perfEvents" :key="pe.id">
+                  <td><RouterLink :to="`/transactions/${pe.transaction_id}`" class="link mono">{{ pe.transaction }}</RouterLink></td>
+                  <td>{{ pe.span_count }}×</td>
+                  <td>{{ pe.total_ms }}ms</td>
+                  <td :title="new Date(pe.created_at).toUTCString()">{{ formatRel(pe.created_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </template>
 
@@ -1082,6 +1084,7 @@ onUnmounted(() => {
                   <span
                     v-if="ev.environment"
                     class="envbadge"
+                    :title="ev.environment"
                     :class="ev.environment === 'production' ? 'envbadge--prod' : ''"
                   >{{ ev.environment }}</span>
                   <span v-else style="color:var(--text-3)">–</span>

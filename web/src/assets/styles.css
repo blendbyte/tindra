@@ -1245,8 +1245,13 @@ a { color: inherit; text-decoration: none; }
 }
 
 .projtag {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  line-height: 14px;
   height: 16px;
   padding: 0 6px;
   border-radius: 8px;
@@ -1255,20 +1260,27 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-2);
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   white-space: nowrap;
   letter-spacing: -0.005em;
 }
 
 .envbadge {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-2);
 }
 .envbadge::before {
   content: '';
+  display: inline-block;
+  vertical-align: middle;
   width: 4px;
   height: 4px;
   border-radius: 50%;
@@ -1293,7 +1305,13 @@ a { color: inherit; text-decoration: none; }
   height: 16px;
   opacity: 0.85;
 }
-.events-cell__num { font-variant-numeric: tabular-nums; }
+.events-cell__num {
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .users-cell {
   display: flex;
@@ -1631,7 +1649,6 @@ a { color: inherit; text-decoration: none; }
 }
 .tag .leveldot { width: 6px; height: 6px; flex: 0 0 6px; }
 .tag--unhandled { color: var(--danger); border-color: color-mix(in oklch, var(--danger) 40%, transparent); background: color-mix(in oklch, var(--danger) 10%, transparent); font-family: var(--sans); font-weight: 500; letter-spacing: 0.02em; }
-
 
 .hgram-wrap {
   margin-top: 20px;
@@ -2284,13 +2301,6 @@ a { color: inherit; text-decoration: none; }
   line-height: 1.45;
 }
 
-.txrow--trace {
-  grid-template-columns: 110px 80px minmax(0, 1fr) 90px 72px 72px;
-}
-.txrow--pageload {
-  grid-template-columns: 110px minmax(0, 1fr) 72px 72px 72px 72px;
-}
-
 /* Event navigator */
 .eventnav {
   display: flex;
@@ -2331,10 +2341,11 @@ a { color: inherit; text-decoration: none; }
 /* ---------- Event list (issue detail) ---------- */
 
 .eventlist {
+  min-width: 0;
   margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  overflow: hidden;
+  overflow-x: auto;
 }
 
 .evttable {
@@ -2418,7 +2429,6 @@ a { color: inherit; text-decoration: none; }
 .perf-subnav__tabs::-webkit-scrollbar { display: none; }
 .perf-subnav__actions { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-left: 12px; flex-shrink: 0; }
 .perf-subnav__actions .filterbar__search { min-width: 0; width: clamp(120px, 20vw, 240px); }
-.perf-subnav ~ .perf-table-wrap .perf-table th { top: 88px; }
 .perf-subnav__link {
   font-size: var(--text-sm);
   color: var(--text-3);
@@ -2528,9 +2538,30 @@ a { color: inherit; text-decoration: none; }
 .statbar__sep { color: var(--border); }
 .statbar__right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
+.data-list-scroll {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* Share intrinsic column sizes across the header and every row. Text columns
+   stay bounded; metrics and statuses keep the space their contents need. */
+.tx-list {
+  display: grid;
+  grid-template-columns: 80px minmax(180px, 1fr) minmax(160px, 240px) repeat(7, max-content);
+  min-width: min-content;
+  column-gap: 16px;
+}
+.tx-list--trace {
+  grid-template-columns: max-content 80px minmax(180px, 1fr) minmax(160px, 240px) repeat(2, max-content);
+}
+.tx-list--pageload {
+  grid-template-columns: max-content minmax(180px, 1fr) repeat(4, max-content);
+}
+
 .txrow {
   display: grid;
-  grid-template-columns: 80px minmax(0, 1fr) 90px 56px 64px 90px 90px 68px 68px 80px;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   text-decoration: none;
   color: inherit;
   gap: 16px;
@@ -2541,6 +2572,9 @@ a { color: inherit; text-decoration: none; }
   font-size: 12px;
   transition: background 120ms ease;
 }
+.txrow > * { min-width: 0; }
+.txrow > .projtag { max-width: min(100%, 240px); justify-self: start; }
+.txrow > .statuspill { justify-self: start; }
 .txrow:hover { background: var(--surface); }
 .txrow--header {
   height: 32px;
@@ -2731,7 +2765,8 @@ a { color: inherit; text-decoration: none; }
 }
 .tx-sample-row {
   display: grid;
-  grid-template-columns: 160px 1fr 80px 110px 240px;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   column-gap: 16px;
   align-items: center;
   height: 38px;
@@ -2740,6 +2775,14 @@ a { color: inherit; text-decoration: none; }
   cursor: pointer;
   transition: background 120ms ease;
 }
+.tx-sample-list {
+  display: grid;
+  grid-template-columns: max-content minmax(120px, 1fr) max-content minmax(160px, 240px) 240px;
+  min-width: min-content;
+  column-gap: 16px;
+}
+.tx-sample-row > * { min-width: 0; }
+.tx-sample-row__project { max-width: min(100%, 240px); }
 .tx-sample-row:hover { background: var(--surface); }
 .tx-sample-row--head {
   height: 32px;
@@ -3425,7 +3468,6 @@ a { color: inherit; text-decoration: none; }
   z-index: 2;
   overflow: hidden;
 }
-
 
 .timeline__tick {
   position: absolute;
@@ -4155,6 +4197,7 @@ a { color: inherit; text-decoration: none; }
   background: var(--bg);
 }
 .token-table tbody td {
+  overflow-wrap: anywhere;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border-soft);
   color: var(--text-1);
@@ -4841,7 +4884,8 @@ a { color: inherit; text-decoration: none; }
 
 .relrow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px 70px 64px 110px 110px;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   align-items: center;
   gap: 16px;
   min-height: 56px;
@@ -4851,6 +4895,13 @@ a { color: inherit; text-decoration: none; }
   cursor: pointer;
   transition: background 120ms;
 }
+.release-list {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) repeat(5, max-content);
+  min-width: min-content;
+  column-gap: 16px;
+}
+.relrow > * { min-width: 0; }
 
 .relrow__num {
   text-align: right;
@@ -4870,9 +4921,6 @@ a { color: inherit; text-decoration: none; }
   cursor: default;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
-  position: sticky;
-  top: 48px;
-  z-index: 5;
 }
 .relrow--header:hover { background: var(--bg); }
 
@@ -5193,7 +5241,7 @@ a { color: inherit; text-decoration: none; }
   gap: 1px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  overflow: hidden;
+  overflow-x: auto;
 }
 
 .proj-card {
@@ -5202,7 +5250,8 @@ a { color: inherit; text-decoration: none; }
 
 .proj-table-head {
   display: grid;
-  grid-template-columns: 1fr 120px 100px 110px 28px;
+  grid-template-columns: minmax(200px, 1fr) 120px 100px 110px 28px;
+  min-width: 640px;
   gap: 8px;
   padding: 7px 16px;
   background: var(--surface);
@@ -5225,7 +5274,8 @@ a { color: inherit; text-decoration: none; }
 }
 .proj-card__head--row {
   display: grid;
-  grid-template-columns: 1fr 120px 100px 110px 28px;
+  grid-template-columns: minmax(200px, 1fr) 120px 100px 110px 28px;
+  min-width: 640px;
   gap: 8px;
   align-items: center;
   padding: 10px 16px;
@@ -5255,11 +5305,13 @@ a { color: inherit; text-decoration: none; }
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-1);
+  overflow-wrap: anywhere;
 }
 .proj-card__meta {
   font-size: var(--text-xs);
   color: var(--text-3);
   margin-top: 2px;
+  overflow-wrap: anywhere;
 }
 
 .proj-card__body {
@@ -6369,18 +6421,6 @@ select.field__input {
   .issuerow > :nth-child(6),
   .issuerow > :nth-child(8) { display: none; }
 
-  /* Transaction list: remove TPM (col 5) + Time spent (col 10) */
-  .txrow {
-    grid-template-columns: 80px minmax(0, 1fr) 90px 56px 90px 90px 68px 68px;
-  }
-  .txrow > :nth-child(5),
-  .txrow > :nth-child(10) { display: none; }
-
-  /* Transaction profile samples: remove Tags (col 5) */
-  .tx-sample-row {
-    grid-template-columns: 160px 1fr 80px 110px;
-  }
-  .tx-sample-row > :nth-child(5) { display: none; }
 }
 
 /* 768px — tablet portrait + phones */
@@ -6418,19 +6458,12 @@ select.field__input {
   .ghost-row > :nth-child(5),
   .ghost-row > :nth-child(6) { display: none; }
 
-  /* Transaction list: also remove Project (col 3) + Failure (col 9)
-     Combined with 1023px: also hiding tpm(5) + timeSpent(10) */
+  /* Keep every transaction field available through the list's own scroller. */
+  .tx-list { column-gap: 10px; }
   .txrow {
-    grid-template-columns: 80px minmax(0, 1fr) 56px 90px 90px 68px;
     padding: 0 12px;
     gap: 10px;
   }
-  .txrow > :nth-child(3),
-  .txrow > :nth-child(9) { display: none; }
-
-  /* Transaction profile: let sample table scroll rather than collapse */
-  .tx-samples { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .tx-sample-row { min-width: 480px; }
 
   /* Issue detail: tighter padding + scrollable breadcrumb */
   .detail-breadcrumb { padding: 0 12px; gap: 8px; overflow-x: auto; scrollbar-width: none; }
@@ -6469,10 +6502,6 @@ select.field__input {
   /* Multi-column detail grids → single column */
   .tags-dist { grid-template-columns: 1fr; }
 
-  /* Release row: hide counts + date columns */
-  .relrow { grid-template-columns: minmax(0, 1fr) 110px 100px; }
-  .relrow > :nth-child(2), .relrow > :nth-child(3), .relrow > :nth-child(4) { display: none; }
-
   /* Settings form grids → single column */
   .sso-grid { grid-template-columns: 1fr; }
   .proj-config-grid { grid-template-columns: 1fr; }
@@ -6481,8 +6510,6 @@ select.field__input {
   /* Performance subnav: scrollable tabs */
   .perf-subnav { padding: 0 16px; }
   .perf-subnav::-webkit-scrollbar { display: none; }
-
-  /* perf-table-wrap scroll override is below the base rule in this file (cascade fix) */
 
   /* Login / auth card: respect viewport */
   .login__card { width: min(380px, calc(100vw - 32px)); }
@@ -6497,11 +6524,7 @@ select.field__input {
   .overview-chips { width: 100%; justify-content: flex-start; margin-top: 4px; }
   .pane-head { flex-wrap: wrap; }
 
-  /* Log table: hide Environment and Project columns (message gets the space) */
-  .log-env-col { display: none; }
-  .log-proj-col { display: none; }
-
-  /* Settings: token + users tables — horizontal scroll */
+  /* Settings tables scroll within the page on narrow screens. */
   .token-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
   /* Audit log: reflow to 2-line layout — kind+action on top, time+actor below; drop IP only */
@@ -6727,7 +6750,8 @@ select.field__input {
 /* ---------- Performance analytics table ---------- */
 
 .perf-table-wrap {
-  overflow-x: clip;
+  min-width: 0;
+  overflow-x: auto;
   border-top: 1px solid var(--border);
 }
 
@@ -6746,8 +6770,7 @@ select.field__input {
   padding: 0;
   text-align: left;
   font-weight: 500;
-  position: sticky;
-  top: 92px;
+  position: static;
   background: var(--bg);
   z-index: 1;
 }
@@ -6781,19 +6804,18 @@ select.field__input {
   vertical-align: middle;
 }
 
-/* Override: perf-table-wrap base uses overflow-x:clip (keeps sticky headers on desktop).
-   On mobile this block appears after the base rule so it correctly wins the cascade. */
+/* Wide analytics tables scroll within the page, including on tablet/desktop. */
 @media (max-width: 768px) {
-  .perf-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .perf-table { width: auto; min-width: 600px; }
-  /* Sticky th breaks inside an overflow:auto scroll container — disable on mobile */
-  .perf-table th { position: static; }
 }
 
 .perf-table__desc {
+  min-width: 180px;
   max-width: 420px;
   overflow: hidden;
 }
+.perf-table .projtag { max-width: 240px; }
+.perf-table .envbadge { max-width: 200px; }
 
 .perf-table__desc .mono {
   display: block;
@@ -7078,6 +7100,7 @@ select.field__input {
    max-width:0 leaves it as the only flexible column, so it absorbs whatever the
    fixed-width columns don't use and the body below can ellipsize inside it. */
 .log-msg-col {
+  min-width: 260px;
   max-width: 0;
 }
 
