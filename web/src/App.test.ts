@@ -154,6 +154,39 @@ describe('App', () => {
 
 
 describe('custom investigation ranges', () => {
+  it.each(['All', 'custom'])('recovers a blocked %s range without clearing the investigation scope', async (range) => {
+    setupMocks()
+    routeState.path = '/logs'
+    routeState.name = 'logs'
+    const state = useInvestigationStore()
+    state.projectIds = ['11111111-1111-4111-8111-111111111111']
+    state.environment = 'production'
+    state.paused = true
+    state.setRange('All')
+    if (range === 'custom') {
+      state.absolute = { from: '2026-01-01T00:00:00Z', to: '2026-05-01T00:00:00Z' }
+    }
+    const wrapper = mount(App, { global: globalStubs })
+    expect(wrapper.find('.router-view-stub').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"] h2').text()).toBe('Choose a shorter time range')
+    expect(wrapper.find('[role="alert"] p').text()).toContain(range === 'All'
+      ? 'All time is only available for Issues'
+      : 'This view supports up to 90 days at a time')
+    const recover = wrapper.find('[role="alert"] button')
+    expect(recover.text()).toBe('Show last 90 days')
+    await recover.trigger('click')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.find('.router-view-stub').exists()).toBe(true)
+    expect(state.range).toBe('90d')
+    expect(state.absolute).toBeNull()
+    expect(state.projectIds).toEqual(['11111111-1111-4111-8111-111111111111'])
+    expect(state.environment).toBe('production')
+    expect(state.paused).toBe(true)
+    const request = new URL(state.request('/api/logs'), 'http://test')
+    expect(Date.parse(request.searchParams.get('to')!) - Date.parse(request.searchParams.get('from')!)).toBe(90 * 86400000)
+    routeState.path = '/issues'
+    routeState.name = 'issues'
+  })
   it.each(['All', '90d'])('renders a supported custom interval after %s', (preset) => {
     setupMocks()
     routeState.path = '/logs'
