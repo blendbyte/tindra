@@ -137,6 +137,34 @@ describe('LogsView', () => {
   })
 
   describe('log table', () => {
+    it('groups logs by local calendar date across midnight and year boundaries', () => {
+      vi.mocked(useAuthStore).mockReturnValue({
+        user: { timezone: 'Asia/Taipei', permissions: {} },
+      } as any)
+      setupMocks([
+        { ...makeLog('l1', 'info', 'Newest'), timestamp: '2024-12-31T16:01:00Z' },
+        { ...makeLog('l2', 'info', 'Midnight'), timestamp: '2024-12-31T16:00:00Z' },
+        { ...makeLog('l3', 'info', 'Previous day'), timestamp: '2024-12-31T15:59:00Z' },
+      ])
+      const wrapper = mount(LogsView, { global: { stubs } })
+      const groups = wrapper.findAll('tbody')
+      expect(groups).toHaveLength(2)
+      expect(groups[0].find('[scope="rowgroup"]').text()).toContain('01 Jan 2025')
+      expect(groups[1].find('[scope="rowgroup"]').text()).toContain('31 Dec 2024')
+      expect(groups[0].findAll('.log-msg__body').map(row => row.text())).toEqual(['Newest', 'Midnight'])
+      expect(groups[1].findAll('.log-msg__body').map(row => row.text())).toEqual(['Previous day'])
+      expect(wrapper.findAll('.log-date-zone').map(zone => zone.text())).toEqual(['Asia/Taipei', 'Asia/Taipei'])
+      expect(groups[0].find('time').attributes('aria-label')).toContain('01 Jan 2025')
+    })
+
+    it.each([['all projects', [], '5'], ['one project', ['p1'], '4']])(
+      'spans the date heading across the visible columns for %s', (_, selectedIds, columns) => {
+        setupMocks([makeLog('l1', 'info', 'test')], false, selectedIds as string[])
+        const wrapper = mount(LogsView, { global: { stubs } })
+        expect(wrapper.find('[scope="rowgroup"]').attributes('colspan')).toBe(columns)
+      },
+    )
+
     it('renders a row for each log entry', () => {
       const logs = [
         makeLog('l1', 'error', 'Something went wrong'),

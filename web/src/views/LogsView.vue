@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api/client'
 import { useInvestigationStore } from '@/stores/investigation'
 import { useFormatters } from '@/composables/useFormatters'
+import { useTimezone } from '@/composables/useTimezone'
 import type { Log, LogListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import QueryFeedback from '@/components/QueryFeedback.vue'
@@ -21,6 +22,16 @@ const route = useRoute()
 const lensIdentity = computed(() => routeUserIdentity(route.query) || appUser.identity)
 const router = useRouter()
 const { formatTs } = useFormatters()
+const timezone = useTimezone()
+const dateFormatter = computed(() => new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  timeZone: timezone.value,
+}))
+function timestampLabel(timestamp: string) {
+  return `${dateFormatter.value.format(new Date(timestamp))} ${formatTs(timestamp)} (${timezone.value})`
+}
 
 const LEVELS = ['Fatal', 'Error', 'Warning', 'Info', 'Debug', 'Trace']
 
@@ -104,6 +115,16 @@ const { data, isError, isFetching, fetchStatus, dataUpdatedAt, refetch } = useQu
 })
 
 const logs = computed(() => data.value?.logs ?? [])
+const logGroups = computed(() => {
+  const groups = new Map<string, Log[]>()
+  for (const log of logs.value) {
+    const date = dateFormatter.value.format(new Date(log.timestamp))
+    const group = groups.get(date)
+    if (group) group.push(log)
+    else groups.set(date, [log])
+  }
+  return Array.from(groups, ([date, logs]) => ({ date, logs }))
+})
 
 const expandedId = ref<string | null>(null)
 function toggleRow(id: string) {
@@ -211,7 +232,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
       <table class="perf-table">
         <thead>
           <tr>
-            <th style="width: 110px"><div class="col-sort">Time</div></th>
+            <th class="log-time-col"><div class="col-sort">Time</div></th>
             <th style="width: 80px"><div class="col-sort">Level</div></th>
             <th><div class="col-sort">Message</div></th>
             <th v-if="showProject" class="perf-table__num log-proj-col" style="width: 130px"><div class="col-sort">Project</div></th>
@@ -219,6 +240,9 @@ onUnmounted(() => clearTimeout(debounceTimer))
           </tr>
         </thead>
         <tbody>
+          <tr class="log-date-row" aria-hidden="true">
+            <th :colspan="colCount"><span class="skel" style="width: 160px; height: 12px; display: block" /></th>
+          </tr>
           <tr v-for="i in 12" :key="i" class="perf-table__skel-row">
             <td><span class="skel" style="width: 80px; height: 10px; display: block" /></td>
             <td><span class="skel" style="width: 44px; height: 18px; display: block; border-radius: 3px" /></td>
@@ -250,21 +274,33 @@ onUnmounted(() => clearTimeout(debounceTimer))
       <table class="perf-table">
         <thead>
           <tr>
-            <th style="width: 110px"><div class="col-sort">Time</div></th>
+            <th class="log-time-col"><div class="col-sort">Time</div></th>
             <th style="width: 80px"><div class="col-sort">Level</div></th>
             <th><div class="col-sort">Message</div></th>
             <th v-if="showProject" class="perf-table__num log-proj-col" style="width: 130px"><div class="col-sort">Project</div></th>
             <th class="perf-table__num log-env-col" style="width: 120px"><div class="col-sort">Environment</div></th>
           </tr>
         </thead>
-        <tbody>
-          <template v-for="log in logs" :key="log.id">
+        <tbody v-for="group in logGroups" :key="group.date" :aria-label="group.date">
+          <tr class="log-date-row">
+            <th scope="rowgroup" :colspan="colCount">
+              <div class="log-date-heading">
+                <span>{{ group.date }}</span>
+                <span class="log-date-zone">{{ timezone }}</span>
+              </div>
+            </th>
+          </tr>
+          <template v-for="log in group.logs" :key="log.id">
             <tr
               class="perf-table__row perf-table__row--clickable"
               :class="{ 'log-row--expanded': expandedId === log.id }"
               @click="toggleRow(log.id)"
             >
-              <td class="mono" style="font-size: 11.5px; color: var(--text-3); white-space: nowrap">{{ formatTs(log.timestamp) }}</td>
+              <td class="log-time-col">
+                <time class="log-timestamp mono" :datetime="log.timestamp" :aria-label="timestampLabel(log.timestamp)" :title="timestampLabel(log.timestamp)">
+                  {{ formatTs(log.timestamp) }}
+                </time>
+              </td>
               <td>
                 <span class="tag">
                   <span class="leveldot" :class="`leveldot--${log.level}`" />
@@ -328,14 +364,47 @@ onUnmounted(() => clearTimeout(debounceTimer))
               </td>
             </tr>
           </template>
-
-          <tr v-if="data?.has_more">
+        </tbody>
+        <tfoot v-if="data?.has_more">
+          <tr>
             <td :colspan="colCount" class="muted" style="text-align: center; font-size: var(--text-xs)">
               Showing the first 100 entries. Refine your filters to see more.
             </td>
           </tr>
-        </tbody>
+        </tfoot>
       </table>
     </div>
   </div>
 </template>
+
+<style scoped>
+.log-time-col {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.perf-table .log-date-row th {
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.log-date-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.log-date-zone {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.log-timestamp {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+</style>
