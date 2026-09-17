@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/ingest"
 )
 
@@ -263,8 +265,19 @@ func TestProfileBuffer_survivesAFailedInsert(t *testing.T) {
 
 	buf := ingest.NewProfileBuffer(10)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go buf.Run(ctx, testPool)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf.Run(ctx, testPool)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("profile buffer did not stop")
+		}
+	})
 
 	// No such project, so the foreign key rejects it.
 	bad := stubProfile(t, "v1_php_laravel.json", "profile")
@@ -272,13 +285,21 @@ func TestProfileBuffer_survivesAFailedInsert(t *testing.T) {
 	if !buf.Push(bad) {
 		t.Fatal("push failed")
 	}
-	time.Sleep(400 * time.Millisecond)
+	// Wait for rejection before pushing the good profile so this exercises
+	// recovery after a failed write, even when the CI database is slow.
+	require.Eventually(t, func() bool {
+		stats := buf.Stats()
+		return stats.Dropped["invalid_record"] == 1 && stats.Pending == 0
+	}, 10*time.Second, 25*time.Millisecond, "bad profile was not rejected")
 
 	// The writer is still running and still accepting work.
 	if !buf.Push(stubProfile(t, "v1_python.json", "profile")) {
 		t.Fatal("push after a failed insert failed")
 	}
-	time.Sleep(400 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		stats := buf.Stats()
+		return stats.Persisted == 1 && stats.Pending == 0
+	}, 10*time.Second, 25*time.Millisecond, "good profile was not persisted after the failed insert")
 
 	var count int
 	if err := testPool.QueryRow(context.Background(),
