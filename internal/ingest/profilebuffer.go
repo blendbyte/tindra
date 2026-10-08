@@ -26,6 +26,11 @@ func NewProfileBuffer(size int) *ProfileBuffer {
 	return &ProfileBuffer{queue: q}
 }
 
+// Push strips NUL from the metadata stored in text columns.
+func (b *ProfileBuffer) Push(p BufferedProfile) bool {
+	return b.queue.Push(sanitizeProfile(p))
+}
+
 func (b *ProfileBuffer) QueuedBytes() int64 { return b.Stats().PendingBytes }
 
 // Run flushes bounded batches and drains on cancellation. Stop producers first.

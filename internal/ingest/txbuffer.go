@@ -63,6 +63,12 @@ func NewTransactionBuffer(size int) *TransactionBuffer {
 	return &TransactionBuffer{queue: q}
 }
 
+// Push strips NUL before queueing, so the flush and the Hook see the same
+// cleaned transaction. The caller's spans are not modified.
+func (b *TransactionBuffer) Push(tx BufferedTransaction) bool {
+	return b.queue.Push(sanitizeTransaction(tx))
+}
+
 // Run flushes bounded batches and drains on cancellation. Stop producers first.
 func (b *TransactionBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 	b.run(ctx, 100, func(ctx context.Context, batch []BufferedTransaction) error {

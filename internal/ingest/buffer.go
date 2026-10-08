@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -32,6 +31,7 @@ func NewBuffer(size int) *Buffer {
 // same data, including on retries. The caller's payload is not modified.
 func (b *Buffer) Push(e BufferedEvent) bool {
 	e.Payload = sanitizeJSONPayload(e.Payload)
+	e.TraceID, e.SpanID = stripNUL(e.TraceID), stripNUL(e.SpanID)
 	return b.queue.Push(e)
 }
 
@@ -53,37 +53,6 @@ func (b *Buffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 		}
 		return err
 	})
-}
-
-// sanitizeJSONPayload removes Unicode null escapes rejected by PostgreSQL JSONB.
-func sanitizeJSONPayload(p json.RawMessage) json.RawMessage {
-	const nullEscape = `\u0000`
-	if !bytes.Contains(p, []byte(nullEscape)) {
-		return p
-	}
-	var cleaned json.RawMessage
-	start := 0
-	for i := 0; i < len(p); i++ {
-		if p[i] != '\\' {
-			continue
-		}
-		if bytes.HasPrefix(p[i:], []byte(nullEscape)) {
-			if cleaned == nil {
-				cleaned = make(json.RawMessage, 0, len(p))
-			}
-			cleaned = append(cleaned, p[start:i]...)
-			i += len(nullEscape) - 1
-			start = i + 1
-		} else {
-			// Skip the escaped byte. In particular, \\u0000 is literal text,
-			// whereas \\\u0000 is an escaped backslash followed by a null escape.
-			i++
-		}
-	}
-	if cleaned == nil {
-		return p
-	}
-	return append(cleaned, p[start:]...)
 }
 
 func writeBatch(ctx context.Context, pool batchSender, batch []BufferedEvent) error {

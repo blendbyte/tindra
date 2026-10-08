@@ -1328,3 +1328,66 @@ func TestHandleEnvelope_longTransactionUserIdentity(t *testing.T) {
 		t.Fatalf("identity truncated: got %d bytes, want %d", len(got), len(identity))
 	}
 }
+
+// NUL in a log attribute is valid JSON and SDKs send it unchanged. PostgreSQL
+// rejects it, so the log was accepted with a 200 and then dropped at flush.
+func TestHandleEnvelope_logItem_nulBytes(t *testing.T) {
+	payload := `{"version":2,"items":[{"timestamp":1700000006.0,"level":"info",` +
+		`"body":"nul\u0000 log","attributes":{"a\u0000b":{"value":"x\u0000y","type":"string"}}}]}`
+
+	rec := postLogEnvelope(t, sdkLogEnvelope(payload, 1))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	l := waitForLog(t, "nul log")
+	var attrs map[string]any
+	if err := json.Unmarshal(l.Attributes, &attrs); err != nil {
+		t.Fatalf("unmarshal attributes: %v", err)
+	}
+	if attrs["ab"] != "xy" {
+		t.Errorf("attributes: got %v", attrs)
+	}
+}
+
+func TestHandleEnvelope_transactionWithNulBytes(t *testing.T) {
+	buf := ingest.NewBuffer(10)
+	txBuf := ingest.NewTransactionBuffer(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go txBuf.Run(ctx, testPool)
+
+	payload := `{"event_id":"120e8400e29b41d4a716446655440000","transaction":"/nul\u0000-tx",` +
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:01Z",` +
+		`"contexts":{"trace":{"trace_id":"aa","span_id":"bb","op":"http.server","status":"ok"}},` +
+		`"spans":[{"span_id":"cc","op":"db","description":"SELECT\u0000 1",` +
+		`"start_timestamp":"2026-08-24T10:00:00Z","timestamp":"2026-08-24T10:00:00.5Z",` +
+		`"data":{"db.system":"postgres\u0000"}}]}`
+	body := `{"event_id":"130e8400e29b41d4a716446655440000"}` + "\n" +
+		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
+
+	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
+		0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var description string
+	var data map[string]any
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := testPool.QueryRow(ctx, `
+			SELECT s.description, s.data FROM spans s JOIN transactions t ON t.id = s.transaction_id
+			WHERE t.project_id = $1 AND t.transaction = '/nul-tx'`, testProject.ID).Scan(&description, &data)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the transaction was dropped: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if description != "SELECT 1" || data["db.system"] != "postgres" {
+		t.Errorf("description=%q data=%v", description, data)
+	}
+}

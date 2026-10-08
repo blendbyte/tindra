@@ -32,6 +32,12 @@ func NewLogBuffer(size int) *LogBuffer {
 	return &LogBuffer{queue: q}
 }
 
+// Push strips NUL before queueing, so the flush and the app user enrichment
+// read the same cleaned record.
+func (b *LogBuffer) Push(l BufferedLog) bool {
+	return b.queue.Push(sanitizeLog(l))
+}
+
 // Run flushes bounded batches and drains on cancellation. Stop producers first.
 func (b *LogBuffer) Run(ctx context.Context, pool *pgxpool.Pool) {
 	b.run(ctx, 1000, func(ctx context.Context, batch []BufferedLog) error {
