@@ -3,6 +3,7 @@ module github.com/blendbyte/tindra
 go 1.27.2
 
 require (
+	github.com/andybalholm/brotli v1.2.6
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/golang-migrate/migrate/v4 v4.20.1

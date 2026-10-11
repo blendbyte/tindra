@@ -28,7 +28,7 @@ func groupEventFixture(t *testing.T, n int) []string {
 	return ids
 }
 func groupOne(ctx context.Context, pool *pgxpool.Pool, id string) (*storage.Issue, bool, bool, error) {
-	return storage.GroupEvent(ctx, pool, id, "same-fingerprint", "Atomic error", "error", "production", "v1")
+	return storage.GroupEvent(ctx, pool, id, "same-fingerprint", "", "Atomic error", "error", "production", "v1")
 }
 func TestGroupEventConcurrentExactlyOnce(t *testing.T) {
 	for _, sameEvent := range []bool{true, false} {
@@ -184,4 +184,25 @@ func TestGroupEventCountAndLinkBecomeVisibleTogether(t *testing.T) {
 	require.NoError(t, testPool.QueryRow(ctx, query).Scan(&count, &linked))
 	require.Equal(t, 2, count)
 	require.Equal(t, 2, linked)
+}
+
+// After the switch to frame-based fingerprints, events whose legacy fingerprint
+// already has an issue keep joining it; otherwise the new fingerprint is used.
+func TestGroupEventPrefersExistingLegacyIssue(t *testing.T) {
+	ids := groupEventFixture(t, 3)
+	ctx := context.Background()
+
+	legacyIssue, created, _, err := storage.GroupEvent(ctx, testPool, ids[0], "legacy-fp", "", "Old issue", "error", "", "")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	joined, created, _, err := storage.GroupEvent(ctx, testPool, ids[1], "v2-fp", "legacy-fp", "Old issue", "error", "", "")
+	require.NoError(t, err)
+	require.False(t, created, "must not create a duplicate of the legacy issue")
+	require.Equal(t, legacyIssue.ID, joined.ID)
+
+	fresh, created, _, err := storage.GroupEvent(ctx, testPool, ids[2], "v2-only-fp", "no-such-legacy-fp", "New issue", "error", "", "")
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, "v2-only-fp", fresh.Fingerprint)
 }

@@ -83,7 +83,7 @@ func (s *Store) VerifyEvent(ctx context.Context, projectID string, payload json.
 					f.Status = "map_unreadable"
 					if parsed != nil {
 						f.Status = "no_mapping"
-						if resolved, found := parsed.Resolve(f.Line, f.Column); found && resolved.Source != "" {
+						if resolved, found := parsed.Resolve(f.Line, mapColumn(f.Column)); found && resolved.Source != "" {
 							f.Status, f.Source, f.OriginalLine = "verified", resolved.Source, resolved.Line
 						}
 					}

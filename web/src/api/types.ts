@@ -335,6 +335,8 @@ export interface CronMonitor {
   id: string
   project_id: string
   name: string
+  /** Unique per project; SDKs can send it as monitor_slug. */
+  slug: string
   schedule: string
   grace_period_secs: number
   status: CronMonitorStatus

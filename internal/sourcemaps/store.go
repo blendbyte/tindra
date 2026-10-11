@@ -261,11 +261,11 @@ func (s *Store) resolveFrame(ctx context.Context, projectID, release string, fra
 			cache[normURL] = sm // cache nil too to avoid repeated DB misses
 		}
 		if sm != nil {
-			resolved, found := sm.Resolve(int(lineno), int(colno))
+			resolved, found := sm.Resolve(int(lineno), mapColumn(int(colno)))
 			if found {
 				frame["orig_filename"] = resolved.Source
 				frame["orig_lineno"] = resolved.Line
-				frame["orig_colno"] = resolved.Col
+				frame["orig_colno"] = resolved.Col + 1
 				if resolved.ContextLine != "" {
 					frame["context_line"] = resolved.ContextLine
 					return
@@ -277,7 +277,7 @@ func (s *Store) resolveFrame(ctx context.Context, projectID, release string, fra
 	// Fallback: fetch the raw JS file and extract a line window around colno.
 	// This replicates Sentry's behaviour when no source map is uploaded.
 	if _, already := frame["context_line"]; !already {
-		if cl := s.fetchContextLine(ctx, url, int(lineno), int(colno)); cl != "" {
+		if cl := s.fetchContextLine(ctx, url, int(lineno), mapColumn(int(colno))); cl != "" {
 			frame["context_line"] = cl
 		}
 	}
@@ -291,8 +291,13 @@ func (s *Store) loadSourceMap(ctx context.Context, projectID, release, normURL s
 	return s.parsedSourceMap(ctx, projectID, meta.ContentHash)
 }
 
+// mapColumn converts a Sentry frame column (1-based) to the 0-based column
+// that source maps and byte offsets use.
+func mapColumn(colno int) int { return max(colno-1, 0) }
+
 // fetchContextLine fetches the JS file at rawURL (must be https?://) and
-// returns a window of ctxLineMax characters centred on colno from line lineno,
+// returns a window of ctxLineMax characters centred on the 0-based column colno
+// from line lineno,
 // with {snip} markers at either end if the line was truncated.
 func (s *Store) fetchContextLine(ctx context.Context, rawURL string, lineno, colno int) string {
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {

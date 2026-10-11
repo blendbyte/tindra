@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/robfig/cron/v3"
 )
@@ -22,6 +25,7 @@ type CronMonitor struct {
 	ID                string       `json:"id"`
 	ProjectID         string       `json:"project_id"`
 	Name              string       `json:"name"`
+	Slug              string       `json:"slug"` // per-project; SDK check-ins may use it as monitor_slug
 	Schedule          string       `json:"schedule"`
 	GracePeriodSecs   int          `json:"grace_period_secs"`
 	Status            string       `json:"status"` // active, paused
@@ -70,13 +74,13 @@ func computeMonitorState(m *CronMonitor) string {
 	return "ok"
 }
 
-const cronMonitorCols = `id, project_id, name, schedule, grace_period_secs, status,
+const cronMonitorCols = `id, project_id, name, slug, schedule, grace_period_secs, status,
     is_running, last_ok_at, next_expected_at, last_checkin_status, last_checkin_at, created_at`
 
 func scanCronMonitor(scan func(...any) error) (*CronMonitor, error) {
 	var m CronMonitor
 	err := scan(
-		&m.ID, &m.ProjectID, &m.Name, &m.Schedule,
+		&m.ID, &m.ProjectID, &m.Name, &m.Slug, &m.Schedule,
 		&m.GracePeriodSecs, &m.Status,
 		&m.IsRunning, &m.LastOkAt, &m.NextExpectedAt,
 		&m.LastCheckinStatus, &m.LastCheckinAt,
@@ -99,7 +103,7 @@ const recentCheckinsExpr = `COALESCE((
 ), '[]'::json)`
 
 func ListCronMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs []string) ([]*CronMonitor, error) {
-	base := `SELECT m.id, m.project_id, m.name, m.schedule, m.grace_period_secs, m.status,
+	base := `SELECT m.id, m.project_id, m.name, m.slug, m.schedule, m.grace_period_secs, m.status,
 		m.is_running, m.last_ok_at, m.next_expected_at, m.last_checkin_status, m.last_checkin_at, m.created_at,
 		` + recentCheckinsExpr + ` AS recent_checkins
 		FROM cron_monitors m`
@@ -124,7 +128,7 @@ func ListCronMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs []stri
 		var m CronMonitor
 		var recentJSON []byte
 		err := rows.Scan(
-			&m.ID, &m.ProjectID, &m.Name, &m.Schedule,
+			&m.ID, &m.ProjectID, &m.Name, &m.Slug, &m.Schedule,
 			&m.GracePeriodSecs, &m.Status,
 			&m.IsRunning, &m.LastOkAt, &m.NextExpectedAt,
 			&m.LastCheckinStatus, &m.LastCheckinAt,
@@ -159,35 +163,110 @@ func GetCronMonitor(ctx context.Context, pool *pgxpool.Pool, id string) (*CronMo
 	return m, nil
 }
 
-func CreateCronMonitor(ctx context.Context, pool *pgxpool.Pool, m *CronMonitor) (*CronMonitor, error) {
-	row := pool.QueryRow(ctx, `
-		INSERT INTO cron_monitors (project_id, name, schedule, grace_period_secs, status)
-		VALUES ($1, $2, $3, $4, 'active')
-		RETURNING `+cronMonitorCols,
-		m.ProjectID, m.Name, m.Schedule, m.GracePeriodSecs,
-	)
-	created, err := scanCronMonitor(row.Scan)
-	if err != nil {
-		return nil, fmt.Errorf("insert: %w", err)
+// ErrMonitorSlugTaken means another monitor in the project already uses the slug.
+var ErrMonitorSlugTaken = errors.New("monitor slug already in use in this project")
+
+var (
+	monitorSlugRe        = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,49}$`)
+	monitorSlugInvalidRe = regexp.MustCompile(`[^a-z0-9]+`)
+)
+
+// ValidMonitorSlug reports whether slug is usable as a monitor_slug: lower-case
+// letters, digits, dashes and underscores, starting with a letter or digit,
+// at most 50 characters (Sentry's limit).
+func ValidMonitorSlug(slug string) bool { return monitorSlugRe.MatchString(slug) }
+
+// MonitorSlugFromName derives a slug from a monitor name the same way the
+// backfill migration does: lower-case, runs of other characters become a dash.
+func MonitorSlugFromName(name string) string {
+	slug := monitorSlugInvalidRe.ReplaceAllString(strings.ToLower(name), "-")
+	if len(slug) > 40 {
+		slug = slug[:40]
 	}
-	return created, nil
+	if slug = strings.Trim(slug, "-"); slug == "" {
+		return "monitor"
+	}
+	return slug
+}
+
+func isMonitorSlugConflict(err error) bool {
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	return ok && pgErr.Code == "23505" && pgErr.ConstraintName == "cron_monitors_project_slug"
+}
+
+// CreateCronMonitor inserts a monitor. An empty Slug is derived from the name,
+// with a numeric suffix if that slug is taken; an explicit Slug that is taken
+// returns ErrMonitorSlugTaken.
+func CreateCronMonitor(ctx context.Context, pool *pgxpool.Pool, m *CronMonitor) (*CronMonitor, error) {
+	insert := func(slug string) (*CronMonitor, error) {
+		row := pool.QueryRow(ctx, `
+			INSERT INTO cron_monitors (project_id, name, slug, schedule, grace_period_secs, status)
+			VALUES ($1, $2, $3, $4, $5, 'active')
+			RETURNING `+cronMonitorCols,
+			m.ProjectID, m.Name, slug, m.Schedule, m.GracePeriodSecs,
+		)
+		return scanCronMonitor(row.Scan)
+	}
+	if m.Slug != "" {
+		created, err := insert(m.Slug)
+		if isMonitorSlugConflict(err) {
+			return nil, ErrMonitorSlugTaken
+		}
+		if err != nil {
+			return nil, fmt.Errorf("insert: %w", err)
+		}
+		return created, nil
+	}
+	base := MonitorSlugFromName(m.Name)
+	for n := 1; n <= 100; n++ {
+		slug := base
+		if n > 1 {
+			slug = fmt.Sprintf("%s-%d", base, n)
+		}
+		created, err := insert(slug)
+		if isMonitorSlugConflict(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("insert: %w", err)
+		}
+		return created, nil
+	}
+	return nil, ErrMonitorSlugTaken
 }
 
 func UpdateCronMonitor(ctx context.Context, pool *pgxpool.Pool, m *CronMonitor) (*CronMonitor, error) {
 	row := pool.QueryRow(ctx, `
-		UPDATE cron_monitors SET name=$2, schedule=$3, grace_period_secs=$4, status=$5
+		UPDATE cron_monitors SET name=$2, slug=$3, schedule=$4, grace_period_secs=$5, status=$6
 		WHERE id=$1
 		RETURNING `+cronMonitorCols,
-		m.ID, m.Name, m.Schedule, m.GracePeriodSecs, m.Status,
+		m.ID, m.Name, m.Slug, m.Schedule, m.GracePeriodSecs, m.Status,
 	)
 	updated, err := scanCronMonitor(row.Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
+	if isMonitorSlugConflict(err) {
+		return nil, ErrMonitorSlugTaken
+	}
 	if err != nil {
 		return nil, fmt.Errorf("update: %w", err)
 	}
 	return updated, nil
+}
+
+// GetCronMonitorBySlug returns the project's monitor with the given slug, or nil.
+func GetCronMonitorBySlug(ctx context.Context, pool *pgxpool.Pool, projectID, slug string) (*CronMonitor, error) {
+	row := pool.QueryRow(ctx,
+		`SELECT `+cronMonitorCols+` FROM cron_monitors WHERE project_id = $1 AND slug = $2`, projectID, slug)
+	m, err := scanCronMonitor(row.Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	return m, nil
 }
 
 func DeleteCronMonitor(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error) {

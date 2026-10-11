@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func tagsToMap(tags [][2]string) map[string]string {
@@ -292,5 +293,20 @@ func TestExtractImplicitTags_uaAndroidiOS(t *testing.T) {
 		if tags["os.version"] != c.osVer {
 			t.Errorf("ua=%q: os.version got %q, want %q", c.ua, tags["os.version"], c.osVer)
 		}
+	}
+}
+
+func TestCapTags_truncatesKeysAndValues(t *testing.T) {
+	long := strings.Repeat("é", tagMaxLen+50)
+	tags := capTags([][2]string{{long, long}, {"short", "value"}})
+	for _, tag := range tags {
+		for _, s := range tag {
+			if utf8.RuneCountInString(s) > tagMaxLen || !utf8.ValidString(s) {
+				t.Errorf("tag part not capped to %d valid characters: %d", tagMaxLen, utf8.RuneCountInString(s))
+			}
+		}
+	}
+	if tags[1] != [2]string{"short", "value"} {
+		t.Errorf("short tags must be unchanged, got %v", tags[1])
 	}
 }

@@ -187,6 +187,34 @@ func TestStore_ResolveEventPayload_withSourcemap(t *testing.T) {
 	}
 }
 
+// Sentry frame columns are 1-based while source map columns are 0-based. With
+// one-character tokens (". ( )" in minified code) an off-by-one picks the next
+// segment and so the wrong original line.
+func TestStore_ResolveEventPayload_oneBasedColumns(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
+	store := sourcemaps.NewTestStore(testDataDir, testPool)
+	// Generated columns 0, 1 and 2 map to original lines 1, 2 and 3.
+	store.Upload(context.Background(), testProject.ID, "v3.0.0", "~/dist/min.js",
+		strings.NewReader(`{"version":3,"sources":["src/a.js"],"names":[],"mappings":"AAAA,CACA,CACA"}`))
+
+	payload := json.RawMessage(`{"exception":{"values":[{"type":"TypeError","stacktrace":{"frames":[
+		{"abs_path":"https://cdn.example.com/dist/min.js","lineno":1,"colno":2}
+	]}}]}}`)
+	got := store.ResolveEventPayload(context.Background(), testProject.ID, "v3.0.0", payload)
+
+	var out map[string]any
+	if err := json.Unmarshal(got, &out); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	frame := out["exception"].(map[string]any)["values"].([]any)[0].(map[string]any)["stacktrace"].(map[string]any)["frames"].([]any)[0].(map[string]any)
+	if line, _ := frame["orig_lineno"].(float64); line != 2 {
+		t.Errorf("colno 2 is generated column 1, which maps to original line 2; got %v", frame["orig_lineno"])
+	}
+	if col, _ := frame["orig_colno"].(float64); col != 1 {
+		t.Errorf("orig_colno should be 1-based like colno, got %v", frame["orig_colno"])
+	}
+}
+
 func TestStore_ResolveEventPayload_frameWithFilename(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
 	store := sourcemaps.NewTestStore(testDataDir, testPool)

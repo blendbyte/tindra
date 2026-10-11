@@ -155,12 +155,20 @@ func (q *queue[T]) finish(batch []*queued[T], reason string) {
 // batch would duplicate logs and transactions that have no deduplication key.
 type unknownCommit struct{ error }
 
+// permanent reports database errors that retrying the same records cannot fix:
+// data exceptions (22), constraint violations (23) and program limits such as
+// an oversized index row (54). They roll back the whole batch, so flush splits
+// it to isolate the offending record instead of dropping its neighbours.
 func permanent(err error) bool {
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
+	if !errors.As(err, &pgErr) || len(pgErr.Code) < 2 {
 		return false
 	}
-	return len(pgErr.Code) >= 2 && (pgErr.Code[:2] == "22" || pgErr.Code[:2] == "23")
+	switch pgErr.Code[:2] {
+	case "22", "23", "54":
+		return true
+	}
+	return false
 }
 
 func retryable(err error) bool {

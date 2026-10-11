@@ -112,7 +112,7 @@ func TestWorkerEventRecountIncludesConcurrentGrouping(t *testing.T) {
 	tracer := &beforeIssueLock{hook: func() {
 		// No partial deletion is visible while the retention batch is uncommitted.
 		require.Equal(t, 2, capCount(t, "events"))
-		grouped, _, _, err := storage.GroupEvent(ctx, testPool, event, "open", "Retention", "error", "", "")
+		grouped, _, _, err := storage.GroupEvent(ctx, testPool, event, "open", "", "Retention", "error", "", "")
 		require.NoError(t, err)
 		require.Equal(t, issue, grouped.ID)
 		// A membership move cannot overlap the active retention batch.

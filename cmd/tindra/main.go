@@ -492,6 +492,12 @@ func serveCmd(cfg config) *cobra.Command {
 			// Also drain accepted data if serving stops unexpectedly.
 			cancel()
 			<-shutdownDone
+			// Deliver passthrough envelopes already accepted from SDKs.
+			forwardCtx, forwardCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if err := handler.Close(forwardCtx); err != nil {
+				slog.Warn("passthrough queue not drained before shutdown", "err", err)
+			}
+			forwardCancel()
 			// Reject late pushes even if HTTP shutdown reached its deadline.
 			buf.StopAccepting()
 			txBuf.StopAccepting()

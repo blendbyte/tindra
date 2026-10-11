@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -50,7 +51,10 @@ func TestHandleEnvelope_passthroughForwards(t *testing.T) {
 	done := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("X-Sentry-Auth")
-		gotBody, _ = io.ReadAll(r.Body)
+		// Forwarded envelopes are gzip-compressed.
+		if gz, err := gzip.NewReader(r.Body); err == nil {
+			gotBody, _ = io.ReadAll(gz)
+		}
 		close(done)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -83,7 +87,8 @@ func TestHandleEnvelope_passthroughForwards(t *testing.T) {
 		t.Fatal("upstream did not receive passthrough request within 2s")
 	}
 
-	// The envelope header must have the upstream DSN injected; items are unchanged.
+	// The envelope header must have the upstream DSN injected; item payloads
+	// are unchanged (nothing to scrub here), and item headers keep their fields.
 	lines := strings.SplitN(string(gotBody), "\n", 2)
 	if len(lines) < 2 {
 		t.Fatalf("forwarded body has fewer than 2 lines: %q", string(gotBody))
@@ -96,9 +101,13 @@ func TestHandleEnvelope_passthroughForwards(t *testing.T) {
 	if err := json.Unmarshal(hdr["dsn"], &gotDSN); err != nil || gotDSN != dsn {
 		t.Errorf("envelope header dsn: got %q, want %q", gotDSN, dsn)
 	}
-	wantItems := strings.SplitN(body, "\n", 2)[1]
-	if lines[1] != wantItems {
-		t.Errorf("envelope items changed:\ngot  %q\nwant %q", lines[1], wantItems)
+	_, gotItems, err := ingest.Parse(bytes.NewReader(gotBody))
+	if err != nil {
+		t.Fatalf("forwarded envelope does not parse: %v", err)
+	}
+	_, wantItems, _ := ingest.Parse(strings.NewReader(body))
+	if len(gotItems) != len(wantItems) || gotItems[0].Header.Type != "event" || string(gotItems[0].Payload) != string(wantItems[0].Payload) {
+		t.Errorf("envelope items changed:\ngot  %+v\nwant %+v", gotItems, wantItems)
 	}
 	if want := "Sentry sentry_version=7, sentry_key=upstreamkey"; gotAuth != want {
 		t.Errorf("X-Sentry-Auth: got %q, want %q", gotAuth, want)

@@ -231,7 +231,9 @@ func LockIssueMembership(ctx context.Context, tx pgx.Tx, exclusive bool) error {
 
 // GroupEvent increments an issue and links its event in one transaction.
 // A nil issue means the event was deleted or another worker already grouped it.
-func GroupEvent(ctx context.Context, pool *pgxpool.Pool, eventID, fingerprint, title, level, environment, release string) (*Issue, bool, bool, error) {
+// When legacyFingerprint is set and an issue already exists under it, the event
+// joins that issue, so a change of grouping scheme does not duplicate issues.
+func GroupEvent(ctx context.Context, pool *pgxpool.Pool, eventID, fingerprint, legacyFingerprint, title, level, environment, release string) (*Issue, bool, bool, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, false, false, fmt.Errorf("begin grouping: %w", err)
@@ -253,6 +255,17 @@ func GroupEvent(ctx context.Context, pool *pgxpool.Pool, eventID, fingerprint, t
 	}
 	if existingIssue != nil {
 		return nil, false, false, nil
+	}
+	if legacyFingerprint != "" && legacyFingerprint != fingerprint {
+		var legacyExists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM issue_fingerprints WHERE project_id = $1 AND fingerprint = $2)
+		`, projectID, legacyFingerprint).Scan(&legacyExists); err != nil {
+			return nil, false, false, fmt.Errorf("lookup legacy fingerprint: %w", err)
+		}
+		if legacyExists {
+			fingerprint = legacyFingerprint
+		}
 	}
 	issue, created, regressed, err := upsertIssue(ctx, tx, projectID, fingerprint, title, level, "error", environment, release, timestamp)
 	if err != nil {

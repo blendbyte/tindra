@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,7 +23,8 @@ import (
 const (
 	maxBodyBytes = 20 * 1024 * 1024 // 20 MB - raw/uncompressed
 
-	// maxGzipBodyBytes caps the decompressed size, matching the raw cap.
+	// maxGzipBodyBytes caps the decompressed size of any compressed body
+	// (gzip, br, zstd, deflate), matching the raw cap.
 	// Error events are tiny, but SDK profiling items are not: a single profile
 	// is hundreds of KB to megabytes before compression, and SDKs ship it in
 	// the same envelope as its transaction. The previous 1 MB cap truncated
@@ -36,7 +36,7 @@ const (
 	// profiles existed. Nothing else an SDK sends comes close to it, so there
 	// is no reason to let them force twenty times the allocation per request.
 	maxGzipBodyBytesNoProfiles = 1 * 1024 * 1024
-	maxFieldLen                = 512
+	maxFieldLen                = ingest.MaxIndexedFieldBytes
 	maxDescLen                 = 2048
 	maxSpans                   = 500
 )
@@ -72,13 +72,6 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 
 // exceeded reports whether more bytes were available than the cap allowed.
 func (l *limitedReader) exceeded() bool { return l.over }
-
-func trunc(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
-}
 
 // envelopeReadTimeout bounds delivery of one envelope body. Mobile SDKs on slow
 // links need headroom, but not minutes per request. A variable so tests can
@@ -169,34 +162,28 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 	rawLimit := newLimitedReader(r.Body, maxBodyBytes)
 	var body io.Reader = rawLimit
 	sizeLimit := rawLimit
-	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
-		gz, err := gzip.NewReader(body)
-		if err != nil {
-			observe("envelope", "rejected", "bad_gzip")
-			http.Error(w, "bad gzip", http.StatusBadRequest)
+	if encoding := r.Header.Get("Content-Encoding"); encoding != "" && !strings.EqualFold(encoding, "identity") {
+		decoded, closeDecoder, err := decodeBody(encoding, body)
+		if errors.Is(err, errUnsupportedEncoding) {
+			observe("envelope", "rejected", "unsupported_encoding")
+			http.Error(w, "unsupported content encoding", http.StatusUnsupportedMediaType)
 			return
 		}
-		defer gz.Close()
-		gzipCap := int64(maxGzipBodyBytes)
-		if !project.ProfilingEnabled {
-			gzipCap = maxGzipBodyBytesNoProfiles
+		if err != nil {
+			observe("envelope", "rejected", "bad_compression")
+			http.Error(w, "bad compressed body", http.StatusBadRequest)
+			return
 		}
-		sizeLimit = newLimitedReader(gz, gzipCap)
+		defer closeDecoder()
+		decompressedCap := int64(maxGzipBodyBytes)
+		if !project.ProfilingEnabled {
+			decompressedCap = maxGzipBodyBytesNoProfiles
+		}
+		sizeLimit = newLimitedReader(decoded, decompressedCap)
 		body = sizeLimit
 	}
 
-	// The raw copy exists only to forward the envelope on. Teeing it
-	// unconditionally meant every request held a second full copy of the body
-	// for nothing, which got a lot more expensive once the decompressed cap
-	// rose to 20 MB for profiles.
-	forwarding := project.PassthroughDSN != nil && *project.PassthroughDSN != ""
-	var rawBuf bytes.Buffer
-	parseFrom := body
-	if forwarding {
-		parseFrom = io.TeeReader(body, &rawBuf)
-	}
-
-	header, items, err := ingest.Parse(parseFrom)
+	header, items, err := ingest.Parse(body)
 	// Test the size caps before the parse error. An over-sized body is cut off
 	// mid-item, so it always surfaces as a parse failure; reporting that as a
 	// malformed envelope sends the operator hunting for a bug in their SDK.
@@ -222,27 +209,38 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		r.Close = true
 	}
 
-	var eventID *string
-	if header.EventID != "" {
-		id := header.EventID
-		eventID = &id
-	}
+	// Malformed IDs are dropped rather than stored: the ID feeds a unique index.
+	eventID := ingest.NormalizeEventID(header.EventID)
 
 	scrubCfg := projectScrubConfig(project)
+
+	// Passthrough forwards the scrubbed items Tindra stores, never the raw
+	// body, so upstream receives no more personal data than Tindra keeps.
+	// Item types Tindra does not store (attachments, sessions, replays) bypass
+	// scrubbing and are not forwarded.
+	forwarding := ro.forwarder != nil && project.PassthroughDSN != nil && *project.PassthroughDSN != ""
+	var forwardItems []ingest.Item
+	forward := func(item ingest.Item, payload []byte) {
+		if forwarding {
+			item.Payload = payload
+			forwardItems = append(forwardItems, item)
+		}
+	}
 
 	for _, item := range items {
 		switch item.Header.Type {
 		case "event":
-			ts := parseTimestamp(item.Payload)
+			ts := ingest.ClampFuture(parseTimestamp(item.Payload), time.Now().UTC())
 			traceID, spanID := extractTraceContext(item.Payload)
 			ev := ingest.BufferedEvent{
 				ProjectID: project.ID,
 				EventID:   eventID,
 				Timestamp: ts,
-				Payload:   ingest.ScrubEvent(json.RawMessage(item.Payload), scrubCfg),
-				TraceID:   trunc(traceID, maxFieldLen),
-				SpanID:    trunc(spanID, maxFieldLen),
+				Payload:   ingest.CapEventFields(ingest.ScrubEvent(json.RawMessage(item.Payload), scrubCfg)),
+				TraceID:   ingest.TruncateUTF8(traceID, maxFieldLen),
+				SpanID:    ingest.TruncateUTF8(spanID, maxFieldLen),
 			}
+			forward(item, ev.Payload)
 			if !ro.buf.Push(ev) {
 				observe("events", "rejected", "buffer_full")
 				w.Header().Set("Retry-After", "1")
@@ -253,6 +251,9 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			observe("events", "queued", "queued")
 
 		case "transaction":
+			if forwarding {
+				forward(item, ingest.ScrubEvent(item.Payload, scrubCfg))
+			}
 			if ro.txBuf == nil {
 				observe("transactions", "rejected", "unavailable")
 				continue
@@ -266,7 +267,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			// id, and a v1 profile links to it by value, so fall back rather
 			// than lose the link.
 			if tx.EventID == "" && eventID != nil {
-				tx.EventID = trunc(*eventID, maxFieldLen)
+				tx.EventID = ingest.TruncateUTF8(*eventID, maxFieldLen)
 			}
 			ingest.ScrubTransaction(tx, scrubCfg)
 			if !ro.txBuf.Push(*tx) {
@@ -279,6 +280,9 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			observe("transactions", "queued", "queued")
 
 		case "log":
+			if forwarding {
+				forward(item, ingest.ScrubLogItems(item.Payload, scrubCfg))
+			}
 			if ro.logBuf == nil {
 				continue
 			}
@@ -288,6 +292,9 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			})
 
 		case "profile", "profile_chunk":
+			if forwarding {
+				forward(item, ingest.ScrubEvent(item.Payload, scrubCfg))
+			}
 			if !project.ProfilingEnabled {
 				observe("profile_chunks", "rejected", "profiling_disabled")
 				continue
@@ -331,6 +338,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "check_in":
+			forward(item, item.Payload) // status and timing only, nothing to scrub
 			if ro.pool == nil {
 				continue
 			}
@@ -338,8 +346,12 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if forwarding {
-		ingest.ForwardEnvelope(ro.passthroughClient, *project.PassthroughDSN, rawBuf.Bytes())
+	if len(forwardItems) > 0 {
+		if envelope, err := ingest.EncodeEnvelope(header.Raw, forwardItems); err != nil {
+			slog.Warn("passthrough: encode envelope", "project", project.Slug, "err", err)
+		} else {
+			ro.forwarder.Enqueue(*project.PassthroughDSN, envelope)
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -508,10 +520,7 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 		if rec.Body == "" {
 			continue
 		}
-		ts := ingest.ParseSentryTimestamp(rec.Timestamp)
-		if ts.IsZero() {
-			ts = time.Now().UTC()
-		}
+		ts := ingest.ClampFuture(ingest.ParseSentryTimestamp(rec.Timestamp), time.Now().UTC())
 		level := normalizeLogLevel(rec.Level)
 
 		attrMap := flattenLogAttributes(rec.Attributes)
@@ -528,12 +537,12 @@ func parseLogs(projectID string, payload []byte, yield func(ingest.BufferedLog))
 		yield(ingest.BufferedLog{
 			ProjectID:   projectID,
 			Timestamp:   ts,
-			Level:       trunc(level, maxFieldLen),
-			Body:        trunc(rec.Body, ingest.MaxLogBody),
-			TraceID:     trunc(rec.TraceID, maxFieldLen),
-			SpanID:      trunc(rec.SpanID, maxFieldLen),
-			Environment: trunc(env, maxFieldLen),
-			Release:     trunc(rel, maxFieldLen),
+			Level:       ingest.TruncateUTF8(level, maxFieldLen),
+			Body:        ingest.TruncateUTF8(rec.Body, ingest.MaxLogBody),
+			TraceID:     ingest.TruncateUTF8(rec.TraceID, maxFieldLen),
+			SpanID:      ingest.TruncateUTF8(rec.SpanID, maxFieldLen),
+			Environment: ingest.TruncateUTF8(env, maxFieldLen),
+			Release:     ingest.TruncateUTF8(rel, maxFieldLen),
 			Attributes:  attrs,
 		})
 	}
@@ -617,6 +626,8 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 
 	startTS := ingest.ParseSentryTimestamp(p.StartTimestamp)
 	endTS := ingest.ParseSentryTimestamp(p.Timestamp)
+	shift := ingest.FutureShift(endTS, time.Now().UTC())
+	startTS, endTS = startTS.Add(shift), endTS.Add(shift)
 	durationMs := max(int(endTS.Sub(startTS).Milliseconds()), 0)
 
 	status := p.Contexts.Trace.Status
@@ -630,18 +641,18 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 	}
 	spans := make([]ingest.BufferedSpan, 0, len(rawSpans))
 	for _, sp := range rawSpans {
-		spStart := ingest.ParseSentryTimestamp(sp.StartTimestamp)
-		spEnd := ingest.ParseSentryTimestamp(sp.Timestamp)
+		spStart := ingest.ParseSentryTimestamp(sp.StartTimestamp).Add(shift)
+		spEnd := ingest.ParseSentryTimestamp(sp.Timestamp).Add(shift)
 		spDuration := max(int(spEnd.Sub(spStart).Milliseconds()), 0)
 		spans = append(spans, ingest.BufferedSpan{
-			SpanID:         trunc(sp.SpanID, maxFieldLen),
-			ParentSpanID:   trunc(sp.ParentSpanID, maxFieldLen),
-			Op:             trunc(sp.Op, maxFieldLen),
-			Description:    trunc(sp.Description, maxDescLen),
+			SpanID:         ingest.TruncateUTF8(sp.SpanID, maxFieldLen),
+			ParentSpanID:   ingest.TruncateUTF8(sp.ParentSpanID, maxFieldLen),
+			Op:             ingest.TruncateUTF8(sp.Op, maxFieldLen),
+			Description:    ingest.TruncateUTF8(sp.Description, maxDescLen),
 			StartTimestamp: spStart,
 			Timestamp:      spEnd,
 			DurationMs:     spDuration,
-			Status:         trunc(sp.Status, maxFieldLen),
+			Status:         ingest.TruncateUTF8(sp.Status, maxFieldLen),
 			Data:           sp.Data,
 		})
 	}
@@ -650,37 +661,37 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 
 	return &ingest.BufferedTransaction{
 		ProjectID:      projectID,
-		EventID:        trunc(p.EventID, maxFieldLen),
-		ProfilerID:     trunc(p.Contexts.Profile.ProfilerID, maxFieldLen),
-		ThreadID:       trunc(traceDataString(p.Contexts.Trace.Data, "thread.id"), maxFieldLen),
-		TraceID:        trunc(p.Contexts.Trace.TraceID, maxFieldLen),
-		SpanID:         trunc(p.Contexts.Trace.SpanID, maxFieldLen),
-		Transaction:    trunc(p.Transaction, maxFieldLen),
-		Op:             trunc(p.Contexts.Trace.Op, maxFieldLen),
-		Status:         trunc(status, maxFieldLen),
+		EventID:        ingest.TruncateUTF8(p.EventID, maxFieldLen),
+		ProfilerID:     ingest.TruncateUTF8(p.Contexts.Profile.ProfilerID, maxFieldLen),
+		ThreadID:       ingest.TruncateUTF8(traceDataString(p.Contexts.Trace.Data, "thread.id"), maxFieldLen),
+		TraceID:        ingest.TruncateUTF8(p.Contexts.Trace.TraceID, maxFieldLen),
+		SpanID:         ingest.TruncateUTF8(p.Contexts.Trace.SpanID, maxFieldLen),
+		Transaction:    ingest.TruncateUTF8(p.Transaction, maxFieldLen),
+		Op:             ingest.TruncateUTF8(p.Contexts.Trace.Op, maxFieldLen),
+		Status:         ingest.TruncateUTF8(status, maxFieldLen),
 		DurationMs:     durationMs,
 		StartTimestamp: startTS,
 		Timestamp:      endTS,
 		Measurements:   p.Measurements,
-		Environment:    trunc(p.Environment, maxFieldLen),
-		Release:        trunc(p.Release, maxFieldLen),
-		Platform:       trunc(p.Platform, maxFieldLen),
+		Environment:    ingest.TruncateUTF8(p.Environment, maxFieldLen),
+		Release:        ingest.TruncateUTF8(p.Release, maxFieldLen),
+		Platform:       ingest.TruncateUTF8(p.Platform, maxFieldLen),
 		Spans:          spans,
 		UserIdentity:   su.Identity,
 		UserID:         su.ID,
 		UserUsername:   su.Username,
 		UserEmail:      su.Email,
-		UserName:       trunc(su.Name, maxFieldLen),
+		UserName:       ingest.TruncateUTF8(su.Name, maxFieldLen),
 	}
 }
 
-// handleEnvelopeCheckin processes a check_in envelope item.
-// The monitor_slug field is expected to be the monitor UUID, and the monitor must
-// belong to the project whose DSN sent the envelope.
+// handleEnvelopeCheckin processes a check_in envelope item. monitor_slug is the
+// monitor's slug or its ID, and the monitor must belong to the project whose
+// DSN sent the envelope.
 func handleEnvelopeCheckin(ctx context.Context, pool *pgxpool.Pool, project *storage.Project, payload []byte) {
 	var ci struct {
 		CheckinID   string   `json:"check_in_id"`
-		MonitorSlug string   `json:"monitor_slug"` // contains monitor UUID
+		MonitorSlug string   `json:"monitor_slug"` // monitor slug or UUID
 		Status      string   `json:"status"`       // in_progress, ok, error
 		Duration    *float64 `json:"duration"`     // seconds
 		Environment *string  `json:"environment"`
@@ -689,12 +700,18 @@ func handleEnvelopeCheckin(ctx context.Context, pool *pgxpool.Pool, project *sto
 		slog.Debug("dropping check-in: unreadable payload or missing monitor_slug", "project", project.Slug)
 		return
 	}
-	if uuid.Validate(ci.MonitorSlug) != nil {
-		slog.Debug("dropping check-in: monitor_slug is not a monitor ID", "project", project.Slug, "monitor_slug", ci.MonitorSlug)
+
+	var m *storage.CronMonitor
+	var err error
+	switch {
+	case uuid.Validate(ci.MonitorSlug) == nil:
+		m, err = storage.GetCronMonitor(ctx, pool, ci.MonitorSlug)
+	case storage.ValidMonitorSlug(ci.MonitorSlug):
+		m, err = storage.GetCronMonitorBySlug(ctx, pool, project.ID, ci.MonitorSlug)
+	default:
+		slog.Debug("dropping check-in: monitor_slug is neither a slug nor a monitor ID", "project", project.Slug, "monitor_slug", ci.MonitorSlug)
 		return
 	}
-
-	m, err := storage.GetCronMonitor(ctx, pool, ci.MonitorSlug)
 	if err != nil {
 		slog.Error("get cron monitor for check-in", "err", err, "project", project.Slug)
 		return

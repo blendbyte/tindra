@@ -715,3 +715,51 @@ func TestCronCheckinFinish_bodyTooLarge(t *testing.T) {
 		t.Errorf("expected 413, got %d", rec.Code)
 	}
 }
+
+func postMonitor(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/monitors", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestCreateMonitor_slug(t *testing.T) {
+	auto := createTestMonitor(t, "Slug Auto Monitor", "0 * * * *")
+	if auto.Slug != "slug-auto-monitor" {
+		t.Errorf("slug should derive from the name, got %q", auto.Slug)
+	}
+
+	rec := postMonitor(t, map[string]any{"project_id": testProject.ID, "name": "Explicit", "slug": "explicit-slug", "schedule": "0 * * * *"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("explicit slug: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postMonitor(t, map[string]any{"project_id": testProject.ID, "name": "Dup", "slug": "explicit-slug", "schedule": "0 * * * *"}); rec.Code != http.StatusConflict {
+		t.Errorf("duplicate slug: expected 409, got %d", rec.Code)
+	}
+	if rec := postMonitor(t, map[string]any{"project_id": testProject.ID, "name": "Bad", "slug": "Not Valid!", "schedule": "0 * * * *"}); rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid slug: expected 400, got %d", rec.Code)
+	}
+}
+
+func TestUpdateMonitor_slug(t *testing.T) {
+	m := createTestMonitor(t, "Slug Update Monitor", "0 * * * *")
+	patch := func(slug string) int {
+		b, _ := json.Marshal(map[string]any{"slug": slug})
+		req := httptest.NewRequest(http.MethodPatch, "/api/monitors/"+m.ID, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		cronHandler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := patch("renamed-slug"); code != http.StatusOK {
+		t.Errorf("valid slug: expected 200, got %d", code)
+	}
+	if code := patch("UPPER"); code != http.StatusBadRequest {
+		t.Errorf("invalid slug: expected 400, got %d", code)
+	}
+}

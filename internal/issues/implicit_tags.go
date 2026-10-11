@@ -3,6 +3,7 @@ package issues
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ua-parser/uap-go/uaparser"
 )
@@ -50,9 +51,7 @@ func extractImplicitTags(payload json.RawMessage) [][2]string {
 		if v == "" {
 			return
 		}
-		if len([]rune(v)) > tagMaxLen {
-			v = string([]rune(v)[:tagMaxLen])
-		}
+		v = truncateTag(v)
 		tags = append(tags, [2]string{k, v})
 	}
 
@@ -186,4 +185,22 @@ func mergeImplicitTags(explicit [][2]string, implicit [][2]string) [][2]string {
 		}
 	}
 	return explicit
+}
+
+// capTags applies tagMaxLen to every tag key and value. Tags are indexed, so an
+// oversized key or value would otherwise fail the tag insert for the whole event.
+func capTags(tags [][2]string) [][2]string {
+	for i := range tags {
+		tags[i][0] = truncateTag(tags[i][0])
+		tags[i][1] = truncateTag(tags[i][1])
+	}
+	return tags
+}
+
+// truncateTag shortens v to tagMaxLen characters.
+func truncateTag(v string) string {
+	if utf8.RuneCountInString(v) <= tagMaxLen {
+		return v
+	}
+	return string([]rune(v)[:tagMaxLen])
 }

@@ -79,3 +79,28 @@ func TestParseSentryTimestamp_negativeFloat_fallsToString(t *testing.T) {
 		t.Errorf("negative float should fall back to now, got %v", got)
 	}
 }
+
+func TestClampFuture(t *testing.T) {
+	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	if got := ingest.ClampFuture(now.Add(30*time.Second), now); !got.Equal(now.Add(30 * time.Second)) {
+		t.Errorf("small skew must be kept, got %v", got)
+	}
+	if got := ingest.ClampFuture(now.AddDate(4, 0, 0), now); !got.Equal(now) {
+		t.Errorf("a far-future timestamp must clamp to now, got %v", got)
+	}
+	past := now.Add(-time.Hour)
+	if got := ingest.ClampFuture(past, now); !got.Equal(past) {
+		t.Errorf("past timestamps must be unchanged, got %v", got)
+	}
+}
+
+func TestFutureShift(t *testing.T) {
+	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	if got := ingest.FutureShift(now.Add(30*time.Second), now); got != 0 {
+		t.Errorf("no shift within the allowed skew, got %v", got)
+	}
+	end := now.Add(2 * time.Hour)
+	if got := ingest.FutureShift(end, now); !end.Add(got).Equal(now) {
+		t.Errorf("shift must move end to now, got %v", got)
+	}
+}

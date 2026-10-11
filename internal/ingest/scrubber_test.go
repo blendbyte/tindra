@@ -475,3 +475,17 @@ func TestScrubTransaction_Name(t *testing.T) {
 		})
 	}
 }
+
+func TestScrubEvent_preservesLargeIntegers(t *testing.T) {
+	payload := json.RawMessage(`{"extra":{"order_id":1234567890123456789,"ratio":0.25},"user":{"email":"a@b.c"}}`)
+	got := string(ScrubEvent(payload, ScrubConfig{Fields: []string{"user.email"}}))
+	if !strings.Contains(got, "1234567890123456789") {
+		t.Errorf("large integer was rounded: %s", got)
+	}
+	if !strings.Contains(got, "0.25") {
+		t.Errorf("float changed: %s", got)
+	}
+	if strings.Contains(got, "a@b.c") {
+		t.Errorf("blocked field not scrubbed: %s", got)
+	}
+}

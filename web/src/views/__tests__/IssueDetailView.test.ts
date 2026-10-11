@@ -410,6 +410,20 @@ describe('IssueDetailView', () => {
     })
   })
 
+  describe('truncated title with an object message', () => {
+    it('offers the full formatted message when the SDK sends message as an object', async () => {
+      const full = 'Payment failed for order ' + 'x'.repeat(250)
+      const stored = full.slice(0, 199) + '\u2026'
+      const event = { id: 'evt-1', payload: { message: { formatted: full, message: 'Payment failed for order %s', params: ['x'] } } }
+      setupQueries({ ...baseIssue, title: stored }, [{}, {}, { data: ref(event) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const more = wrapper.find('.detail-hero__more')
+      expect(more.exists()).toBe(true)
+      await more.trigger('click')
+      expect(wrapper.find('.detail-hero__title').text()).toContain(full)
+    })
+  })
+
   describe('context section', () => {
     it('renders context section when event has runtime context', () => {
       const eventWithContexts = {

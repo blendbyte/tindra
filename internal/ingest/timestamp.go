@@ -31,3 +31,27 @@ func ParseSentryTimestamp(raw json.RawMessage) time.Time {
 	}
 	return time.Now().UTC()
 }
+
+// MaxFutureSkew is how far ahead of the server clock a client timestamp may be.
+// Beyond that the client clock is wrong, and keeping the value would pin
+// issues as "last seen" in the future and sort them first indefinitely.
+const MaxFutureSkew = time.Minute
+
+// ClampFuture returns now when t is more than MaxFutureSkew ahead of it.
+func ClampFuture(t, now time.Time) time.Time {
+	if t.Sub(now) > MaxFutureSkew {
+		return now
+	}
+	return t
+}
+
+// FutureShift returns how far to move a group of related timestamps (a
+// transaction and its spans) so that end is not in the future, or zero when
+// end is within MaxFutureSkew. Shifting the whole group keeps durations and
+// span offsets intact, which clamping each timestamp separately would not.
+func FutureShift(end, now time.Time) time.Duration {
+	if end.Sub(now) > MaxFutureSkew {
+		return now.Sub(end)
+	}
+	return 0
+}

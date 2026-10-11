@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -77,8 +78,12 @@ func ScrubEvent(payload json.RawMessage, cfg ScrubConfig) json.RawMessage {
 	if len(fields) == 0 && len(regexps) == 0 {
 		return payload
 	}
+	// UseNumber keeps integers above 2^53 (snowflake IDs in tags, extra or
+	// span data) exact; decoding into float64 would round them on re-encode.
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(payload, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
 		return payload
 	}
 	scrubValue(v, fields, regexps, "")
@@ -160,6 +165,63 @@ func ScrubLog(l *BufferedLog, cfg ScrubConfig) {
 	if len(l.Attributes) > 0 {
 		l.Attributes = ScrubEvent(l.Attributes, cfg)
 	}
+}
+
+// ScrubLogItems applies ScrubLog's rules to a raw log envelope item, for
+// forwarding upstream: patterns on each body, and field blocking and patterns
+// on attributes, with paths relative to the attributes object. Blocked
+// attributes keep their {"value","type"} shape so upstream still accepts them.
+func ScrubLogItems(payload json.RawMessage, cfg ScrubConfig) json.RawMessage {
+	fields, regexps := buildScrubber(cfg)
+	if len(fields) == 0 && len(regexps) == 0 {
+		return payload
+	}
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return payload
+	}
+	scrubRecord := func(item any) {
+		rec, ok := item.(map[string]any)
+		if !ok {
+			return
+		}
+		if body, ok := rec["body"].(string); ok {
+			rec["body"] = scrubString(body, regexps)
+		}
+		attrs, _ := rec["attributes"].(map[string]any)
+		for name, attr := range attrs {
+			if _, blocked := fields[strings.ToLower(name)]; !blocked {
+				attrs[name] = scrubValue(attr, fields, regexps, name)
+				continue
+			}
+			if obj, ok := attr.(map[string]any); ok {
+				obj["value"], obj["type"] = scrubPlaceholder, "string"
+			} else {
+				attrs[name] = scrubPlaceholder
+			}
+		}
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		if items, ok := t["items"].([]any); ok {
+			for _, item := range items {
+				scrubRecord(item)
+			}
+		} else {
+			scrubRecord(t)
+		}
+	case []any:
+		for _, item := range t {
+			scrubRecord(item)
+		}
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return payload
+	}
+	return out
 }
 
 func buildScrubber(cfg ScrubConfig) (fields map[string]struct{}, regexps []*regexp.Regexp) {

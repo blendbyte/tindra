@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"mime"
 	"net"
@@ -59,6 +60,7 @@ type router struct {
 	txRowLimit             int
 	evaluator              *alerts.Evaluator
 	passthroughClient      *http.Client
+	forwarder              *ingest.Forwarder
 	retentionDays          int
 	webhookAllowPrivateIPs bool
 	requireMFA             bool
@@ -91,6 +93,19 @@ func (h *Handle) SetLimits(projectLimit, eventLimit, userLimit int) {
 
 // SetRowLimits stores the per-project row caps for logs and transactions.
 // These are read-only after startup so a plain int is sufficient.
+// Close drains queued passthrough forwards. Call it after the HTTP server has
+// stopped accepting requests.
+func (h *Handle) Close(ctx context.Context) error {
+	return h.ro.forwarder.Close(ctx)
+}
+
+// Passthrough runs a few concurrent upstream deliveries and queues a bounded
+// number more; beyond that envelopes are dropped rather than buffered.
+const (
+	passthroughWorkers   = 4
+	passthroughQueueSize = 256
+)
+
 func (h *Handle) SetRowLimits(logRowLimit, txRowLimit int) {
 	h.ro.logRowLimit = logRowLimit
 	h.ro.txRowLimit = txRowLimit
@@ -126,6 +141,7 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 
 	loginRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
 	resetRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
+	ro.forwarder = ingest.NewForwarder(ro.passthroughClient, passthroughWorkers, passthroughQueueSize)
 	ro.envelopeRL = newRateLimiter(rateLimitEnvelope, time.Minute)
 	ro.loginEmailRL = newRateLimiter(rateLimitLogin, 15*time.Minute)
 	ro.reauthRL = newRateLimiter(10, 15*time.Minute)

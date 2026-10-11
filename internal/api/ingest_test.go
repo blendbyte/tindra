@@ -3,9 +3,11 @@ package api_test
 import (
 	"bytes"
 	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/blendbyte/tindra/internal/api"
 	"github.com/blendbyte/tindra/internal/ingest"
@@ -231,6 +235,49 @@ func TestHandleEnvelope_gzip(t *testing.T) {
 	).Scan(&count)
 	if count < 1 {
 		t.Errorf("expected event in DB after gzip ingest, got %d", count)
+	}
+}
+
+// sentry-python sends brotli when the brotli package is installed; zstd and
+// deflate are accepted too. Unknown encodings get a clear 415.
+func TestHandleEnvelope_compressionEncodings(t *testing.T) {
+	envelope := []byte(eventEnvelope("770e8400e29b41d4a716446655440000", `{"level":"info","message":"compressed"}`))
+	compress := map[string]func(io.Writer) io.WriteCloser{
+		"br": func(w io.Writer) io.WriteCloser { return brotli.NewWriter(w) },
+		"zstd": func(w io.Writer) io.WriteCloser {
+			zw, _ := zstd.NewWriter(w)
+			return zw
+		},
+		"deflate": func(w io.Writer) io.WriteCloser { return zlib.NewWriter(w) },
+	}
+	for encoding, newWriter := range compress {
+		t.Run(encoding, func(t *testing.T) {
+			var body bytes.Buffer
+			w := newWriter(&body)
+			w.Write(envelope)
+			w.Close()
+			buf := ingest.NewBuffer(10)
+			req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &body)
+			req.Header.Set("Content-Encoding", encoding)
+			req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+			rec := httptest.NewRecorder()
+			newHandler(buf).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if accepted := buf.Stats().Accepted; accepted != 1 {
+				t.Errorf("expected 1 event accepted, got %d", accepted)
+			}
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", bytes.NewReader(envelope))
+	req.Header.Set("Content-Encoding", "compress")
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
+	rec := httptest.NewRecorder()
+	newHandler(ingest.NewBuffer(10)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("unknown encoding: expected 415, got %d", rec.Code)
 	}
 }
 

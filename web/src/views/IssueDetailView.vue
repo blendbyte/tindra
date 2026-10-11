@@ -238,8 +238,20 @@ const fullTitle = computed(() => {
     if (last?.value) return [last.type, last.value].filter(Boolean).join(': ')
     return last?.type ?? ''
   }
-  return typeof payload?.message === 'string' ? payload.message : ''
+  return eventMessageText(payload?.message) || eventMessageText((payload as { logentry?: unknown } | undefined)?.logentry)
 })
+
+// SDKs send message as a string or as {formatted, message, params}
+// (Java, .NET, PHP, and Python's logentry). Prefer the formatted text.
+function eventMessageText(message: unknown): string {
+  if (typeof message === 'string') return message
+  if (message && typeof message === 'object') {
+    const m = message as { formatted?: unknown; message?: unknown }
+    if (typeof m.formatted === 'string' && m.formatted) return m.formatted
+    if (typeof m.message === 'string') return m.message
+  }
+  return ''
+}
 
 const titleTruncated = computed(() => {
   const stored = issue.value?.title ?? ''

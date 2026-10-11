@@ -9,6 +9,7 @@ import type { CronMonitor, CronCheckin, ProjectMetadata, UptimeMonitor, UptimeCh
 import { useProjectsStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/Icon.vue'
+import { useToast } from '@/composables/useToast'
 import cronstrue from 'cronstrue'
 
 function humanSchedule(expr: string): string {
@@ -110,8 +111,9 @@ function copyPingURL(id: string) {
 }
 
 // ---- cron create ----
+const { show: showToast } = useToast()
 const showCreate = ref(false)
-const newMonitor = ref({ name: '', schedule: '0 * * * *', grace_period_secs: 300, project_id: '' })
+const newMonitor = ref({ name: '', slug: '', schedule: '0 * * * *', grace_period_secs: 300, project_id: '' })
 
 const { mutate: createMonitor, isPending: creating } = useMutation({
   mutationFn: () =>
@@ -120,6 +122,8 @@ const { mutate: createMonitor, isPending: creating } = useMutation({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: newMonitor.value.name,
+        // Empty lets the server derive the slug from the name.
+        ...(newMonitor.value.slug.trim() ? { slug: newMonitor.value.slug.trim() } : {}),
         schedule: newMonitor.value.schedule,
         grace_period_secs: Number(newMonitor.value.grace_period_secs),
         project_id: newMonitor.value.project_id,
@@ -128,18 +132,19 @@ const { mutate: createMonitor, isPending: creating } = useMutation({
   onSuccess(m) {
     qc.invalidateQueries({ queryKey: ['monitors'] })
     showCreate.value = false
-    newMonitor.value = { name: '', schedule: '0 * * * *', grace_period_secs: 300, project_id: '' }
+    newMonitor.value = { name: '', slug: '', schedule: '0 * * * *', grace_period_secs: 300, project_id: '' }
     selectedMonitorId.value = m.id
   },
+  onError: (err) => showToast(err instanceof Error ? err.message : 'Failed to create monitor.', 'error'),
 })
 
 // ---- cron edit ----
 const editingId = ref<string | null>(null)
-const editForm = ref({ name: '', schedule: '', grace_period_secs: 300, status: 'active' as 'active' | 'paused' })
+const editForm = ref({ name: '', slug: '', schedule: '', grace_period_secs: 300, status: 'active' as 'active' | 'paused' })
 
 function startEdit(m: CronMonitor) {
   editingId.value = m.id
-  editForm.value = { name: m.name, schedule: m.schedule, grace_period_secs: m.grace_period_secs, status: m.status }
+  editForm.value = { name: m.name, slug: m.slug, schedule: m.schedule, grace_period_secs: m.grace_period_secs, status: m.status }
 }
 
 const { mutate: saveMonitor, isPending: saving } = useMutation({
@@ -153,6 +158,7 @@ const { mutate: saveMonitor, isPending: saving } = useMutation({
     qc.invalidateQueries({ queryKey: ['monitors'] })
     editingId.value = null
   },
+  onError: (err) => showToast(err instanceof Error ? err.message : 'Failed to save monitor.', 'error'),
 })
 
 // ---- cron delete ----
@@ -173,7 +179,7 @@ function confirmDelete(m: CronMonitor) {
 
 function cancelCreate() {
   showCreate.value = false
-  newMonitor.value = { name: '', schedule: '0 * * * *', grace_period_secs: 300, project_id: '' }
+  newMonitor.value = { name: '', slug: '', schedule: '0 * * * *', grace_period_secs: 300, project_id: '' }
 }
 
 // ============================================================
@@ -399,6 +405,10 @@ function confirmDeleteUptime(m: UptimeMonitor) {
             <input v-model="newMonitor.name" class="mon-field__input" placeholder="Daily backup" autofocus />
           </div>
           <div class="mon-field">
+            <label class="mon-field__label" for="new-monitor-slug">Slug</label>
+            <input id="new-monitor-slug" v-model="newMonitor.slug" class="mon-field__input mono" placeholder="from the name" title="SDKs can send this as monitor_slug" />
+          </div>
+          <div class="mon-field">
             <label class="mon-field__label">Project</label>
             <select v-model="newMonitor.project_id" class="mon-field__input">
               <option value="">Select project</option>
@@ -407,7 +417,7 @@ function confirmDeleteUptime(m: UptimeMonitor) {
           </div>
           <div class="mon-field">
             <label class="mon-field__label">Schedule</label>
-            <input v-model="newMonitor.schedule" class="mon-field__input mono" placeholder="0 * * * *" />
+            <input id="new-monitor-schedule" v-model="newMonitor.schedule" class="mon-field__input mono" placeholder="0 * * * *" />
           </div>
           <div class="mon-field">
             <label class="mon-field__label">Grace (secs)</label>
@@ -536,6 +546,10 @@ function confirmDeleteUptime(m: UptimeMonitor) {
                   <input v-model="editForm.name" class="mon-field__input" />
                 </div>
                 <div class="mon-field">
+                  <label class="mon-field__label" for="edit-monitor-slug">Slug</label>
+                  <input id="edit-monitor-slug" v-model="editForm.slug" class="mon-field__input mono" />
+                </div>
+                <div class="mon-field">
                   <label class="mon-field__label">Schedule</label>
                   <input v-model="editForm.schedule" class="mon-field__input mono" />
                 </div>
@@ -565,6 +579,10 @@ function confirmDeleteUptime(m: UptimeMonitor) {
             <template v-else>
               <div class="mon-detail__toolbar">
                 <div class="mon-detail__meta">
+                  <span class="mon-detail__kv" title="Use as monitor_slug in Sentry SDK check-ins">
+                    <span class="mon-detail__k">Slug</span>
+                    <span class="mon-detail__v mono">{{ m.slug }}</span>
+                  </span>
                   <span class="mon-detail__kv">
                     <span class="mon-detail__k">Grace</span>
                     <span class="mon-detail__v">{{ m.grace_period_secs }}s</span>

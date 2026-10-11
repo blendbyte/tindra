@@ -35,6 +35,45 @@ func TestQueueRetryRetainsPending(t *testing.T) {
 	}
 }
 
+// An oversized index row (54000) used to fail the whole batch. It is now
+// treated like a data error, so the batch is split to keep healthy records.
+func TestQueueIsolatesIndexRowTooLarge(t *testing.T) {
+	q := newQueue[int]("events", 3, false)
+	var batch []*queued[int]
+	for _, v := range []int{1, 2, 3} {
+		q.Push(v)
+		batch = append(batch, <-q.ch)
+	}
+	var persisted []int
+	q.flush(t.Context(), batch, func(_ context.Context, values []int) error {
+		for _, v := range values {
+			if v == 2 {
+				return &pgconn.PgError{Code: "54000", Message: "index row size exceeds btree version 4 maximum"}
+			}
+		}
+		persisted = append(persisted, values...)
+		return nil
+	})
+	s := q.Stats()
+	if len(persisted) != 2 || s.Dropped["invalid_record"] != 1 {
+		t.Fatalf("bad isolation: persisted=%v stats=%+v", persisted, s)
+	}
+}
+
+func TestPermanentErrorClasses(t *testing.T) {
+	for code, want := range map[string]bool{
+		"22021": true, "23505": true, "54000": true,
+		"40001": false, "08006": false, "53100": false, "57014": false,
+	} {
+		if got := permanent(&pgconn.PgError{Code: code}); got != want {
+			t.Errorf("permanent(%s) = %v, want %v", code, got, want)
+		}
+	}
+	if permanent(errors.New("plain error")) {
+		t.Error("non-database errors are not permanent")
+	}
+}
+
 func TestQueueIsolatesInvalidRecord(t *testing.T) {
 	q := newQueue[int]("events", 3, false)
 	var batch []*queued[int]

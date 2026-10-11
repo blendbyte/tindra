@@ -100,6 +100,8 @@ const reasonText: Record<string, string> = {
   storage_failed: 'This data could not be stored. Check the database connection and server writer logs, then retry.',
   event_limit: 'The instance event limit was reached. Review usage and limits in settings.',
   bad_gzip: 'Tindra could not decompress the request. Check SDK and proxy compression settings.',
+  bad_compression: 'Tindra could not decompress the request. Check SDK and proxy compression settings.',
+  unsupported_encoding: 'The request used a compression Tindra does not support. Use gzip, br, zstd or deflate.',
   envelope_too_large: 'The request exceeded the ingestion size limit. Reduce the payload size and retry.',
   bad_envelope: 'The request was not a valid Sentry envelope. Check the SDK transport configuration.',
   read_timeout: 'The SDK took too long to send the request body. Check the network path and any proxy between the SDK and Tindra.',

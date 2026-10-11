@@ -168,7 +168,7 @@ func (g *Grouper) readPage(ctx context.Context, cursor *groupingCursor) ([]rawEv
 
 func (g *Grouper) group(ctx context.Context, e rawEvent) (bool, error) {
 
-	fp := Compute(e.Payload)
+	fp, legacyFP := Compute(e.Payload)
 	title := Title(e.Payload)
 
 	var partial struct {
@@ -183,14 +183,14 @@ func (g *Grouper) group(ctx context.Context, e rawEvent) (bool, error) {
 		level = "error"
 	}
 
-	issue, isNew, wasRegressed, err := storage.GroupEvent(ctx, g.pool, e.ID, fp, title, level, partial.Environment, partial.Release)
+	issue, isNew, wasRegressed, err := storage.GroupEvent(ctx, g.pool, e.ID, fp, legacyFP, title, level, partial.Environment, partial.Release)
 	if err != nil {
 		return false, err
 	}
 	if issue == nil {
 		return false, nil
 	}
-	tags := mergeImplicitTags(storage.ParseTags(partial.Tags), extractImplicitTags(e.Payload))
+	tags := capTags(mergeImplicitTags(storage.ParseTags(partial.Tags), extractImplicitTags(e.Payload)))
 	if len(tags) > 0 {
 		if err := storage.InsertEventTags(ctx, g.pool, e.ID, issue.ID, e.ProjectID, tags); err != nil {
 			slog.Error("insert tags", "err", err)

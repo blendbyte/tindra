@@ -49,6 +49,7 @@ var (
 	ErrProfileMalformedStacks    = errors.New("profile stack references a missing frame")
 	ErrProfileTooLong            = errors.New("profile exceeds the maximum duration")
 	ErrProfileTooManySamples     = errors.New("profile exceeds the maximum sample count")
+	ErrProfileMalformedID        = errors.New("profile has a malformed identifier")
 	// A v1 profile names the transaction it belongs to. Without one there is no
 	// way to reach it again, so it is rejected rather than stored unreachable.
 	ErrProfileNoTransaction = errors.New("profile has no associated transaction")
@@ -278,6 +279,14 @@ func (p *Profile) adoptSampleData(raw rawSampleData, at func(*rawSample) int64) 
 // payloads. Pointer authentication stripping is deliberately skipped: it only
 // affects native platforms, and only matters for symbolication we do not do.
 func (p *Profile) normalize(maxDuration time.Duration) error {
+	// These IDs feed unique indexes; real ones are UUIDs or 32 hex digits.
+	for _, id := range []string{p.ChunkID, p.ProfilerID, p.TransactionID} {
+		if len(id) > maxIDBytes {
+			return ErrProfileMalformedID
+		}
+	}
+	p.Release = TruncateUTF8(p.Release, MaxIndexedFieldBytes)
+	p.Environment = TruncateUTF8(p.Environment, MaxIndexedFieldBytes)
 	p.dropSingleSampleThreads()
 
 	if len(p.Samples) == 0 {

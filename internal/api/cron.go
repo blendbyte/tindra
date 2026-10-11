@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
+
+const invalidSlugMessage = "slug must be 1-50 lower-case letters, digits, dashes or underscores, starting with a letter or digit"
 
 // handleListMonitors returns all monitors visible to the caller, optionally
 // filtered by project_id query params.
@@ -32,6 +35,7 @@ func (ro *router) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProjectID       string `json:"project_id"`
 		Name            string `json:"name"`
+		Slug            string `json:"slug"` // optional; derived from the name when empty
 		Schedule        string `json:"schedule"`
 		GracePeriodSecs int    `json:"grace_period_secs"`
 	}
@@ -45,6 +49,10 @@ func (ro *router) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if req.Slug != "" && !storage.ValidMonitorSlug(req.Slug) {
+		http.Error(w, invalidSlugMessage, http.StatusBadRequest)
 		return
 	}
 	if req.Schedule == "" {
@@ -62,9 +70,14 @@ func (ro *router) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 	m, err := storage.CreateCronMonitor(r.Context(), ro.pool, &storage.CronMonitor{
 		ProjectID:       req.ProjectID,
 		Name:            req.Name,
+		Slug:            req.Slug,
 		Schedule:        req.Schedule,
 		GracePeriodSecs: req.GracePeriodSecs,
 	})
+	if errors.Is(err, storage.ErrMonitorSlugTaken) {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	if err != nil {
 		slog.Error("create monitor", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -96,6 +109,7 @@ func (ro *router) handleUpdateMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Name            *string `json:"name"`
+		Slug            *string `json:"slug"`
 		Schedule        *string `json:"schedule"`
 		GracePeriodSecs *int    `json:"grace_period_secs"`
 		Status          *string `json:"status"`
@@ -106,6 +120,13 @@ func (ro *router) handleUpdateMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil {
 		m.Name = *req.Name
+	}
+	if req.Slug != nil {
+		if !storage.ValidMonitorSlug(*req.Slug) {
+			http.Error(w, invalidSlugMessage, http.StatusBadRequest)
+			return
+		}
+		m.Slug = *req.Slug
 	}
 	if req.Schedule != nil {
 		if _, err := storage.ParseCronSchedule(*req.Schedule); err != nil {
@@ -125,6 +146,10 @@ func (ro *router) handleUpdateMonitor(w http.ResponseWriter, r *http.Request) {
 		m.Status = *req.Status
 	}
 	updated, err := storage.UpdateCronMonitor(r.Context(), ro.pool, m)
+	if errors.Is(err, storage.ErrMonitorSlugTaken) {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	if err != nil {
 		slog.Error("update monitor", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

@@ -142,3 +142,28 @@ func TestEnvelopeCheckinRejectsOtherProjectsMonitor(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, m.LastCheckinStatus)
 }
+
+// Sentry SDKs send the monitor's slug, e.g. @monitor(monitor_slug="nightly").
+func TestEnvelopeCheckinBySlug(t *testing.T) {
+	h := newHandler(ingest.NewBuffer(1))
+	m := createTestMonitor(t, "Envelope Slug Monitor", "* * * * *")
+	payload := fmt.Sprintf(`{"monitor_slug":%q,"status":"ok"}`, m.Slug)
+	require.Equal(t, http.StatusOK, postEnvelope(t, h, checkinEnvelope(payload)).Code)
+	rows, err := storage.ListCheckins(t.Context(), testPool, m.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "ok", rows[0].Status)
+
+	// A slug only resolves within the DSN's own project.
+	other, err := storage.CreateProject(t.Context(), testPool, "checkin-slug-other", "Checkin Slug Other")
+	require.NoError(t, err)
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID) })
+	foreign, err := storage.CreateCronMonitor(t.Context(), testPool, &storage.CronMonitor{
+		ProjectID: other.ID, Name: "foreign", Slug: "foreign-only-slug", Schedule: "* * * * *", GracePeriodSecs: 300,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, postEnvelope(t, h, checkinEnvelope(`{"monitor_slug":"foreign-only-slug","status":"ok"}`)).Code)
+	rows, err = storage.ListCheckins(t.Context(), testPool, foreign.ID, 10)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}

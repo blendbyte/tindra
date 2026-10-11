@@ -387,7 +387,7 @@ describe('MonitorsView', () => {
       setupMocks([], true)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       await wrapper.find('.filterbar .btn--primary').trigger('click')
-      const scheduleInput = wrapper.find('.mon-createbar input.mono')
+      const scheduleInput = wrapper.find('#new-monitor-schedule')
       await scheduleInput.setValue('0 0 * * *')
       expect((scheduleInput.element as HTMLInputElement).value).toBe('0 0 * * *')
     })
@@ -410,12 +410,46 @@ describe('MonitorsView', () => {
       expect((graceInput.element as HTMLInputElement).value).toBe('600')
     })
 
+    it('sends an optional slug when creating a monitor', async () => {
+      const recorded: any[] = []
+      vi.mocked(useMutation).mockImplementation(((opts: any) => {
+        recorded.push(opts)
+        return { mutate: vi.fn(), isPending: ref(false) }
+      }) as any)
+      setupMocks([], true)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('Nightly backup')
+      await wrapper.find('#new-monitor-slug').setValue(' nightly ')
+      const { apiFetch } = await import('@/api/client')
+      vi.mocked(apiFetch).mockClear()
+      // The create mutation is the first one the view registers.
+      await recorded[0].mutationFn()
+      const body = JSON.parse((vi.mocked(apiFetch).mock.calls[0][1] as RequestInit).body as string)
+      expect(body).toMatchObject({ name: 'Nightly backup', slug: 'nightly' })
+
+      await wrapper.find('#new-monitor-slug').setValue('')
+      vi.mocked(apiFetch).mockClear()
+      await recorded[0].mutationFn()
+      const noSlug = JSON.parse((vi.mocked(apiFetch).mock.calls[0][1] as RequestInit).body as string)
+      expect(noSlug).not.toHaveProperty('slug')
+    })
+
+    it('shows the slug in monitor detail and prefills it when editing', async () => {
+      setupMocks([{ ...makeMonitor('m1', 'Daily backup'), slug: 'daily-backup' }], true)
+      const wrapper = mount(MonitorsView, { global: { stubs } })
+      await wrapper.findAll('.monrow').find(r => r.text().includes('Daily backup'))!.trigger('click')
+      expect(wrapper.find('.mon-detail__meta').text()).toContain('daily-backup')
+      await wrapper.find('.mon-detail__actions .btn').trigger('click')
+      expect((wrapper.find('#edit-monitor-slug').element as HTMLInputElement).value).toBe('daily-backup')
+    })
+
     it('calls createMonitor when Create button is clicked with all fields set', async () => {
       setupMocks([], true)
       const wrapper = mount(MonitorsView, { global: { stubs } })
       await wrapper.find('.filterbar .btn--primary').trigger('click')
       await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('My Monitor')
-      await wrapper.find('.mon-createbar input.mono').setValue('0 * * * *')
+      await wrapper.find('#new-monitor-schedule').setValue('0 * * * *')
       await wrapper.find('.mon-createbar select').setValue('proj-1')
       const createBtn = wrapper.find('.mon-createbar__actions .btn--primary')
       await createBtn.trigger('click')
@@ -1170,7 +1204,7 @@ describe('MonitorsView', () => {
       const wrapper = mount(MonitorsView, { global: { stubs } })
       await wrapper.find('.filterbar .btn--primary').trigger('click')
       await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('New Monitor')
-      await wrapper.find('.mon-createbar input.mono').setValue('0 * * * *')
+      await wrapper.find('#new-monitor-schedule').setValue('0 * * * *')
       await wrapper.find('.mon-createbar select').setValue('proj-1')
       await wrapper.find('.mon-createbar__actions .btn--primary').trigger('click')
       await flushPromises()

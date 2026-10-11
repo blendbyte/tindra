@@ -55,7 +55,7 @@ func TestOptimizedReadsRejectUnavailableDatabase(t *testing.T) {
 		require.Nil(t, data)
 	})
 	t.Run("grouping", func(t *testing.T) {
-		data, created, regressed, err := storage.GroupEvent(ctx, pool, "missing", "fp", "Title", "error", "", "")
+		data, created, regressed, err := storage.GroupEvent(ctx, pool, "missing", "fp", "", "Title", "error", "", "")
 		require.ErrorContains(t, err, "begin grouping")
 		require.Nil(t, data)
 		require.False(t, created)

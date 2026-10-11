@@ -18,12 +18,16 @@ const initialItemBuffer = 64 * 1024
 
 type EnvelopeHeader struct {
 	EventID string `json:"event_id"`
-	SentAt  string `json:"sent_at"`
+	// Raw is the header line as sent, kept so the envelope can be rebuilt for
+	// passthrough forwarding without losing fields Tindra does not model.
+	Raw json.RawMessage `json:"-"`
 }
 
 type ItemHeader struct {
 	Type   string `json:"type"`
 	Length int    `json:"length"`
+	// Raw is the item header line as sent (content_type, item_count, ...).
+	Raw json.RawMessage `json:"-"`
 }
 
 type Item struct {
@@ -48,6 +52,7 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 		return EnvelopeHeader{}, nil, fmt.Errorf("envelope header must be a JSON object")
 	}
 	header := *parsedHeader
+	header.Raw = bytes.Clone(bytes.TrimRight(line, "\r\n"))
 
 	var items []Item
 	for {
@@ -66,6 +71,7 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 		if err := json.Unmarshal(bytes.TrimRight(line, "\r\n"), &ih); err != nil {
 			return header, items, fmt.Errorf("parse item header: %w", err)
 		}
+		ih.Raw = bytes.Clone(bytes.TrimRight(line, "\r\n"))
 
 		var payload []byte
 		if ih.Length > 0 {
@@ -109,4 +115,34 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 	}
 
 	return header, items, nil
+}
+
+// EncodeEnvelope serializes an envelope from a header line and items. Each item
+// keeps its original header fields, with length rewritten to match the payload,
+// since a payload may have changed (scrubbing) since it was parsed.
+func EncodeEnvelope(header json.RawMessage, items []Item) ([]byte, error) {
+	var out bytes.Buffer
+	out.Write(header)
+	out.WriteByte('\n')
+	for _, item := range items {
+		fields := map[string]json.RawMessage{}
+		if len(item.Header.Raw) > 0 {
+			if err := json.Unmarshal(item.Header.Raw, &fields); err != nil {
+				return nil, fmt.Errorf("item header: %w", err)
+			}
+		}
+		if _, ok := fields["type"]; !ok {
+			fields["type"], _ = json.Marshal(item.Header.Type)
+		}
+		fields["length"], _ = json.Marshal(len(item.Payload))
+		itemHeader, err := json.Marshal(fields)
+		if err != nil {
+			return nil, fmt.Errorf("item header: %w", err)
+		}
+		out.Write(itemHeader)
+		out.WriteByte('\n')
+		out.Write(item.Payload)
+		out.WriteByte('\n')
+	}
+	return out.Bytes(), nil
 }
