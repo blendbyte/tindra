@@ -22,6 +22,8 @@ func (ro *router) handleListLogs(w http.ResponseWriter, r *http.Request) {
 		TraceID:      q.Get("trace_id"),
 		UserIdentity: q.Get("user"),
 		Limit:        100,
+		// Tokens must not learn transaction IDs from other projects via trace links.
+		TraceProjectIDs: tokenScope(r.Context()),
 	}
 	if min := q.Get("min_level"); min != "" {
 		if min == "warn" {

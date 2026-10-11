@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -1180,5 +1181,28 @@ func TestGetMe_withBearerToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 for bearer token on /api/me, got %d", rec.Code)
+	}
+}
+
+// Request bodies on API routes are capped, so a session cannot post a
+// multi-megabyte comment.
+func TestCreateComment_bodyOverAPICapRejected(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "comment-cap-fp", "Comment Cap Issue")
+
+	body := `{"body":"` + strings.Repeat("x", 2<<20) + `"}`
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/issues/%s/comments", iss.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code < 400 || rec.Code >= 500 {
+		t.Fatalf("expected a 4xx rejection, got %d", rec.Code)
+	}
+	var n int
+	testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue_comments WHERE issue_id = $1`, iss.ID).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected no comment to be stored, found %d", n)
 	}
 }

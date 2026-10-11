@@ -813,6 +813,44 @@ func TestGetAlertRule_bearerTokenWrongProject(t *testing.T) {
 	}
 }
 
+func TestListAlertFirings_bearerTokenWrongProject(t *testing.T) {
+	truncateAlertRules(t)
+	truncateTokens(t)
+
+	otherProject, err := storage.CreateProject(context.Background(), testPool, "other-project-firings", "Other Project")
+	if err != nil {
+		t.Fatalf("create other project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", otherProject.ID) })
+
+	rule, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs:   []string{testProject.ID},
+		Name:         "scoped firings rule",
+		Enabled:      true,
+		Trigger:      "new_issue",
+		Channel:      "webhook",
+		WebhookURL:   new("https://203.0.113.1/hook"),
+		CooldownMins: 60,
+	})
+	if err != nil {
+		t.Fatalf("create alert rule: %v", err)
+	}
+
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, otherProject.ID, "tok", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/alert-rules/%s/firings", rule.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	alertHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 when bearer token project doesn't match rule scope, got %d", rec.Code)
+	}
+}
+
 func TestCreateAlertRule_emailEmptyEmailTo(t *testing.T) {
 	b, _ := json.Marshal(map[string]any{
 		"name": "empty to", "trigger": "new_or_regressed", "channel": "email", "email_to": "",

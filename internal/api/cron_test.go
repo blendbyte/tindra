@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blendbyte/tindra/internal/storage"
@@ -681,5 +682,36 @@ func TestDeleteMonitor_unauthenticated(t *testing.T) {
 	cronHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// Public cron routes reject malformed IDs up front instead of failing in the
+// database with a 500.
+func TestCronPublicRoutes_malformedIDsAre404(t *testing.T) {
+	m := createTestMonitor(t, "malformed-id-monitor", "0 * * * *")
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/cron/not-a-uuid"},
+		{http.MethodPost, "/api/cron/not-a-uuid/checkins/"},
+		{http.MethodPost, "/api/cron/not-a-uuid/finished"},
+		{http.MethodPut, "/api/cron/" + m.ID + "/checkins/not-a-uuid/"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{"status":"ok"}`))
+		rec := httptest.NewRecorder()
+		cronHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s: expected 404, got %d", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
+func TestCronCheckinFinish_bodyTooLarge(t *testing.T) {
+	m := createTestMonitor(t, "large-body-monitor", "0 * * * *")
+	body := `{"status":"ok","pad":"` + strings.Repeat("x", 64*1024) + `"}`
+	req := httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/cron/%s/checkins/00000000-0000-0000-0000-000000000000/", m.ID), strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	cronHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 413, got %d", rec.Code)
 	}
 }

@@ -168,6 +168,62 @@ func TestGetTransactionErrors_withTraceID(t *testing.T) {
 	}
 }
 
+// A token scoped to the frontend project must not see backend errors that share
+// the same distributed trace.
+func TestGetTransactionErrors_bearerExcludesOtherProjects(t *testing.T) {
+	ctx := context.Background()
+	other, err := storage.CreateProject(ctx, testPool, "trace-errors-backend", "Backend")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM projects WHERE id = $1", other.ID) })
+
+	const traceID = "trace-shared-scope-api"
+	var txID string
+	if err := testPool.QueryRow(ctx,
+		`INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, trace_id)
+		 VALUES ($1, '/frontend', 'pageload', 'ok', 100, NOW(), NOW(), $2) RETURNING id`,
+		testProject.ID, traceID).Scan(&txID); err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM transactions WHERE id = $1", txID) })
+
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, other.ID, "fp-backend-secret", "Backend secret error", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+	if _, err := testPool.Exec(ctx,
+		`INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id, trace_id)
+		 VALUES ($1, NOW(), NOW(), '{}'::jsonb, 'fp-backend-secret', $2, $3)`,
+		other.ID, issue.ID, traceID); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	_, plaintext, err := storage.CreateAPIToken(ctx, testPool, testProject.ID, "trace-scope-tok", false)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/errors", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Backend secret error") {
+		t.Errorf("token response leaked another project's error: %s", rec.Body.String())
+	}
+
+	// A session still sees the whole trace.
+	req = httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/errors", nil)
+	req.AddCookie(authCookie())
+	rec = httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "Backend secret error") {
+		t.Errorf("session response should include the cross-project error: %s", rec.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // handleGetTransactionGlobal — wrong bearer project (line 1039)
 // ---------------------------------------------------------------------------

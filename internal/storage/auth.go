@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -333,11 +334,34 @@ func UpdateUserProfile(ctx context.Context, pool *pgxpool.Pool, id, name, email,
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
+		if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == "23505" {
+			return nil, ErrEmailTaken
+		}
 		return nil, fmt.Errorf("update profile: %w", err)
 	}
 	u.HasPassword = u.PasswordHash != ""
 	return &u, nil
 }
+
+// VerifyUserPassword reports whether password matches the user's current
+// password. Users without a password (SSO-only) never match.
+func VerifyUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, password string) (bool, error) {
+	var hash string
+	err := pool.QueryRow(ctx, `SELECT COALESCE(password_hash, '') FROM users WHERE id = $1`, userID).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query password: %w", err)
+	}
+	if hash == "" || password == "" {
+		return false, nil
+	}
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil, nil
+}
+
+// ErrEmailTaken means another user already has the requested email address.
+var ErrEmailTaken = errors.New("email already in use")
 
 // ChangeUserPassword changes credentials and revokes all existing authentication artifacts.
 func ChangeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword string) error {

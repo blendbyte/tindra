@@ -64,6 +64,7 @@ type router struct {
 	requireMFA             bool
 	trustedProxies         []*net.IPNet
 	loginEmailRL           *rateLimiter
+	reauthRL               *rateLimiter // password or 2FA re-confirmation for sensitive profile changes
 	envelopeRL             *rateLimiter
 	cronPingRL             *rateLimiter
 	passwordResetActive    atomic.Int32
@@ -127,11 +128,17 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	resetRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
 	ro.envelopeRL = newRateLimiter(rateLimitEnvelope, time.Minute)
 	ro.loginEmailRL = newRateLimiter(rateLimitLogin, 15*time.Minute)
+	ro.reauthRL = newRateLimiter(10, 15*time.Minute)
 	ro.cronPingRL = newRateLimiter(5, time.Minute)
+	// Monitor IDs come from the URL, so cap how many distinct keys an attacker
+	// can make the limiter remember.
+	ro.cronPingRL.maxKeys = 100_000
 
 	r := chi.NewRouter()
 	r.Use(realIPFromTrustedProxy(ro.trustedProxies))
 	r.Use(corsMiddleware(ro.corsOrigin))
+	r.Use(limitAPIBody)
+	r.Use(crossOriginProtection(ro.publicURL, ro.corsOrigin))
 	r.Use(ro.securityHeaders)
 	r.Use(slogRequestLogger)
 	r.Use(middleware.Recoverer)
@@ -315,17 +322,21 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	// Cron monitor ingest - public, auth is by knowing the monitor UUID.
 	// Accepts GET and POST so shell scripts can use curl without -X POST.
 	// Rate-limited per monitor ID to prevent alert suppression via ping flooding.
+	// Malformed IDs are rejected before they reach the limiter or the database,
+	// and bodies are small and read under a deadline since these routes are public.
 	cronRL := ro.cronPingRL.limitBy(func(r *http.Request) string {
 		return chi.URLParam(r, "monitorID")
 	})
-	r.With(cronRL).Get("/api/cron/{monitorID}", ro.handleCronPing)
-	r.With(cronRL).Post("/api/cron/{monitorID}", ro.handleCronPing)
-	r.With(cronRL).Post("/api/cron/{monitorID}/checkins/", ro.handleCronCheckinStart)
-	r.With(cronRL).Put("/api/cron/{monitorID}/checkins/{checkinID}/", ro.handleCronCheckinFinish)
+	cronBody := limitBody(maxCronBodyBytes, authBodyReadTimeout)
+	cron := r.With(requireUUIDParams("monitorID"), cronRL, cronBody)
+	cron.Get("/api/cron/{monitorID}", ro.handleCronPing)
+	cron.Post("/api/cron/{monitorID}", ro.handleCronPing)
+	cron.Post("/api/cron/{monitorID}/checkins/", ro.handleCronCheckinStart)
+	cron.With(requireUUIDParams("checkinID")).Put("/api/cron/{monitorID}/checkins/{checkinID}/", ro.handleCronCheckinFinish)
 	// Oh Dear / Spatie laravel-schedule-monitor compatibility.
-	r.With(cronRL).Post("/api/cron/{monitorID}/starting", ro.handleOhDearStarting)
-	r.With(cronRL).Post("/api/cron/{monitorID}/finished", ro.handleOhDearFinished)
-	r.With(cronRL).Post("/api/cron/{monitorID}/failed", ro.handleOhDearFailed)
+	cron.Post("/api/cron/{monitorID}/starting", ro.handleOhDearStarting)
+	cron.Post("/api/cron/{monitorID}/finished", ro.handleOhDearFinished)
+	cron.Post("/api/cron/{monitorID}/failed", ro.handleOhDearFailed)
 
 	// Cron monitor CRUD - authenticated.
 	r.Group(func(r chi.Router) {

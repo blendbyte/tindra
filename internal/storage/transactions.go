@@ -524,15 +524,18 @@ func GetTransactionPercentiles(ctx context.Context, pool *pgxpool.Pool, projectI
 }
 
 // GetTransactionByTraceID returns the most recent transaction for a given trace_id.
-func GetTransactionByTraceID(ctx context.Context, pool *pgxpool.Pool, traceID string) (*Transaction, error) {
+// A non-nil projectIDs limits the lookup to those projects, so a project-scoped
+// caller cannot follow a distributed trace into another project.
+func GetTransactionByTraceID(ctx context.Context, pool *pgxpool.Pool, traceID string, projectIDs []string) (*Transaction, error) {
 	var t Transaction
 	err := pool.QueryRow(ctx, `
 		SELECT id, project_id, COALESCE(trace_id,''), COALESCE(span_id,''), transaction,
 		       op, status, duration_ms, start_timestamp, timestamp, received_at,
 		       COALESCE(environment,''), COALESCE(release,''), COALESCE(platform,'')
-		FROM transactions WHERE trace_id = $1
+		FROM transactions
+		WHERE trace_id = $1 AND ($2::uuid[] IS NULL OR project_id = ANY($2::uuid[]))
 		ORDER BY received_at DESC LIMIT 1
-	`, traceID).Scan(
+	`, traceID, projectIDs).Scan(
 		&t.ID, &t.ProjectID, &t.TraceID, &t.SpanID, &t.Transaction,
 		&t.Op, &t.Status, &t.DurationMs, &t.StartTimestamp, &t.Timestamp, &t.ReceivedAt,
 		&t.Environment, &t.Release, &t.Platform,
@@ -548,15 +551,16 @@ func GetTransactionByTraceID(ctx context.Context, pool *pgxpool.Pool, traceID st
 
 // GetErrorsForTrace returns up to 50 error events that share a trace_id, joined to their
 // parent issue for title and status. Used to correlate errors with spans in the waterfall.
-func GetErrorsForTrace(ctx context.Context, pool *pgxpool.Pool, traceID string) ([]*TraceError, error) {
+// A non-nil projectIDs limits results to those projects.
+func GetErrorsForTrace(ctx context.Context, pool *pgxpool.Pool, traceID string, projectIDs []string) ([]*TraceError, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT e.id, COALESCE(e.span_id, ''), e.timestamp, i.id, i.title, COALESCE(e.level, 'error'), i.status
 		FROM events e
 		JOIN issues i ON i.id = e.issue_id
-		WHERE e.trace_id = $1
+		WHERE e.trace_id = $1 AND ($2::uuid[] IS NULL OR e.project_id = ANY($2::uuid[]))
 		ORDER BY e.timestamp ASC
 		LIMIT 50
-	`, traceID)
+	`, traceID, projectIDs)
 	if err != nil {
 		return nil, fmt.Errorf("trace errors: %w", err)
 	}

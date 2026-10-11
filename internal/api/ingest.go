@@ -5,13 +5,16 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/blendbyte/tindra/internal/ingest"
@@ -76,6 +79,11 @@ func trunc(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// envelopeReadTimeout bounds delivery of one envelope body. Mobile SDKs on slow
+// links need headroom, but not minutes per request. A variable so tests can
+// shorten it.
+var envelopeReadTimeout = 60 * time.Second
 
 // handleEnvelopeCORS handles OPTIONS preflight requests from browser SDKs.
 func (ro *router) handleEnvelopeCORS(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +159,13 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Bound how long a client may take to deliver the body, so slow senders
+	// cannot hold connections and buffers open indefinitely.
+	controller := http.NewResponseController(w)
+	if err := controller.SetReadDeadline(time.Now().Add(envelopeReadTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		slog.Error("set envelope read deadline", "err", err)
+	}
+
 	rawLimit := newLimitedReader(r.Body, maxBodyBytes)
 	var body io.Reader = rawLimit
 	sizeLimit := rawLimit
@@ -190,10 +205,21 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "envelope too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
+		observe("envelope", "rejected", "read_timeout")
+		r.Close = true
+		http.Error(w, "request body read timed out", http.StatusRequestTimeout)
+		return
+	}
 	if err != nil {
 		observe("envelope", "rejected", "bad_envelope")
 		http.Error(w, "bad envelope", http.StatusBadRequest)
 		return
+	}
+	// The body is fully read; lift the deadline so keep-alive connections are
+	// not cut off on their next request.
+	if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		r.Close = true
 	}
 
 	var eventID *string
@@ -308,7 +334,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			if ro.pool == nil {
 				continue
 			}
-			handleEnvelopeCheckin(r.Context(), ro.pool, item.Payload)
+			handleEnvelopeCheckin(r.Context(), ro.pool, project, item.Payload)
 		}
 	}
 
@@ -649,8 +675,9 @@ func parseTransaction(projectID string, payload []byte) *ingest.BufferedTransact
 }
 
 // handleEnvelopeCheckin processes a check_in envelope item.
-// The monitor_slug field is expected to be the monitor UUID.
-func handleEnvelopeCheckin(ctx context.Context, pool *pgxpool.Pool, payload []byte) {
+// The monitor_slug field is expected to be the monitor UUID, and the monitor must
+// belong to the project whose DSN sent the envelope.
+func handleEnvelopeCheckin(ctx context.Context, pool *pgxpool.Pool, project *storage.Project, payload []byte) {
 	var ci struct {
 		CheckinID   string   `json:"check_in_id"`
 		MonitorSlug string   `json:"monitor_slug"` // contains monitor UUID
@@ -659,11 +686,26 @@ func handleEnvelopeCheckin(ctx context.Context, pool *pgxpool.Pool, payload []by
 		Environment *string  `json:"environment"`
 	}
 	if err := json.Unmarshal(payload, &ci); err != nil || ci.MonitorSlug == "" {
+		slog.Debug("dropping check-in: unreadable payload or missing monitor_slug", "project", project.Slug)
+		return
+	}
+	if uuid.Validate(ci.MonitorSlug) != nil {
+		slog.Debug("dropping check-in: monitor_slug is not a monitor ID", "project", project.Slug, "monitor_slug", ci.MonitorSlug)
 		return
 	}
 
 	m, err := storage.GetCronMonitor(ctx, pool, ci.MonitorSlug)
-	if err != nil || m == nil || m.Status == "paused" {
+	if err != nil {
+		slog.Error("get cron monitor for check-in", "err", err, "project", project.Slug)
+		return
+	}
+	// Report another project's monitor as missing so a DSN cannot probe or
+	// write check-ins for monitors outside its own project.
+	if m == nil || m.ProjectID != project.ID {
+		slog.Debug("dropping check-in: monitor not found in project", "project", project.Slug, "monitor_slug", ci.MonitorSlug)
+		return
+	}
+	if m.Status == "paused" {
 		return
 	}
 
@@ -687,5 +729,7 @@ func handleEnvelopeCheckin(ctx context.Context, pool *pgxpool.Pool, payload []by
 	default:
 		return
 	}
-	_, _ = storage.RecordCheckin(ctx, pool, m.ID, checkin)
+	if _, err := storage.RecordCheckin(ctx, pool, m.ID, checkin); err != nil {
+		slog.Error("record envelope check-in", "err", err, "monitor", m.ID)
+	}
 }

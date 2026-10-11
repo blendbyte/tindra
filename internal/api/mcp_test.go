@@ -1292,9 +1292,9 @@ func TestMCP_bulkUpdateIssues_writableToken_projectScoping(t *testing.T) {
 	}
 }
 
-// --- create_alert_rule: writable token success ---
+// --- create_alert_rule: tokens are denied, matching REST ---
 
-func TestMCP_createAlertRule_writableToken_success(t *testing.T) {
+func TestMCP_createAlertRule_writableToken_denied(t *testing.T) {
 	truncateAlertRules(t)
 
 	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "alert-rw-tok", true)
@@ -1306,20 +1306,82 @@ func TestMCP_createAlertRule_writableToken_success(t *testing.T) {
 	rec := bearerRequest(t, mcpHandler(), plaintext, body)
 	var resp rpcResp
 	json.NewDecoder(rec.Body).Decode(&resp)
-	isErr, _ := resp.Result["isError"].(bool)
-	if isErr {
-		t.Fatalf("unexpected isError for writable token: %s", toolText(t, resp.Result))
+	if isErr, _ := resp.Result["isError"].(bool); !isErr {
+		t.Fatalf("expected isError:true for token creating an alert rule, got %v", resp.Result)
 	}
-	text := toolText(t, resp.Result)
-	var rule map[string]any
-	if err := json.Unmarshal([]byte(text), &rule); err != nil {
-		t.Fatalf("decode: %v", err)
+	var n int
+	testPool.QueryRow(context.Background(), `SELECT count(*) FROM alert_rules`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected no alert rule to be created, found %d", n)
 	}
-	if rule["id"] == nil || rule["id"] == "" {
-		t.Error("expected non-empty id in created rule")
+}
+
+// --- update_issue: tokens may change status but not the assignee ---
+
+func TestMCP_updateIssue_writableToken_assigneeDenied(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "mcp-rw-assign-fp", "RW Assign Issue")
+
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rw-assign-tok", true)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
 	}
-	if rule["name"] != "RW Alert" {
-		t.Errorf("name: got %v", rule["name"])
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"update_issue","arguments":{"id":"` + iss.ID + `","assignee_id":"` + testUser.ID + `"}}}`
+	rec := bearerRequest(t, mcpHandler(), plaintext, body)
+	var resp rpcResp
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if isErr, _ := resp.Result["isError"].(bool); !isErr {
+		t.Fatalf("expected isError:true for token changing assignee, got %v", resp.Result)
+	}
+	var assignee *string
+	testPool.QueryRow(context.Background(), `SELECT assignee_id::text FROM issues WHERE id = $1`, iss.ID).Scan(&assignee)
+	if assignee != nil {
+		t.Errorf("assignee should be unchanged, got %v", *assignee)
+	}
+}
+
+// --- bulk_update_issues: history only for issues actually updated ---
+
+func TestMCP_bulkUpdateIssues_historyOnlyForUpdatedIssues(t *testing.T) {
+	truncateIssues(t)
+	own := seedIssue(t, "mcp-bulk-hist-own", "Bulk Hist Own")
+
+	other, err := storage.CreateProject(context.Background(), testPool, "mcp-bulk-hist-other", "Bulk Hist Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID)
+	})
+	foreign, _, _, err := storage.UpsertIssue(context.Background(), testPool, other.ID, "mcp-bulk-hist-foreign", "Bulk Hist Foreign", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("seed other issue: %v", err)
+	}
+
+	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "bulk-hist-tok", true)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bulk_update_issues","arguments":{"ids":["` + own.ID + `","` + foreign.ID + `"],"status":"resolved"}}}`
+	rec := bearerRequest(t, mcpHandler(), plaintext, body)
+	var resp rpcResp
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if isErr, _ := resp.Result["isError"].(bool); isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, resp.Result))
+	}
+
+	historyCount := func(issueID string) int {
+		var n int
+		testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue_history WHERE issue_id = $1 AND event_type = 'status_changed'`, issueID).Scan(&n)
+		return n
+	}
+	if n := historyCount(own.ID); n != 1 {
+		t.Errorf("own issue: expected 1 status_changed history row, got %d", n)
+	}
+	if n := historyCount(foreign.ID); n != 0 {
+		t.Errorf("foreign issue: expected no history rows, got %d", n)
 	}
 }
 
@@ -1460,28 +1522,21 @@ func TestMCP_updateIssue_assigneeUpdate(t *testing.T) {
 	truncateIssues(t)
 	iss := seedIssue(t, "mcp-assignee-fp", "Assignee Issue")
 
-	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rw-assignee-tok", true)
-	if err != nil {
-		t.Fatalf("create token: %v", err)
+	// No status field triggers the assignee branch. Assignee changes need a session.
+	result := toolCall(t, mcpHandler(), "update_issue", map[string]any{"id": iss.ID, "assignee_id": testUser.ID}, authCookie())
+	if isErr, _ := result["isError"].(bool); isErr {
+		t.Fatalf("unexpected error on assignee update: %s", toolText(t, result))
 	}
-
-	// Update with assignee_id = testUser.ID (no status field → triggers else branch)
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"update_issue","arguments":{"id":"` + iss.ID + `","assignee_id":"` + testUser.ID + `"}}}`
-	rec := bearerRequest(t, mcpHandler(), plaintext, body)
-	var resp rpcResp
-	json.NewDecoder(rec.Body).Decode(&resp)
-	isErr, _ := resp.Result["isError"].(bool)
-	if isErr {
-		t.Fatalf("unexpected error on assignee update: %s", toolText(t, resp.Result))
-	}
-	text := toolText(t, resp.Result)
 	var got map[string]any
-	if err := json.Unmarshal([]byte(text), &got); err != nil {
+	if err := json.Unmarshal([]byte(toolText(t, result)), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	// The response should be the updated issue JSON.
 	if got["id"] != iss.ID {
 		t.Errorf("id: got %v, want %v", got["id"], iss.ID)
+	}
+	if got["assignee_id"] != testUser.ID {
+		t.Errorf("assignee_id: got %v, want %v", got["assignee_id"], testUser.ID)
 	}
 }
 
@@ -1489,23 +1544,13 @@ func TestMCP_updateIssue_unassign(t *testing.T) {
 	truncateIssues(t)
 	iss := seedIssue(t, "mcp-unassign-fp", "Unassign Issue")
 
-	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rw-unassign-tok", true)
-	if err != nil {
-		t.Fatalf("create token: %v", err)
+	// No status, no assignee_id: assigneeID stays nil and the issue is unassigned.
+	result := toolCall(t, mcpHandler(), "update_issue", map[string]any{"id": iss.ID}, authCookie())
+	if isErr, _ := result["isError"].(bool); isErr {
+		t.Fatalf("unexpected error on unassign: %s", toolText(t, result))
 	}
-
-	// No status, no assignee_id → assigneeID stays nil → unassigns (covers details["to_id"]=nil path)
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"update_issue","arguments":{"id":"` + iss.ID + `"}}}`
-	rec := bearerRequest(t, mcpHandler(), plaintext, body)
-	var resp rpcResp
-	json.NewDecoder(rec.Body).Decode(&resp)
-	isErr, _ := resp.Result["isError"].(bool)
-	if isErr {
-		t.Fatalf("unexpected error on unassign: %s", toolText(t, resp.Result))
-	}
-	text := toolText(t, resp.Result)
 	var got map[string]any
-	if err := json.Unmarshal([]byte(text), &got); err != nil {
+	if err := json.Unmarshal([]byte(toolText(t, result)), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if got["id"] != iss.ID {

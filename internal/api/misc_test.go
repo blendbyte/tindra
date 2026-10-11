@@ -255,6 +255,34 @@ func TestUploadSourcemap_success(t *testing.T) {
 	}
 }
 
+// Sourcemaps are routinely larger than the default API body cap, so the upload
+// route must keep its own, larger limit.
+func TestUploadSourcemap_largerThanAPIBodyCap(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
+	h, _ := smHandler(t)
+
+	padding := strings.Repeat("x", 2<<20)
+	mapContent := `{"version":3,"sources":["src/app.js"],"sourcesContent":["` + padding + `"],"mappings":"AAAA"}`
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("release", "v1.0.0")
+	mw.WriteField("url", "https://example.com/dist/big.js")
+	fw, _ := mw.CreateFormFile("file", "big.js.map")
+	io.Copy(fw, strings.NewReader(mapContent))
+	mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/sourcemaps", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for a 2 MB sourcemap, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUploadSourcemap_missingRelease(t *testing.T) {
 	h, _ := smHandler(t)
 

@@ -102,6 +102,7 @@ const reasonText: Record<string, string> = {
   bad_gzip: 'Tindra could not decompress the request. Check SDK and proxy compression settings.',
   envelope_too_large: 'The request exceeded the ingestion size limit. Reduce the payload size and retry.',
   bad_envelope: 'The request was not a valid Sentry envelope. Check the SDK transport configuration.',
+  read_timeout: 'The SDK took too long to send the request body. Check the network path and any proxy between the SDK and Tindra.',
   buffer_full: 'The ingestion buffer was full. Wait briefly and retry; check server load if this continues.',
   unavailable: 'This data type is unavailable on the server. Check the server configuration.',
   invalid_transaction: 'A transaction payload could not be parsed. Check the SDK version and transport.',

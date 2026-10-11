@@ -98,6 +98,17 @@ func CompleteMFALogin(ctx context.Context, pool *pgxpool.Pool, token, userID, ve
 	if !enabled || secret == nil || *secret != verifiedSecret {
 		return nil, ErrAuthenticationChanged
 	}
+	// Reset the failure counter, unless an MFA lock was taken after the
+	// caller's check: the lock still wins.
+	reset, err := tx.Exec(ctx, `
+		UPDATE users SET mfa_failed_attempts=0, mfa_locked_until=NULL
+		WHERE id=$1 AND (mfa_locked_until IS NULL OR mfa_locked_until <= NOW())`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("reset mfa failures: %w", err)
+	}
+	if reset.RowsAffected() != 1 {
+		return nil, ErrAuthenticationChanged
+	}
 	tag, err := tx.Exec(ctx, `DELETE FROM mfa_challenges WHERE token_hash=$1 AND user_id=$2 AND expires_at>NOW()`, tokenHash(token), userID)
 	if err != nil {
 		return nil, fmt.Errorf("consume mfa challenge: %w", err)

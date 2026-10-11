@@ -212,3 +212,43 @@ func TestMergeIssues_wrongProject(t *testing.T) {
 		t.Errorf("expected 404 for cross-project merge, got %d", rec.Code)
 	}
 }
+
+// Merging an issue into itself used to delete the target inside the merge and
+// fail with a 500. Duplicates are now collapsed before validation.
+func TestMergeIssues_selfMergeRejected(t *testing.T) {
+	truncateIssues(t)
+	own := seedIssueFull(t, "fp-self-merge", "Self")
+
+	body, _ := json.Marshal(map[string]any{"issue_ids": []string{own.ID, own.ID}})
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/issues/merge", bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	issuesHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for self-merge, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var exists bool
+	testPool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM issues WHERE id = $1)`, own.ID).Scan(&exists)
+	if !exists {
+		t.Error("self-merge must not delete the issue")
+	}
+}
+
+func TestMergeIssues_tooManyIDs(t *testing.T) {
+	ids := make([]string, 1001)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
+	}
+	body, _ := json.Marshal(map[string]any{"issue_ids": ids})
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/issues/merge", bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	issuesHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for over-limit merge, got %d", rec.Code)
+	}
+}

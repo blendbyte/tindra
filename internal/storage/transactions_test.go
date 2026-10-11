@@ -428,7 +428,7 @@ func TestGetTransactionByTraceID_found(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	got, err := storage.GetTransactionByTraceID(context.Background(), testPool, traceID)
+	got, err := storage.GetTransactionByTraceID(context.Background(), testPool, traceID, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestGetTransactionByTraceID_found(t *testing.T) {
 func TestGetTransactionByTraceID_notFound(t *testing.T) {
 	setupProjectForTxns(t) // clears transactions via CASCADE
 
-	got, err := storage.GetTransactionByTraceID(context.Background(), testPool, "nonexistent-trace-xyz")
+	got, err := storage.GetTransactionByTraceID(context.Background(), testPool, "nonexistent-trace-xyz", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestListTransactionSummaries_withData(t *testing.T) {
 }
 
 func TestGetErrorsForTrace_empty(t *testing.T) {
-	errs, err := storage.GetErrorsForTrace(context.Background(), testPool, "nonexistent-trace-id")
+	errs, err := storage.GetErrorsForTrace(context.Background(), testPool, "nonexistent-trace-id", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestGetErrorsForTrace_withErrors(t *testing.T) {
 		VALUES ($1, NOW(), NOW(), '{"level":"error"}'::jsonb, 'fp-trace-err', $2, $3)
 	`, p.ID, issue.ID, traceID)
 
-	errs, err := storage.GetErrorsForTrace(ctx, testPool, traceID)
+	errs, err := storage.GetErrorsForTrace(ctx, testPool, traceID, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -589,6 +589,58 @@ func TestGetErrorsForTrace_withErrors(t *testing.T) {
 	}
 	if errs[0].Title != "Trace Error" {
 		t.Errorf("title: got %q", errs[0].Title)
+	}
+}
+
+func TestTraceLookups_projectScope(t *testing.T) {
+	p := setupProjectForTxns(t)
+	ctx := context.Background()
+	other, err := storage.CreateProject(ctx, testPool, "trace-scope-other", "Trace Scope Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM projects WHERE id = $1", other.ID) })
+	traceID := "trace-scope-shared"
+
+	// The trace spans both projects: a transaction and an error in "other".
+	start := time.Now().UTC().Add(-time.Minute)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp, trace_id)
+		VALUES ($1, '/api/backend', 'http.server', 'ok', 10, $2, $2, $3)
+	`, other.ID, start, traceID); err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, other.ID, "fp-trace-scope", "Backend Error", "error", "error", "", "", time.Now())
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id, trace_id)
+		VALUES ($1, NOW(), NOW(), '{"level":"error"}'::jsonb, 'fp-trace-scope', $2, $3)
+	`, other.ID, issue.ID, traceID); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+
+	tx, err := storage.GetTransactionByTraceID(ctx, testPool, traceID, []string{p.ID})
+	if err != nil {
+		t.Fatalf("scoped transaction lookup: %v", err)
+	}
+	if tx != nil {
+		t.Errorf("scoped lookup leaked transaction %s from another project", tx.ID)
+	}
+	if tx, _ := storage.GetTransactionByTraceID(ctx, testPool, traceID, nil); tx == nil {
+		t.Error("unscoped lookup should find the transaction")
+	}
+
+	errs, err := storage.GetErrorsForTrace(ctx, testPool, traceID, []string{p.ID})
+	if err != nil {
+		t.Fatalf("scoped errors lookup: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Errorf("scoped lookup leaked %d errors from another project", len(errs))
+	}
+	if errs, _ := storage.GetErrorsForTrace(ctx, testPool, traceID, nil); len(errs) != 1 {
+		t.Errorf("unscoped lookup: expected 1 error, got %d", len(errs))
 	}
 }
 

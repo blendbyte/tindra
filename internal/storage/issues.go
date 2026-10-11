@@ -825,9 +825,12 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 	return newIssues, nil
 }
 
-func BulkUpdateIssueStatus(ctx context.Context, pool *pgxpool.Pool, ids []string, status string, opts *IgnoreOptions, projectIDs []string) (int64, error) {
+// BulkUpdateIssueStatus sets status on the given issues, limited to projectIDs
+// when non-nil. It returns the IDs that were actually updated so callers only
+// record history for issues they changed.
+func BulkUpdateIssueStatus(ctx context.Context, pool *pgxpool.Pool, ids []string, status string, opts *IgnoreOptions, projectIDs []string) ([]string, error) {
 	if !validStatuses[status] {
-		return 0, fmt.Errorf("invalid status %q", status)
+		return nil, fmt.Errorf("invalid status %q", status)
 	}
 	var ignoreUntil *time.Time
 	var ignoreCountLimit *int
@@ -835,32 +838,25 @@ func BulkUpdateIssueStatus(ctx context.Context, pool *pgxpool.Pool, ids []string
 		ignoreUntil = opts.Until
 		ignoreCountLimit = opts.CountLimit
 	}
-	var tag interface{ RowsAffected() int64 }
-	var err error
-	if len(projectIDs) > 0 {
-		tag, err = pool.Exec(ctx, `
-			UPDATE issues
-			SET status             = $1,
-			    ignore_until       = $3,
-			    ignore_count_limit = $4,
-			    ignore_count       = 0
-			WHERE id = ANY($2::uuid[])
-			  AND project_id = ANY($5::uuid[])
-		`, status, ids, ignoreUntil, ignoreCountLimit, projectIDs)
-	} else {
-		tag, err = pool.Exec(ctx, `
-			UPDATE issues
-			SET status             = $1,
-			    ignore_until       = $3,
-			    ignore_count_limit = $4,
-			    ignore_count       = 0
-			WHERE id = ANY($2::uuid[])
-		`, status, ids, ignoreUntil, ignoreCountLimit)
-	}
+	// A nil projectIDs slice is sent as NULL, which disables the scope filter.
+	rows, err := pool.Query(ctx, `
+		UPDATE issues
+		SET status             = $1,
+		    ignore_until       = $3,
+		    ignore_count_limit = $4,
+		    ignore_count       = 0
+		WHERE id = ANY($2::uuid[])
+		  AND ($5::uuid[] IS NULL OR project_id = ANY($5::uuid[]))
+		RETURNING id
+	`, status, ids, ignoreUntil, ignoreCountLimit, projectIDs)
 	if err != nil {
-		return 0, fmt.Errorf("bulk update: %w", err)
+		return nil, fmt.Errorf("bulk update: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	updated, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("bulk update: %w", err)
+	}
+	return updated, nil
 }
 
 // AutoResolvePerformanceIssues resolves all open/regressed performance issues

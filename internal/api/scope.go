@@ -1,8 +1,12 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
@@ -15,6 +19,16 @@ func bearerProjectIDs(r *http.Request, ids []string) []string {
 		return []string{projID}
 	}
 	return ids
+}
+
+// tokenScope returns the bearer token's project as a one-element list, or nil for
+// session callers. Pass it to storage lookups that would otherwise follow a
+// trace_id across project boundaries.
+func tokenScope(ctx context.Context) []string {
+	if projID, ok := ctx.Value(ctxTokenProjID).(string); ok && projID != "" {
+		return []string{projID}
+	}
+	return nil
 }
 
 // enforceTokenProject returns false and writes a 404 if the request carries a bearer
@@ -47,4 +61,38 @@ func (ro *router) enforceIssueProject(w http.ResponseWriter, r *http.Request, is
 		return false
 	}
 	return true
+}
+
+// requireUUIDParams responds 404 when a named URL parameter is not a UUID, so
+// malformed IDs never reach rate limiters or the database (where they would
+// surface as 500s).
+func requireUUIDParams(names ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, name := range names {
+				if uuid.Validate(chi.URLParam(r, name)) != nil {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// maxIssueIDsPerRequest bounds bulk issue operations so one request cannot
+// fan out into an unbounded number of queries and history rows.
+const maxIssueIDsPerRequest = 1000
+
+// uniqueStrings returns ids without duplicates, keeping first occurrences in order.
+func uniqueStrings(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := ids[:0:0]
+	for _, id := range ids {
+		if _, dup := seen[id]; !dup {
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out
 }

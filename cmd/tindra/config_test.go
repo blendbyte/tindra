@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"testing"
 )
@@ -254,5 +255,18 @@ func TestUptimePrivateIPOptIn(t *testing.T) {
 				t.Fatalf("uptime private-IP opt-in for %q: got %v", value, cfg.uptimeAllowPrivateIPs)
 			}
 		})
+	}
+}
+
+func TestNewHTTPServer_timeouts(t *testing.T) {
+	srv := newHTTPServer(http.NotFoundHandler())
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Error("ReadHeaderTimeout must be set to bound slow header delivery")
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Error("IdleTimeout must be set so idle keep-alive connections are closed")
+	}
+	if srv.ReadTimeout != 0 {
+		t.Error("ReadTimeout would cut off large sourcemap uploads; use per-route deadlines")
 	}
 }

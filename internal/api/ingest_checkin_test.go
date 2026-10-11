@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -117,4 +118,27 @@ func TestEnvelopeCheckinInvalidDeliveries(t *testing.T) {
 	rows, err = storage.ListCheckins(t.Context(), testPool, m.ID, 10)
 	require.NoError(t, err)
 	require.Empty(t, rows)
+}
+
+// A DSN may only write check-ins for monitors in its own project.
+func TestEnvelopeCheckinRejectsOtherProjectsMonitor(t *testing.T) {
+	h := newHandler(ingest.NewBuffer(1))
+	other, err := storage.CreateProject(t.Context(), testPool, "checkin-other-project", "Checkin Other")
+	require.NoError(t, err)
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID) })
+	foreign, err := storage.CreateCronMonitor(t.Context(), testPool, &storage.CronMonitor{
+		ProjectID: other.ID, Name: "foreign monitor", Schedule: "* * * * *", GracePeriodSecs: 300,
+	})
+	require.NoError(t, err)
+
+	// postEnvelope authenticates with testProject's DSN.
+	payload := fmt.Sprintf(`{"monitor_slug":%q,"status":"ok"}`, foreign.ID)
+	require.Equal(t, http.StatusOK, postEnvelope(t, h, checkinEnvelope(payload)).Code)
+
+	rows, err := storage.ListCheckins(t.Context(), testPool, foreign.ID, 10)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	m, err := storage.GetCronMonitor(t.Context(), testPool, foreign.ID)
+	require.NoError(t, err)
+	require.Nil(t, m.LastCheckinStatus)
 }

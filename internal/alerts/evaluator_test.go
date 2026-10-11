@@ -346,7 +346,7 @@ func TestLogFilterFromRule_andDetails(t *testing.T) {
 func TestFormatLogSampleLines(t *testing.T) {
 	got := formatLogSampleLines([]*storage.Log{
 		{Level: "error", Body: "stripe failed\nretry"},
-	})
+	}, escapeSlack, slackCodeSpan)
 	if !strings.Contains(got, "`error`") || !strings.Contains(got, "stripe failed retry") {
 		t.Errorf("got %q", got)
 	}

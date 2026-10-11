@@ -182,3 +182,20 @@ func AcceptInviteWithSession(ctx context.Context, pool *pgxpool.Pool, token, pas
 	}
 	return user, session, nil
 }
+
+// HasPendingInvite reports whether an unaccepted, unexpired invite exists for
+// email. A user must not take over an address someone has been invited with,
+// since that person's first SSO login would then attach to the wrong account.
+func HasPendingInvite(ctx context.Context, pool *pgxpool.Pool, email string) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_invites
+			WHERE lower(email) = lower($1) AND accepted_at IS NULL AND expires_at > NOW()
+		)
+	`, email).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("query pending invite: %w", err)
+	}
+	return exists, nil
+}

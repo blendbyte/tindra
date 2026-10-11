@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 )
 
@@ -63,7 +64,25 @@ func isBlockedIP(ip net.IP) bool {
 }
 
 func blockedDirect(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified()
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() {
+		return true
+	}
+	if addr, ok := netip.AddrFromSlice(ip); ok {
+		addr = addr.Unmap()
+		for _, p := range blockedPrefixes {
+			if p.Contains(addr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// blockedPrefixes covers internal ranges the net.IP helpers do not classify.
+var blockedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),     // "this network"; 0.x addresses can reach local services
+	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT, Tailscale, Alibaba Cloud metadata (100.100.100.200)
+	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking, used for internal networks
 }
 
 func embeddedIPv4(ip net.IP) []net.IP {

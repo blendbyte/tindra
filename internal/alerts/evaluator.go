@@ -429,10 +429,12 @@ func truncateLogBody(body string, n int) string {
 	return string(runes[:n]) + "…"
 }
 
-func formatLogSampleLines(logs []*storage.Log) string {
+// formatLogSampleLines renders log samples for chat. escText escapes the body
+// and escCode makes the level safe inside its code span.
+func formatLogSampleLines(logs []*storage.Log, escText, escCode func(string) string) string {
 	var sb strings.Builder
 	for _, l := range logs {
-		fmt.Fprintf(&sb, "`%s` %s\n", l.Level, truncateLogBody(l.Body, 120))
+		fmt.Fprintf(&sb, "`%s` %s\n", escCode(l.Level), escText(truncateLogBody(l.Body, 120)))
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
@@ -884,12 +886,12 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 	blocks := []block{
 		{
 			Type: "section",
-			Text: &textObj{Type: "mrkdwn", Text: "*" + subject + "*"},
+			Text: &textObj{Type: "mrkdwn", Text: "*" + escapeSlack(subject) + "*"},
 		},
 		{
 			Type: "section",
 			Fields: []textObj{
-				{Type: "mrkdwn", Text: "*Project:*\n" + proj},
+				{Type: "mrkdwn", Text: "*Project:*\n" + escapeSlack(proj)},
 				{Type: "mrkdwn", Text: "*Trigger:*\n" + trigLabel},
 			},
 		},
@@ -899,9 +901,9 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("• <" + e.publicURL + "/issues/" + iss.ID + "|" + iss.Title + ">\n")
+				sb.WriteString("• <" + e.publicURL + "/issues/" + iss.ID + "|" + escapeSlack(iss.Title) + ">\n")
 			} else {
-				sb.WriteString("• " + iss.Title + "\n")
+				sb.WriteString("• " + escapeSlack(iss.Title) + "\n")
 			}
 		}
 		blocks = append(blocks, block{
@@ -913,12 +915,12 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 	if len(payload.UptimeMonitors) > 0 {
 		var sb strings.Builder
 		for _, m := range payload.UptimeMonitors {
-			sb.WriteString("• *" + m.Name + "* — `" + m.URL + "`\n")
+			sb.WriteString("• *" + escapeSlack(m.Name) + "* · `" + slackCodeSpan(m.URL) + "`\n")
 			meta := "  "
 			if m.LastStatusCode != nil {
-				meta += fmt.Sprintf("expected %s, got HTTP %d", m.ExpectedCodes, *m.LastStatusCode)
+				meta += fmt.Sprintf("expected %s, got HTTP %d", escapeSlack(m.ExpectedCodes), *m.LastStatusCode)
 			} else if m.LastError != nil && *m.LastError != "" {
-				meta += *m.LastError
+				meta += escapeSlack(*m.LastError)
 			}
 			if m.LastResponseMs != nil {
 				meta += fmt.Sprintf(" · %dms", *m.LastResponseMs)
@@ -954,7 +956,7 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 	if len(payload.Logs) > 0 {
 		blocks = append(blocks, block{
 			Type: "section",
-			Text: &textObj{Type: "mrkdwn", Text: "*Logs:*\n" + formatLogSampleLines(payload.Logs)},
+			Text: &textObj{Type: "mrkdwn", Text: "*Logs:*\n" + formatLogSampleLines(payload.Logs, escapeSlack, slackCodeSpan)},
 		})
 	}
 	if payload.Trigger == "log_count" && e.publicURL != "" {
@@ -974,7 +976,7 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 		Text   string  `json:"text"`
 		Blocks []block `json:"blocks"`
 	}{
-		Text:   subject,
+		Text:   escapeSlack(subject),
 		Blocks: blocks,
 	}
 
@@ -1028,7 +1030,7 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 	}
 
 	fields := []embedField{
-		{Name: "Project", Value: proj, Inline: true},
+		{Name: "Project", Value: escapeMarkdown(proj), Inline: true},
 		{Name: "Trigger", Value: trigLabel, Inline: true},
 	}
 
@@ -1037,16 +1039,16 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("- [" + iss.Title + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
+				sb.WriteString("- [" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
 			} else {
-				sb.WriteString("- " + iss.Title + "\n")
+				sb.WriteString("- " + escapeMarkdown(iss.Title) + "\n")
 			}
 		}
 		description = strings.TrimRight(sb.String(), "\n")
 	}
 
 	if len(payload.Logs) > 0 {
-		desc := formatLogSampleLines(payload.Logs)
+		desc := formatLogSampleLines(payload.Logs, escapeMarkdown, codeSpan)
 		if description != "" {
 			description += "\n" + desc
 		} else {
@@ -1064,12 +1066,12 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 	if len(payload.UptimeMonitors) > 0 {
 		var sb strings.Builder
 		for _, m := range payload.UptimeMonitors {
-			sb.WriteString("**" + m.Name + "** — `" + m.URL + "`\n")
+			sb.WriteString("**" + escapeMarkdown(m.Name) + "** · `" + codeSpan(m.URL) + "`\n")
 			meta := ""
 			if m.LastStatusCode != nil {
-				meta += fmt.Sprintf("expected %s, got HTTP %d", m.ExpectedCodes, *m.LastStatusCode)
+				meta += fmt.Sprintf("expected %s, got HTTP %d", escapeMarkdown(m.ExpectedCodes), *m.LastStatusCode)
 			} else if m.LastError != nil && *m.LastError != "" {
-				meta += *m.LastError
+				meta += escapeMarkdown(*m.LastError)
 			}
 			if m.LastResponseMs != nil {
 				meta += fmt.Sprintf(" · %dms", *m.LastResponseMs)
@@ -1101,9 +1103,15 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 		embedColor = 5763719 // Discord green (#57F287)
 	}
 
+	type allowedMentions struct {
+		Parse []string `json:"parse"`
+	}
 	msg := struct {
-		Embeds []embed `json:"embeds"`
+		Embeds          []embed         `json:"embeds"`
+		AllowedMentions allowedMentions `json:"allowed_mentions"`
 	}{
+		// Never let alert content ping users, roles, @here or @everyone.
+		AllowedMentions: allowedMentions{Parse: []string{}},
 		Embeds: []embed{{
 			Title:       subject,
 			Color:       embedColor,
@@ -1184,9 +1192,9 @@ func (e *Evaluator) fireTeams(ctx context.Context, rule *storage.AlertRule, payl
 	}
 
 	body := cardBody{
-		textBlock{Type: "TextBlock", Text: subject, Wrap: true, Weight: "Bolder", Size: "Medium", Color: titleColor},
+		textBlock{Type: "TextBlock", Text: escapeMarkdown(subject), Wrap: true, Weight: "Bolder", Size: "Medium", Color: titleColor},
 		factSet{Type: "FactSet", Facts: []factItem{
-			{Title: "Project", Value: proj},
+			{Title: "Project", Value: escapeMarkdown(proj)},
 			{Title: "Trigger", Value: trigLabel},
 		}},
 	}
@@ -1195,16 +1203,16 @@ func (e *Evaluator) fireTeams(ctx context.Context, rule *storage.AlertRule, payl
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("- [" + iss.Title + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
+				sb.WriteString("- [" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
 			} else {
-				sb.WriteString("- " + iss.Title + "\n")
+				sb.WriteString("- " + escapeMarkdown(iss.Title) + "\n")
 			}
 		}
 		body = append(body, textBlock{Type: "TextBlock", Text: "**Issues:**\n" + strings.TrimRight(sb.String(), "\n"), Wrap: true})
 	}
 
 	if len(payload.Logs) > 0 {
-		body = append(body, textBlock{Type: "TextBlock", Text: "**Logs:**\n" + formatLogSampleLines(payload.Logs), Wrap: true})
+		body = append(body, textBlock{Type: "TextBlock", Text: "**Logs:**\n" + formatLogSampleLines(payload.Logs, escapeMarkdown, codeSpan), Wrap: true})
 	}
 	if payload.Trigger == "log_count" && e.publicURL != "" {
 		view := logsViewURL(strings.TrimRight(e.publicURL, "/"), payload)
@@ -1219,12 +1227,12 @@ func (e *Evaluator) fireTeams(ctx context.Context, rule *storage.AlertRule, payl
 		var sb strings.Builder
 		sb.WriteString(label + "\n\n")
 		for _, m := range payload.UptimeMonitors {
-			sb.WriteString("**" + m.Name + "** — " + m.URL + "\n")
+			sb.WriteString("**" + escapeMarkdown(m.Name) + "** · " + escapeMarkdown(m.URL) + "\n")
 			meta := ""
 			if m.LastStatusCode != nil {
-				meta += fmt.Sprintf("expected %s, got HTTP %d", m.ExpectedCodes, *m.LastStatusCode)
+				meta += fmt.Sprintf("expected %s, got HTTP %d", escapeMarkdown(m.ExpectedCodes), *m.LastStatusCode)
 			} else if m.LastError != nil && *m.LastError != "" {
-				meta += *m.LastError
+				meta += escapeMarkdown(*m.LastError)
 			}
 			if m.LastResponseMs != nil {
 				meta += fmt.Sprintf(" · %dms", *m.LastResponseMs)

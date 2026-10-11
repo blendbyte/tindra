@@ -399,6 +399,43 @@ func TestListLogs_resolvesTransactionID(t *testing.T) {
 	}
 }
 
+// TestListLogs_traceProjectScope verifies TraceProjectIDs stops a scoped caller
+// from learning a transaction ID in another project through a shared trace,
+// while unscoped callers still get the cross-project link.
+func TestListLogs_traceProjectScope(t *testing.T) {
+	p := setupProjectForLogs(t)
+	ctx := context.Background()
+	other, err := storage.CreateProject(ctx, testPool, "logs-trace-scope-other", "Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM projects WHERE id = $1", other.ID) })
+	now := time.Now().UTC()
+
+	otherTx := seedTxForTrace(t, other.ID, "trace-scope-logs", now)
+	seedTracedLog(t, p.ID, "frontend log", "trace-scope-logs", now)
+
+	scoped, _, err := storage.ListLogs(ctx, testPool, storage.LogFilter{
+		ProjectIDs:      []string{p.ID},
+		TraceProjectIDs: []string{p.ID},
+		Limit:           50,
+	})
+	if err != nil {
+		t.Fatalf("scoped list: %v", err)
+	}
+	if len(scoped) != 1 || scoped[0].TransactionID != nil {
+		t.Fatalf("scoped list should return the log without a cross-project link, got %+v", scoped)
+	}
+
+	unscoped, _, err := storage.ListLogs(ctx, testPool, storage.LogFilter{ProjectIDs: []string{p.ID}, Limit: 50})
+	if err != nil {
+		t.Fatalf("unscoped list: %v", err)
+	}
+	if len(unscoped) != 1 || unscoped[0].TransactionID == nil || *unscoped[0].TransactionID != otherTx {
+		t.Fatalf("unscoped list should link to %s, got %+v", otherTx, unscoped)
+	}
+}
+
 // TestListLogs_transactionIDNilWithoutTrace verifies logs without a trace_id, and
 // traced logs whose transaction was never ingested, both come back unlinked
 // rather than joining to an arbitrary row.

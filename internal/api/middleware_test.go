@@ -253,6 +253,43 @@ func TestCORS_preflightOptions(t *testing.T) {
 	}
 }
 
+func TestIsEnvelopePath(t *testing.T) {
+	cases := map[string]bool{
+		"/api/123/envelope/":          true,
+		"/api/abc-uuid/envelope/":     true,
+		"/api//envelope/":             false,
+		"/api/123/envelope":           false,
+		"/api/a/b/envelope/":          false,
+		"/api/projects/x/envelope/x/": false,
+		"/envelope/":                  false,
+	}
+	for path, want := range cases {
+		if got := isEnvelopePath(path); got != want {
+			t.Errorf("isEnvelopePath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+func TestIsSourcemapUpload(t *testing.T) {
+	cases := []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodPost, "/api/projects/web/sourcemaps", true},
+		{http.MethodGet, "/api/projects/web/sourcemaps", false},
+		{http.MethodPost, "/api/projects//sourcemaps", false},
+		{http.MethodPost, "/api/projects/web/sourcemaps/123", false},
+		{http.MethodPost, "/api/projects/a/b/sourcemaps", false},
+		{http.MethodPost, "/api/issues/sourcemaps", false},
+	}
+	for _, tc := range cases {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		if got := isSourcemapUpload(r); got != tc.want {
+			t.Errorf("isSourcemapUpload(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestRealIPFromTrustedProxyTrustBoundary(t *testing.T) {
 	trusted := []*net.IPNet{mustParseCIDR("10.0.0.0/8"), mustParseCIDR("fd00::/8")}
 	for _, tc := range []struct {

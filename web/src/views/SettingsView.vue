@@ -488,14 +488,30 @@ watch([tab, me], () => {
   if (tab.value === 'profile' && me.value) initProfile()
 }, { immediate: true })
 
+// Changing the email needs the current password, or a 2FA code for SSO-only accounts.
+const profileCurrentPassword = ref('')
+const profileMfaCode = ref('')
+const emailChanged = computed(() =>
+  !!me.value && profileEmail.value.trim().toLowerCase() !== me.value.email.toLowerCase(),
+)
+
 const { mutate: updateProfile } = useMutation({
   mutationFn: ({ name, email, weekly_digest, timezone }: { name: string; email: string; weekly_digest: boolean; timezone: string }) =>
-    apiFetch<User>('/api/me', { method: 'PATCH', body: JSON.stringify({ name, email, weekly_digest, timezone }) }),
+    apiFetch<User>('/api/me', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name, email, weekly_digest, timezone,
+        ...(emailChanged.value ? { current_password: profileCurrentPassword.value, mfa_code: profileMfaCode.value } : {}),
+      }),
+    }),
   onSuccess: (updated) => {
     auth.setUser(updated)
     qc.invalidateQueries({ queryKey: ['me'] })
+    profileCurrentPassword.value = ''
+    profileMfaCode.value = ''
     showToast('Profile saved')
   },
+  onError: (err) => showToast(err instanceof Error ? err.message : 'Failed to save profile.', 'error'),
 })
 
 // Password change
@@ -2743,6 +2759,17 @@ function actionKindOf(action: string) {
                 <label class="field__label">Email</label>
                 <input v-model="profileEmail" class="field__input" type="email" :placeholder="me?.email ?? 'you@example.com'" />
               </div>
+              <div v-if="emailChanged && me?.has_password" class="field" style="grid-column: 1 / -1">
+                <label class="field__label" for="profile-current-password">Current password</label>
+                <input id="profile-current-password" v-model="profileCurrentPassword" class="field__input" type="password" autocomplete="current-password" placeholder="Confirm it's you to change your email" />
+              </div>
+              <div v-else-if="emailChanged && me?.mfa_enabled" class="field" style="grid-column: 1 / -1">
+                <label class="field__label" for="profile-mfa-code">Two-factor code</label>
+                <input id="profile-mfa-code" v-model="profileMfaCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Confirm it's you to change your email" />
+              </div>
+              <p v-else-if="emailChanged" class="field__hint" style="grid-column: 1 / -1">
+                Your account has no password or two-factor code to confirm this change. Ask an admin to update your email.
+              </p>
               <div class="field" style="grid-column: 1 / -1">
                 <label class="field__label">Timezone</label>
                 <select v-model="profileTimezone" class="field__input">

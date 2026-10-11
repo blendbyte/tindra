@@ -5,8 +5,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
@@ -94,11 +97,23 @@ func slogRequestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(ww, r)
 		slog.Debug("http",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"route", routePattern(r),
 			"status", ww.status,
 			"ms", time.Since(start).Milliseconds(),
 		)
 	})
+}
+
+// routePattern returns the matched chi route (e.g. /api/auth/invite/{token})
+// rather than the raw path, which can carry invite and reset tokens or the
+// monitor UUIDs that authenticate cron pings.
+func routePattern(r *http.Request) string {
+	if rc := chi.RouteContext(r.Context()); rc != nil {
+		if pattern := rc.RoutePattern(); pattern != "" {
+			return pattern
+		}
+	}
+	return "unmatched"
 }
 
 type statusRecorder struct {
@@ -117,13 +132,15 @@ func (sr *statusRecorder) WriteHeader(code int) {
 func corsMiddleware(origin string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if origin == "" {
+			// Envelope ingestion has its own wildcard CORS policy for browser SDKs
+			// on customer sites; the dashboard origin must not replace it.
+			if origin == "" || isEnvelopePath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
 			h := w.Header()
 			h.Set("Access-Control-Allow-Origin", origin)
-			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			h.Set("Access-Control-Allow-Credentials", "true")
 			h.Set("Access-Control-Max-Age", "300")
@@ -135,6 +152,71 @@ func corsMiddleware(origin string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// crossOriginProtection rejects state-changing browser requests that come from
+// another origin (CSRF). SameSite=Strict cookies already stop cross-site
+// requests; this also covers sibling subdomains and login CSRF, where no
+// session cookie is involved yet. Non-browser clients (no Sec-Fetch-Site or
+// Origin header) are unaffected.
+func crossOriginProtection(trustedOrigins ...string) func(http.Handler) http.Handler {
+	cop := http.NewCrossOriginProtection()
+	// Browser SDKs on customer sites post envelopes cross-origin by design.
+	cop.AddInsecureBypassPattern("POST /api/{projectID}/envelope/")
+	for _, raw := range trustedOrigins {
+		if origin := originOf(raw); origin != "" {
+			if err := cop.AddTrustedOrigin(origin); err != nil {
+				slog.Warn("ignoring invalid trusted origin", "origin", raw, "err", err)
+			}
+		}
+	}
+	return cop.Handler
+}
+
+// originOf reduces a configured URL such as PUBLIC_URL to scheme://host[:port].
+func originOf(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// maxAPIBodyBytes caps JSON request bodies on the dashboard and REST API.
+const maxAPIBodyBytes = 1 << 20
+
+// limitAPIBody caps request bodies for every route by default. Envelope
+// ingestion and sourcemap uploads enforce their own, larger limits.
+func limitAPIBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isEnvelopePath(r.URL.Path) && !isSourcemapUpload(r) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxAPIBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isSourcemapUpload matches POST /api/projects/{projectSlug}/sourcemaps.
+func isSourcemapUpload(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/api/projects/")
+	if !ok {
+		return false
+	}
+	slug, ok := strings.CutSuffix(rest, "/sourcemaps")
+	return ok && slug != "" && !strings.Contains(slug, "/")
+}
+
+// isEnvelopePath matches the Sentry ingestion route /api/{projectID}/envelope/.
+func isEnvelopePath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/")
+	if !ok {
+		return false
+	}
+	projectID, ok := strings.CutSuffix(rest, "/envelope/")
+	return ok && projectID != "" && !strings.Contains(projectID, "/")
 }
 
 type ctxKey int

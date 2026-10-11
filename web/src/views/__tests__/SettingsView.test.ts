@@ -771,6 +771,79 @@ describe('SettingsView', () => {
     })
   })
 
+  describe('profile tab - email change confirmation', () => {
+    // Record each useMutation's options next to its mutate spy, so a test can
+    // find the mutation a click triggered and run its mutationFn.
+    function recordMutations() {
+      const recorded: { opts: any; mutate: ReturnType<typeof vi.fn> }[] = []
+      vi.mocked(useMutation).mockImplementation(((opts: any) => {
+        const mutate = vi.fn()
+        recorded.push({ opts, mutate })
+        return { mutate, isPending: ref(false) }
+      }) as any)
+      return recorded
+    }
+
+    async function changeEmail(wrapper: ReturnType<typeof mount>, email: string) {
+      await wrapper.find('input[type="email"]').setValue(email)
+    }
+
+    it('asks for the current password and sends it when the email changes', async () => {
+      currentTab = 'profile'
+      const recorded = recordMutations()
+      setupMocks({ ...adminUser, has_password: true })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+
+      expect(wrapper.find('#profile-current-password').exists()).toBe(false)
+      await changeEmail(wrapper, 'new@example.com')
+      const pw = wrapper.find('#profile-current-password')
+      expect(pw.exists()).toBe(true)
+      await pw.setValue('my-current-password')
+
+      await wrapper.findAll('.btn--primary').find(b => b.text().includes('Save changes'))!.trigger('click')
+      const profile = recorded.find(r => r.mutate.mock.calls.length > 0)!
+      const { apiFetch } = await import('@/api/client')
+      vi.mocked(apiFetch).mockClear()
+      await profile.opts.mutationFn(profile.mutate.mock.calls[0][0])
+      const [url, init] = vi.mocked(apiFetch).mock.calls[0] as [string, RequestInit]
+      expect(url).toBe('/api/me')
+      expect(JSON.parse(init.body as string)).toMatchObject({ email: 'new@example.com', current_password: 'my-current-password' })
+    })
+
+    it('does not send confirmation fields when the email is unchanged', async () => {
+      currentTab = 'profile'
+      const recorded = recordMutations()
+      setupMocks({ ...adminUser, has_password: true })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+
+      await wrapper.findAll('.btn--primary').find(b => b.text().includes('Save changes'))!.trigger('click')
+      const profile = recorded.find(r => r.mutate.mock.calls.length > 0)!
+      const { apiFetch } = await import('@/api/client')
+      vi.mocked(apiFetch).mockClear()
+      await profile.opts.mutationFn(profile.mutate.mock.calls[0][0])
+      const body = JSON.parse((vi.mocked(apiFetch).mock.calls[0][1] as RequestInit).body as string)
+      expect(body).not.toHaveProperty('current_password')
+      expect(body).not.toHaveProperty('mfa_code')
+    })
+
+    it('asks SSO-only users with 2FA for a code', async () => {
+      currentTab = 'profile'
+      setupMocks({ ...adminUser, has_password: false, mfa_enabled: true })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await changeEmail(wrapper, 'new@example.com')
+      expect(wrapper.find('#profile-mfa-code').exists()).toBe(true)
+      expect(wrapper.find('#profile-current-password').exists()).toBe(false)
+    })
+
+    it('tells SSO-only users without 2FA to ask an admin', async () => {
+      currentTab = 'profile'
+      setupMocks({ ...adminUser, has_password: false, mfa_enabled: false })
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      await changeEmail(wrapper, 'new@example.com')
+      expect(wrapper.text()).toContain('Ask an admin to update your email')
+    })
+  })
+
   describe('overview tab with health data', () => {
     const healthData = {
       events_total: 1_500_000,

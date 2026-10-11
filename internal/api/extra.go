@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/pquerna/otp/totp"
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
@@ -44,13 +46,30 @@ func (ro *router) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		Email        string `json:"email"`
 		WeeklyDigest *bool  `json:"weekly_digest"`
 		Timezone     string `json:"timezone"`
+		// Required only when the email changes; see confirmEmailChange.
+		CurrentPassword string `json:"current_password"`
+		MFACode         string `json:"mfa_code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" {
 		http.Error(w, "email is required", http.StatusBadRequest)
+		return
+	}
+	current, err := storage.GetUserByID(r.Context(), ro.pool, *actorID)
+	if err != nil {
+		slog.Error("update me: get user", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if current == nil {
+		http.Error(w, "session required", http.StatusUnauthorized)
+		return
+	}
+	if req.Email != current.Email && !ro.confirmEmailChange(w, r, current, req.Email, req.CurrentPassword, req.MFACode) {
 		return
 	}
 	tz := req.Timezone
@@ -62,10 +81,23 @@ func (ro *router) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := storage.UpdateUserProfile(r.Context(), ro.pool, *actorID, req.Name, req.Email, tz)
+	if errors.Is(err, storage.ErrEmailTaken) {
+		http.Error(w, "that email address is already in use", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		slog.Error("update me", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	if req.Email != current.Email {
+		storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+			EventType: "user.email_changed",
+			ActorID:   actorID,
+			TargetID:  actorID,
+			IP:        r.RemoteAddr,
+			Details:   map[string]any{"from": current.Email, "to": req.Email},
+		})
 	}
 	if req.WeeklyDigest != nil {
 		if err := storage.UpdateUserWeeklyDigest(r.Context(), ro.pool, *actorID, *req.WeeklyDigest); err != nil {
@@ -76,6 +108,65 @@ func (ro *router) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		u.WeeklyDigest = *req.WeeklyDigest
 	}
 	writeJSON(w, u)
+}
+
+// confirmEmailChange re-authenticates the user before their email changes, so a
+// hijacked session cannot redirect password resets to an attacker's address.
+// Users with a password confirm with it; SSO-only users confirm with a current
+// two-factor code; users with neither must ask an admin. It writes the error
+// response and returns false when the change must not proceed.
+func (ro *router) confirmEmailChange(w http.ResponseWriter, r *http.Request, user *storage.User, newEmail, password, mfaCode string) bool {
+	if !user.HasPassword && !user.MFAEnabled {
+		http.Error(w, "your account has no password or two-factor code to confirm this change; ask an admin to update your email", http.StatusForbidden)
+		return false
+	}
+	if user.HasPassword && password == "" {
+		http.Error(w, "enter your current password to change your email", http.StatusBadRequest)
+		return false
+	}
+	if !user.HasPassword && mfaCode == "" {
+		http.Error(w, "enter a two-factor code to change your email", http.StatusBadRequest)
+		return false
+	}
+	if ro.reauthRL != nil && !ro.reauthRL.allow(user.ID) {
+		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
+		return false
+	}
+
+	var confirmed bool
+	if user.HasPassword {
+		ok, err := storage.VerifyUserPassword(r.Context(), ro.pool, user.ID, password)
+		if err != nil {
+			slog.Error("verify password for email change", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return false
+		}
+		confirmed = ok
+	} else {
+		secret, err := storage.GetMFASecret(r.Context(), ro.pool, user.ID)
+		if err != nil {
+			slog.Error("get mfa secret for email change", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return false
+		}
+		confirmed = secret != nil && totp.Validate(mfaCode, *secret)
+	}
+	if !confirmed {
+		http.Error(w, "the confirmation you entered is incorrect", http.StatusForbidden)
+		return false
+	}
+
+	pending, err := storage.HasPendingInvite(r.Context(), ro.pool, newEmail)
+	if err != nil {
+		slog.Error("check pending invite for email change", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if pending {
+		http.Error(w, "that email address has a pending invite", http.StatusConflict)
+		return false
+	}
+	return true
 }
 
 // handleUpdateUserPermissions replaces the named permission set for a user.

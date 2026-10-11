@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -210,8 +211,19 @@ func (ro *router) handleMergeIssues(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IssueIDs []string `json:"issue_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IssueIDs) < 2 {
-		http.Error(w, "issue_ids must contain at least 2 IDs", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// The first ID is the merge target; duplicates (including the target
+	// repeated) would delete the target itself inside the merge.
+	req.IssueIDs = uniqueStrings(req.IssueIDs)
+	if len(req.IssueIDs) < 2 {
+		http.Error(w, "issue_ids must contain at least 2 distinct IDs", http.StatusBadRequest)
+		return
+	}
+	if len(req.IssueIDs) > maxIssueIDsPerRequest {
+		http.Error(w, fmt.Sprintf("at most %d issue_ids per request", maxIssueIDsPerRequest), http.StatusBadRequest)
 		return
 	}
 

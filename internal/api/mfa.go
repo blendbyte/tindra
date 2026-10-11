@@ -247,6 +247,19 @@ func (ro *router) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check the lock before the code, so a correct guess during a lock is
+	// indistinguishable from a wrong one.
+	locked, err := storage.MFALocked(r.Context(), ro.pool, userID)
+	if err != nil {
+		slog.Error("check mfa lock", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if locked {
+		http.Error(w, "too many failed attempts, sign in again later", http.StatusTooManyRequests)
+		return
+	}
+
 	secret, err := storage.GetMFASecret(r.Context(), ro.pool, userID)
 	if err != nil {
 		slog.Error("get mfa secret", "err", err)
@@ -254,6 +267,9 @@ func (ro *router) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if secret == nil || !totp.Validate(req.Code, *secret) {
+		if err := storage.RecordMFAFailure(r.Context(), ro.pool, req.MFAToken, userID); err != nil {
+			slog.Error("record mfa failure", "err", err)
+		}
 		http.Error(w, "invalid code", http.StatusUnauthorized)
 		return
 	}

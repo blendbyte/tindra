@@ -462,12 +462,12 @@ func TestBulkUpdateIssueStatus_basic(t *testing.T) {
 	iss1 := seedIssueWithEvent(t, project.ID, "bulk-fp-1", "Bulk One")
 	iss2 := seedIssueWithEvent(t, project.ID, "bulk-fp-2", "Bulk Two")
 
-	n, err := storage.BulkUpdateIssueStatus(ctx, testPool, []string{iss1.ID, iss2.ID}, "resolved", nil, nil)
+	updated, err := storage.BulkUpdateIssueStatus(ctx, testPool, []string{iss1.ID, iss2.ID}, "resolved", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if n != 2 {
-		t.Errorf("expected 2 rows updated, got %d", n)
+	if len(updated) != 2 {
+		t.Errorf("expected 2 rows updated, got %d", len(updated))
 	}
 
 	// Verify status in DB.
@@ -489,12 +489,12 @@ func TestBulkUpdateIssueStatus_projectIDsFilter(t *testing.T) {
 	iss2 := seedIssueWithEvent(t, p2.ID, "bulk-scope-fp-2", "P2 Issue")
 
 	// Update both IDs, but restrict to p1 only.
-	n, err := storage.BulkUpdateIssueStatus(ctx, testPool, []string{iss1.ID, iss2.ID}, "resolved", nil, []string{p1.ID})
+	updated, err := storage.BulkUpdateIssueStatus(ctx, testPool, []string{iss1.ID, iss2.ID}, "resolved", nil, []string{p1.ID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("expected 1 row updated (p1 only), got %d", n)
+	if len(updated) != 1 || updated[0] != iss1.ID {
+		t.Errorf("expected only p1 issue %s updated, got %v", iss1.ID, updated)
 	}
 
 	var s1, s2 string

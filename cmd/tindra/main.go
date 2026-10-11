@@ -468,10 +468,7 @@ func serveCmd(cfg config) *cobra.Command {
 				}
 			}()
 
-			srv := &http.Server{
-				Handler:           handler,
-				ReadHeaderTimeout: 10 * time.Second,
-			}
+			srv := newHTTPServer(handler)
 
 			ln, err := listen(cfg.bindAddr, cfg.socketMode)
 			if err != nil {
@@ -561,4 +558,16 @@ func sendDigestCmd(cfg config) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "send to all opted-in users, ignoring the 7-day cooldown")
 	return cmd
+}
+
+// newHTTPServer applies connection-level timeouts. There is deliberately no
+// server-wide ReadTimeout: sourcemap uploads can be large, so body read
+// deadlines are set per route (envelopes, auth and cron bodies) instead.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		// Close idle keep-alive connections so they cannot pile up.
+		IdleTimeout: 120 * time.Second,
+	}
 }

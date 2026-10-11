@@ -174,3 +174,36 @@ func TestRateLimiter_pruningDoesNotPanic(t *testing.T) {
 		rl.allow("prune-trigger")
 	})
 }
+
+func TestRateLimiter_maxKeysFailsOpenForUntrackedKeys(t *testing.T) {
+	rl := newRateLimiter(1, time.Minute)
+	rl.maxKeys = 2
+	if !rl.allow("a") || !rl.allow("b") {
+		t.Fatal("first calls for tracked keys must be allowed")
+	}
+	if rl.allow("a") {
+		t.Error("tracked key over its limit must still be limited")
+	}
+	// The map is full: a new key is allowed but not remembered.
+	for range 3 {
+		if !rl.allow("c") {
+			t.Error("untracked key should fail open when the limiter is full")
+		}
+	}
+	if len(rl.entries) != 2 {
+		t.Errorf("limiter tracked %d keys, want at most 2", len(rl.entries))
+	}
+}
+
+func TestRateLimiter_maxKeysReclaimsExpiredEntries(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rl := newRateLimiter(1, time.Minute)
+		rl.maxKeys = 1
+		rl.allow("old")
+		time.Sleep(2 * time.Minute)
+		rl.allow("new")
+		if rl.allow("new") {
+			t.Error("new key should be tracked (and limited) once the expired entry is pruned")
+		}
+	})
+}

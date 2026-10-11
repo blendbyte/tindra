@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -246,5 +247,21 @@ func TestParse_truncatedFixedPayload(t *testing.T) {
 	_, _, err := ingest.Parse(strings.NewReader("{}\n{\"length\":2}\na"))
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("expected unexpected EOF, got %v", err)
+	}
+}
+
+// A client-declared item length must not be allocated before the bytes arrive.
+func TestParse_declaredLengthDoesNotPreallocate(t *testing.T) {
+	body := `{}` + "\n" + `{"type":"event","length":20000000}` + "\n" + `{"short":true}`
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, _, err := ingest.Parse(strings.NewReader(body))
+	runtime.ReadMemStats(&after)
+	if err == nil || !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("expected unexpected EOF for truncated item, got %v", err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 4<<20 {
+		t.Errorf("parsing a truncated item allocated %d bytes; the declared length must not be preallocated", allocated)
 	}
 }

@@ -2361,3 +2361,20 @@ func TestGetStats_responseFields(t *testing.T) {
 		}
 	}
 }
+
+func TestBulkUpdateIssues_tooManyIDs(t *testing.T) {
+	ids := make([]string, 1001)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
+	}
+	body, _ := json.Marshal(map[string]any{"ids": ids, "status": "resolved"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/issues/bulk", bytes.NewBuffer(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for over-limit bulk update, got %d", rec.Code)
+	}
+}

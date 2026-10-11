@@ -737,6 +737,10 @@ func (ro *router) mcpListAlerts(ctx context.Context, args map[string]any) (strin
 	if rules == nil {
 		rules = []*storage.AlertRule{}
 	}
+	// Webhook URLs are credentials; never hand them to an LLM context.
+	for _, rule := range rules {
+		redactRuleWebhook(rule)
+	}
 	b, _ := json.MarshalIndent(rules, "", "  ")
 	return string(b), nil
 }
@@ -754,9 +758,15 @@ func ruleMatchesProjects(rule *storage.AlertRule, projectIDs []string) bool {
 // --- Write permission check ---
 
 // mcpCheckWrite verifies that the caller is allowed to perform a write operation.
-// Bearer tokens must have writable=true. Session users must hold the named permission.
-func mcpCheckWrite(ctx context.Context, perm string) error {
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
+// It mirrors the REST rules: bearer tokens carry no user permissions, so they may
+// only perform the project-scoped writes REST allows them (tokenAllowed), and only
+// when writable and scoped to a project. Session users must hold the named permission.
+func mcpCheckWrite(ctx context.Context, perm string, tokenAllowed bool) error {
+	if tokenProjID, isToken := ctx.Value(ctxTokenProjID).(string); isToken {
+		// Unscoped tokens are read-only over REST too.
+		if !tokenAllowed || tokenProjID == "" {
+			return mcpToolError{"API tokens cannot perform this operation; sign in with a user that has " + perm}
+		}
 		if writable, _ := ctx.Value(ctxTokenWritable).(bool); !writable {
 			return mcpToolError{"this token is read-only; create a writable token to use write operations"}
 		}
@@ -890,6 +900,8 @@ func (ro *router) mcpGetLogs(ctx context.Context, args map[string]any) (string, 
 		Environment: mcpArgString(args, "environment"),
 		TraceID:     mcpArgString(args, "trace_id"),
 		Limit:       limit,
+		// Tokens must not learn transaction IDs from other projects via trace links.
+		TraceProjectIDs: tokenScope(ctx),
 	}
 	logs, _, err := storage.ListLogs(ctx, ro.pool, filter)
 	if err != nil {
@@ -905,7 +917,10 @@ func (ro *router) mcpGetLogs(ctx context.Context, args map[string]any) (string, 
 // --- Phase 2: write tools ---
 
 func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (string, error) {
-	if err := mcpCheckWrite(ctx, "manage_issues"); err != nil {
+	// Tokens may change status (like the project-scoped REST PATCH) but not the
+	// assignee, which REST only allows for sessions.
+	status := mcpArgString(args, "status")
+	if err := mcpCheckWrite(ctx, "manage_issues", status != ""); err != nil {
 		return "", err
 	}
 	id := mcpArgString(args, "id")
@@ -925,7 +940,6 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 		}
 	}
 
-	status := mcpArgString(args, "status")
 	actor := actorFromContext(ctx)
 	var updated *storage.Issue
 	if status != "" {
@@ -991,7 +1005,7 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 }
 
 func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) (string, error) {
-	if err := mcpCheckWrite(ctx, "manage_issues"); err != nil {
+	if err := mcpCheckWrite(ctx, "manage_issues", true); err != nil {
 		return "", err
 	}
 	rawIDs, ok := args["ids"].([]any)
@@ -1007,6 +1021,9 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 	if len(ids) == 0 {
 		return "", mcpToolError{"ids must be a non-empty array of strings"}
 	}
+	if len(ids) > maxIssueIDsPerRequest {
+		return "", mcpToolError{fmt.Sprintf("at most %d ids per call", maxIssueIDsPerRequest)}
+	}
 	status := mcpArgString(args, "status")
 	if status == "" {
 		return "", mcpToolError{"status is required"}
@@ -1018,7 +1035,7 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 		projectIDs = []string{tokenProjID}
 	}
 
-	n, err := storage.BulkUpdateIssueStatus(ctx, ro.pool, ids, status, nil, projectIDs)
+	updated, err := storage.BulkUpdateIssueStatus(ctx, ro.pool, ids, status, nil, projectIDs)
 	if err != nil {
 		return "", fmt.Errorf("bulk update: %w", err)
 	}
@@ -1026,10 +1043,10 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 		EventType: "issue.bulk_status_changed",
 		ActorID:   actor,
-		Details:   map[string]any{"status": status, "count": n},
+		Details:   map[string]any{"status": status, "count": len(updated)},
 	})
 	now := time.Now().UTC()
-	for _, issueID := range ids {
+	for _, issueID := range updated {
 		if err := storage.InsertIssueHistory(ctx, ro.pool, storage.IssueHistoryEntry{
 			IssueID:   issueID,
 			ActorID:   actor,
@@ -1040,12 +1057,12 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 			slog.Error("insert bulk issue history (mcp)", "err", err, "issue_id", issueID)
 		}
 	}
-	b, _ := json.MarshalIndent(map[string]any{"updated": n}, "", "  ")
+	b, _ := json.MarshalIndent(map[string]any{"updated": len(updated)}, "", "  ")
 	return string(b), nil
 }
 
 func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (string, error) {
-	if err := mcpCheckWrite(ctx, "manage_alerts"); err != nil {
+	if err := mcpCheckWrite(ctx, "manage_alerts", false); err != nil {
 		return "", err
 	}
 

@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -154,9 +156,45 @@ func (ro *router) handleListAlertRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !canManageAlerts(r.Context()) {
+		for _, rule := range rules {
+			redactRuleWebhook(rule)
+		}
+	}
+
 	writeJSON(w, struct {
 		Rules []*storage.AlertRule `json:"rules"`
 	}{Rules: rules})
+}
+
+// canManageAlerts reports whether the caller is a session user with
+// manage_alerts. Bearer tokens carry no user permissions.
+func canManageAlerts(ctx context.Context) bool {
+	if _, isToken := ctx.Value(ctxTokenProjID).(string); isToken {
+		return false
+	}
+	p := permsFromContext(ctx)
+	return p != nil && p.ManageAlerts
+}
+
+// redactWebhookURL keeps enough of a webhook URL to recognise it (scheme, host
+// and the last four characters) while hiding the path and query, which for
+// Slack, Discord and Teams incoming webhooks are the credential itself.
+func redactWebhookURL(raw string) string {
+	tail := raw[max(len(raw)-4, 0):]
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "…" + tail
+	}
+	return u.Scheme + "://" + u.Host + "/…" + tail
+}
+
+// redactRuleWebhook replaces the rule's webhook URL with its redacted form.
+func redactRuleWebhook(rule *storage.AlertRule) {
+	if rule.WebhookURL != nil && *rule.WebhookURL != "" {
+		redacted := redactWebhookURL(*rule.WebhookURL)
+		rule.WebhookURL = &redacted
+	}
 }
 
 func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
@@ -171,14 +209,27 @@ func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		if !slices.Contains(rule.ProjectIDs, tokenProjID) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
+	if !enforceTokenRule(w, r, rule) {
+		return
+	}
+	if !canManageAlerts(r.Context()) {
+		redactRuleWebhook(rule)
 	}
 
 	writeJSON(w, rule)
+}
+
+// enforceTokenRule writes a 404 and returns false when a project-scoped token
+// asks for a rule that is not scoped to its project. Global rules span every
+// project, so they are hidden from tokens as well.
+func enforceTokenRule(w http.ResponseWriter, r *http.Request, rule *storage.AlertRule) bool {
+	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
+		if !slices.Contains(rule.ProjectIDs, tokenProjID) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return false
+		}
+	}
+	return true
 }
 
 func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +350,8 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 	if patch.Channel != nil {
 		existing.Channel = *patch.Channel
 	}
-	if patch.WebhookURL != nil {
+	// A client that echoes back the redacted URL it was shown keeps the stored one.
+	if patch.WebhookURL != nil && (existing.WebhookURL == nil || *patch.WebhookURL != redactWebhookURL(*existing.WebhookURL)) {
 		existing.WebhookURL = patch.WebhookURL
 	}
 	if patch.EmailTo != nil {
@@ -390,6 +442,9 @@ func (ro *router) handleListAlertFirings(w http.ResponseWriter, r *http.Request)
 	}
 	if rule == nil {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !enforceTokenRule(w, r, rule) {
 		return
 	}
 

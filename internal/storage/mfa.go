@@ -96,6 +96,71 @@ func GetMFAChallenge(ctx context.Context, pool *pgxpool.Pool, token string) (str
 	return userID, nil
 }
 
+// MFA login attempt limits. A challenge is discarded after
+// MFAChallengeMaxFailures wrong codes, and MFAUserMaxFailures wrong codes across
+// any challenges lock MFA verification for the user for MFALockDuration.
+const (
+	MFAChallengeMaxFailures = 5
+	MFAUserMaxFailures      = 10
+	MFALockDuration         = 15 * time.Minute
+)
+
+// MFALocked reports whether MFA verification is currently locked for the user.
+func MFALocked(ctx context.Context, pool *pgxpool.Pool, userID string) (bool, error) {
+	var locked bool
+	err := pool.QueryRow(ctx, `
+		SELECT COALESCE(mfa_locked_until > NOW(), FALSE) FROM users WHERE id = $1
+	`, userID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query mfa lock: %w", err)
+	}
+	return locked, nil
+}
+
+// RecordMFAFailure counts a wrong code against the challenge and the user. It
+// discards the challenge once it reaches MFAChallengeMaxFailures. When the user
+// reaches MFAUserMaxFailures it locks verification and discards all of the
+// user's challenges, so continuing requires a fresh password or SSO login.
+func RecordMFAFailure(ctx context.Context, pool *pgxpool.Pool, token, userID string) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM mfa_challenges WHERE token_hash = $1 AND failed_attempts + 1 >= $2
+	`, tokenHash(token), MFAChallengeMaxFailures); err != nil {
+		return fmt.Errorf("discard challenge: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE mfa_challenges SET failed_attempts = failed_attempts + 1 WHERE token_hash = $1
+	`, tokenHash(token)); err != nil {
+		return fmt.Errorf("count challenge failure: %w", err)
+	}
+
+	var locked bool
+	err = tx.QueryRow(ctx, `
+		UPDATE users SET
+			mfa_failed_attempts = CASE WHEN mfa_failed_attempts + 1 >= $2 THEN 0 ELSE mfa_failed_attempts + 1 END,
+			mfa_locked_until    = CASE WHEN mfa_failed_attempts + 1 >= $2 THEN NOW() + $3::interval ELSE mfa_locked_until END
+		WHERE id = $1
+		RETURNING COALESCE(mfa_locked_until > NOW(), FALSE)
+	`, userID, MFAUserMaxFailures, MFALockDuration).Scan(&locked)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("count user failure: %w", err)
+	}
+	if locked {
+		if _, err := tx.Exec(ctx, `DELETE FROM mfa_challenges WHERE user_id = $1`, userID); err != nil {
+			return fmt.Errorf("discard user challenges: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // ConsumeMFAChallenge deletes a valid challenge and returns the user ID.
 // Only call this after the TOTP code has been verified successfully.
 // Returns ("", nil) if the token is not found or expired.

@@ -37,6 +37,9 @@ type LogFilter struct {
 	Search       string
 	TraceID      string
 	UserIdentity string
+	// TraceProjectIDs, when non-nil, limits which projects' transactions a log
+	// may link to through its trace_id. Set it for project-scoped callers.
+	TraceProjectIDs []string
 	// WindowMins, when > 0, restricts to timestamp in (NOW() - window, NOW() + 2m].
 	Range      *TimeRange
 	WindowMins int
@@ -64,6 +67,8 @@ func ListLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) ([]*Log
 		)
 	}
 
+	args = append(args, filter.TraceProjectIDs)
+	traceScopeArg := len(args)
 	// Fetch one extra row to determine has_more.
 	args = append(args, limit+1)
 	// The lateral join resolves each log's trace to the most recent transaction
@@ -75,13 +80,14 @@ func ListLogs(ctx context.Context, pool *pgxpool.Pool, filter LogFilter) ([]*Log
 		LEFT JOIN LATERAL (
 			SELECT t.id FROM transactions t
 			WHERE l.trace_id IS NOT NULL AND t.trace_id = l.trace_id
+			  AND ($%d::uuid[] IS NULL OR t.project_id = ANY($%d::uuid[]))
 			ORDER BY t.received_at DESC
 			LIMIT 1
 		) tx ON TRUE
 		WHERE %s
 		ORDER BY l.timestamp DESC, l.id DESC
 		LIMIT $%d
-	`, where, len(args))
+	`, traceScopeArg, traceScopeArg, where, len(args))
 
 	rows, err := pool.Query(ctx, q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {

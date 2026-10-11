@@ -665,6 +665,10 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "ids must be a non-empty array", http.StatusBadRequest)
 		return
 	}
+	if len(req.IDs) > maxIssueIDsPerRequest {
+		http.Error(w, fmt.Sprintf("at most %d ids per request", maxIssueIDsPerRequest), http.StatusBadRequest)
+		return
+	}
 	switch req.Status {
 	case "open", "resolved", "ignored":
 	default:
@@ -675,7 +679,7 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 	if req.Status == "ignored" && (req.IgnoreUntil != nil || req.IgnoreCountLimit != nil) {
 		ignoreOpts = &storage.IgnoreOptions{Until: req.IgnoreUntil, CountLimit: req.IgnoreCountLimit}
 	}
-	n, err := storage.BulkUpdateIssueStatus(r.Context(), ro.pool, req.IDs, req.Status, ignoreOpts, nil)
+	updated, err := storage.BulkUpdateIssueStatus(r.Context(), ro.pool, req.IDs, req.Status, ignoreOpts, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid status") {
 			http.Error(w, "invalid status", http.StatusBadRequest)
@@ -690,7 +694,7 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 		EventType: "issue.bulk_status_changed",
 		ActorID:   actor,
 		IP:        r.RemoteAddr,
-		Details:   map[string]any{"status": req.Status, "count": n},
+		Details:   map[string]any{"status": req.Status, "count": len(updated)},
 	})
 	now := time.Now().UTC()
 	historyDetails := map[string]any{"to": req.Status}
@@ -702,7 +706,7 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 			historyDetails["ignore_count_limit"] = *req.IgnoreCountLimit
 		}
 	}
-	for _, issueID := range req.IDs {
+	for _, issueID := range updated {
 		if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
 			IssueID:   issueID,
 			ActorID:   actor,
@@ -713,7 +717,7 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 			slog.Error("insert bulk issue history", "err", err, "issue_id", issueID)
 		}
 	}
-	writeJSON(w, map[string]any{"updated": n})
+	writeJSON(w, map[string]any{"updated": len(updated)})
 }
 
 // handleGetIssueGlobal fetches a single issue by ID without project scoping.
@@ -984,7 +988,7 @@ func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := storage.GetTransactionByTraceID(r.Context(), ro.pool, *ev.TraceID)
+	tx, err := storage.GetTransactionByTraceID(r.Context(), ro.pool, *ev.TraceID, tokenScope(r.Context()))
 	if err != nil {
 		slog.Error("get transaction by trace", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1380,7 +1384,7 @@ func (ro *router) handleGetTransactionErrors(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, []*storage.TraceError{})
 		return
 	}
-	errs, err := storage.GetErrorsForTrace(r.Context(), ro.pool, tx.TraceID)
+	errs, err := storage.GetErrorsForTrace(r.Context(), ro.pool, tx.TraceID, tokenScope(r.Context()))
 	if err != nil {
 		slog.Error("get trace errors", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

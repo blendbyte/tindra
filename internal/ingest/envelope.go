@@ -8,10 +8,13 @@ import (
 	"io"
 )
 
-// maxEnvelopeBytes caps the pre-allocation for a single envelope item.
+// maxEnvelopeBytes caps the length a single envelope item may declare.
 // Matches the outer io.LimitReader in the HTTP handler - no legitimate item
 // can exceed the total envelope size limit.
 const maxEnvelopeBytes = 20 * 1024 * 1024
+
+// initialItemBuffer is the most an item buffer reserves before its bytes arrive.
+const initialItemBuffer = 64 * 1024
 
 type EnvelopeHeader struct {
 	EventID string `json:"event_id"`
@@ -69,10 +72,18 @@ func Parse(r io.Reader) (EnvelopeHeader, []Item, error) {
 			if ih.Length > maxEnvelopeBytes {
 				return header, items, fmt.Errorf("item length %d exceeds maximum %d", ih.Length, maxEnvelopeBytes)
 			}
-			payload = make([]byte, ih.Length)
-			if _, err := io.ReadFull(reader, payload); err != nil {
+			// Grow with the bytes that actually arrive instead of allocating the
+			// declared length up front: the header is client-controlled, so a
+			// claimed 20 MB item must not cost 20 MB before any payload is sent.
+			var buf bytes.Buffer
+			buf.Grow(min(ih.Length, initialItemBuffer))
+			if _, err := io.CopyN(&buf, reader, int64(ih.Length)); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
 				return header, items, fmt.Errorf("read item payload: %w", err)
 			}
+			payload = buf.Bytes()
 			separator, err := reader.ReadByte()
 			if err == nil && separator == '\r' {
 				separator, err = reader.ReadByte()
