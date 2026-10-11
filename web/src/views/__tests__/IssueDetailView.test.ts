@@ -366,6 +366,17 @@ describe('IssueDetailView', () => {
       expect(wrapper.text()).toContain('This is a critical issue')
     })
 
+    it('shows "Deleted user" for comments whose author was deleted', () => {
+      const comment = {
+        id: 'c-2', user_id: '', user_name: '', user_email: '',
+        body: 'Left by a former teammate', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z',
+      }
+      setupQueries(baseIssue, [{}, {}, {}, {}, { data: ref([comment]) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.activity-author').text()).toBe('Deleted user')
+      expect(wrapper.text()).toContain('Left by a former teammate')
+    })
+
     it('shows activity count in section header when there are comments', () => {
       const comment = { id: 'c-1', user_id: 'u1', user_name: 'Alice', user_email: 'a@example.com', body: 'Note', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' }
       setupQueries(baseIssue, [{}, {}, {}, {}, { data: ref([comment]) }])

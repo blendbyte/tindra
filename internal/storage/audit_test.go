@@ -161,3 +161,21 @@ func TestListAuditLog_orderNewestFirst(t *testing.T) {
 		t.Errorf("expected newest first, got %q", rows[0].EventType)
 	}
 }
+
+// "_" in a search matches a literal underscore, not any character.
+func TestListAuditLog_searchEscapesWildcards(t *testing.T) {
+	truncateAuditLog(t)
+	ctx := context.Background()
+	for _, eventType := range []string{"alert_rule.created", "alertXrule.created"} {
+		if _, err := testPool.Exec(ctx, `INSERT INTO audit_log (event_type, ip) VALUES ($1, '')`, eventType); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := storage.ListAuditLog(ctx, testPool, storage.AuditFilter{Search: "alert_rule"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 || rows[0].EventType != "alert_rule.created" {
+		t.Errorf("expected only the literal match, got %+v", rows)
+	}
+}

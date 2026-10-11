@@ -241,6 +241,11 @@ const fullTitle = computed(() => {
   return eventMessageText(payload?.message) || eventMessageText((payload as { logentry?: unknown } | undefined)?.logentry)
 })
 
+// Comments outlive their authors; a deleted user's comments have no name or email.
+function commentAuthor(c: Comment): string {
+  return c.user_name || c.user_email || 'Deleted user'
+}
+
 // SDKs send message as a string or as {formatted, message, params}
 // (Java, .NET, PHP, and Python's logentry). Prefer the formatted text.
 function eventMessageText(message: unknown): string {
@@ -1436,11 +1441,11 @@ onUnmounted(() => {
             <!-- Comment -->
             <div v-if="item.kind === 'comment'" class="activity-item">
               <div class="activity-avatar">
-                {{ ((item.data as Comment).user_name || (item.data as Comment).user_email)[0].toUpperCase() }}
+                {{ commentAuthor(item.data as Comment)[0].toUpperCase() }}
               </div>
               <div class="activity-body">
                 <div class="activity-meta">
-                  <span class="activity-author">{{ (item.data as Comment).user_name || (item.data as Comment).user_email }}</span>
+                  <span class="activity-author">{{ commentAuthor(item.data as Comment) }}</span>
                   <span class="activity-time mono">{{ formatRel(item.time) }}</span>
                   <span v-if="(item.data as Comment).updated_at !== (item.data as Comment).created_at" class="activity-edited">(edited)</span>
                   <div class="activity-actions">

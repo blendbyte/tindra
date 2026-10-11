@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/blendbyte/tindra/internal/storage"
@@ -368,4 +369,47 @@ func TestListEnabledAlertRules_empty(t *testing.T) {
 	if len(rules) != 0 {
 		t.Errorf("expected 0 rules, got %d", len(rules))
 	}
+}
+
+// Deleting a rule's last project must not turn it into a global rule.
+func TestAlertRule_deletingLastProjectLeavesRuleInert(t *testing.T) {
+	ctx := context.Background()
+	truncateProjects(t)
+	testPool.Exec(ctx, `DELETE FROM alert_rules`)
+	scoped, err := storage.CreateProject(ctx, testPool, "rule-scope-a", "A")
+	require.NoError(t, err)
+
+	rule, err := storage.CreateAlertRule(ctx, testPool, &storage.AlertRule{
+		ProjectIDs: []string{scoped.ID}, Name: "scoped", Enabled: true, Trigger: "new_issue",
+		Channel: "webhook", WebhookURL: new("https://203.0.113.1/hook"), CooldownMins: 60,
+	})
+	require.NoError(t, err)
+	require.False(t, rule.IsGlobal)
+	global, err := storage.CreateAlertRule(ctx, testPool, &storage.AlertRule{
+		Name: "global", Enabled: true, Trigger: "new_issue",
+		Channel: "webhook", WebhookURL: new("https://203.0.113.1/hook"), CooldownMins: 60,
+	})
+	require.NoError(t, err)
+	require.True(t, global.IsGlobal)
+
+	_, err = testPool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, scoped.ID)
+	require.NoError(t, err)
+
+	for name, list := range map[string]func(context.Context, *pgxpool.Pool) ([]*storage.AlertRule, error){
+		"due": storage.ListDueAlertRules, "enabled": storage.ListEnabledAlertRules,
+	} {
+		rules, err := list(ctx, testPool)
+		require.NoError(t, err)
+		ids := []string{}
+		for _, r := range rules {
+			ids = append(ids, r.ID)
+		}
+		require.Contains(t, ids, global.ID, name)
+		require.NotContains(t, ids, rule.ID, "%s: an orphaned rule must not be evaluated", name)
+	}
+
+	got, err := storage.GetAlertRule(ctx, testPool, rule.ID)
+	require.NoError(t, err)
+	require.False(t, got.IsGlobal)
+	require.Empty(t, got.ProjectIDs)
 }

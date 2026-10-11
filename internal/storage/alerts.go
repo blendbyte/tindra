@@ -12,8 +12,12 @@ import (
 )
 
 type AlertRule struct {
-	ID                string     `json:"id"`
-	ProjectIDs        []string   `json:"project_ids"`
+	ID         string   `json:"id"`
+	ProjectIDs []string `json:"project_ids"`
+	// IsGlobal is true for rules saved without projects (they cover every
+	// project). A non-global rule whose projects were all deleted matches
+	// nothing and is never evaluated.
+	IsGlobal          bool       `json:"is_global"`
 	Name              string     `json:"name"`
 	Enabled           bool       `json:"enabled"`
 	Trigger           string     `json:"trigger"`
@@ -37,7 +41,7 @@ const alertRuleQuery = `
 	SELECT ar.id, ar.name, ar.enabled, ar.trigger, ar.threshold, ar.window_mins,
 	       ar.channel, ar.webhook_url, ar.email_to, ar.cooldown_mins,
 	       ar.filter_level, ar.filter_environment, ar.min_occurrences, ar.filter_search,
-	       ar.last_fired_at, ar.created_at,
+	       ar.last_fired_at, ar.created_at, ar.is_global,
 	       COALESCE(array_agg(arp.project_id::text) FILTER (WHERE arp.project_id IS NOT NULL), '{}') AS project_ids
 	FROM alert_rules ar
 	LEFT JOIN alert_rule_projects arp ON arp.rule_id = ar.id`
@@ -50,7 +54,7 @@ func scanAlertRule(scan func(...any) error) (*AlertRule, error) {
 		&r.Channel, &r.WebhookURL, &r.EmailTo,
 		&r.CooldownMins,
 		&r.FilterLevel, &r.FilterEnvironment, &r.MinOccurrences, &r.FilterSearch,
-		&r.LastFiredAt, &r.CreatedAt,
+		&r.LastFiredAt, &r.CreatedAt, &r.IsGlobal,
 		&r.ProjectIDs,
 	)
 	if err != nil {
@@ -74,22 +78,23 @@ func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		INSERT INTO alert_rules
 			(name, enabled, trigger, threshold, window_mins,
 			 channel, webhook_url, email_to, cooldown_mins,
-			 filter_level, filter_environment, min_occurrences, filter_search)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			 filter_level, filter_environment, min_occurrences, filter_search, is_global)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING id, name, enabled, trigger, threshold, window_mins,
 		          channel, webhook_url, email_to, cooldown_mins,
 		          filter_level, filter_environment, min_occurrences, filter_search,
-		          last_fired_at, created_at`,
+		          last_fired_at, created_at, is_global`,
 		r.Name, r.Enabled, r.Trigger, r.Threshold, r.WindowMins,
 		r.Channel, r.WebhookURL, r.EmailTo, r.CooldownMins,
 		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences, r.FilterSearch,
+		len(normaliseProjectIDs(r.ProjectIDs)) == 0,
 	).Scan(
 		&created.ID, &created.Name, &created.Enabled, &created.Trigger,
 		&created.Threshold, &created.WindowMins,
 		&created.Channel, &created.WebhookURL, &created.EmailTo,
 		&created.CooldownMins,
 		&created.FilterLevel, &created.FilterEnvironment, &created.MinOccurrences, &created.FilterSearch,
-		&created.LastFiredAt, &created.CreatedAt,
+		&created.LastFiredAt, &created.CreatedAt, &created.IsGlobal,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert: %w", err)
@@ -144,12 +149,17 @@ func ListAlertRules(ctx context.Context, pool *pgxpool.Pool, projectID string) (
 }
 
 // ListDueAlertRules returns all enabled rules whose cooldown has elapsed.
+// ruleHasScope excludes rules that are neither global nor scoped to any
+// remaining project: their projects were deleted, so they must not fire.
+const ruleHasScope = `(ar.is_global OR EXISTS (SELECT 1 FROM alert_rule_projects WHERE rule_id = ar.id))`
+
 func ListDueAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, error) {
 	rows, err := pool.Query(ctx,
 		alertRuleQuery+`
 		WHERE ar.enabled = TRUE
 		  AND (ar.last_fired_at IS NULL
 		       OR ar.last_fired_at + make_interval(mins => ar.cooldown_mins) <= NOW())
+		  AND `+ruleHasScope+`
 		GROUP BY ar.id`)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
@@ -171,7 +181,7 @@ func ListDueAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, e
 // Used for one-shot notifications that bypass the normal evaluation cycle.
 func ListEnabledAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, error) {
 	rows, err := pool.Query(ctx,
-		alertRuleQuery+` WHERE ar.enabled = TRUE GROUP BY ar.id`)
+		alertRuleQuery+` WHERE ar.enabled = TRUE AND `+ruleHasScope+` GROUP BY ar.id`)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -201,22 +211,23 @@ func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 			name=$2, enabled=$3, trigger=$4, threshold=$5, window_mins=$6,
 			channel=$7, webhook_url=$8, email_to=$9, cooldown_mins=$10,
 			filter_level=$11, filter_environment=$12, min_occurrences=$13,
-			filter_search=$14
+			filter_search=$14, is_global=$15
 		WHERE id=$1
 		RETURNING id, name, enabled, trigger, threshold, window_mins,
 		          channel, webhook_url, email_to, cooldown_mins,
 		          filter_level, filter_environment, min_occurrences, filter_search,
-		          last_fired_at, created_at`,
+		          last_fired_at, created_at, is_global`,
 		r.ID, r.Name, r.Enabled, r.Trigger, r.Threshold, r.WindowMins,
 		r.Channel, r.WebhookURL, r.EmailTo, r.CooldownMins,
 		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences, r.FilterSearch,
+		len(normaliseProjectIDs(r.ProjectIDs)) == 0,
 	).Scan(
 		&updated.ID, &updated.Name, &updated.Enabled, &updated.Trigger,
 		&updated.Threshold, &updated.WindowMins,
 		&updated.Channel, &updated.WebhookURL, &updated.EmailTo,
 		&updated.CooldownMins,
 		&updated.FilterLevel, &updated.FilterEnvironment, &updated.MinOccurrences, &updated.FilterSearch,
-		&updated.LastFiredAt, &updated.CreatedAt,
+		&updated.LastFiredAt, &updated.CreatedAt, &updated.IsGlobal,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -251,7 +262,7 @@ func MarkAlertFired(ctx context.Context, pool *pgxpool.Pool, id string) {
 }
 
 // setAlertRuleProjects replaces all project associations for a rule within an
-// existing transaction. Passing an empty slice makes the rule global.
+// existing transaction. Callers set is_global alongside it.
 func setAlertRuleProjects(ctx context.Context, tx pgx.Tx, ruleID string, projectIDs []string) error {
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM alert_rule_projects WHERE rule_id = $1`, ruleID); err != nil {

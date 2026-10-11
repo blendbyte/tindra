@@ -465,7 +465,8 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		if rule.LastFiredAt != nil {
 			since = *rule.LastFiredAt
 		}
-		issues, err := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
+		issues, err := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
+			ProjectIDs:  rule.ProjectIDs,
 			Limit:       5,
 			Since:       &since,
 			Levels:      filterLevels,
@@ -479,7 +480,8 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		if rule.LastFiredAt != nil {
 			since = *rule.LastFiredAt
 		}
-		issues, err := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
+		issues, err := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
+			ProjectIDs:     rule.ProjectIDs,
 			Status:         "regressed",
 			SinceRegressed: &since,
 			Limit:          5,
@@ -494,13 +496,15 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 		if rule.LastFiredAt != nil {
 			since = *rule.LastFiredAt
 		}
-		newIssues, _ := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
+		newIssues, _ := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
+			ProjectIDs:  rule.ProjectIDs,
 			Since:       &since,
 			Limit:       5,
 			Levels:      filterLevels,
 			Environment: filterEnv,
 		})
-		regIssues, _ := storage.ListIssues(ctx, e.pool, projID, storage.IssueFilter{
+		regIssues, _ := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
+			ProjectIDs:     rule.ProjectIDs,
 			Status:         "regressed",
 			SinceRegressed: &since,
 			Limit:          5,

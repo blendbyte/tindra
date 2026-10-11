@@ -150,6 +150,7 @@ func setupFromDSN(ctx context.Context, adminDSN string) (*pgxpool.Pool, func()) 
 		log.Fatalf("testutil: parse DSN: %v", err)
 	}
 	cfg.ConnConfig.Database = dbName
+	storage.ConfigurePool(cfg)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -189,7 +190,12 @@ func setupContainer(ctx context.Context) (*pgxpool.Pool, func()) {
 		log.Fatalf("testutil: get connection string: %v", err)
 	}
 
-	pool, err := pgxpool.New(ctx, connStr)
+	cfg, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		log.Fatalf("testutil: parse connection string: %v", err)
+	}
+	storage.ConfigurePool(cfg)
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		log.Fatalf("testutil: create pool: %v", err)
 	}

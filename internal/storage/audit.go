@@ -51,11 +51,11 @@ func ListAuditLog(ctx context.Context, pool *pgxpool.Pool, filter AuditFilter) (
 		WHERE TRUE`
 
 	if filter.Kind != "" && filter.Kind != "All" {
-		args = append(args, filter.Kind+"%")
+		args = append(args, likePrefix(filter.Kind))
 		q += fmt.Sprintf(" AND a.event_type LIKE $%d", len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, likeContains(filter.Search))
 		n := len(args)
 		q += fmt.Sprintf(" AND (a.event_type ILIKE $%d OR a.ip ILIKE $%d OR u.email ILIKE $%d)", n, n, n)
 	}

@@ -665,7 +665,7 @@ function firingTriggerLabel(trigger: string): string {
 }
 
 function ruleProjectNames(rule: AlertRule): string {
-  if (!rule.project_ids?.length) return 'Global'
+  if (!rule.project_ids?.length) return rule.is_global === false ? 'No projects (inactive)' : 'Global'
   return rule.project_ids.map(id => projectByID.value.get(id)?.name ?? id).join(', ')
 }
 

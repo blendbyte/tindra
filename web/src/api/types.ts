@@ -365,6 +365,8 @@ export type AlertChannel = 'webhook' | 'slack' | 'discord' | 'teams' | 'email'
 export interface AlertRule {
   id: string
   project_ids: string[]
+  /** True when saved without projects. A non-global rule whose projects were all deleted never fires. */
+  is_global?: boolean
   name: string
   enabled: boolean
   trigger: AlertTrigger

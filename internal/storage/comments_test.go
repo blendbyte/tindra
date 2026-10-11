@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -195,4 +197,30 @@ func TestDeleteComment_notFound(t *testing.T) {
 	if deleted {
 		t.Error("expected deleted=false for unknown comment")
 	}
+}
+
+// Deleting a user keeps their comments; the author reads back as empty.
+func TestComments_surviveAuthorDeletion(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	issue := seedIssueWithEvent(t, project.ID, "fp-comment-author", "Comment author")
+	author, err := storage.CreateUser(ctx, testPool, "leaving@example.com", "password1234")
+	require.NoError(t, err)
+	created, err := storage.CreateComment(ctx, testPool, issue.ID, author.ID, "still useful")
+	require.NoError(t, err)
+
+	_, err = testPool.Exec(ctx, `DELETE FROM users WHERE id = $1`, author.ID)
+	require.NoError(t, err)
+
+	comments, err := storage.ListComments(ctx, testPool, issue.ID)
+	require.NoError(t, err)
+	require.Len(t, comments, 1)
+	require.Equal(t, "still useful", comments[0].Body)
+	require.Empty(t, comments[0].UserID)
+	require.Empty(t, comments[0].UserEmail)
+
+	got, err := storage.GetComment(ctx, testPool, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got.UserID)
 }

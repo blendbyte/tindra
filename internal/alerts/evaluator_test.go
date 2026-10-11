@@ -2836,3 +2836,41 @@ func TestRetryFiring_invalidPayload(t *testing.T) {
 		t.Error("expected error message to be set for unmarshal failure")
 	}
 }
+
+// A rule scoped to several projects lists new issues from all of them, and its
+// environment filter applies to the listed issues too.
+func TestEnrichPayload_newIssueAcrossRuleProjects(t *testing.T) {
+	ctx := context.Background()
+	other, err := storage.CreateProject(ctx, testPool, "alerts-enrich-other", "Enrich Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", other.ID) })
+	testPool.Exec(ctx, "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+
+	since := time.Now().Add(-time.Minute)
+	if _, _, _, err := storage.UpsertIssue(ctx, testPool, other.ID, "fp-enrich-prod", "Prod in other project", "error", "error", "production", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := storage.UpsertIssue(ctx, testPool, other.ID, "fp-enrich-staging", "Staging in other project", "error", "error", "staging", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	env := "production"
+	rule := &storage.AlertRule{
+		ProjectIDs:        []string{testProject.ID, other.ID},
+		Trigger:           "new_issue",
+		FilterEnvironment: &env,
+		CreatedAt:         since,
+	}
+	payload := AlertPayload{Trigger: "new_issue", Details: map[string]any{}}
+	testEvaluator(nil).enrichPayload(ctx, &payload, rule)
+
+	titles := []string{}
+	for _, iss := range payload.Issues {
+		titles = append(titles, iss.Title)
+	}
+	if len(titles) != 1 || titles[0] != "Prod in other project" {
+		t.Errorf("expected only the production issue from the second project, got %v", titles)
+	}
+}

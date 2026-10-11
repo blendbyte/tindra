@@ -50,7 +50,7 @@ func TestGrouper_createsIssueForUngroupedEvent(t *testing.T) {
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		var err error
-		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		issueList, err = storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 50})
 		if err != nil {
 			t.Fatalf("list issues: %v", err)
 		}
@@ -90,7 +90,7 @@ func TestGrouper_groupsSameFingerprint(t *testing.T) {
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		var err error
-		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		issueList, err = storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 50})
 		if err != nil {
 			t.Fatalf("list issues: %v", err)
 		}
@@ -123,7 +123,7 @@ func TestGrouper_separateFingerprints(t *testing.T) {
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		var err error
-		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		issueList, err = storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 50})
 		if err != nil {
 			t.Fatalf("list issues: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestGrouper_defaultsLevelToError(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
-		issueList, _ = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		issueList, _ = storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 50})
 		if len(issueList) == 1 {
 			break
 		}
@@ -225,7 +225,7 @@ func TestGrouper_storesImplicitTags(t *testing.T) {
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		var err error
-		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		issueList, err = storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 50})
 		if err != nil {
 			t.Fatalf("list issues: %v", err)
 		}
@@ -299,7 +299,7 @@ func TestGrouper_regressionDetected(t *testing.T) {
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		var err error
-		issueList, err = storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 50})
+		issueList, err = storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 50})
 		if err != nil {
 			t.Fatalf("list issues: %v", err)
 		}

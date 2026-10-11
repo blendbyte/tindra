@@ -11,8 +11,9 @@ import (
 )
 
 type Comment struct {
-	ID        string    `json:"id"`
-	IssueID   string    `json:"issue_id"`
+	ID      string `json:"id"`
+	IssueID string `json:"issue_id"`
+	// UserID, UserEmail and UserName are empty when the author was deleted.
 	UserID    string    `json:"user_id"`
 	UserEmail string    `json:"user_email"`
 	UserName  string    `json:"user_name"`
@@ -21,11 +22,14 @@ type Comment struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// commentAuthorCols reads the author of comment c, empty when the user was deleted.
+const commentAuthorCols = `COALESCE(c.user_id::text, ''), COALESCE(u.email, ''), COALESCE(u.name, '')`
+
 func ListComments(ctx context.Context, pool *pgxpool.Pool, issueID string) ([]*Comment, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT c.id, c.issue_id, c.user_id, u.email, u.name, c.body, c.created_at, c.updated_at
+		SELECT c.id, c.issue_id, `+commentAuthorCols+`, c.body, c.created_at, c.updated_at
 		FROM issue_comments c
-		JOIN users u ON u.id = c.user_id
+		LEFT JOIN users u ON u.id = c.user_id
 		WHERE c.issue_id = $1
 		ORDER BY c.created_at ASC
 		LIMIT 200
@@ -67,9 +71,9 @@ func CreateComment(ctx context.Context, pool *pgxpool.Pool, issueID, userID, bod
 func GetComment(ctx context.Context, pool *pgxpool.Pool, commentID string) (*Comment, error) {
 	var c Comment
 	err := pool.QueryRow(ctx, `
-		SELECT c.id, c.issue_id, c.user_id, u.email, u.name, c.body, c.created_at, c.updated_at
+		SELECT c.id, c.issue_id, `+commentAuthorCols+`, c.body, c.created_at, c.updated_at
 		FROM issue_comments c
-		JOIN users u ON u.id = c.user_id
+		LEFT JOIN users u ON u.id = c.user_id
 		WHERE c.id = $1
 	`, commentID).Scan(&c.ID, &c.IssueID, &c.UserID, &c.UserEmail, &c.UserName, &c.Body, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -89,8 +93,8 @@ func UpdateComment(ctx context.Context, pool *pgxpool.Pool, commentID, body stri
 			WHERE id = $1
 			RETURNING id, issue_id, user_id, body, created_at, updated_at
 		)
-		SELECT upd.id, upd.issue_id, upd.user_id, u.email, u.name, upd.body, upd.created_at, upd.updated_at
-		FROM upd JOIN users u ON u.id = upd.user_id
+		SELECT upd.id, upd.issue_id, COALESCE(upd.user_id::text, ''), COALESCE(u.email, ''), COALESCE(u.name, ''), upd.body, upd.created_at, upd.updated_at
+		FROM upd LEFT JOIN users u ON u.id = upd.user_id
 	`, commentID, body).Scan(&c.ID, &c.IssueID, &c.UserID, &c.UserEmail, &c.UserName, &c.Body, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

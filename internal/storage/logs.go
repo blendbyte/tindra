@@ -243,9 +243,16 @@ func expandWarnLevels(levels []string) []string {
 
 // likeContains wraps s as an ILIKE contains pattern and escapes LIKE
 // metacharacters so a user search of "%" does not match every row.
-func likeContains(s string) string {
+func likeContains(s string) string { return "%" + escapeLike(s) + "%" }
+
+// likePrefix returns a LIKE pattern matching values that start with s.
+func likePrefix(s string) string { return escapeLike(s) + "%" }
+
+// escapeLike makes user input literal inside a LIKE pattern, so "%" and "_"
+// in a search do not act as wildcards. Backslash is PostgreSQL's default
+// LIKE escape character.
+func escapeLike(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
-	return "%" + s + "%"
+	return strings.ReplaceAll(s, `_`, `\_`)
 }

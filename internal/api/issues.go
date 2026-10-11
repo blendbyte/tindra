@@ -3,10 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -64,7 +64,8 @@ func (ro *router) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	issues, err := storage.ListIssues(r.Context(), ro.pool, project.ID, filter)
+	filter.ProjectIDs = []string{project.ID}
+	issues, err := storage.ListIssues(r.Context(), ro.pool, filter)
 	if err != nil {
 		slog.Error("list issues", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -270,17 +271,8 @@ func (ro *router) handleMergeIssues(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		slog.Error("insert issue history (merge primary)", "err", err)
 	}
-	for _, mid := range mergeIDs {
-		if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
-			IssueID:   mid,
-			ActorID:   actor,
-			EventType: "merged",
-			Details:   map[string]any{"into": primaryID},
-			CreatedAt: now,
-		}); err != nil {
-			slog.Error("insert issue history (merge source)", "err", err, "issue_id", mid)
-		}
-	}
+	// The merged issues are gone, and their history now lives on the primary,
+	// so the "merged_into" entry above is the record of this merge.
 
 	writeJSON(w, merged)
 }
@@ -313,7 +305,7 @@ func (ro *router) handleUnmergeIssue(w http.ResponseWriter, r *http.Request) {
 
 	newIssues, err := storage.UnmergeFingerprints(r.Context(), ro.pool, issueID, req.Fingerprints)
 	if err != nil {
-		if strings.Contains(err.Error(), "cannot unmerge all fingerprints") {
+		if errors.Is(err, storage.ErrUnmergeAll) || errors.Is(err, storage.ErrUnknownFingerprint) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

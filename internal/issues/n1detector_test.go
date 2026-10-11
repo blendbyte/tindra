@@ -65,7 +65,7 @@ func TestN1Detector_createsIssueForRepeatedDbSpans(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, err := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, err := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if err != nil {
 		t.Fatalf("list issues: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestN1Detector_recordsPerfEvent(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 1 {
 		t.Fatalf("expected 1 issue, got %d", len(list))
 	}
@@ -139,7 +139,7 @@ func TestN1Detector_belowCountThreshold_noIssue(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 0 {
 		t.Errorf("expected 0 issues for 4 repeated spans, got %d", len(list))
 	}
@@ -159,7 +159,7 @@ func TestN1Detector_belowDurationThreshold_noIssue(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 0 {
 		t.Errorf("expected 0 issues for fast repeated queries (total < 50ms), got %d", len(list))
 	}
@@ -188,7 +188,7 @@ func TestN1Detector_normalizesQueryLiterals(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 1 {
 		t.Fatalf("expected 1 issue (queries normalized), got %d", len(list))
 	}
@@ -217,7 +217,7 @@ func TestN1Detector_normalizesStringLiterals(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 1 {
 		t.Fatalf("expected 1 issue (string literals normalized), got %d", len(list))
 	}
@@ -244,7 +244,7 @@ func TestN1Detector_ignoresNonDbOps(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 0 {
 		t.Errorf("expected 0 issues for non-db ops, got %d", len(list))
 	}
@@ -267,7 +267,7 @@ func TestN1Detector_ignoresEmptyDescription(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 0 {
 		t.Errorf("expected 0 issues for empty descriptions, got %d", len(list))
 	}
@@ -288,7 +288,7 @@ func TestN1Detector_groupsSameQueryAcrossTransactions(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, txs, []string{txID1, txID2})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 1 {
 		t.Fatalf("expected 1 issue for same query in two transactions, got %d", len(list))
 	}
@@ -321,7 +321,7 @@ func TestN1Detector_differentQueriesSeparateIssues(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 2 {
 		t.Errorf("expected 2 issues for two distinct N+1 queries, got %d", len(list))
 	}
@@ -340,7 +340,7 @@ func TestN1Detector_skipsEmptyTxID(t *testing.T) {
 	// Empty txID should be skipped entirely - no panic, no issue.
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{""})
 
-	list, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	list, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(list) != 0 {
 		t.Errorf("expected 0 issues when txID is empty, got %d", len(list))
 	}
@@ -376,12 +376,12 @@ func TestN1Detector_kindFilterReturnsOnlyPerfIssues(t *testing.T) {
 	}
 	detector.ProcessBatch(context.Background(), testPool, []ingest.BufferedTransaction{tx}, []string{txID})
 
-	all, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10})
+	all, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10})
 	if len(all) != 2 {
 		t.Fatalf("expected 2 total issues, got %d", len(all))
 	}
 
-	perfOnly, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10, Kind: "n1_query"})
+	perfOnly, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10, Kind: "n1_query"})
 	if len(perfOnly) != 1 {
 		t.Errorf("kind filter: expected 1 n1_query issue, got %d", len(perfOnly))
 	}
@@ -389,7 +389,7 @@ func TestN1Detector_kindFilterReturnsOnlyPerfIssues(t *testing.T) {
 		t.Errorf("kind: got %q", perfOnly[0].Kind)
 	}
 
-	errOnly, _ := storage.ListIssues(context.Background(), testPool, testProject.ID, storage.IssueFilter{Limit: 10, Kind: "error"})
+	errOnly, _ := storage.ListIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{testProject.ID}, Limit: 10, Kind: "error"})
 	if len(errOnly) != 1 {
 		t.Errorf("kind filter: expected 1 error issue, got %d", len(errOnly))
 	}

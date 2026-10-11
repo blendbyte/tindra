@@ -115,7 +115,7 @@ func TestListIssues(t *testing.T) {
 		}
 	}
 
-	issues, err := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{Limit: 50})
+	issues, err := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Limit: 50})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,12 +143,12 @@ func TestListIssues_filterByStatus(t *testing.T) {
 	storage.UpsertIssue(ctx, testPool, project.ID, "fp-regressed", "Title 3", "error", "error", "", "", ts.Add(time.Second))
 
 	// "open" filter must include regressed issues.
-	open, _ := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{Status: "open", Limit: 50})
+	open, _ := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Status: "open", Limit: 50})
 	if len(open) != 2 {
 		t.Errorf("expected 2 open+regressed issues, got %d", len(open))
 	}
 
-	resolved, _ := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{Status: "resolved", Limit: 50})
+	resolved, _ := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Status: "resolved", Limit: 50})
 	if len(resolved) != 1 {
 		t.Errorf("expected 1 resolved issue, got %d", len(resolved))
 	}
@@ -241,12 +241,12 @@ func TestListIssues_filterByLevel(t *testing.T) {
 	storage.UpsertIssue(ctx, testPool, project.ID, "fp-err", "Error", "error", "error", "", "", ts)
 	storage.UpsertIssue(ctx, testPool, project.ID, "fp-warn", "Warning", "warning", "error", "", "", ts)
 
-	errors, _ := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{Level: "error", Limit: 50})
+	errors, _ := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Level: "error", Limit: 50})
 	if len(errors) != 1 || errors[0].Level != "error" {
 		t.Errorf("expected 1 error-level issue, got %d", len(errors))
 	}
 
-	warnings, _ := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{Level: "warning", Limit: 50})
+	warnings, _ := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Level: "warning", Limit: 50})
 	if len(warnings) != 1 || warnings[0].Level != "warning" {
 		t.Errorf("expected 1 warning-level issue, got %d", len(warnings))
 	}
@@ -262,7 +262,7 @@ func TestListIssues_filterByLevels(t *testing.T) {
 	storage.UpsertIssue(ctx, testPool, project.ID, "fp-levels-info", "Info", "info", "error", "", "", ts)
 
 	// Levels filter: fatal and error, not info
-	got, err := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{
+	got, err := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID},
 		Levels: []string{"fatal", "error"},
 		Limit:  50,
 	})
@@ -289,14 +289,14 @@ func TestListIssues_cursor(t *testing.T) {
 	}
 
 	// Get all issues (newest first)
-	all, _ := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{Limit: 50})
+	all, _ := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Limit: 50})
 	if len(all) != 4 {
 		t.Fatalf("expected 4 issues, got %d", len(all))
 	}
 
 	// Use the second issue as a cursor - should return issues 3 and 4
 	cursor := all[1]
-	paged, err := storage.ListIssues(ctx, testPool, project.ID, storage.IssueFilter{
+	paged, err := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID},
 		Limit:      50,
 		CursorTime: &cursor.LastSeen,
 		CursorID:   &cursor.ID,
@@ -447,10 +447,91 @@ func TestUnmergeFingerprints_noEvents(t *testing.T) {
 	if len(newIssues) != 1 {
 		t.Fatalf("expected 1 new issue, got %d", len(newIssues))
 	}
-	// Fallback sets fingerprint as the title.
 	if newIssues[0].Fingerprint != "fp-noev-orphan" {
 		t.Errorf("fingerprint: got %q", newIssues[0].Fingerprint)
 	}
+	// Without events there is nothing to count, rather than an invented 1.
+	if newIssues[0].EventCount != 0 {
+		t.Errorf("event count: got %d, want 0", newIssues[0].EventCount)
+	}
+}
+
+// Merging used to delete the merged issues' tags, N+1 samples, comments and
+// history through ON DELETE CASCADE. They now move to the primary.
+func TestMergeIssues_keepsRelatedRows(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	primary := seedIssueWithEvent(t, project.ID, "fp-keep-primary", "Primary")
+	merged := seedIssueWithEvent(t, project.ID, "fp-keep-merged", "Merged")
+
+	user, err := storage.CreateUser(ctx, testPool, "merge-keep@example.com", "password1234")
+	require.NoError(t, err)
+	var eventID, txID string
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT id FROM events WHERE issue_id = $1`, merged.ID).Scan(&eventID))
+	require.NoError(t, testPool.QueryRow(ctx, `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+		VALUES ($1, '/n1', 'http.server', 'ok', 10, NOW(), NOW()) RETURNING id`, project.ID).Scan(&txID))
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO event_tags (event_id, issue_id, project_id, key, value) VALUES ($1, $2, $3, 'browser', 'Firefox')`, []any{eventID, merged.ID, project.ID}},
+		{`INSERT INTO perf_events (issue_id, transaction_id, span_count, total_ms) VALUES ($1, $2, 6, 60)`, []any{merged.ID, txID}},
+		{`INSERT INTO issue_comments (issue_id, user_id, body) VALUES ($1, $2, 'keep me')`, []any{merged.ID, user.ID}},
+		{`INSERT INTO issue_history (issue_id, event_type) VALUES ($1, 'created')`, []any{merged.ID}},
+	} {
+		_, err := testPool.Exec(ctx, q.sql, q.args...)
+		require.NoError(t, err)
+	}
+
+	_, err = storage.MergeIssues(ctx, testPool, primary.ID, []string{merged.ID})
+	require.NoError(t, err)
+
+	for _, table := range []string{"event_tags", "perf_events", "issue_comments", "issue_history"} {
+		var n int
+		require.NoError(t, testPool.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE issue_id = $1`, primary.ID).Scan(&n))
+		require.Equal(t, 1, n, "%s rows must move to the primary", table)
+	}
+}
+
+func TestUnmergeFingerprints_validatesAndMovesTags(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	primary := seedIssueWithEvent(t, project.ID, "fp-umv-1", "Primary")
+	secondary := seedIssueWithEvent(t, project.ID, "fp-umv-2", "Secondary")
+	_, err := testPool.Exec(ctx, `UPDATE events SET payload = '{"level":"warning","release":"2.0","message":{"formatted":"Disk 91% full","message":"Disk %s full"}}' WHERE issue_id = $1`, secondary.ID)
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `UPDATE issues SET environment = 'production' WHERE id = $1`, primary.ID)
+	require.NoError(t, err)
+	var eventID string
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT id FROM events WHERE issue_id = $1`, secondary.ID).Scan(&eventID))
+	_, err = storage.MergeIssues(ctx, testPool, primary.ID, []string{secondary.ID})
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `INSERT INTO event_tags (event_id, issue_id, project_id, key, value) VALUES ($1, $2, $3, 'os', 'Linux')`, eventID, primary.ID, project.ID)
+	require.NoError(t, err)
+
+	_, err = storage.UnmergeFingerprints(ctx, testPool, primary.ID, []string{"not-on-this-issue"})
+	require.ErrorIs(t, err, storage.ErrUnknownFingerprint)
+
+	// A duplicated fingerprint counts once instead of fabricating an issue.
+	created, err := storage.UnmergeFingerprints(ctx, testPool, primary.ID, []string{"fp-umv-2", "fp-umv-2"})
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	split := created[0]
+	require.Equal(t, "Disk 91% full", split.Title, "object messages produce a readable title")
+	require.Equal(t, "error", split.Kind)
+	require.NotNil(t, split.Environment)
+	require.Equal(t, "production", *split.Environment)
+	require.NotNil(t, split.FirstRelease)
+	require.Equal(t, "2.0", *split.FirstRelease)
+
+	var tagIssue string
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT issue_id FROM event_tags WHERE event_id = $1`, eventID).Scan(&tagIssue))
+	require.Equal(t, split.ID, tagIssue, "tags move with their events")
+
+	var primaryCount int64
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT event_count FROM issues WHERE id = $1`, primary.ID).Scan(&primaryCount))
+	require.EqualValues(t, 1, primaryCount)
 }
 
 // --- BulkUpdateIssueStatus ---
@@ -830,9 +911,56 @@ func TestExpireIgnoredIssues(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected non-nil issue")
 	}
-	if got.Status != "regressed" {
-		t.Errorf("status: got %q, want regressed", got.Status)
+	// The snooze ends quietly: open, not regressed, until the error recurs.
+	if got.Status != "open" {
+		t.Errorf("status: got %q, want open", got.Status)
 	}
+}
+
+// After a snooze ends, the next event is a regression: status regressed,
+// regressed_at set, and reported so regression alerts fire.
+func TestExpiredSnoozeRegressesOnRecurrence(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-snooze-recur", "Title", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `UPDATE issues SET status = 'ignored', ignore_until = NOW() - interval '1 minute' WHERE id = $1`, issue.ID)
+	require.NoError(t, err)
+	_, err = storage.ExpireIgnoredIssues(ctx, testPool)
+	require.NoError(t, err)
+
+	recurred, created, regressed, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-snooze-recur", "Title", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	require.False(t, created)
+	require.True(t, regressed, "the first event after a snooze ends is a regression")
+	require.Equal(t, "regressed", recurred.Status)
+	var regressedAt *time.Time
+	var snoozeEnded *time.Time
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT regressed_at, snooze_ended_at FROM issues WHERE id = $1`, issue.ID).Scan(&regressedAt, &snoozeEnded))
+	require.NotNil(t, regressedAt, "regression alerts key off regressed_at")
+	require.Nil(t, snoozeEnded, "the marker is cleared once used")
+
+	_, _, regressedAgain, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-snooze-recur", "Title", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	require.False(t, regressedAgain, "later events do not regress again")
+}
+
+// A manual status change after a snooze ended forgets it.
+func TestExpiredSnoozeForgottenOnManualStatusChange(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-snooze-manual", "Title", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `UPDATE issues SET status = 'ignored', ignore_until = NOW() - interval '1 minute' WHERE id = $1`, issue.ID)
+	require.NoError(t, err)
+	_, err = storage.ExpireIgnoredIssues(ctx, testPool)
+	require.NoError(t, err)
+	_, err = storage.UpdateIssueStatus(ctx, testPool, project.ID, issue.ID, "open", nil)
+	require.NoError(t, err)
+
+	_, _, regressed, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-snooze-manual", "Title", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	require.False(t, regressed)
 }
 
 func TestExpireIgnoredIssues_noneToExpire(t *testing.T) {
@@ -1029,4 +1157,115 @@ func TestListAllIssues_statusAndAssigneeFilters(t *testing.T) {
 	}
 	_ = issues
 	_ = issues2
+}
+
+// ListIssues used to ignore most filter fields; it now applies all of them.
+func TestListIssues_appliesAllFilters(t *testing.T) {
+	ctx := context.Background()
+	truncateProjects(t)
+	a, err := storage.CreateProject(ctx, testPool, "list-filter-a", "A")
+	require.NoError(t, err)
+	b, err := storage.CreateProject(ctx, testPool, "list-filter-b", "B")
+	require.NoError(t, err)
+	c, err := storage.CreateProject(ctx, testPool, "list-filter-c", "C")
+	require.NoError(t, err)
+	old := time.Now().Add(-2 * time.Hour)
+	for _, tc := range []struct{ project, fp, env string }{
+		{a.ID, "lf-a-prod", "production"}, {b.ID, "lf-b-prod", "production"},
+		{b.ID, "lf-b-staging", "staging"}, {c.ID, "lf-c-prod", "production"},
+	} {
+		_, _, _, err := storage.UpsertIssue(ctx, testPool, tc.project, tc.fp, "Issue "+tc.fp, "error", "error", tc.env, "", time.Now())
+		require.NoError(t, err)
+	}
+	_, _, _, err = storage.UpsertIssue(ctx, testPool, a.ID, "lf-a-old", "Old issue", "error", "error", "production", "", old)
+	require.NoError(t, err)
+
+	got, err := storage.ListIssues(ctx, testPool, storage.IssueFilter{
+		ProjectIDs:  []string{a.ID, b.ID},
+		Environment: "production",
+		Since:       new(time.Now().Add(-time.Hour)),
+		Limit:       50,
+	})
+	require.NoError(t, err)
+	fps := []string{}
+	for _, iss := range got {
+		fps = append(fps, iss.Fingerprint)
+	}
+	require.ElementsMatch(t, []string{"lf-a-prod", "lf-b-prod"}, fps)
+}
+
+// "%" and "_" in a title search are literal, not wildcards.
+func TestListIssues_titleSearchEscapesWildcards(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	for _, title := range []string{"100% CPU", "user_id missing", "plain title"} {
+		_, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-like-"+title, title, "error", "error", "", "", time.Now())
+		require.NoError(t, err)
+	}
+	search := func(q string) []string {
+		got, err := storage.ListIssues(ctx, testPool, storage.IssueFilter{ProjectIDs: []string{project.ID}, Title: q, Limit: 50})
+		require.NoError(t, err)
+		titles := []string{}
+		for _, iss := range got {
+			titles = append(titles, iss.Title)
+		}
+		return titles
+	}
+	require.Equal(t, []string{"100% CPU"}, search("%"))
+	require.Equal(t, []string{"user_id missing"}, search("_"))
+}
+
+// Per-project open counts include regressed issues, matching every other
+// "open" in the app (the dashboard total, the issue list filter).
+func TestGetProjectIssueCounts_includesRegressed(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	for _, status := range []string{"open", "regressed", "resolved"} {
+		iss, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-count-"+status, status, "error", "error", "", "", time.Now())
+		require.NoError(t, err)
+		_, err = testPool.Exec(ctx, `UPDATE issues SET status = $2 WHERE id = $1`, iss.ID, status)
+		require.NoError(t, err)
+	}
+	counts, err := storage.GetProjectIssueCounts(ctx, testPool, []string{project.ID})
+	require.NoError(t, err)
+	require.Len(t, counts, 1)
+	var openOrRegressed int64
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT count(*) FROM issues WHERE project_id = $1 AND status IN ('open','regressed')`, project.ID).Scan(&openOrRegressed))
+	require.Equal(t, openOrRegressed, counts[0].OpenIssues)
+}
+
+// Concurrent events on a resolved issue report the regression exactly once.
+// Transaction A plays the first event: it regresses the issue and holds the
+// row lock. A second upsert started meanwhile must wait, then see the row as
+// already regressed rather than the "resolved" of its statement snapshot.
+func TestUpsertIssue_concurrentRegressionReportedOnce(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	iss, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-concurrent-regress", "Title", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `UPDATE issues SET status = 'resolved' WHERE id = $1`, iss.ID)
+	require.NoError(t, err)
+
+	first, err := testPool.Begin(ctx)
+	require.NoError(t, err)
+	defer first.Rollback(ctx) //nolint:errcheck
+	_, err = first.Exec(ctx, `UPDATE issues SET status = 'regressed', regressed_at = NOW() WHERE id = $1`, iss.ID)
+	require.NoError(t, err)
+
+	regressed := make(chan bool, 1)
+	go func() {
+		_, _, r, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-concurrent-regress", "Title", "error", "error", "", "", time.Now())
+		if err != nil {
+			t.Errorf("upsert: %v", err)
+		}
+		regressed <- r
+	}()
+	require.Eventually(t, func() bool {
+		var waiting int
+		testPool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting)
+		return waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "second upsert should be waiting on the row lock")
+	require.NoError(t, first.Commit(ctx))
+
+	require.False(t, <-regressed, "the regression was already reported by the first event")
 }

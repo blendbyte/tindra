@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -128,7 +129,13 @@ func upsertIssueOnce(ctx context.Context, pool issueDB, projectID, fingerprint, 
 		var iss Issue
 		var wasRegressed bool
 		err = pool.QueryRow(ctx, `
-			WITH prev AS (SELECT status FROM issues WHERE id = $1)
+			-- prev is joined in FROM so it is read (and the row locked) before the
+			-- update. FOR UPDATE makes a concurrent upsert wait and then read the
+			-- already-regressed row, so only one of them reports the regression.
+			WITH prev AS (
+				SELECT status AS prev_status, snooze_ended_at AS prev_snooze_ended_at
+				FROM issues WHERE id = $1 FOR UPDATE
+			)
 			UPDATE issues
 			SET event_count        = event_count + 1,
 			    last_seen          = GREATEST(last_seen, $2),
@@ -140,6 +147,7 @@ func upsertIssueOnce(ctx context.Context, pool issueDB, projectID, fingerprint, 
 			                        END,
 			    status             = CASE
 			                          WHEN status = 'resolved' THEN 'regressed'
+			                          WHEN status = 'open' AND snooze_ended_at IS NOT NULL THEN 'regressed'
 			                          WHEN status = 'ignored' AND ignore_until IS NOT NULL AND ignore_until < now() THEN 'regressed'
 			                          WHEN status = 'ignored' AND ignore_count_limit IS NOT NULL AND (ignore_count + 1) >= ignore_count_limit THEN 'regressed'
 			                          ELSE status
@@ -160,13 +168,19 @@ func upsertIssueOnce(ctx context.Context, pool issueDB, projectID, fingerprint, 
 			                        END,
 			    regressed_at       = CASE
 			                          WHEN status = 'resolved' THEN NOW()
+			                          WHEN status = 'open' AND snooze_ended_at IS NOT NULL THEN NOW()
 			                          WHEN status = 'ignored' AND ignore_until IS NOT NULL AND ignore_until < now() THEN NOW()
 			                          WHEN status = 'ignored' AND ignore_count_limit IS NOT NULL AND (ignore_count + 1) >= ignore_count_limit THEN NOW()
 			                          ELSE regressed_at
-			                        END
+			                        END,
+			    -- A snooze that ended is only remembered until the next event.
+			    snooze_ended_at    = NULL
+			FROM prev
 			WHERE id = $1
 			RETURNING `+issueSelectCols+`,
-			          (SELECT status FROM prev) IN ('resolved', 'ignored') AND status = 'regressed'
+			          status = 'regressed' AND (
+			              prev_status IN ('resolved', 'ignored')
+			              OR (prev_status = 'open' AND prev_snooze_ended_at IS NOT NULL))
 		`, existingID, ts, level, environment).Scan(
 			&iss.ID, &iss.ProjectID, &iss.Fingerprint, &iss.Title,
 			&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
@@ -291,58 +305,19 @@ func LinkEventToIssue(ctx context.Context, pool *pgxpool.Pool, eventID, issueID,
 	return nil
 }
 
-func ListIssues(ctx context.Context, pool *pgxpool.Pool, projectID string, filter IssueFilter) ([]*Issue, error) {
+// ListIssues returns the issues matching every field of filter, most recently
+// seen first. Unlike ListAllIssues it skips the per-issue user count, for
+// callers that only need the issue rows (alert payloads, the project API).
+func ListIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) ([]*Issue, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-
-	var args []any
-	q := `SELECT ` + issueSelectCols + ` FROM issues WHERE TRUE`
-	if projectID != "" {
-		args = append(args, projectID)
-		q += fmt.Sprintf(" AND project_id = $%d", len(args))
-	}
-
-	switch filter.Status {
-	case "open":
-		q += " AND status IN ('open', 'regressed')"
-	case "":
-		// no filter
-	default:
-		args = append(args, filter.Status)
-		q += fmt.Sprintf(" AND status = $%d", len(args))
-	}
-	if len(filter.Levels) > 0 {
-		args = append(args, filter.Levels)
-		q += fmt.Sprintf(" AND level = ANY($%d::text[])", len(args))
-	} else if filter.Level != "" {
-		args = append(args, filter.Level)
-		q += fmt.Sprintf(" AND level = $%d", len(args))
-	}
-	if filter.Kind != "" {
-		args = append(args, filter.Kind)
-		q += fmt.Sprintf(" AND kind = $%d", len(args))
-	}
-	if filter.Since != nil {
-		args = append(args, *filter.Since)
-		q += fmt.Sprintf(" AND first_seen > $%d", len(args))
-	}
-	if filter.SinceLast != nil {
-		args = append(args, *filter.SinceLast)
-		q += fmt.Sprintf(" AND last_seen > $%d", len(args))
-	}
-	if filter.SinceRegressed != nil {
-		args = append(args, *filter.SinceRegressed)
-		q += fmt.Sprintf(" AND regressed_at > $%d", len(args))
-	}
+	q, args := addCommonFilters(`SELECT `+issueSelectCols+` FROM issues WHERE TRUE`, nil, filter)
 	if filter.CursorTime != nil && filter.CursorID != nil {
 		n := len(args) + 1
 		args = append(args, *filter.CursorTime, *filter.CursorID)
-		q += fmt.Sprintf(
-			" AND (last_seen < $%d OR (last_seen = $%d AND id < $%d::uuid))",
-			n, n, n+1,
-		)
+		q += fmt.Sprintf(" AND (last_seen < $%d OR (last_seen = $%d AND id < $%d::uuid))", n, n, n+1)
 	}
 	args = append(args, limit)
 	q += fmt.Sprintf(" ORDER BY last_seen DESC, id DESC LIMIT $%d", len(args))
@@ -352,16 +327,10 @@ func ListIssues(ctx context.Context, pool *pgxpool.Pool, projectID string, filte
 		return nil, fmt.Errorf("query: %w", err)
 	}
 	defer rows.Close()
-
 	var issues []*Issue
 	for rows.Next() {
 		var iss Issue
-		if err := rows.Scan(
-			&iss.ID, &iss.ProjectID, &iss.Fingerprint, &iss.Title,
-			&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
-			&iss.AssigneeID, &iss.Environment,
-			&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount, &iss.FirstRelease,
-		); err != nil {
+		if err := scanIssue(rows, &iss); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		issues = append(issues, &iss)
@@ -399,7 +368,7 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 		q += fmt.Sprintf(" AND assignee_id = $%d::uuid", len(args))
 	}
 	if filter.Title != "" {
-		args = append(args, "%"+filter.Title+"%")
+		args = append(args, likeContains(filter.Title))
 		q += fmt.Sprintf(" AND title ILIKE $%d", len(args))
 	}
 	if filter.TagKey != "" {
@@ -433,6 +402,10 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 			sub += fmt.Sprintf(` AND project_id = ANY($%d::uuid[])`, projIdx)
 		}
 		q += sub + `)`
+	}
+	if filter.Since != nil {
+		args = append(args, *filter.Since)
+		q += fmt.Sprintf(" AND first_seen > $%d", len(args))
 	}
 	if filter.SinceLast != nil {
 		args = append(args, *filter.SinceLast)
@@ -624,7 +597,8 @@ func UpdateIssueStatus(ctx context.Context, pool *pgxpool.Pool, projectID, id, s
 		SET status             = $1,
 		    ignore_until       = $4,
 		    ignore_count_limit = $5,
-		    ignore_count       = 0
+		    ignore_count       = 0,
+		    snooze_ended_at    = NULL
 		WHERE id = $2 AND project_id = $3
 		RETURNING `+issueSelectCols,
 		status, id, projectID, ignoreUntil, ignoreCountLimit), &iss)
@@ -690,6 +664,14 @@ func MergeIssues(ctx context.Context, pool *pgxpool.Pool, primaryID string, merg
 		return nil, fmt.Errorf("reassign events: %w", err)
 	}
 
+	// Move everything else that belongs to the merged issues. These tables
+	// cascade on delete, so anything left behind would be lost with them.
+	for _, table := range []string{"event_tags", "perf_events", "issue_comments", "issue_history"} {
+		if _, err := tx.Exec(ctx, `UPDATE `+table+` SET issue_id = $1 WHERE issue_id = ANY($2::uuid[])`, primaryID, mergeIDs); err != nil {
+			return nil, fmt.Errorf("reassign %s: %w", table, err)
+		}
+	}
+
 	// Aggregate stats from the merged issues into the primary.
 	if _, err := tx.Exec(ctx, `
 		UPDATE issues dst SET
@@ -726,10 +708,32 @@ func MergeIssues(ctx context.Context, pool *pgxpool.Pool, primaryID string, merg
 	return &iss, nil
 }
 
+// Unmerge errors.
+var (
+	ErrUnmergeAll         = errors.New("cannot unmerge all fingerprints - at least one must remain")
+	ErrUnknownFingerprint = errors.New("fingerprint does not belong to this issue")
+)
+
+// eventTitleSQL derives an issue title from an event payload the way the
+// grouper does: innermost exception "Type: value", else the message (string or
+// {formatted, message} object), else logentry.
+const eventTitleSQL = `COALESCE(
+	NULLIF(concat_ws(': ',
+		NULLIF(payload->'exception'->'values'->-1->>'type', ''),
+		NULLIF(payload->'exception'->'values'->-1->>'value', '')), ''),
+	CASE jsonb_typeof(payload->'message')
+		WHEN 'string' THEN NULLIF(payload->>'message', '')
+		WHEN 'object' THEN COALESCE(NULLIF(payload->'message'->>'formatted', ''), NULLIF(payload->'message'->>'message', ''))
+	END,
+	NULLIF(payload->'logentry'->>'formatted', ''),
+	NULLIF(payload->'logentry'->>'message', ''),
+	'Unknown error')`
+
 // UnmergeFingerprints splits the given fingerprints out of issueID into new individual issues.
 // Each fingerprint gets its own issue with stats derived from its events.
 // At least one fingerprint must remain on the original issue.
 func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string, fingerprints []string) ([]*Issue, error) {
+	fingerprints = slices.Compact(slices.Sorted(slices.Values(fingerprints)))
 	if len(fingerprints) == 0 {
 		return nil, nil
 	}
@@ -743,78 +747,81 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 		return nil, fmt.Errorf("lock issue membership: %w", err)
 	}
 
-	// Guard: issue must have more fingerprints than we're removing.
-	var totalFPs int
+	// Every fingerprint must be on this issue, and at least one must stay.
+	var totalFPs, matched int
 	if err := tx.QueryRow(ctx, `
-		SELECT COUNT(*) FROM issue_fingerprints WHERE issue_id = $1
-	`, issueID).Scan(&totalFPs); err != nil {
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE fingerprint = ANY($2::text[]))
+		FROM issue_fingerprints WHERE issue_id = $1
+	`, issueID, fingerprints).Scan(&totalFPs, &matched); err != nil {
 		return nil, fmt.Errorf("count fingerprints: %w", err)
 	}
+	if matched != len(fingerprints) {
+		return nil, ErrUnknownFingerprint
+	}
 	if totalFPs <= len(fingerprints) {
-		return nil, fmt.Errorf("cannot unmerge all fingerprints - at least one must remain")
+		return nil, ErrUnmergeAll
+	}
+
+	// The new issues inherit the source's project, kind and environment.
+	var projectID, kind string
+	var environment *string
+	if err := tx.QueryRow(ctx, `SELECT project_id, kind, environment FROM issues WHERE id = $1`, issueID).Scan(&projectID, &kind, &environment); err != nil {
+		return nil, fmt.Errorf("get source issue: %w", err)
 	}
 
 	var newIssues []*Issue
 	var totalUnmergedCount int64
-
-	// Get the project_id once; it's the same for all fingerprints.
-	var projectID string
-	if err := tx.QueryRow(ctx, `SELECT project_id FROM issues WHERE id = $1`, issueID).Scan(&projectID); err != nil {
-		return nil, fmt.Errorf("get project id: %w", err)
-	}
-
 	for _, fp := range fingerprints {
-		// Derive title, level, and time bounds from the events with this fingerprint.
-		var title, level string
-		var firstSeen, lastSeen time.Time
+		// Derive title, level, first release and time bounds from the latest
+		// and earliest events with this fingerprint.
+		title, level := "Unknown error", "error"
+		var firstRelease *string
+		firstSeen, lastSeen := time.Now().UTC(), time.Now().UTC()
 		var count int64
-
 		err := tx.QueryRow(ctx, `
-			SELECT
-				COALESCE(payload->'exception'->'values'->0->>'type', payload->>'message', 'Unknown Error'),
+			SELECT `+eventTitleSQL+`,
 				COALESCE(payload->>'level', 'error'),
-				MIN(timestamp) OVER (),
-				MAX(timestamp) OVER (),
-				COUNT(*) OVER ()
+				MIN(timestamp) OVER (), MAX(timestamp) OVER (), COUNT(*) OVER (),
+				FIRST_VALUE(release) OVER (ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
 			FROM events
 			WHERE issue_id = $1 AND fingerprint = $2
 			ORDER BY received_at DESC
 			LIMIT 1
-		`, issueID, fp).Scan(&title, &level, &firstSeen, &lastSeen, &count)
-		if errors.Is(err, pgx.ErrNoRows) {
-			// No events for this fingerprint (shouldn't happen in practice).
-			title, level = fp, "error"
-			firstSeen, lastSeen = time.Now(), time.Now()
-			count = 1
-		} else if err != nil {
+		`, issueID, fp).Scan(&title, &level, &firstSeen, &lastSeen, &count, &firstRelease)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("derive stats for %s: %w", fp, err)
 		}
+		// No events (all past retention): the fingerprint still moves, with an
+		// empty issue rather than invented counts.
 
-		// Create the new issue.
 		var newIss Issue
 		err = scanIssue(tx.QueryRow(ctx, `
-			INSERT INTO issues (project_id, fingerprint, title, level, kind, first_seen, last_seen, event_count)
-			VALUES ($1, $2, $3, $4, 'error', $5, $6, $7)
+			INSERT INTO issues (project_id, fingerprint, title, level, kind, environment, first_release, first_seen, last_seen, event_count)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			RETURNING `+issueSelectCols,
-			projectID, fp, title, level, firstSeen, lastSeen, count), &newIss)
+			projectID, fp, truncRunesStorage(title, 200), level, kind, environment, firstRelease, firstSeen, lastSeen, count), &newIss)
 		if err != nil {
 			return nil, fmt.Errorf("insert new issue: %w", err)
 		}
 
-		// Reassign the fingerprint mapping.
 		if _, err := tx.Exec(ctx, `
 			UPDATE issue_fingerprints SET issue_id = $1
 			WHERE issue_id = $2 AND fingerprint = $3
 		`, newIss.ID, issueID, fp); err != nil {
 			return nil, fmt.Errorf("reassign fingerprint: %w", err)
 		}
-
-		// Reassign the events.
 		if _, err := tx.Exec(ctx, `
 			UPDATE events SET issue_id = $1
 			WHERE issue_id = $2 AND fingerprint = $3
 		`, newIss.ID, issueID, fp); err != nil {
 			return nil, fmt.Errorf("reassign events: %w", err)
+		}
+		// Tags travel with their events.
+		if _, err := tx.Exec(ctx, `
+			UPDATE event_tags SET issue_id = $1
+			WHERE issue_id = $2 AND event_id IN (SELECT id FROM events WHERE issue_id = $1)
+		`, newIss.ID, issueID); err != nil {
+			return nil, fmt.Errorf("reassign tags: %w", err)
 		}
 
 		totalUnmergedCount += count
@@ -824,7 +831,7 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 	// Subtract the unmerged event counts from the original issue and refresh time bounds.
 	if _, err := tx.Exec(ctx, `
 		UPDATE issues SET
-			event_count = event_count - $2,
+			event_count = GREATEST(event_count - $2, 0),
 			first_seen  = COALESCE((SELECT MIN(timestamp) FROM events WHERE issue_id = $1), first_seen),
 			last_seen   = COALESCE((SELECT MAX(timestamp) FROM events WHERE issue_id = $1), last_seen)
 		WHERE id = $1
@@ -836,6 +843,16 @@ func UnmergeFingerprints(ctx context.Context, pool *pgxpool.Pool, issueID string
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return newIssues, nil
+}
+
+// truncRunesStorage caps s at max characters, marking the cut with an ellipsis
+// like issue titles from the grouper.
+func truncRunesStorage(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "\u2026"
 }
 
 // BulkUpdateIssueStatus sets status on the given issues, limited to projectIDs
@@ -857,7 +874,8 @@ func BulkUpdateIssueStatus(ctx context.Context, pool *pgxpool.Pool, ids []string
 		SET status             = $1,
 		    ignore_until       = $3,
 		    ignore_count_limit = $4,
-		    ignore_count       = 0
+		    ignore_count       = 0,
+		    snooze_ended_at    = NULL
 		WHERE id = ANY($2::uuid[])
 		  AND ($5::uuid[] IS NULL OR project_id = ANY($5::uuid[]))
 		RETURNING id
@@ -878,7 +896,7 @@ func BulkUpdateIssueStatus(ctx context.Context, pool *pgxpool.Pool, ids []string
 func AutoResolvePerformanceIssues(ctx context.Context, pool *pgxpool.Pool, olderThan time.Duration) ([]*Issue, error) {
 	rows, err := pool.Query(ctx, `
 		UPDATE issues
-		SET status = 'resolved'
+		SET status = 'resolved', snooze_ended_at = NULL
 		WHERE kind != 'error'
 		  AND status IN ('open', 'regressed')
 		  AND last_seen < NOW() - make_interval(secs => $1::float8)
@@ -905,12 +923,14 @@ func AutoResolvePerformanceIssues(ctx context.Context, pool *pgxpool.Pool, older
 	return issues, rows.Err()
 }
 
-// ExpireIgnoredIssues transitions any time-limited ignored issues past their expiry to regressed.
-// Intended to be called by a background goroutine every ~60 seconds.
+// ExpireIgnoredIssues ends time-based snoozes that have run out. The issue
+// reopens quietly (no regression yet) and records snooze_ended_at, so the next
+// event marks it regressed and regression alerts fire on recurrence.
 func ExpireIgnoredIssues(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	tag, err := pool.Exec(ctx, `
 		UPDATE issues
-		SET status             = 'regressed',
+		SET status             = 'open',
+		    snooze_ended_at    = now(),
 		    ignore_until       = NULL,
 		    ignore_count_limit = NULL,
 		    ignore_count       = 0

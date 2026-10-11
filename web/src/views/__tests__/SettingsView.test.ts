@@ -625,6 +625,17 @@ describe('SettingsView', () => {
       expect(wrapper.find('.rule__body').exists()).toBe(false)
     })
 
+    it('labels global rules and rules whose projects were all deleted', () => {
+      setupAlertsWithRules([
+        { ...makeRule('r1', 'Everywhere'), is_global: true },
+        { ...makeRule('r2', 'Orphaned'), is_global: false },
+      ])
+      const wrapper = mount(SettingsView, { global: { stubs } })
+      const heads = wrapper.findAll('.rule__head')
+      expect(heads.find(h => h.text().includes('Everywhere'))!.text()).toContain('Global')
+      expect(heads.find(h => h.text().includes('Orphaned'))!.text()).toContain('No projects (inactive)')
+    })
+
     it('opens edit form when Edit button is clicked in expanded rule', async () => {
       setupAlertsWithRules([makeRule('r1', 'High Error Rate')])
       const wrapper = mount(SettingsView, { global: { stubs } })

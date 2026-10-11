@@ -327,7 +327,7 @@ func GetProjectIssueCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs [
 	rows, err := pool.Query(ctx, `
 		SELECT p.id, COUNT(i.id) AS open_issues
 		FROM projects p
-		LEFT JOIN issues i ON i.project_id = p.id AND i.status = 'open'
+		LEFT JOIN issues i ON i.project_id = p.id AND i.status IN ('open', 'regressed')
 		WHERE p.id = ANY($1)
 		GROUP BY p.id
 	`, projectIDs)
