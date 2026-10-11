@@ -20,6 +20,10 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// `make test` exports the developer's .env, which may configure a real mail
+	// provider. Tests that need email set it themselves with t.Setenv.
+	_ = os.Unsetenv("EMAIL_PROVIDER")
+
 	ctx := context.Background()
 	pool, dsn, cleanup := testutil.SetupDBWithDSN(ctx)
 	testUserPool = pool

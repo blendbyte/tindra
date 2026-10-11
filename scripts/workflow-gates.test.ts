@@ -52,7 +52,7 @@ for (const name of ['ci', 'release']) {
 test('all verification checks are mandatory for every revision', () => {
   expect(verify.on.workflow_call).toBeDefined()
   expect(Object.keys(verify.jobs).sort()).toEqual([
-    'action-pins', 'frontend', 'frontend-test', 'go-lint', 'go-test',
+    'action-pins', 'frontend', 'frontend-test', 'go-lint', 'go-test', 'go-vuln',
   ])
   for (const job of Object.values(verify.jobs) as any[]) {
     expect(job.if).toBeUndefined()
@@ -87,6 +87,22 @@ test('Go and frontend unit suites cannot be replaced by build-only checks', () =
     step.uses?.startsWith('golangci/golangci-lint-action@'),
   )).toBe(true)
   expect(verify.jobs['frontend-test'].steps.map((step: any) => step.run)).toContain('bun run test:coverage')
+})
+
+test('vulnerability scan uses the toolchain that ships in releases', () => {
+  const steps = verify.jobs['go-vuln'].steps
+  const setupGo = steps.find((step: any) => step.uses?.startsWith('actions/setup-go@'))
+  expect(setupGo.with['go-version-file']).toBe('go.mod')
+  expect(steps.some((step: any) =>
+    /^go run golang\.org\/x\/vuln\/cmd\/govulncheck@v\d+\.\d+\.\d+ \.\/\.\.\.$/.test(step.run ?? ''),
+  )).toBe(true)
+})
+
+test('Docker builder uses the same Go version as go.mod', () => {
+  const goVersion = readFileSync(new URL('../go.mod', import.meta.url), 'utf8').match(/^go (\S+)$/m)?.[1]
+  const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8')
+  expect(goVersion).toBeDefined()
+  expect(dockerfile).toContain(`golang:${goVersion}-alpine`)
 })
 
 test('release binaries consume the frontend artifact from mandatory verification', () => {

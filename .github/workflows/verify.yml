@@ -73,6 +73,22 @@ jobs:
         with:
           version: latest
 
+  go-vuln:
+    name: Go vulnerability check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Create UI stub for embed
+        run: mkdir -p internal/ui/dist && printf '<!doctype html>' > internal/ui/dist/index.html
+      # Also scans the standard library of the toolchain pinned in go.mod, so a
+      # stale Go patch version fails here instead of shipping in a release.
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   frontend:
     name: Frontend build and browser tests
     runs-on: ubuntu-latest
