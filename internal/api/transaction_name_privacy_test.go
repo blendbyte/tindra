@@ -38,7 +38,7 @@ func TestEnvelopePersistsScrubbedTransactionName(t *testing.T) {
 			done := make(chan struct{})
 			go func() { defer close(done); txBuf.Run(ctx, testPool) }()
 			defer func() { cancel(); <-done }()
-			h := api.NewRouter(testPool, nil, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+			h := api.NewRouter(api.Config{Pool: testPool, Transactions: txBuf})
 			body := "{}\n{\"type\":\"transaction\"}\n" + `{"transaction":"GET /users/private@example.com","contexts":{"trace":{"trace_id":"1234567890abcdef1234567890abcdef","span_id":"1234567890abcdef"}},"start_timestamp":1704067200,"timestamp":1704067201}` + "\n"
 			req := httptest.NewRequest(http.MethodPost, "/api/"+p.ID+"/envelope/", strings.NewReader(body))
 			req.Header.Set("X-Sentry-Auth", sentryAuthHeader(p.PublicKey))

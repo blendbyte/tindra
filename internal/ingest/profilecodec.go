@@ -61,14 +61,8 @@ func EncodeProfile(p *Profile) (data []byte, encoding int16, err error) {
 	return profileEncoder.EncodeAll(raw, nil), ProfileEncodingZstdJSON, nil
 }
 
-// DecodeProfile reverses EncodeProfile.
 // ErrProfileDecodeBudget means the next chunk would exceed the request budget.
 var ErrProfileDecodeBudget = errors.New("profile decode budget exceeded")
-
-func DecodeProfile(encoding int16, data []byte) (*Profile, error) {
-	p, _, err := DecodeProfileLimited(context.Background(), encoding, data, maxDecodedProfileBytes)
-	return p, err
-}
 
 // DecodeProfileLimited charges all decompressed JSON, including frames and stacks,
 // before allocating the decoded object. The decoder also caps any transient raw

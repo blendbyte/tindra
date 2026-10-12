@@ -24,7 +24,7 @@ function buildChunkErrorRouter() {
   return r
 }
 
-describe('chunk reload — vite:preloadError handler (main.ts)', () => {
+describe('chunk reload: vite:preloadError handler (main.ts)', () => {
   let reloadMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -67,7 +67,7 @@ describe('chunk reload — vite:preloadError handler (main.ts)', () => {
   })
 })
 
-describe('chunk reload — router.onError handler (router/index.ts)', () => {
+describe('chunk reload: router.onError handler (router/index.ts)', () => {
   let assignMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {

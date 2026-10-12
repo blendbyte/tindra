@@ -454,7 +454,7 @@ func TestGetSpanSummaries_releaseFilter(t *testing.T) {
 	testPool.QueryRow(context.Background(), `SELECT id FROM transactions WHERE transaction = '/rel-txn' AND project_id = $1`, p.ID).Scan(&txID)
 	seedSpan(t, txID, "rel-sp", "db.query", "SELECT release", 10, now)
 
-	// Matching release — span should appear.
+	// Matching release: span should appear.
 	got, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "", "v2.0.0")
 	if err != nil {
 		t.Fatalf("release filter: %v", err)
@@ -469,7 +469,7 @@ func TestGetSpanSummaries_releaseFilter(t *testing.T) {
 		t.Error("expected span visible when release matches")
 	}
 
-	// Non-matching release — span should not appear.
+	// Non-matching release: span should not appear.
 	none, err := storage.GetSpanSummaries(context.Background(), testPool, "db", []string{p.ID}, 24, "", "v1.0.0")
 	if err != nil {
 		t.Fatalf("v1 release filter: %v", err)

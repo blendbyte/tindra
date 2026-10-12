@@ -158,16 +158,6 @@ func (p eventPayload) message() messageField {
 	return p.LogEntry
 }
 
-// Compute returns the fingerprint for a Sentry event payload, plus the legacy
-// v1 fingerprint when it differs (empty otherwise). The grouper prefers an
-// existing issue under the legacy fingerprint.
-// Priority: explicit SDK fingerprint (with {{ default }} expansion), then the
-// innermost exception, then the message, then the transaction.
-func Compute(raw json.RawMessage) (fingerprint, legacy string) {
-	p, ok := decodeEvent(raw)
-	return computeFrom(p, ok)
-}
-
 func computeFrom(p eventPayload, ok bool) (fingerprint, legacy string) {
 	if !ok {
 		// Never hash the raw payload: it contains the event ID and timestamp,
@@ -263,13 +253,6 @@ func frameKeys(e exceptionValue) []string {
 		return keys
 	}
 	return pick(func(f stackFrame) bool { return f.InApp == nil })
-}
-
-// Title extracts a short human-readable title from a Sentry event payload.
-// Uses the last (innermost) exception for consistency with Compute.
-func Title(raw json.RawMessage) string {
-	p, ok := decodeEvent(raw)
-	return titleFrom(p, ok)
 }
 
 func titleFrom(p eventPayload, ok bool) string {

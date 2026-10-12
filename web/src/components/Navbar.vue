@@ -336,7 +336,7 @@ async function logout() {
     </div>
   </nav>
 
-  <!-- Mobile nav drawer — teleported to body to escape nav's stacking context -->
+  <!-- Mobile nav drawer, teleported to body to escape nav's stacking context -->
   <Teleport to="body">
     <div v-if="menuOpen" id="mobile-navigation" ref="mobileDrawer" class="nav__mobile-drawer" role="navigation" aria-label="Main navigation" @click.self="menuOpen = false">
       <RouterLink :to="{ path: '/dashboard', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path === '/dashboard' ? 'page' : undefined" @click="menuOpen = false">

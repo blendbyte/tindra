@@ -88,14 +88,6 @@ func ListPendingInvites(ctx context.Context, pool *pgxpool.Pool) ([]*Invite, err
 	return invites, nil
 }
 
-func MarkInviteAccepted(ctx context.Context, pool *pgxpool.Pool, token string) error {
-	_, err := pool.Exec(ctx, `UPDATE user_invites SET accepted_at = NOW() WHERE token_hash = $1`, tokenHash(token))
-	if err != nil {
-		return fmt.Errorf("update: %w", err)
-	}
-	return nil
-}
-
 // DeleteInvite removes an invite by its UUID (the stable admin identifier).
 func DeleteInvite(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error) {
 	tag, err := pool.Exec(ctx, `DELETE FROM user_invites WHERE id = $1`, id)

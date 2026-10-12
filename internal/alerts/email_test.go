@@ -651,7 +651,7 @@ func TestSmtpSender_port465DialFailure(t *testing.T) {
 
 func TestSmtpSender_starttlsFailure(t *testing.T) {
 	// FakeSMTP advertises STARTTLS and responds "220 Ready" then closes the
-	// connection, so the client's StartTLS handshake fails — covers "starttls: …".
+	// connection, so the client's StartTLS handshake fails: covers "starttls: …".
 	srv := testutil.NewFakeSMTPWithSTARTTLS(t)
 	s := &smtpSender{cfg: smtpConfig{
 		Host: "127.0.0.1",

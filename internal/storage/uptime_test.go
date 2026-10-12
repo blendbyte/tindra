@@ -748,7 +748,7 @@ func TestListRecoveredUptimeMonitors_sinceFilter(t *testing.T) {
 	code := 200
 	storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "up", StatusCode: &code})
 
-	// Query with a since time in the future — should return nothing
+	// Query with a since time in the future: should return nothing
 	since := time.Now().UTC().Add(1 * time.Hour)
 	monitors, err := storage.ListRecoveredUptimeMonitors(context.Background(), testPool, []string{p.ID}, since)
 	if err != nil {
@@ -763,7 +763,7 @@ func TestListUptimeMonitors_noProjectFilter(t *testing.T) {
 	p := setupProjectForUptime(t)
 	seedUptimeMonitor(t, p.ID, "global-list", "https://example.com")
 
-	// Empty projectIDs — should return all monitors (no WHERE clause)
+	// Empty projectIDs: should return all monitors (no WHERE clause)
 	monitors, err := storage.ListUptimeMonitors(context.Background(), testPool, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -788,7 +788,7 @@ func TestListDownUptimeMonitors_noProjectFilter(t *testing.T) {
 		storage.RecordUptimeCheck(context.Background(), testPool, m.ID, &storage.UptimeCheck{Status: "down", StatusCode: &code})
 	}
 
-	// Empty projectIDs — should match any project
+	// Empty projectIDs: should match any project
 	monitors, err := storage.ListDownUptimeMonitors(context.Background(), testPool, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

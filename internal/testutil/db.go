@@ -33,7 +33,7 @@ const templateLockKey = int64(0x74696e6472615f74) // "tindra_t"
 //
 // If TINDRA_TEST_DSN is set (e.g. "postgres://tindra:tindra@localhost:5432/postgres?sslmode=disable")
 // a short-lived database is created on that server instead of starting a container.
-// This makes repeated local runs near-instant — just keep `make db` running.
+// This makes repeated local runs near-instant; just keep `make db` running.
 func SetupDB(ctx context.Context) (*pgxpool.Pool, func()) {
 	storage.BcryptCost = bcrypt.MinCost
 	if dsn := os.Getenv("TINDRA_TEST_DSN"); dsn != "" {
@@ -137,7 +137,7 @@ func setupFromDSN(ctx context.Context, adminDSN string) (*pgxpool.Pool, func()) 
 	if err != nil {
 		log.Fatalf("testutil: connect to admin db: %v", err)
 	}
-	// Clone the pre-migrated template — much faster than running migrations again.
+	// Clone the pre-migrated template, which is much faster than running migrations again.
 	if _, err := adminPool.Exec(ctx, fmt.Sprintf(
 		"CREATE DATABASE %s TEMPLATE %s", dbName, templateDB,
 	)); err != nil {

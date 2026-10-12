@@ -16,7 +16,7 @@ import (
 )
 
 func mcpHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1)})
 }
 
 type rpcResp struct {
@@ -154,18 +154,35 @@ func TestMCP_unknownMethod(t *testing.T) {
 // --- initialize & ping ---
 
 func TestMCP_initialize(t *testing.T) {
-	resp := postMCP(t, mcpHandler(), "initialize", nil, authCookie())
+	resp := postMCP(t, mcpHandler(), "initialize", map[string]any{"protocolVersion": "2025-06-18"}, authCookie())
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %v", resp.Error)
 	}
-	if resp.Result["protocolVersion"] != "2024-11-05" {
-		t.Errorf("protocolVersion: got %v", resp.Result["protocolVersion"])
+	if resp.Result["protocolVersion"] != "2025-06-18" {
+		t.Errorf("protocolVersion: got %v, want the client's supported version", resp.Result["protocolVersion"])
 	}
 	if resp.Result["serverInfo"] == nil {
 		t.Error("missing serverInfo")
 	}
 	if resp.Result["capabilities"] == nil {
 		t.Error("missing capabilities")
+	}
+	if resp.Result["instructions"] == "" {
+		t.Error("missing instructions")
+	}
+}
+
+func TestMCP_initialize_offersNewestLegacyVersionForUnknownOnes(t *testing.T) {
+	// 2024-11-05 meant the HTTP+SSE transport, which Tindra does not serve.
+	for _, requested := range []any{"2024-11-05", "2099-01-01", nil} {
+		params := map[string]any{}
+		if requested != nil {
+			params["protocolVersion"] = requested
+		}
+		resp := postMCP(t, mcpHandler(), "initialize", params, authCookie())
+		if resp.Result["protocolVersion"] != "2025-11-25" {
+			t.Errorf("requested %v: got %v, want 2025-11-25", requested, resp.Result["protocolVersion"])
+		}
 	}
 }
 
@@ -540,7 +557,7 @@ func TestMCP_getIssue_resolvesSourceMaps(t *testing.T) {
 	iss := seedIssue(t, "mcp-sm-fp", "SM Error")
 	evID := seedMCPIssueEvent(t, iss.ID, "mcp-sm-fp", `{"exception":{"values":[{"stacktrace":{"frames":[{"filename":"app.js","lineno":1}]}}]},"release":"v1"}`, time.Now().UTC())
 	store, _ := newSmStore(t)
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, store, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), Sourcemaps: store})
 
 	result := toolCall(t, h, "get_issue", map[string]any{"id": iss.ID}, authCookie())
 	isErr, _ := result["isError"].(bool)
@@ -1387,60 +1404,33 @@ func TestMCP_bulkUpdateIssues_historyOnlyForUpdatedIssues(t *testing.T) {
 
 // --- OAuth discovery & transport helpers ---
 
-func TestMCP_oauthAS_returns200JSON(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
-	rec := httptest.NewRecorder()
-	mcpHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("expected application/json Content-Type, got %q", ct)
-	}
-	var body map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("body is not valid JSON: %v", err)
-	}
-	if body["issuer"] == nil {
-		t.Error("expected issuer field in AS metadata")
-	}
-	methods, ok := body["bearer_methods_supported"].([]any)
-	if !ok || len(methods) == 0 {
-		t.Error("expected non-empty bearer_methods_supported")
+func TestMCP_oauthDiscovery_isJSONNotFound(t *testing.T) {
+	// Tokens come from Settings; advertising an authorization server that does
+	// not exist sent OAuth-capable clients into a dead end.
+	for _, path := range []string{
+		"/.well-known/oauth-authorization-server",
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/oauth-protected-resource/mcp",
+	} {
+		rec := httptest.NewRecorder()
+		mcpHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404, got %d", path, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			t.Errorf("%s: expected JSON, got %q", path, ct)
+		}
 	}
 }
 
-func TestMCP_oauthPR_returns200JSON(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource", nil)
-	rec := httptest.NewRecorder()
-	mcpHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("expected application/json Content-Type, got %q", ct)
-	}
-	var body map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("body is not valid JSON: %v", err)
-	}
-	if body["resource"] == nil {
-		t.Error("expected resource field in protected resource metadata")
-	}
-	authServers, ok := body["authorization_servers"].([]any)
-	if !ok || len(authServers) == 0 {
-		t.Error("expected non-empty authorization_servers")
-	}
-	methods, ok := body["bearer_methods_supported"].([]any)
-	if !ok || len(methods) == 0 {
-		t.Error("expected non-empty bearer_methods_supported")
+func TestMCP_getAndDelete_return405JSON(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) { checkMCP405(t, method) })
 	}
 }
 
-func TestMCP_getMethod_returns405JSON(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+func checkMCP405(t *testing.T, method string) {
+	req := httptest.NewRequest(method, "/mcp", nil)
 	rec := httptest.NewRecorder()
 	mcpHandler().ServeHTTP(rec, req)
 
@@ -1582,7 +1572,7 @@ func TestMCP_getOverview_withTransactions(t *testing.T) {
 	}
 	// transaction_error_rate is only present when len(summaries) > 0.
 	if _, ok := overview["transaction_error_rate"]; !ok {
-		t.Log("note: transaction_error_rate not in response — summaries may have been outside the 24h window")
+		t.Log("note: transaction_error_rate not in response: summaries may have been outside the 24h window")
 	}
 }
 

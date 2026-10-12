@@ -93,7 +93,7 @@ func TestConditionMet_uptimeDown_noProjectFilter(t *testing.T) {
 		VALUES ($1, 'global-down', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'down', 2)
 	`, testProject.ID)
 
-	// Rule with no project filter — should match any project
+	// Rule with no project filter: should match any project
 	rule := &storage.AlertRule{
 		ProjectIDs: []string{},
 		Trigger:    "uptime_down",
@@ -194,7 +194,7 @@ func TestConditionMet_uptimeRecovered_usesLastFiredAt(t *testing.T) {
 		VALUES ($1, 'old-recovery', 'https://example.com', 'GET', 300, 10, '200-299', 'active', 'up', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '30 minutes')
 	`, testProject.ID)
 
-	// LastFiredAt = 10 minutes ago — so the recovery happened BEFORE last firing
+	// LastFiredAt = 10 minutes ago: so the recovery happened BEFORE last firing
 	lastFired := time.Now().Add(-10 * time.Minute)
 	rule := &storage.AlertRule{
 		ProjectIDs:  []string{testProject.ID},

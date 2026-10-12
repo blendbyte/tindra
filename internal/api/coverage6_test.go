@@ -1,6 +1,6 @@
 package api_test
 
-// coverage6_test.go — additional tests targeting uncovered branches across
+// coverage6_test.go: additional tests targeting uncovered branches across
 // alerts.go, uptime.go, cron.go, extra.go, global.go, and mcp.go.
 // Focus: alert rule trigger variants, uptime PATCH paths, comment paths,
 // release resources, handleUpdateMe timezone edge cases, cron helpers,
@@ -23,7 +23,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// handleListAllIssues — query param branches not yet exercised elsewhere
+// handleListAllIssues: query param branches not yet exercised elsewhere
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_withEnvFilter(t *testing.T) {
@@ -67,7 +67,7 @@ func TestListAllIssues_since24h(t *testing.T) {
 }
 
 func TestListAllIssues_sinceUnknown(t *testing.T) {
-	// Unknown since value causes d to stay zero — SinceLast not set
+	// Unknown since value causes d to stay zero: SinceLast not set
 	req := httptest.NewRequest(http.MethodGet, "/api/issues?since=1year", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
@@ -78,7 +78,7 @@ func TestListAllIssues_sinceUnknown(t *testing.T) {
 }
 
 func TestListAllIssues_invalidCursorTimeIgnoredGlobal(t *testing.T) {
-	// cursor_time present but unparseable — inner if not entered, no cursor applied
+	// cursor_time present but unparseable: inner if not entered, no cursor applied
 	req := httptest.NewRequest(http.MethodGet, "/api/issues?cursor_time=notadate&cursor_id=someid", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestListAllIssues_invalidCursorTimeIgnoredGlobal(t *testing.T) {
 }
 
 func TestListAllIssues_cursorTimeWithoutCursorIDGlobal(t *testing.T) {
-	// cursor_time alone (no cursor_id) — inner if not entered
+	// cursor_time alone (no cursor_id): inner if not entered
 	cursorTime := time.Now().UTC().Format(time.RFC3339Nano)
 	req := httptest.NewRequest(http.MethodGet, "/api/issues?cursor_time="+cursorTime, nil)
 	req.AddCookie(authCookie())
@@ -101,7 +101,7 @@ func TestListAllIssues_cursorTimeWithoutCursorIDGlobal(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — additional trigger values (cron_missed, cron_error, regressed)
+// alerts.go: additional trigger values (cron_missed, cron_error, regressed)
 // ---------------------------------------------------------------------------
 
 func TestCreateAlertRule_cronMissedTrigger(t *testing.T) {
@@ -200,7 +200,7 @@ func TestCreateAlertRule_uptimeRecoveredTrigger(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — validateAlertRule: event_count boundary values
+// alerts.go: validateAlertRule: event_count boundary values
 // ---------------------------------------------------------------------------
 
 func TestCreateAlertRule_eventCountPositiveValues(t *testing.T) {
@@ -277,7 +277,7 @@ func TestCreateAlertRule_eventCountNegativeWindowMins(t *testing.T) {
 func TestCreateAlertRule_defaultCooldownApplied(t *testing.T) {
 	truncateAlertRules(t)
 
-	// No cooldown_mins supplied — should default to 60
+	// No cooldown_mins supplied: should default to 60
 	b, _ := json.Marshal(map[string]any{
 		"name":        "default cooldown",
 		"trigger":     "new_issue",
@@ -302,7 +302,7 @@ func TestCreateAlertRule_defaultCooldownApplied(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule: patch project_ids to empty slice
+// alerts.go: handleUpdateAlertRule: patch project_ids to empty slice
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_clearProjectIDsCov6(t *testing.T) {
@@ -334,7 +334,7 @@ func TestUpdateAlertRule_clearProjectIDsCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleCreateUptimeMonitor: valid URL with non-standard port
+// uptime.go: handleCreateUptimeMonitor: valid URL with non-standard port
 // ---------------------------------------------------------------------------
 
 func TestCreateUptimeMonitor_nonStandardPort(t *testing.T) {
@@ -356,7 +356,7 @@ func TestCreateUptimeMonitor_nonStandardPort(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleUpdateUptimeMonitor: resume from paused (active status)
+// uptime.go: handleUpdateUptimeMonitor: resume from paused (active status)
 // ---------------------------------------------------------------------------
 
 func TestUpdateUptimeMonitor_resumeFromPaused(t *testing.T) {
@@ -396,7 +396,7 @@ func TestUpdateUptimeMonitor_resumeFromPaused(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleUpdateUptimeMonitor: update interval and timeout only
+// uptime.go: handleUpdateUptimeMonitor: update interval and timeout only
 // ---------------------------------------------------------------------------
 
 func TestUpdateUptimeMonitor_updateIntervalAndTimeout(t *testing.T) {
@@ -429,7 +429,7 @@ func TestUpdateUptimeMonitor_updateIntervalAndTimeout(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleUpdateUptimeMonitor: update name only
+// uptime.go: handleUpdateUptimeMonitor: update name only
 // ---------------------------------------------------------------------------
 
 func TestUpdateUptimeMonitor_updateNameOnly(t *testing.T) {
@@ -456,7 +456,7 @@ func TestUpdateUptimeMonitor_updateNameOnly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleGetUptimeStats: bearer token wrong project → 403/404
+// uptime.go: handleGetUptimeStats: bearer token wrong project → 403/404
 // ---------------------------------------------------------------------------
 
 func TestGetUptimeStats_bearerTokenWrongProject(t *testing.T) {
@@ -483,7 +483,7 @@ func TestGetUptimeStats_bearerTokenWrongProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleListUptimeMonitors: bearer token scoped to project
+// uptime.go: handleListUptimeMonitors: bearer token scoped to project
 // ---------------------------------------------------------------------------
 
 func TestListUptimeMonitors_bearerTokenScoped(t *testing.T) {
@@ -509,7 +509,7 @@ func TestListUptimeMonitors_bearerTokenScoped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleListUptimeChecks: invalid limit param falls back to default
+// uptime.go: handleListUptimeChecks: invalid limit param falls back to default
 // ---------------------------------------------------------------------------
 
 func TestListUptimeChecks_invalidLimit(t *testing.T) {
@@ -527,7 +527,7 @@ func TestListUptimeChecks_invalidLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListComments: valid issue authenticated
+// extra.go: handleListComments: valid issue authenticated
 // ---------------------------------------------------------------------------
 
 func TestListComments_validIssueAuthenticated(t *testing.T) {
@@ -553,7 +553,7 @@ func TestListComments_validIssueAuthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleCreateComment: bad JSON body returns 400
+// extra.go: handleCreateComment: bad JSON body returns 400
 // ---------------------------------------------------------------------------
 
 func TestCreateComment_badBodyCov6(t *testing.T) {
@@ -573,7 +573,7 @@ func TestCreateComment_badBodyCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateComment: bad JSON body returns 400
+// extra.go: handleUpdateComment: bad JSON body returns 400
 // ---------------------------------------------------------------------------
 
 func TestUpdateComment_badBodyCov6(t *testing.T) {
@@ -592,7 +592,7 @@ func TestUpdateComment_badBodyCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleDeleteComment: read-only user without manage_issues → 403
+// extra.go: handleDeleteComment: read-only user without manage_issues → 403
 // ---------------------------------------------------------------------------
 
 func TestDeleteComment_readOnlyUserForbiddenCov6(t *testing.T) {
@@ -610,7 +610,7 @@ func TestDeleteComment_readOnlyUserForbiddenCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetRelease: authenticated with known release ID
+// extra.go: handleGetRelease: authenticated with known release ID
 // ---------------------------------------------------------------------------
 
 func TestGetRelease_authenticatedKnown(t *testing.T) {
@@ -641,7 +641,7 @@ func TestGetRelease_authenticatedKnown(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListAuditLog: authenticated with no filters returns rows
+// extra.go: handleListAuditLog: authenticated with no filters returns rows
 // ---------------------------------------------------------------------------
 
 func TestListAuditLog_authenticatedNoFiltersCov6(t *testing.T) {
@@ -662,7 +662,7 @@ func TestListAuditLog_authenticatedNoFiltersCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateMe: valid timezone values
+// extra.go: handleUpdateMe: valid timezone values
 // ---------------------------------------------------------------------------
 
 func TestUpdateMe_withUTCTimezone(t *testing.T) {
@@ -716,7 +716,7 @@ func TestUpdateMe_withInvalidTimezone400(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleChangePassword: empty field validations
+// extra.go: handleChangePassword: empty field validations
 // ---------------------------------------------------------------------------
 
 func TestChangePassword_emptyCurrentPasswordCov6(t *testing.T) {
@@ -744,7 +744,7 @@ func TestChangePassword_emptyNewPasswordCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleListMonitors: multiple project_id query params
+// cron.go: handleListMonitors: multiple project_id query params
 // ---------------------------------------------------------------------------
 
 func TestListMonitors_multipleProjectIDs(t *testing.T) {
@@ -769,7 +769,7 @@ func TestListMonitors_multipleProjectIDs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleUpdateMonitor: grace_period_secs only
+// cron.go: handleUpdateMonitor: grace_period_secs only
 // ---------------------------------------------------------------------------
 
 func TestUpdateMonitor_graceperiodOnlyCov6(t *testing.T) {
@@ -793,7 +793,7 @@ func TestUpdateMonitor_graceperiodOnlyCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleListCheckins: unauthenticated returns 401
+// cron.go: handleListCheckins: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestListCheckins_unauthenticatedCov6(t *testing.T) {
@@ -807,7 +807,7 @@ func TestListCheckins_unauthenticatedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronPing: invalid duration string is ignored gracefully
+// cron.go: handleCronPing: invalid duration string is ignored gracefully
 // ---------------------------------------------------------------------------
 
 func TestCronPing_invalidDurationCov6(t *testing.T) {
@@ -822,7 +822,7 @@ func TestCronPing_invalidDurationCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetConfig: public endpoint returns expected keys
+// global.go: handleGetConfig: public endpoint returns expected keys
 // ---------------------------------------------------------------------------
 
 func TestGetConfig_returnsPublicURL(t *testing.T) {
@@ -845,7 +845,7 @@ func TestGetConfig_returnsPublicURL(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateUserPermissions: successful update
+// extra.go: handleUpdateUserPermissions: successful update
 // ---------------------------------------------------------------------------
 
 func TestUpdateUserPermissions_successCov6(t *testing.T) {
@@ -878,7 +878,7 @@ func TestUpdateUserPermissions_successCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// uptime.go — handleCreateUptimeMonitor: multiple expected_codes formats
+// uptime.go: handleCreateUptimeMonitor: multiple expected_codes formats
 // ---------------------------------------------------------------------------
 
 func TestCreateUptimeMonitor_multipleExpectedCodes(t *testing.T) {
@@ -908,7 +908,7 @@ func TestCreateUptimeMonitor_multipleExpectedCodes(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleCreateAlertRule: filter_level and min_occurrences combined
+// alerts.go: handleCreateAlertRule: filter_level and min_occurrences combined
 // ---------------------------------------------------------------------------
 
 func TestCreateAlertRule_withAllFilterFields(t *testing.T) {
@@ -947,7 +947,7 @@ func TestCreateAlertRule_withAllFilterFields(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetRelease: unauthenticated
+// extra.go: handleGetRelease: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestGetRelease_unauthenticatedCov6(t *testing.T) {
@@ -961,7 +961,7 @@ func TestGetRelease_unauthenticatedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetReleaseTransactions: unauthenticated
+// extra.go: handleGetReleaseTransactions: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestGetReleaseTransactions_unauthenticatedCov6(t *testing.T) {
@@ -975,7 +975,7 @@ func TestGetReleaseTransactions_unauthenticatedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetReleaseIssues: unauthenticated
+// extra.go: handleGetReleaseIssues: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestGetReleaseIssues_unauthenticatedCov6(t *testing.T) {
@@ -989,7 +989,7 @@ func TestGetReleaseIssues_unauthenticatedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetRelease: not found returns 404 (rel == nil)
+// extra.go: handleGetRelease: not found returns 404 (rel == nil)
 // (covers the "if rel == nil" branch in handleGetRelease)
 // ---------------------------------------------------------------------------
 
@@ -1005,7 +1005,7 @@ func TestGetRelease_notFoundCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetReleaseTransactions: not-found with bearer token (wrong project)
+// extra.go: handleGetReleaseTransactions: not-found with bearer token (wrong project)
 // (covers the "rel.ProjectID != tokenProjID" branch)
 // ---------------------------------------------------------------------------
 
@@ -1041,7 +1041,7 @@ func TestGetReleaseTransactions_bearerWrongProjectCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetReleaseIssues: not-found with bearer token (wrong project)
+// extra.go: handleGetReleaseIssues: not-found with bearer token (wrong project)
 // (covers the "rel.ProjectID != tokenProjID" branch in handleGetReleaseIssues)
 // ---------------------------------------------------------------------------
 
@@ -1077,7 +1077,7 @@ func TestGetReleaseIssues_bearerWrongProjectCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateMe: update with weekly_digest=true
+// extra.go: handleUpdateMe: update with weekly_digest=true
 // (covers the "if req.WeeklyDigest != nil" branch at extra.go:70)
 // ---------------------------------------------------------------------------
 
@@ -1101,7 +1101,7 @@ func TestUpdateMe_withWeeklyDigestTrue(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetLatestEventGlobal: smStore path (lines 816-821)
+// global.go: handleGetLatestEventGlobal: smStore path (lines 816-821)
 // When smStore is non-nil, it calls smStore.ResolveEventPayload which covers
 // the "if ro.smStore != nil" branch.
 // ---------------------------------------------------------------------------
@@ -1130,13 +1130,12 @@ func TestGetLatestEventGlobal_withSmStoreCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// router.go — SPA fallback: request for an actual dist file (lines 336-340)
+// router.go: SPA fallback: request for an actual dist file (lines 336-340)
 // A GET for /favicon.svg should find the file in dist and serve it directly.
 // ---------------------------------------------------------------------------
 
 func TestSPAFallback_existingDistFile(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1)})
 	req := httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -1146,13 +1145,12 @@ func TestSPAFallback_existingDistFile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// router.go — SPA fallback: request for an unknown path serves index.html
+// router.go: SPA fallback: request for an unknown path serves index.html
 // (covers the "dist.Open(index.html)" fallback path)
 // ---------------------------------------------------------------------------
 
 func TestSPAFallback_unknownPathServesIndex(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1)})
 	req := httptest.NewRequest(http.MethodGet, "/some/spa/route", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -1162,7 +1160,7 @@ func TestSPAFallback_unknownPathServesIndex(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpListReleases: nil releases when table is empty
+// mcp.go: mcpListReleases: nil releases when table is empty
 // (covers the "if releases == nil { releases = [] }" branch at mcp.go:661)
 // ---------------------------------------------------------------------------
 
@@ -1182,7 +1180,7 @@ func TestMCP_listReleases_emptyCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpListReleases: with project_id argument
+// mcp.go: mcpListReleases: with project_id argument
 // ---------------------------------------------------------------------------
 
 func TestMCP_listReleases_withProjectIDCov6(t *testing.T) {
@@ -1204,7 +1202,7 @@ func TestMCP_listReleases_withProjectIDCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpArgInt: verify normal float64 (JSON) path works for coverage
+// mcp.go: mcpArgInt: verify normal float64 (JSON) path works for coverage
 // The case int: branch (mcp.go:471) is unreachable via normal JSON decode.
 // ---------------------------------------------------------------------------
 
@@ -1219,7 +1217,7 @@ func TestMCP_listMonitors_defaultLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListComments: bearer token wrong project returns 403/404
+// extra.go: handleListComments: bearer token wrong project returns 403/404
 // (covers the enforceIssueProject bearer scope check in handleListComments)
 // ---------------------------------------------------------------------------
 
@@ -1249,7 +1247,7 @@ func TestListComments_bearerTokenWrongProjectCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleDeleteComment: author can delete their own comment (204)
+// extra.go: handleDeleteComment: author can delete their own comment (204)
 // (covers the success path of handleDeleteComment when actor == author)
 // ---------------------------------------------------------------------------
 
@@ -1267,7 +1265,7 @@ func TestDeleteComment_authorCanDeleteCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateComment: author can update their own comment
+// extra.go: handleUpdateComment: author can update their own comment
 // (covers the "comment.UserID == *actorID" success path)
 // ---------------------------------------------------------------------------
 
@@ -1295,7 +1293,7 @@ func TestUpdateComment_authorCanUpdateCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListReleases: when releases table is empty returns [] not null
+// extra.go: handleListReleases: when releases table is empty returns [] not null
 // (covers the "if releases == nil" branch at extra.go:335)
 // ---------------------------------------------------------------------------
 
@@ -1322,7 +1320,7 @@ func TestListReleases_emptyTableCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetRelease: enforceTokenProject fails (bearer token for
+// extra.go: handleGetRelease: enforceTokenProject fails (bearer token for
 // a release in a different project) covers the "!enforceTokenProject" branch
 // ---------------------------------------------------------------------------
 
@@ -1358,7 +1356,7 @@ func TestGetRelease_bearerWrongProjectCov6b(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListAuditLog: rows == nil when audit log table is empty
+// extra.go: handleListAuditLog: rows == nil when audit log table is empty
 // (covers the "if rows == nil" branch at extra.go:438)
 // ---------------------------------------------------------------------------
 
@@ -1383,7 +1381,7 @@ func TestListAuditLog_emptyResultCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleTestAlertRule: not found returns 404 (rule == nil)
+// alerts.go: handleTestAlertRule: not found returns 404 (rule == nil)
 // ---------------------------------------------------------------------------
 
 func TestTestAlertRule_notFoundCov6(t *testing.T) {
@@ -1398,7 +1396,7 @@ func TestTestAlertRule_notFoundCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleTestAlertRule: evaluator == nil returns 503
+// alerts.go: handleTestAlertRule: evaluator == nil returns 503
 // ---------------------------------------------------------------------------
 
 func TestTestAlertRule_evaluatorNilCov6(t *testing.T) {
@@ -1428,7 +1426,7 @@ func TestTestAlertRule_evaluatorNilCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleListAlertFirings: not found returns 404 (rule == nil)
+// alerts.go: handleListAlertFirings: not found returns 404 (rule == nil)
 // ---------------------------------------------------------------------------
 
 func TestListAlertFirings_notFoundCov6(t *testing.T) {
@@ -1443,7 +1441,7 @@ func TestListAlertFirings_notFoundCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetIssueHistory: nil entries nil-check
+// global.go: handleGetIssueHistory: nil entries nil-check
 // (covers the "if entries == nil" branch in handleGetIssueHistory)
 // ---------------------------------------------------------------------------
 
@@ -1468,7 +1466,7 @@ func TestGetIssueHistory_nilToEmptySliceCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleUpdateIssueGlobal: same status as current → early return
+// global.go: handleUpdateIssueGlobal: same status as current → early return
 // (covers the "req.Status == issue.Status" branch at global.go:669-671)
 // ---------------------------------------------------------------------------
 
@@ -1495,7 +1493,7 @@ func TestUpdateIssueGlobal_sameStatusReturnsCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetMe: unauthenticated returns 401
+// extra.go: handleGetMe: unauthenticated returns 401
 // (covers the "actorID == nil" branch in handleGetMe)
 // ---------------------------------------------------------------------------
 
@@ -1509,7 +1507,7 @@ func TestGetMe_unauthenticatedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateMe: unauthenticated returns 401
+// extra.go: handleUpdateMe: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestUpdateMe_unauthenticatedCov6(t *testing.T) {
@@ -1524,7 +1522,7 @@ func TestUpdateMe_unauthenticatedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListUsers: returns non-nil slice
+// extra.go: handleListUsers: returns non-nil slice
 // (covers the "if users == nil { users = [] }" guard)
 // ---------------------------------------------------------------------------
 
@@ -1546,7 +1544,7 @@ func TestListUsers_nonNilSliceCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetIssueTags: for known issue with tags
+// global.go: handleGetIssueTags: for known issue with tags
 // (more coverage of handleGetIssueTags success path)
 // ---------------------------------------------------------------------------
 
@@ -1571,7 +1569,7 @@ func TestGetIssueTags_withEventsCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleListMonitors: bearerProjectIDs filters (covers the
+// cron.go: handleListMonitors: bearerProjectIDs filters (covers the
 // "bearerProjectIDs" call with bearer token, hitting the "isBearer" branch)
 // ---------------------------------------------------------------------------
 
@@ -1595,7 +1593,7 @@ func TestListMonitors_bearerTokenScopedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetProjectStats: with bearerProjectIDs token
+// global.go: handleGetProjectStats: with bearerProjectIDs token
 // (covers the bearerProjectIDs != empty path in handleGetProjectStats)
 // ---------------------------------------------------------------------------
 
@@ -1603,7 +1601,7 @@ func TestGetProjectStats_bearerTokenCov6(t *testing.T) {
 	truncateTokens(t)
 	tok := bearerToken(t, testProject.ID)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/stats/projects", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/stats", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	globalHandler().ServeHTTP(rec, req)
@@ -1613,7 +1611,7 @@ func TestGetProjectStats_bearerTokenCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleCreateComment: empty body returns 400
+// extra.go: handleCreateComment: empty body returns 400
 // (covers the "req.Body == ''" branch at extra.go:219)
 // ---------------------------------------------------------------------------
 

@@ -69,10 +69,6 @@ const (
 	maxPasswordLen = 72
 )
 
-func CreateUser(ctx context.Context, pool *pgxpool.Pool, email, password string) (*User, error) {
-	return createUser(ctx, pool, email, password)
-}
-
 func createUser(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, email, password string) (*User, error) {
@@ -128,29 +124,6 @@ func CreateAdminUser(ctx context.Context, pool *pgxpool.Pool, email, name, passw
 		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
 	`, strings.ToLower(email), name, string(hash)).Scan(
-		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
-		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("insert: %w", err)
-	}
-	u.HasPassword = u.PasswordHash != ""
-	return &u, nil
-}
-
-// CreateOAuthUser creates a user with no local password (SSO-only). The empty
-// password_hash intentionally prevents local login.
-func CreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, email string) (*User, error) {
-	var u User
-	// Same first-user-gets-all-permissions logic as CreateUser.
-	err := pool.QueryRow(ctx, `
-		WITH is_first AS (SELECT NOT EXISTS (SELECT 1 FROM users) AS v)
-		INSERT INTO users (email, password_hash,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)
-		SELECT $1, '', v, v, v, v FROM is_first
-		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
-	`, strings.ToLower(email)).Scan(
 		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
 		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
@@ -363,12 +336,6 @@ func VerifyUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, passwor
 // ErrEmailTaken means another user already has the requested email address.
 var ErrEmailTaken = errors.New("email already in use")
 
-// ChangeUserPassword changes credentials and revokes all existing authentication artifacts.
-func ChangeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword string) error {
-	_, err := changeUserPassword(ctx, pool, userID, currentPassword, newPassword, "")
-	return err
-}
-
 // ChangeUserPasswordWithSession rotates the requesting session in the same transaction.
 func ChangeUserPasswordWithSession(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword, currentSession string) (*Session, error) {
 	if currentSession == "" {
@@ -442,10 +409,6 @@ func changeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, current
 	return session, nil
 }
 
-func CreateSession(ctx context.Context, pool *pgxpool.Pool, userID string) (*Session, error) {
-	return createSession(ctx, pool, userID)
-}
-
 func createSession(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, userID string) (*Session, error) {
@@ -489,29 +452,6 @@ func GetSessionIdentity(ctx context.Context, pool *pgxpool.Pool, token string) (
 		return nil, fmt.Errorf("query session identity: %w", err)
 	}
 	return &identity, nil
-}
-
-func GetSession(ctx context.Context, pool *pgxpool.Pool, token string) (*Session, error) {
-	s := Session{Token: token}
-	err := pool.QueryRow(ctx, `
-		SELECT user_id, expires_at, created_at
-		FROM sessions WHERE token_hash = $1 AND expires_at > NOW()
-	`, tokenHash(token)).Scan(&s.UserID, &s.ExpiresAt, &s.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query: %w", err)
-	}
-	return &s, nil
-}
-
-func DeleteSession(ctx context.Context, pool *pgxpool.Pool, token string) error {
-	_, err := pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash(token))
-	if err != nil {
-		return fmt.Errorf("delete: %w", err)
-	}
-	return nil
 }
 
 // DeleteSessionReturningUserID deletes the session and returns the owning user

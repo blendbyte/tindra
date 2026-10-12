@@ -266,65 +266,6 @@ func TestGetAlertEventData_noExceptionValues(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// events.go: GetTopFrames - all frames non-in-app, falls back to all frames
-// ---------------------------------------------------------------------------
-
-func TestGetTopFrames_allNonInApp_fallsBack(t *testing.T) {
-	project, _ := setupProjectAndEvent(t)
-	ctx := context.Background()
-
-	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-noninapp", "Error", "error", "error", "", "", time.Now())
-	if err != nil {
-		t.Fatalf("upsert issue: %v", err)
-	}
-
-	// All frames have in_app: false - should fall back to returning all frames.
-	payload := json.RawMessage(`{
-		"exception": {"values": [{"stacktrace": {"frames": [
-			{"function": "runtime.main", "filename": "runtime.go", "lineno": 1, "in_app": false},
-			{"function": "http.Serve", "filename": "server.go", "lineno": 200, "in_app": false}
-		]}}]}
-	}`)
-	testPool.Exec(ctx, `
-		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
-		VALUES ($1, NOW(), NOW(), $2, 'fp-noninapp', $3)
-	`, project.ID, payload, issue.ID)
-
-	frames := storage.GetTopFrames(ctx, testPool, issue.ID, 5)
-	if len(frames) == 0 {
-		t.Error("expected frames via fallback when all frames are non-in-app")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// events.go: GetTopFrames - empty frames list (returns nil)
-// ---------------------------------------------------------------------------
-
-func TestGetTopFrames_emptyFrames(t *testing.T) {
-	project, _ := setupProjectAndEvent(t)
-	ctx := context.Background()
-
-	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-emptyfr", "Error", "error", "error", "", "", time.Now())
-	if err != nil {
-		t.Fatalf("upsert issue: %v", err)
-	}
-
-	// Exception present but frames list is empty.
-	payload := json.RawMessage(`{
-		"exception": {"values": [{"stacktrace": {"frames": []}}]}
-	}`)
-	testPool.Exec(ctx, `
-		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
-		VALUES ($1, NOW(), NOW(), $2, 'fp-emptyfr', $3)
-	`, project.ID, payload, issue.ID)
-
-	frames := storage.GetTopFrames(ctx, testPool, issue.ID, 5)
-	if frames != nil {
-		t.Errorf("expected nil for empty frames list, got %v", frames)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // events.go: ListEventsForIssue - default limit clamping (limit 0 becomes 50)
 // ---------------------------------------------------------------------------
 

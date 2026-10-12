@@ -188,7 +188,7 @@ func TestGetSpansForTransaction_dataField(t *testing.T) {
 		t.Fatalf("insert span with data: %v", err)
 	}
 
-	// Span with NULL data — COALESCE should return '{}'
+	// Span with NULL data: COALESCE should return '{}'
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO spans (transaction_id, span_id, op, start_timestamp, timestamp, duration_ms, status, project_id)
 		SELECT $1, 'null-data', 'http.client', $2, $3, 10, 'ok', project_id FROM transactions WHERE id = $1

@@ -20,6 +20,11 @@ die()  { printf "\n${RED}error:${RESET}  %s\n\n" "$*" >&2; exit 1; }
 COMPOSE_DIR="${1:-.}"
 OUTPUT_DIR="${2:-.}"
 
+# Resolve the output directory now: the script changes into COMPOSE_DIR below,
+# and a relative path must still mean "relative to where it was run".
+[ -d "$OUTPUT_DIR" ] || die "Output directory does not exist: $OUTPUT_DIR"
+OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+
 # ── locate docker compose ─────────────────────────────────────────────────────
 if docker compose version >/dev/null 2>&1; then
   DC="docker compose"
@@ -59,7 +64,7 @@ if [ -n "$TINDRA_CID" ]; then
   docker cp "$TINDRA_CID:/data" "$WORK/data"
   ok "data/  $(du -sh "$WORK/data" | cut -f1)"
 else
-  warn "Tindra container not running — data directory skipped"
+  warn "Tindra container not running, so the data directory was skipped"
 fi
 
 # ── 3. manifest ───────────────────────────────────────────────────────────────
@@ -71,20 +76,29 @@ Contents:
   postgres.dump   pg_restore-format database dump
   data/           Tindra data directory (source maps, etc.)
 
-Restore:
-  # 1. Start a fresh Tindra stack and wait for postgres:
-  #    docker compose up -d postgres
-  # 2. Restore the database:
-  #    docker compose exec -T postgres pg_restore -U tindra -d tindra --clean < postgres.dump
-  # 3. Restore data:
-  #    docker compose cp data/. tindra:/data
-  # 4. Restart:
-  #    docker compose restart tindra
+Restore (run in the directory with docker-compose.yml; B is this folder):
+  B=/path/to/$BACKUP_NAME
+  # 1. Stop Tindra and make sure Postgres is up:
+  docker compose stop tindra
+  docker compose up -d postgres
+  # 2. Replace the database with the backup. Recreating it (rather than
+  #    pg_restore --clean) also removes tables added by newer versions, so
+  #    Tindra can migrate the restored schema forward on start.
+  docker compose exec -T postgres dropdb -U tindra --force --if-exists tindra
+  docker compose exec -T postgres createdb -U tindra tindra
+  docker compose exec -T postgres pg_restore -U tindra -d tindra --no-owner < "\$B/postgres.dump"
+  # 3. Restore the data directory into Tindra's volume, owned by the
+  #    non-root user the image runs as:
+  docker compose up --no-start tindra
+  docker run --rm --volumes-from "\$(docker compose ps -aq tindra)" -v "\$B/data:/restore:ro" \\
+    alpine sh -c 'cp -a /restore/. /data/ && chown -R 65532:65532 /data'
+  # 4. Start Tindra:
+  docker compose up -d
 EOF
 
 # ── 4. pack ───────────────────────────────────────────────────────────────────
 step "Packing archive"
-ARCHIVE="$(cd "$OUTPUT_DIR" && pwd)/$BACKUP_NAME.tar.gz"
+ARCHIVE="$OUTPUT_DIR/$BACKUP_NAME.tar.gz"
 tar -czf "$ARCHIVE" -C "$STAGE" "$BACKUP_NAME"
 ok "$BACKUP_NAME.tar.gz  $(du -sh "$ARCHIVE" | cut -f1)"
 

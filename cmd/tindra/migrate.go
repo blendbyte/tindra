@@ -3,10 +3,11 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	migrate "github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/spf13/cobra"
 
@@ -18,7 +19,7 @@ func newMigrator(cfg config) (*migrate.Migrate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open migrations: %w", err)
 	}
-	driver, err := database.Open(cfg.databaseURL)
+	driver, err := database.Open(migrationURL(cfg.databaseURL))
 	if err != nil {
 		_ = src.Close()
 		return nil, fmt.Errorf("open migration database: %w", err)
@@ -30,6 +31,18 @@ func newMigrator(cfg config) (*migrate.Migrate, error) {
 		return nil, fmt.Errorf("init migrate: %w", err)
 	}
 	return m, nil
+}
+
+// migrationURL points golang-migrate at its pgx v5 driver, the same driver the
+// app uses, so the binary does not also ship lib/pq. That driver registers the
+// "pgx5" scheme; the schema_migrations table is the same as before.
+func migrationURL(databaseURL string) string {
+	for _, scheme := range []string{"postgres://", "postgresql://"} {
+		if rest, ok := strings.CutPrefix(databaseURL, scheme); ok {
+			return "pgx5://" + rest
+		}
+	}
+	return databaseURL
 }
 
 func migrateCmd(cfg config) *cobra.Command {

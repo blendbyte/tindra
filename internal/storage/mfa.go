@@ -26,24 +26,6 @@ func GetMFASecret(ctx context.Context, pool *pgxpool.Pool, userID string) (*stri
 	return secret, nil
 }
 
-// StoreMFASecret stores an active secret. Enrollment uses SetPendingMFASecret.
-func StoreMFASecret(ctx context.Context, pool *pgxpool.Pool, userID, secret string) error {
-	_, err := pool.Exec(ctx, `UPDATE users SET mfa_secret = $1 WHERE id = $2`, secret, userID)
-	if err != nil {
-		return fmt.Errorf("update: %w", err)
-	}
-	return nil
-}
-
-// EnableMFA marks MFA as active. The secret must already be stored.
-func EnableMFA(ctx context.Context, pool *pgxpool.Pool, userID string) error {
-	_, err := pool.Exec(ctx, `UPDATE users SET mfa_enabled = true WHERE id = $1`, userID)
-	if err != nil {
-		return fmt.Errorf("update: %w", err)
-	}
-	return nil
-}
-
 // DisableMFA clears the secret and disables MFA.
 func DisableMFA(ctx context.Context, pool *pgxpool.Pool, userID string) error {
 	_, err := pool.Exec(ctx, `
@@ -54,11 +36,6 @@ func DisableMFA(ctx context.Context, pool *pgxpool.Pool, userID string) error {
 		return fmt.Errorf("update: %w", err)
 	}
 	return nil
-}
-
-// CreateMFAChallenge issues a short-lived token after password passes but before TOTP is verified.
-func CreateMFAChallenge(ctx context.Context, pool *pgxpool.Pool, userID string) (string, error) {
-	return createMFAChallenge(ctx, pool, userID)
 }
 
 func createMFAChallenge(ctx context.Context, db interface {
@@ -159,25 +136,6 @@ func RecordMFAFailure(ctx context.Context, pool *pgxpool.Pool, token, userID str
 		}
 	}
 	return tx.Commit(ctx)
-}
-
-// ConsumeMFAChallenge deletes a valid challenge and returns the user ID.
-// Only call this after the TOTP code has been verified successfully.
-// Returns ("", nil) if the token is not found or expired.
-func ConsumeMFAChallenge(ctx context.Context, pool *pgxpool.Pool, token string) (string, error) {
-	var userID string
-	err := pool.QueryRow(ctx, `
-		DELETE FROM mfa_challenges
-		WHERE token_hash = $1 AND expires_at > NOW()
-		RETURNING user_id
-	`, tokenHash(token)).Scan(&userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("query: %w", err)
-	}
-	return userID, nil
 }
 
 // SetPendingMFASecret stages enrollment only while the authenticated factor is

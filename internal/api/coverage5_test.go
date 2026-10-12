@@ -1,6 +1,6 @@
 package api_test
 
-// coverage5_test.go — additional tests targeting remaining uncovered branches
+// coverage5_test.go: additional tests targeting remaining uncovered branches
 // in global.go. Focuses on paths not hit by global_test.go, coverage_test.go,
 // coverage2_test.go, coverage3_test.go, or coverage4_test.go.
 
@@ -21,7 +21,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// handleListAllIssues — env filter (query param branch not yet isolated)
+// handleListAllIssues: env filter (query param branch not yet isolated)
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_withStatusFilter(t *testing.T) {
@@ -45,7 +45,7 @@ func TestListAllIssues_withQSearch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleExportIssues — CSV row with assignee email set (lines 526-532)
+// handleExportIssues: CSV row with assignee email set (lines 526-532)
 // ---------------------------------------------------------------------------
 
 func TestExportIssues_csvWithAssignee(t *testing.T) {
@@ -79,7 +79,7 @@ func TestExportIssues_csvWithAssignee(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleExportIssues — JSON format includes Content-Disposition header
+// handleExportIssues: JSON format includes Content-Disposition header
 // ---------------------------------------------------------------------------
 
 func TestExportIssues_jsonContentDisposition(t *testing.T) {
@@ -96,7 +96,7 @@ func TestExportIssues_jsonContentDisposition(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleExportIssues — env filter
+// handleExportIssues: env filter
 // ---------------------------------------------------------------------------
 
 func TestExportIssues_withEnvFilter(t *testing.T) {
@@ -110,7 +110,7 @@ func TestExportIssues_withEnvFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleExportIssues — status filter
+// handleExportIssues: status filter
 // ---------------------------------------------------------------------------
 
 func TestExportIssues_withStatusFilter(t *testing.T) {
@@ -124,7 +124,7 @@ func TestExportIssues_withStatusFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetWebVitals — with env filter
+// handleGetWebVitals: with env filter
 // ---------------------------------------------------------------------------
 
 func TestGetWebVitals_withEnvFilter(t *testing.T) {
@@ -138,7 +138,7 @@ func TestGetWebVitals_withEnvFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetWebVitals — with project_id filter (bearerProjectIDs)
+// handleGetWebVitals: with project_id filter (bearerProjectIDs)
 // ---------------------------------------------------------------------------
 
 func TestGetWebVitals_withProjectIDFilter(t *testing.T) {
@@ -153,7 +153,7 @@ func TestGetWebVitals_withProjectIDFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetWebVitalsPages — with project_id filter
+// handleGetWebVitalsPages: with project_id filter
 // ---------------------------------------------------------------------------
 
 func TestGetWebVitalsPages_withProjectIDFilter(t *testing.T) {
@@ -168,7 +168,7 @@ func TestGetWebVitalsPages_withProjectIDFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetWebVitalsPages — unauthenticated
+// handleGetWebVitalsPages: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestGetWebVitalsPages_unauthenticated(t *testing.T) {
@@ -181,7 +181,7 @@ func TestGetWebVitalsPages_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetWebVitals — unauthenticated
+// handleGetWebVitals: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestGetWebVitals_unauthenticated(t *testing.T) {
@@ -194,7 +194,7 @@ func TestGetWebVitals_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleSpanSamples — with env and release params
+// handleSpanSamples: with env and release params
 // ---------------------------------------------------------------------------
 
 func TestSpanSamples_withEnvAndRelease(t *testing.T) {
@@ -209,7 +209,7 @@ func TestSpanSamples_withEnvAndRelease(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleSpanSamples — with description param
+// handleSpanSamples: with description param
 // ---------------------------------------------------------------------------
 
 func TestSpanSamples_withDescription(t *testing.T) {
@@ -224,7 +224,7 @@ func TestSpanSamples_withDescription(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleSpanSummaries — with env and release params (hits the env/release
+// handleSpanSummaries: with env and release params (hits the env/release
 // branches in handleSpanSummaries that differ from hours)
 // ---------------------------------------------------------------------------
 
@@ -260,7 +260,7 @@ func TestSpanSummaries_jobs_withHours(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleSpanTimeseries — with env and release params
+// handleSpanTimeseries: with env and release params
 // ---------------------------------------------------------------------------
 
 func TestSpanTimeseries_withEnvAndRelease(t *testing.T) {
@@ -295,7 +295,7 @@ func TestSpanTimeseries_jobs_withHours(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListTransactionSummaries — env / name / op / release params
+// handleListTransactionSummaries: env / name / op / release params
 // ---------------------------------------------------------------------------
 
 func TestTransactionSummaries_withNameAndOp(t *testing.T) {
@@ -332,7 +332,7 @@ func TestTransactionSummaries_withProjectID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleTransactionTimeseries — with env / name / op / project_id params
+// handleTransactionTimeseries: with env / name / op / project_id params
 // ---------------------------------------------------------------------------
 
 func TestTransactionTimeseries_withNameAndOp(t *testing.T) {
@@ -358,7 +358,7 @@ func TestTransactionTimeseries_withEnvAndProjectID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListAllTransactions — with env and name params
+// handleListAllTransactions: with env and name params
 // ---------------------------------------------------------------------------
 
 func TestListAllTransactions_withEnvAndName(t *testing.T) {
@@ -373,7 +373,7 @@ func TestListAllTransactions_withEnvAndName(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListAllTransactions — out-of-range limit clamped to 50
+// handleListAllTransactions: out-of-range limit clamped to 50
 // ---------------------------------------------------------------------------
 
 func TestListAllTransactions_outOfRangeLimit(t *testing.T) {
@@ -397,7 +397,7 @@ func TestListAllTransactions_zeroLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetTransactionGlobal — with bearer token correct project
+// handleGetTransactionGlobal: with bearer token correct project
 // ---------------------------------------------------------------------------
 
 func TestGetTransactionGlobal_bearerCorrectProject(t *testing.T) {
@@ -416,7 +416,7 @@ func TestGetTransactionGlobal_bearerCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetSpansGlobal — with correct bearer token project
+// handleGetSpansGlobal: with correct bearer token project
 // ---------------------------------------------------------------------------
 
 func TestGetSpansGlobal_bearerCorrectProject(t *testing.T) {
@@ -435,7 +435,7 @@ func TestGetSpansGlobal_bearerCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// computeCriticalPath — exercise via spans endpoint with multiple spans
+// computeCriticalPath: exercise via spans endpoint with multiple spans
 // (Tests the path where spans have parents and children to compute critical path)
 // ---------------------------------------------------------------------------
 
@@ -482,7 +482,7 @@ func TestGetSpansGlobal_criticalPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueTrace — with valid trace_id but no transaction in DB
+// handleGetIssueTrace: with valid trace_id but no transaction in DB
 // (returns null because GetTransactionByTraceID finds nothing)
 // ---------------------------------------------------------------------------
 
@@ -512,7 +512,7 @@ func TestGetIssueTrace_traceIDNoTransaction(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueTrace — with valid bearer token on correct project
+// handleGetIssueTrace: with valid bearer token on correct project
 // ---------------------------------------------------------------------------
 
 func TestGetIssueTrace_bearerCorrectProject(t *testing.T) {
@@ -532,7 +532,7 @@ func TestGetIssueTrace_bearerCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueHistogram — with bearer token correct project
+// handleGetIssueHistogram: with bearer token correct project
 // ---------------------------------------------------------------------------
 
 func TestGetIssueHistogram_bearerCorrectProject(t *testing.T) {
@@ -552,7 +552,7 @@ func TestGetIssueHistogram_bearerCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleBulkUpdateIssues — multiple IDs in a single call
+// handleBulkUpdateIssues: multiple IDs in a single call
 // ---------------------------------------------------------------------------
 
 func TestBulkUpdateIssues_multipleIDs(t *testing.T) {
@@ -583,7 +583,7 @@ func TestBulkUpdateIssues_multipleIDs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleBulkUpdateIssues — "open" status (re-open path)
+// handleBulkUpdateIssues: "open" status (re-open path)
 // ---------------------------------------------------------------------------
 
 func TestBulkUpdateIssues_reopen(t *testing.T) {
@@ -609,7 +609,7 @@ func TestBulkUpdateIssues_reopen(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListAllTokens — unauthenticated returns 401
+// handleListAllTokens: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestListAllTokens_unauthenticated(t *testing.T) {
@@ -622,7 +622,7 @@ func TestListAllTokens_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleCreateTokenGlobal — unauthenticated returns 401
+// handleCreateTokenGlobal: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestCreateTokenGlobal_unauthenticated(t *testing.T) {
@@ -640,7 +640,7 @@ func TestCreateTokenGlobal_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleUpdateTokenGlobal — unauthenticated returns 401
+// handleUpdateTokenGlobal: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestUpdateTokenGlobal_unauthenticated(t *testing.T) {
@@ -659,7 +659,7 @@ func TestUpdateTokenGlobal_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleDeleteTokenGlobal — unauthenticated returns 401
+// handleDeleteTokenGlobal: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestDeleteTokenGlobal_unauthenticated(t *testing.T) {
@@ -673,7 +673,7 @@ func TestDeleteTokenGlobal_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueGlobal — unauthenticated returns 401
+// handleGetIssueGlobal: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestGetIssueGlobal_unauthenticated(t *testing.T) {
@@ -687,7 +687,7 @@ func TestGetIssueGlobal_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleUpdateIssueGlobal — unauthenticated returns 401
+// handleUpdateIssueGlobal: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestUpdateIssueGlobal_unauthenticated(t *testing.T) {
@@ -703,7 +703,7 @@ func TestUpdateIssueGlobal_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueHistory — success with session auth
+// handleGetIssueHistory: success with session auth
 // ---------------------------------------------------------------------------
 
 func TestGetIssueHistory_withSessionAuth(t *testing.T) {
@@ -721,7 +721,7 @@ func TestGetIssueHistory_withSessionAuth(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueTags — unauthenticated returns 401
+// handleGetIssueTags: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestGetIssueTags_unauthenticated(t *testing.T) {
@@ -735,7 +735,7 @@ func TestGetIssueTags_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListEventsForIssue — cursor_id without cursor_time (partial cursor)
+// handleListEventsForIssue: cursor_id without cursor_time (partial cursor)
 // ---------------------------------------------------------------------------
 
 func TestListEventsForIssue_cursorIDWithoutCursorTime(t *testing.T) {
@@ -754,7 +754,7 @@ func TestListEventsForIssue_cursorIDWithoutCursorTime(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetProjectStats — forbidden for read-only user
+// handleGetProjectStats: forbidden for read-only user
 // ---------------------------------------------------------------------------
 
 func TestGetProjectStats_readOnlyAllowed(t *testing.T) {
@@ -770,7 +770,7 @@ func TestGetProjectStats_readOnlyAllowed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleUpdateProject — with a valid passthrough_dsn (non-empty, valid http URL)
+// handleUpdateProject: with a valid passthrough_dsn (non-empty, valid http URL)
 // Tests the ValidateWebhookURL success path.
 // ---------------------------------------------------------------------------
 
@@ -799,7 +799,7 @@ func TestUpdateProject_validPassthroughDSN(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetProjectQuota — with bearer token (enforceTokenProject passes)
+// handleGetProjectQuota: with bearer token (enforceTokenProject passes)
 // ---------------------------------------------------------------------------
 
 func TestGetProjectQuota_bearerCorrectProject(t *testing.T) {
@@ -817,7 +817,7 @@ func TestGetProjectQuota_bearerCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetProjectQuota — with wrong bearer project (enforceTokenProject fails)
+// handleGetProjectQuota: with wrong bearer project (enforceTokenProject fails)
 // ---------------------------------------------------------------------------
 
 func TestGetProjectQuota_bearerWrongProject(t *testing.T) {
@@ -843,7 +843,7 @@ func TestGetProjectQuota_bearerWrongProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetInstanceHealth — authenticated admin user
+// handleGetInstanceHealth: authenticated admin user
 // Already covered by global_test.go but ensure instance/health path is hit.
 // ---------------------------------------------------------------------------
 
@@ -858,7 +858,7 @@ func TestGetInstanceHealth_authenticatedAdmin(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListTransactionSummaries — invalid hours clamped to default
+// handleListTransactionSummaries: invalid hours clamped to default
 // ---------------------------------------------------------------------------
 
 func TestTransactionSummaries_invalidHours(t *testing.T) {
@@ -882,7 +882,7 @@ func TestTransactionSummaries_tooLargeHours(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleTransactionTimeseries — invalid hours clamped
+// handleTransactionTimeseries: invalid hours clamped
 // ---------------------------------------------------------------------------
 
 func TestTransactionTimeseries_invalidHours(t *testing.T) {
@@ -896,11 +896,11 @@ func TestTransactionTimeseries_invalidHours(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetSettings — with billingURL set in settings response
+// handleGetSettings: with billingURL set in settings response
 // ---------------------------------------------------------------------------
 
 func TestGetSettings_withBillingURL(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "https://billing.example.com", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), BillingURL: "https://billing.example.com"})
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
@@ -920,7 +920,7 @@ func TestGetSettings_withBillingURL(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetSettings — no update available when versions match
+// handleGetSettings: no update available when versions match
 // ---------------------------------------------------------------------------
 
 func TestGetSettings_noUpdateWhenVersionsMatch(t *testing.T) {
@@ -944,7 +944,7 @@ func TestGetSettings_noUpdateWhenVersionsMatch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListAllIssues — invalid cursor_time but valid cursor_id (both required)
+// handleListAllIssues: invalid cursor_time but valid cursor_id (both required)
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_invalidCursorTimeParsing(t *testing.T) {
@@ -959,7 +959,7 @@ func TestListAllIssues_invalidCursorTimeParsing(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleBulkUpdateIssues — bulk with ignored + ignore_count_limit in history
+// handleBulkUpdateIssues: bulk with ignored + ignore_count_limit in history
 // ---------------------------------------------------------------------------
 
 func TestBulkUpdateIssues_ignoredCountLimitInHistory(t *testing.T) {
@@ -983,7 +983,7 @@ func TestBulkUpdateIssues_ignoredCountLimitInHistory(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleBulkUpdateIssues — bulk with ignore_until sets history details
+// handleBulkUpdateIssues: bulk with ignore_until sets history details
 // ---------------------------------------------------------------------------
 
 func TestBulkUpdateIssues_ignoredUntilInHistory(t *testing.T) {
@@ -1007,7 +1007,7 @@ func TestBulkUpdateIssues_ignoredUntilInHistory(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetTransactionErrors — with bearer token correct project AND trace_id
+// handleGetTransactionErrors: with bearer token correct project AND trace_id
 // ---------------------------------------------------------------------------
 
 func TestGetTransactionErrors_bearerAndTraceID(t *testing.T) {
@@ -1036,7 +1036,7 @@ func TestGetTransactionErrors_bearerAndTraceID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListAllIssues — bearer token restricts project_ids
+// handleListAllIssues: bearer token restricts project_ids
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_bearerTokenRestriction(t *testing.T) {
@@ -1053,7 +1053,7 @@ func TestListAllIssues_bearerTokenRestriction(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetProjectStats — nil projects slice becomes empty slice
+// handleGetProjectStats: nil projects slice becomes empty slice
 // ---------------------------------------------------------------------------
 
 func TestGetProjectStats_emptyProjectList(t *testing.T) {
@@ -1077,7 +1077,7 @@ func TestGetProjectStats_emptyProjectList(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleUpdateProjectPrivacy — with valid scrub patterns (non-empty array)
+// handleUpdateProjectPrivacy: with valid scrub patterns (non-empty array)
 // ---------------------------------------------------------------------------
 
 func TestUpdateProjectPrivacy_withScrubPatterns(t *testing.T) {
@@ -1106,7 +1106,7 @@ func TestUpdateProjectPrivacy_withScrubPatterns(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetLatestEventGlobal — with smStore set (ResolveEventPayload path)
+// handleGetLatestEventGlobal: with smStore set (ResolveEventPayload path)
 // for an issue via the global /api/issues/{issueID}/events/latest endpoint
 // ---------------------------------------------------------------------------
 
@@ -1141,7 +1141,7 @@ func TestGetLatestEventGlobal_found(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetLatestEventGlobal — unauthenticated returns 401
+// handleGetLatestEventGlobal: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestGetLatestEventGlobal_unauthenticated(t *testing.T) {
@@ -1155,7 +1155,7 @@ func TestGetLatestEventGlobal_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetLatestEventGlobal — with positive offset
+// handleGetLatestEventGlobal: with positive offset
 // ---------------------------------------------------------------------------
 
 func TestGetLatestEventGlobal_withPositiveOffset(t *testing.T) {
@@ -1183,7 +1183,7 @@ func TestGetLatestEventGlobal_withPositiveOffset(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueTrace — with positive offset param
+// handleGetIssueTrace: with positive offset param
 // ---------------------------------------------------------------------------
 
 func TestGetIssueTrace_positiveOffset(t *testing.T) {
@@ -1212,7 +1212,7 @@ func TestGetIssueTrace_positiveOffset(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListProjects — returns non-nil slice even when empty
+// handleListProjects: returns non-nil slice even when empty
 // ---------------------------------------------------------------------------
 
 func TestListProjects_nonNilSlice(t *testing.T) {
@@ -1233,7 +1233,7 @@ func TestListProjects_nonNilSlice(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleDeleteProject — unauthenticated
+// handleDeleteProject: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestDeleteProject_unauthenticated(t *testing.T) {
@@ -1247,7 +1247,7 @@ func TestDeleteProject_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListTransactionSummaries — unauthenticated
+// handleListTransactionSummaries: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestTransactionSummaries_unauthenticated(t *testing.T) {
@@ -1260,7 +1260,7 @@ func TestTransactionSummaries_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleTransactionTimeseries — unauthenticated
+// handleTransactionTimeseries: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestTransactionTimeseries_unauthenticated(t *testing.T) {
@@ -1273,7 +1273,7 @@ func TestTransactionTimeseries_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleSpanSamples — unauthenticated
+// handleSpanSamples: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestSpanSamples_unauthenticated(t *testing.T) {
@@ -1286,7 +1286,7 @@ func TestSpanSamples_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListAllTransactions — unauthenticated
+// handleListAllTransactions: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestListAllTransactions_unauthenticated(t *testing.T) {
@@ -1299,7 +1299,7 @@ func TestListAllTransactions_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetSettings — with commitHash set (AppCommit coverage)
+// handleGetSettings: with commitHash set (AppCommit coverage)
 // ---------------------------------------------------------------------------
 
 func TestGetSettings_respondsWithCommit(t *testing.T) {
@@ -1323,12 +1323,12 @@ func TestGetSettings_respondsWithCommit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetStats — with missing Authorization header (no Bearer prefix)
+// handleGetStats: with missing Authorization header (no Bearer prefix)
 // ---------------------------------------------------------------------------
 
 func TestGetStats_missingAuthHeader(t *testing.T) {
 	// Build a handler with a non-empty statsAPIKey so the key check is enforced.
-	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "some-stats-key-cov5", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	statsHandler := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), StatsAPIKey: "some-stats-key-cov5"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	// No Authorization header at all.
@@ -1340,11 +1340,11 @@ func TestGetStats_missingAuthHeader(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetStats — with wrong API key in Authorization header
+// handleGetStats: with wrong API key in Authorization header
 // ---------------------------------------------------------------------------
 
 func TestGetStats_wrongAPIKey(t *testing.T) {
-	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "correct-key-cov5", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	statsHandler := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), StatsAPIKey: "correct-key-cov5"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer wrong-key-cov5")
@@ -1356,12 +1356,12 @@ func TestGetStats_wrongAPIKey(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetStats — with correct API key
+// handleGetStats: with correct API key
 // ---------------------------------------------------------------------------
 
 func TestGetStats_correctAPIKey(t *testing.T) {
 	const key = "correct-stats-key-cov5"
-	statsHandler := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", key, "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	statsHandler := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), StatsAPIKey: key})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	req.Header.Set("Authorization", "Bearer "+key)

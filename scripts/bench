@@ -3,8 +3,8 @@
 # Example: ./scripts/bench http://abc123def456@localhost:8080/550e8400-e29b-41d4-a716-446655440000
 #
 # Runs two scenarios, escalating concurrency by 50 until errors exceed 5%:
-#   storm   — identical error event (fixed event_id), tests dedup pressure
-#   traffic — unique transactions (no event_id), tests full write throughput
+#   storm:   identical error event (fixed event_id), tests dedup pressure
+#   traffic: unique transactions (no event_id), tests full write throughput
 #
 # Requires hey: go install github.com/rakyll/hey@latest
 # For clean numbers: start Tindra with RATE_LIMIT_ENVELOPE=0
@@ -37,14 +37,14 @@ ENDPOINT="${TINDRA_URL}/api/${PROJECT_ID}/envelope/"
 AUTH="X-Sentry-Auth: Sentry sentry_version=7, sentry_key=${PUBLIC_KEY}"
 
 [[ -z "$PUBLIC_KEY" || -z "$PROJECT_ID" || -z "$HOST" ]] && \
-    die "could not parse DSN — expected http://key@host/project-uuid"
+    die "could not parse DSN: expected http://key@host/project-uuid"
 
 # ── Load tool ──────────────────────────────────────────────────────────────
 if command -v hey >/dev/null 2>&1; then
     USE_HEY=1
 else
     USE_HEY=0
-    echo -e "${YLW}!${RST} hey not found — falling back to parallel curl (no latency percentiles)"
+    echo -e "${YLW}!${RST} hey not found: falling back to parallel curl (no latency percentiles)"
     echo -e "  ${DIM}go install github.com/rakyll/hey@latest${RST}"
     echo
 fi
@@ -72,10 +72,10 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     --data-binary @"$TMPDIR_BENCH/storm.envelope" "$ENDPOINT" 2>/dev/null || echo 000)
 case "$STATUS" in
     200) echo -e "${GRN}ok${RST}" ;;
-    401) echo; die "HTTP 401 — wrong key or project ID" ;;
-    404) echo; die "HTTP 404 — check DSN host and project ID" ;;
-    429) echo -e "${YLW}429 (rate limited)${RST} — set RATE_LIMIT_ENVELOPE=0 for accurate results" ;;
-    000) echo; die "connection refused — is Tindra running?" ;;
+    401) echo; die "HTTP 401: wrong key or project ID" ;;
+    404) echo; die "HTTP 404: check DSN host and project ID" ;;
+    429) echo -e "${YLW}429 (rate limited)${RST}: set RATE_LIMIT_ENVELOPE=0 for accurate results" ;;
+    000) echo; die "connection refused: is Tindra running?" ;;
     *)   echo -e "${YLW}HTTP $STATUS${RST}" ;;
 esac
 [[ "$STATUS" == "401" || "$STATUS" == "404" || "$STATUS" == "000" ]] && exit 1
@@ -143,11 +143,11 @@ parse_result() {
     local out="$1"
     local requests rps p50 p95 p99 ok_count err_pct
 
-    # Sum all "[NNN]  X responses" lines — works for both hey and curl fallback output.
+    # Sum all "[NNN]  X responses" lines: works for both hey and curl fallback output.
     # hey's "Total:" line holds elapsed seconds, not request count, so we don't use it.
     requests=$(echo "$out" | awk '/\[[0-9]+\]/{sum += $2} END{print sum+0}')
     rps=$(echo "$out"      | awk '/Requests\/sec:/{print $2}')
-    # hey outputs "50%%" (double-percent) on all platforms — match without trailing space
+    # hey outputs "50%%" (double-percent) on all platforms: match without trailing space
     p50=$(echo "$out"      | awk '/^ *50%%/{printf "%.0fms", $3*1000}')
     p95=$(echo "$out"      | awk '/^ *95%%/{printf "%.0fms", $3*1000}')
     p99=$(echo "$out"      | awk '/^ *99%%/{printf "%.0fms", $3*1000}')
@@ -198,9 +198,9 @@ run_scenario() {
         local rps_val="${rps//[!0-9.]/}"
         rps_val="${rps_val:-0}"
 
-        # Collapse detection: rps dropped >50% from peak in a single step — OS socket exhaustion
+        # Collapse detection: rps dropped >50% from peak in a single step: OS socket exhaustion
         if awk "BEGIN{exit !(${peak_rps}+0 > 0 && ${rps_val}+0 < ${peak_rps}+0 * 0.5)}" 2>/dev/null; then
-            echo -e "  ${RED}↓ throughput collapsed (${rps} req/s vs peak ${peak_rps}) — OS socket exhaustion${RST}"
+            echo -e "  ${RED}↓ throughput collapsed (${rps} req/s vs peak ${peak_rps}): OS socket exhaustion${RST}"
             echo -e "  ${DIM}macOS fix: sudo sysctl -w net.inet.ip.portrange.first=1024 net.inet.tcp.msl=500${RST}"
             echo -e "  ${DIM}Linux fix: sudo sysctl -w net.ipv4.ip_local_port_range=\"1024 65535\" net.ipv4.tcp_fin_timeout=15${RST}"
             break
@@ -215,7 +215,7 @@ run_scenario() {
         elif awk "BEGIN{exit !(${rps_val}+0 < ${peak_rps}+0 * ${PLATEAU_DROP})}" 2>/dev/null; then
             plateau_count=$(( plateau_count + 1 ))
             if [[ "$plateau_count" -ge "$PLATEAU_STEPS" ]]; then
-                echo -e "  ${YLW}~ throughput plateaued at ~${peak_rps} req/s — server saturated${RST}"
+                echo -e "  ${YLW}~ throughput plateaued at ~${peak_rps} req/s: server saturated${RST}"
                 break
             fi
         fi
@@ -226,10 +226,10 @@ run_scenario() {
 }
 
 run_scenario "storm" "$TMPDIR_BENCH/storm.envelope" \
-    "identical error, fixed event_id — ring buffer + dedup pressure"
+    "identical error, fixed event_id: ring buffer + dedup pressure"
 
 run_scenario "traffic" "$TMPDIR_BENCH/traffic.envelope" \
-    "unique transactions, no event_id — full write throughput"
+    "unique transactions, no event_id: full write throughput"
 
 hr
 dim "Results: $OUT_DIR/results.csv"

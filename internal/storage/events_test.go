@@ -64,48 +64,6 @@ func TestGetLatestEventForIssue_noEvents(t *testing.T) {
 	}
 }
 
-func TestGetTopFrames_withFrames(t *testing.T) {
-	project, _ := setupProjectAndEvent(t)
-	ctx := context.Background()
-
-	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-frames", "Error", "error", "error", "", "", time.Now())
-	if err != nil {
-		t.Fatalf("upsert issue: %v", err)
-	}
-
-	payload := json.RawMessage(`{
-		"exception": {"values": [{"stacktrace": {"frames": [
-			{"function": "main", "filename": "main.go", "lineno": 10, "in_app": false},
-			{"function": "handler", "filename": "handler.go", "lineno": 42, "in_app": true},
-			{"function": "process", "filename": "process.go", "lineno": 7, "in_app": true}
-		]}}]}
-	}`)
-	testPool.Exec(ctx, `
-		INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
-		VALUES ($1, NOW(), NOW(), $2, 'fp-frames', $3)
-	`, project.ID, payload, issue.ID)
-
-	frames := storage.GetTopFrames(ctx, testPool, issue.ID, 5)
-	if len(frames) == 0 {
-		t.Error("expected non-empty frames")
-	}
-	// In-app frames preferred, top of call stack first
-	if frames[0] != "process  process.go:7" {
-		t.Errorf("expected top in-app frame first, got %q", frames[0])
-	}
-}
-
-func TestGetTopFrames_noEvent(t *testing.T) {
-	project, _ := setupProjectAndEvent(t)
-	ctx := context.Background()
-
-	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-noframes", "Error", "error", "error", "", "", time.Now())
-	frames := storage.GetTopFrames(ctx, testPool, issue.ID, 5)
-	if frames != nil {
-		t.Errorf("expected nil for issue with no events, got %v", frames)
-	}
-}
-
 func TestGetAlertEventData_withEvent(t *testing.T) {
 	project, _ := setupProjectAndEvent(t)
 	ctx := context.Background()
@@ -322,7 +280,7 @@ func TestGetIssueHistogram_weekBuckets(t *testing.T) {
 	project, _ := setupProjectAndEvent(t)
 	ctx := context.Background()
 
-	// >60 days old triggers week-bucket granularity — exercises truncateBucket("week") and advanceBucket("week")
+	// >60 days old triggers week-bucket granularity: exercises truncateBucket("week") and advanceBucket("week")
 	firstSeen := time.Now().Add(-90 * 24 * time.Hour)
 	issue, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-histweek", "Error", "error", "error", "", "", firstSeen)
 

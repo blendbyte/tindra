@@ -1,6 +1,6 @@
 package api
 
-// oauth_cov9_test.go — additional tests for oauth.go handler branches
+// oauth_cov9_test.go: additional tests for oauth.go handler branches
 // that require white-box (package api) access to the unexported helpers.
 //
 // Gaps covered:

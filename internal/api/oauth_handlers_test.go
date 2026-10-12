@@ -1,6 +1,6 @@
 package api
 
-// oauth_handlers_test.go — integration tests for handleOAuthRedirect and
+// oauth_handlers_test.go: integration tests for handleOAuthRedirect and
 // handleOAuthCallback. Uses the white-box (package api) approach so that the
 // unexported oauthProvider interface and mockProvider type (defined in
 // auth_sso_test.go) are available. Each test that needs a real database creates
@@ -51,7 +51,7 @@ func oauthDB(t *testing.T) *pgxpool.Pool {
 // or more mock OAuth providers configured. This lets us exercise the full
 // redirect / callback flow including state storage.
 func routerWithSSOAndPool(pool *pgxpool.Pool, providers ...oauthProvider) http.Handler {
-	return NewRouter(pool, ingest.NewBuffer(1), nil, nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return NewRouter(Config{Pool: pool, Events: ingest.NewBuffer(1), OAuthProviders: providers})
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ func routerWithSSOAndPool(pool *pgxpool.Pool, providers ...oauthProvider) http.H
 // ---------------------------------------------------------------------------
 
 func TestHandleOAuthRedirect_unknownProvider(t *testing.T) {
-	// Pool is nil — the 404 short-circuits before any DB call.
+	// Pool is nil: the 404 short-circuits before any DB call.
 	h := routerWithSSO(mockProvider{name: "google"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/nonexistent/redirect", nil)
@@ -137,7 +137,7 @@ func TestHandleOAuthCallback_invalidState(t *testing.T) {
 	pool := oauthDB(t)
 	h := routerWithSSOAndPool(pool, mockProvider{name: "google"})
 
-	// Provide a state token that was never inserted — ConsumeOAuthState returns
+	// Provide a state token that was never inserted: ConsumeOAuthState returns
 	// nil, which the handler treats as an invalid/expired state.
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/auth/google/callback?state=doesnotexist&code=somecode", nil)
@@ -254,7 +254,7 @@ func TestHandleOAuthCallbackAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h := NewRouter(pool, nil, nil, nil, nil, nil, []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+			h := NewRouter(Config{Pool: pool, OAuthProviders: []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}})
 			if scenario.full {
 				count, err := storage.CountUsers(t.Context(), pool)
 				if err != nil {

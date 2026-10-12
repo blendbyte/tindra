@@ -462,52 +462,6 @@ func TestGetProjectBySlug_notFound(t *testing.T) {
 	}
 }
 
-func TestGetByIDAndPublicKey_found(t *testing.T) {
-	truncateProjects(t)
-
-	created, err := storage.CreateProject(context.Background(), testPool, "id-and-key", "ID And Key")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	p, err := storage.GetByIDAndPublicKey(context.Background(), testPool, created.ID, created.PublicKey)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	require.NotNil(t, p, "expected project, got nil")
-	if p.ID != created.ID {
-		t.Errorf("ID mismatch: got %q, want %q", p.ID, created.ID)
-	}
-}
-
-func TestGetByIDAndPublicKey_wrongKey(t *testing.T) {
-	truncateProjects(t)
-
-	created, _ := storage.CreateProject(context.Background(), testPool, "id-wrong-key", "Test")
-
-	p, err := storage.GetByIDAndPublicKey(context.Background(), testPool, created.ID, "wrong-key")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p != nil {
-		t.Error("expected nil for wrong key")
-	}
-}
-
-func TestGetByIDAndPublicKey_wrongID(t *testing.T) {
-	truncateProjects(t)
-
-	created, _ := storage.CreateProject(context.Background(), testPool, "wrong-id", "Test")
-
-	p, err := storage.GetByIDAndPublicKey(context.Background(), testPool, "00000000-0000-0000-0000-000000000000", created.PublicKey)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p != nil {
-		t.Error("expected nil for wrong ID")
-	}
-}
-
 func TestUpdateProject_passthroughDSN(t *testing.T) {
 	truncateProjects(t)
 

@@ -10,7 +10,7 @@ import (
 )
 
 func routerWithPublicURL(url string) http.Handler {
-	return NewRouter(nil, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", url, "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	return NewRouter(Config{Events: ingest.NewBuffer(1), PublicURL: url, RequireMFA: true})
 }
 
 type configResp struct {

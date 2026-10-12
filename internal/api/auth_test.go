@@ -17,7 +17,7 @@ import (
 )
 
 func authHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1)})
 }
 
 func TestHandleLogin_success(t *testing.T) {
@@ -140,8 +140,8 @@ func TestRequireAuth_invalidSessionCookie(t *testing.T) {
 
 func TestRequireSessionAuth_invalidSessionCookie(t *testing.T) {
 	// requireSessionAuth with an invalid cookie → 401
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/tokens",
-		bytes.NewBufferString(`{"name":"x"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/me/password",
+		bytes.NewBufferString(`{"current_password":"x","new_password":"y"}`))
 	req.AddCookie(&http.Cookie{Name: "tindra_session", Value: "not-a-valid-token"})
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

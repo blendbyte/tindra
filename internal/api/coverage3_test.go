@@ -1,6 +1,6 @@
 package api_test
 
-// coverage3_test.go — additional tests targeting uncovered branches in global.go and cron.go.
+// coverage3_test.go: additional tests targeting uncovered branches in global.go and cron.go.
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// handleUpdateIssueGlobal — ignored status with ignore_until (lines 654, 672-674)
+// handleUpdateIssueGlobal: ignored status with ignore_until (lines 654, 672-674)
 // ---------------------------------------------------------------------------
 
 func TestUpdateIssueGlobal_ignoredWithIgnoreUntil(t *testing.T) {
@@ -51,7 +51,7 @@ func TestUpdateIssueGlobal_ignoredWithCountLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleUpdateIssueGlobal — assignee set to non-nil (lines 698-700)
+// handleUpdateIssueGlobal: assignee set to non-nil (lines 698-700)
 // ---------------------------------------------------------------------------
 
 func TestUpdateIssueGlobal_assigneeSetNotNull(t *testing.T) {
@@ -70,7 +70,7 @@ func TestUpdateIssueGlobal_assigneeSetNotNull(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListAllIssues — cursor_time+cursor_id parsing (lines 418-424)
+// handleListAllIssues: cursor_time+cursor_id parsing (lines 418-424)
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_hardcodedCursor(t *testing.T) {
@@ -86,7 +86,7 @@ func TestListAllIssues_hardcodedCursor(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleSpanSummaries — ?hours param branch (lines 1327-1330)
+// handleSpanSummaries: ?hours param branch (lines 1327-1330)
 // ---------------------------------------------------------------------------
 
 func TestSpanSummaries_withHours(t *testing.T) {
@@ -100,7 +100,7 @@ func TestSpanSummaries_withHours(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleSpanTimeseries — ?hours param branch (lines 1370-1373)
+// handleSpanTimeseries: ?hours param branch (lines 1370-1373)
 // ---------------------------------------------------------------------------
 
 func TestSpanTimeseries_withHours(t *testing.T) {
@@ -114,7 +114,7 @@ func TestSpanTimeseries_withHours(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleListTransactionSummaries — ?hours and ?offset params (lines 919-927)
+// handleListTransactionSummaries: ?hours and ?offset params (lines 919-927)
 // ---------------------------------------------------------------------------
 
 func TestTransactionSummaries_withHoursAndOffset(t *testing.T) {
@@ -128,7 +128,7 @@ func TestTransactionSummaries_withHoursAndOffset(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleTransactionTimeseries — ?hours param (lines 954-957)
+// handleTransactionTimeseries: ?hours param (lines 954-957)
 // ---------------------------------------------------------------------------
 
 func TestTransactionTimeseries_withHours(t *testing.T) {
@@ -142,7 +142,7 @@ func TestTransactionTimeseries_withHours(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetTransactionErrors — non-empty trace_id (lines 1203-1212)
+// handleGetTransactionErrors: non-empty trace_id (lines 1203-1212)
 // ---------------------------------------------------------------------------
 
 func TestGetTransactionErrors_withTraceID(t *testing.T) {
@@ -225,7 +225,7 @@ func TestGetTransactionErrors_bearerExcludesOtherProjects(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetTransactionGlobal — wrong bearer project (line 1039)
+// handleGetTransactionGlobal: wrong bearer project (line 1039)
 // ---------------------------------------------------------------------------
 
 func TestGetTransactionGlobal_wrongBearerProject(t *testing.T) {
@@ -263,7 +263,7 @@ func TestGetTransactionGlobal_wrongBearerProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetSpansGlobal — wrong bearer project (line 1149)
+// handleGetSpansGlobal: wrong bearer project (line 1149)
 // ---------------------------------------------------------------------------
 
 func TestGetSpansGlobal_wrongBearerProject(t *testing.T) {
@@ -293,7 +293,7 @@ func TestGetSpansGlobal_wrongBearerProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleUpdateProjectPrivacy — null/empty fields (lines 263-268)
+// handleUpdateProjectPrivacy: null/empty fields (lines 263-268)
 // ---------------------------------------------------------------------------
 
 func TestUpdateProjectPrivacy_nullFields(t *testing.T) {
@@ -310,7 +310,7 @@ func TestUpdateProjectPrivacy_nullFields(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleUpdateProject — conflicting slug (lines 233-236)
+// handleUpdateProject: conflicting slug (lines 233-236)
 // ---------------------------------------------------------------------------
 
 func TestUpdateProject_duplicateSlug(t *testing.T) {
@@ -334,7 +334,7 @@ func TestUpdateProject_duplicateSlug(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleBulkUpdateIssues — ignore_until branch (lines 580-582)
+// handleBulkUpdateIssues: ignore_until branch (lines 580-582)
 // ---------------------------------------------------------------------------
 
 func TestBulkUpdateIssues_ignoredWithIgnoreUntil(t *testing.T) {
@@ -354,7 +354,7 @@ func TestBulkUpdateIssues_ignoredWithIgnoreUntil(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleExportIssues — CSV with environment set (lines 526-532)
+// handleExportIssues: CSV with environment set (lines 526-532)
 // ---------------------------------------------------------------------------
 
 func TestExportIssues_csvWithEnvironment(t *testing.T) {
@@ -377,7 +377,7 @@ func TestExportIssues_csvWithEnvironment(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueHistory — wrong bearer project (line 722)
+// handleGetIssueHistory: wrong bearer project (line 722)
 // ---------------------------------------------------------------------------
 
 func TestGetIssueHistory_wrongBearerProject(t *testing.T) {
@@ -402,7 +402,7 @@ func TestGetIssueHistory_wrongBearerProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueTrace — wrong bearer project (line 825)
+// handleGetIssueTrace: wrong bearer project (line 825)
 // ---------------------------------------------------------------------------
 
 func TestGetIssueTrace_wrongBearerProject(t *testing.T) {
@@ -427,7 +427,7 @@ func TestGetIssueTrace_wrongBearerProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetIssueTrace — ?offset param parsing (lines 830-832)
+// handleGetIssueTrace: ?offset param parsing (lines 830-832)
 // ---------------------------------------------------------------------------
 
 func TestGetIssueTrace_withOffset(t *testing.T) {
@@ -444,7 +444,7 @@ func TestGetIssueTrace_withOffset(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetWebVitalsPages — ?hours param (lines 1415-1419)
+// handleGetWebVitalsPages: ?hours param (lines 1415-1419)
 // ---------------------------------------------------------------------------
 
 func TestGetWebVitalsPages_withHours(t *testing.T) {

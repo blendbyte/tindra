@@ -313,7 +313,7 @@ func TestWorker_customExpectedCode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Monitor only accepts 200 — 202 should be treated as down
+	// Monitor only accepts 200: 202 should be treated as down
 	m := seedMonitor(t, srv.URL, "GET", "200")
 	uptime.NewWorker(testPool, true).RunOnce(ctx)
 

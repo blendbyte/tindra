@@ -11,7 +11,7 @@ import (
 )
 
 func csrfRouter() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "https://dash.example.com", "https://tindra.example.com", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), CORSOrigin: "https://dash.example.com", PublicURL: "https://tindra.example.com"})
 }
 
 func TestCrossOriginProtection(t *testing.T) {

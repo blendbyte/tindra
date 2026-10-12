@@ -21,7 +21,7 @@ import (
 
 func TestAuthenticationRoutesBoundBodies(t *testing.T) {
 	// Oversized requests must be rejected before any handler touches the database.
-	h := NewRouter(nil, nil, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := NewRouter(Config{})
 	for _, route := range []struct{ method, path string }{
 		{"POST", "/api/auth/login"}, {"POST", "/api/auth/logout"}, {"POST", "/api/auth/mfa/verify"},
 		{"POST", "/api/auth/invite/token/accept"}, {"POST", "/api/auth/password-reset/token"},
@@ -168,7 +168,7 @@ func TestAuthBodyRejectsOversizedUploadWithoutWaitingForRest(t *testing.T) {
 func TestAuthenticatedMFARoutesBoundBodies(t *testing.T) {
 	pool := oauthDB(t)
 	fixture := seedRecovery(t, pool)
-	h := NewRouter(pool, nil, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := NewRouter(Config{Pool: pool})
 	for _, route := range []struct{ method, path string }{
 		{"POST", "/api/auth/mfa/setup"}, {"POST", "/api/auth/mfa/confirm"}, {"DELETE", "/api/auth/mfa"},
 	} {

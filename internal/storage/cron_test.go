@@ -48,6 +48,31 @@ func TestParseCronSchedule_valid(t *testing.T) {
 	}
 }
 
+func TestParseCronSchedule_dayFieldsMatchEither(t *testing.T) {
+	cases := []struct {
+		expr string
+		from time.Time
+		want time.Time
+	}{
+		// The 1st of the month or any Monday: Friday 10 July runs next on Monday 13 July.
+		{"0 0 1 * 1", time.Date(2026, 7, 10, 20, 0, 0, 0, time.UTC), time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)},
+		// A stepped day-of-week (*/2: Sunday, Tuesday, Thursday, Saturday) is a
+		// restriction too, so Thursday 12 February runs although it is not the 24th.
+		{"37 * 24 * */2", time.Date(2026, 2, 12, 23, 15, 0, 0, time.UTC), time.Date(2026, 2, 12, 23, 37, 0, 0, time.UTC)},
+		// Only day-of-month restricted: the 31st, skipping short months.
+		{"0 0 31 * *", time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		sched, err := storage.ParseCronSchedule(tc.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.expr, err)
+		}
+		if got := sched.Next(tc.from); !got.Equal(tc.want) {
+			t.Errorf("%s after %s = %s, want %s", tc.expr, tc.from, got, tc.want)
+		}
+	}
+}
+
 func TestParseCronSchedule_invalid(t *testing.T) {
 	_, err := storage.ParseCronSchedule("not a cron expression")
 	if err == nil {
@@ -585,7 +610,7 @@ func TestListMonitorsWithRecentErrors_sinceFilter(t *testing.T) {
 		t.Fatalf("error checkin: %v", err)
 	}
 
-	// Query with a since time in the future — should return nothing.
+	// Query with a since time in the future: should return nothing.
 	since := time.Now().UTC().Add(1 * time.Hour)
 	monitors, err := storage.ListMonitorsWithRecentErrors(context.Background(), testPool, []string{p.ID}, since)
 	if err != nil {

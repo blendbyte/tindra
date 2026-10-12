@@ -279,68 +279,6 @@ func TestListLogs_noProjectFilter(t *testing.T) {
 	}
 }
 
-// TestDeleteLogsOlderThan_deletesOldRows verifies old rows are removed and recent ones are kept.
-func TestDeleteLogsOlderThan_deletesOldRows(t *testing.T) {
-	p := setupProjectForLogs(t)
-
-	old := time.Now().UTC().Add(-48 * time.Hour)
-	recent := time.Now().UTC()
-
-	// Insert one old log and one recent log using received_at explicitly.
-	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO logs (project_id, timestamp, received_at, level, body)
-		VALUES ($1, $2, $2, 'info', 'old log')
-	`, p.ID, old); err != nil {
-		t.Fatalf("insert old log: %v", err)
-	}
-	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO logs (project_id, timestamp, received_at, level, body)
-		VALUES ($1, $2, $2, 'info', 'recent log')
-	`, p.ID, recent); err != nil {
-		t.Fatalf("insert recent log: %v", err)
-	}
-
-	cutoff := time.Now().UTC().Add(-24 * time.Hour)
-	deleted, err := storage.DeleteLogsOlderThan(context.Background(), testPool, cutoff)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if deleted != 1 {
-		t.Errorf("expected 1 deleted row, got %d", deleted)
-	}
-
-	logs, _, err := storage.ListLogs(context.Background(), testPool, storage.LogFilter{
-		ProjectIDs: []string{p.ID},
-		Limit:      50,
-	})
-	if err != nil {
-		t.Fatalf("list after delete: %v", err)
-	}
-	if len(logs) != 1 {
-		t.Fatalf("expected 1 log remaining, got %d", len(logs))
-	}
-	if logs[0].Body != "recent log" {
-		t.Errorf("expected 'recent log' to survive, got %q", logs[0].Body)
-	}
-}
-
-// TestDeleteLogsOlderThan_nothingToDelete verifies zero is returned when no rows match.
-func TestDeleteLogsOlderThan_nothingToDelete(t *testing.T) {
-	p := setupProjectForLogs(t)
-	now := time.Now().UTC()
-	seedLog(t, p.ID, "info", "fresh log", now, "")
-
-	// Cutoff is 30 days ago - the fresh log should not be touched.
-	cutoff := now.Add(-30 * 24 * time.Hour)
-	deleted, err := storage.DeleteLogsOlderThan(context.Background(), testPool, cutoff)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if deleted != 0 {
-		t.Errorf("expected 0 deleted rows, got %d", deleted)
-	}
-}
-
 // seedTracedLog inserts a log carrying a trace_id and returns its ID.
 func seedTracedLog(t *testing.T, projectID, body, traceID string, ts time.Time) string {
 	t.Helper()

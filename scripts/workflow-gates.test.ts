@@ -88,7 +88,7 @@ test('Go and frontend unit suites cannot be replaced by build-only checks', () =
   )).toBe(true)
   expect(verify.jobs['frontend-test'].steps.map((step: any) => step.run)).toContain('bun run test:coverage')
   expect(verify.jobs['frontend-test'].steps.map((step: any) => step.run)).toContain('bun run lint')
-  expect(verify.jobs['action-pins'].steps.map((step: any) => step.run)).toContain('bun test scripts/install.test.ts')
+  expect(verify.jobs['action-pins'].steps.map((step: any) => step.run)).toContain('bun test scripts/install.test.ts scripts/backup.test.ts scripts/makefile.test.ts scripts/style.test.ts')
 })
 
 test('vulnerability scan uses the toolchain that ships in releases', () => {
@@ -159,8 +159,43 @@ test('verification has read-only permissions and dev publishing only runs on mai
   expect(ci.jobs['docker-dev'].if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'")
   expect(ci.jobs['docker-dev'].permissions).toEqual({ contents: 'read', packages: 'write' })
   expect(release.jobs.docker.permissions).toEqual({ contents: 'read', packages: 'write' })
-  expect(release.jobs.release.permissions).toEqual({ contents: 'write' })
+  // id-token and attestations sign the build provenance for the release files.
+  expect(release.jobs.release.permissions).toEqual({ contents: 'write', 'id-token': 'write', attestations: 'write' })
   for (const job of Object.values(verify.jobs) as any[]) {
     expect(job.permissions ?? verify.permissions).toEqual({ contents: 'read' })
   }
+})
+
+test('every job has a timeout and runs are grouped', () => {
+  const ci = workflow('ci')
+  const release = workflow('release')
+  for (const document of [verify, ci, release]) {
+    for (const [name, job] of Object.entries(document.jobs) as [string, any][]) {
+      // Jobs that call a reusable workflow inherit its job timeouts.
+      if (job.uses) continue
+      expect(job['timeout-minutes'], name).toBeGreaterThan(0)
+    }
+  }
+  expect(ci.concurrency.group).toBe('ci-${{ github.ref }}')
+  expect(ci.concurrency['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}")
+  expect(release.concurrency['cancel-in-progress']).toBe(false)
+})
+
+test('lint and release tooling are pinned and releases are verifiable', () => {
+  const lint = verify.jobs['go-lint'].steps.find((step: any) => step.uses?.startsWith('golangci/golangci-lint-action@'))
+  expect(lint.with.version).toMatch(/^v\d+\.\d+\.\d+$/)
+
+  const release = workflow('release')
+  const steps = release.jobs.release.steps
+  const index = (prefix: string) => steps.findIndex((step: any) => (step.uses ?? step.run ?? '').startsWith(prefix))
+  // Checksums are taken before anything else is added to the directory.
+  expect(index('sha256sum tindra-* > SHA256SUMS')).toBeGreaterThan(-1)
+  expect(index('sha256sum')).toBeLessThan(index('anchore/sbom-action@'))
+  expect(steps[index('actions/attest-build-provenance@')].with['subject-checksums']).toBe('SHA256SUMS')
+  const files = steps[index('softprops/action-gh-release@')].with.files
+  for (const name of ['tindra-*', 'SHA256SUMS', 'sbom.spdx.json']) expect(files).toContain(name)
+
+  const image = release.jobs.docker.steps.find((step: any) => step.uses?.startsWith('docker/build-push-action@'))
+  expect(image.with.sbom).toBe(true)
+  expect(image.with.provenance).toBe('mode=max')
 })

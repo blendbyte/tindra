@@ -78,7 +78,7 @@ describe('auth store', () => {
       expect(store.ready).toBe(true)
     })
 
-    it('is idempotent — skips fetch on second call', async () => {
+    it('is idempotent: skips fetch on second call', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockUser),

@@ -54,7 +54,7 @@ func TestCredentialChangesRevokeAccess(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f := seedRecovery(t, pool)
 			other := seedRecovery(t, pool)
-			h := NewRouter(pool, nil, nil, nil, nil, nil, nil, true, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+			h := NewRouter(Config{Pool: pool, CookieSecure: true, RequireMFA: true})
 			method, path, body := "PATCH", "/api/me/password", `{"current_password":"original-password","new_password":"replacement-password"}`
 			if kind == "admin" {
 				_, err := storage.UpdateUserPermissions(t.Context(), pool, f.user.ID, storage.UserPermissions{ManageUsers: true})

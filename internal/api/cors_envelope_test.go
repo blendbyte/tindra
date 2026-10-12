@@ -13,7 +13,7 @@ import (
 // With CORS_ORIGIN set for the dashboard, browser SDKs on other sites must still
 // get the envelope route's own wildcard preflight answer.
 func TestCORSOrigin_doesNotOverrideEnvelopePreflight(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "https://dashboard.example.com", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), CORSOrigin: "https://dashboard.example.com"})
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/"+testProject.ID+"/envelope/", nil)
 	req.Header.Set("Origin", "https://customer-site.example.org")

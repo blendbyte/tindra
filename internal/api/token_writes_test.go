@@ -171,6 +171,7 @@ func TestWritableTokenCannotAdministerInstance(t *testing.T) {
 		rec := tokenWriteRequest(h, token, tc.method, tc.path, `{}`)
 		require.Equal(t, http.StatusForbidden, rec.Code, tc.path)
 	}
-	rec := tokenWriteRequest(h, token, "POST", "/api/projects/"+testProject.Slug+"/tokens", `{"name":"new"}`)
+	// Session-only routes reject bearer tokens outright.
+	rec := tokenWriteRequest(h, token, "PATCH", "/api/me/password", `{"current_password":"x","new_password":"y"}`)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }

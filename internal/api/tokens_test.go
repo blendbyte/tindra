@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blendbyte/tindra/internal/api"
@@ -15,204 +15,13 @@ import (
 )
 
 func tokenHandler() http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1)})
 }
 
 func truncateTokens(t *testing.T) {
 	t.Helper()
 	if _, err := testPool.Exec(context.Background(), "TRUNCATE api_tokens CASCADE"); err != nil {
 		t.Fatalf("truncate api_tokens: %v", err)
-	}
-}
-
-func TestCreateToken_unauthenticated(t *testing.T) {
-	body := bytes.NewBufferString(`{"name":"ci"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/tokens", body)
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", rec.Code)
-	}
-}
-
-func TestCreateToken_tokenAuthRejected(t *testing.T) {
-	// Bootstrap a token to test with
-	truncateTokens(t)
-	_, plaintext, err := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "bootstrap", false)
-	if err != nil {
-		t.Fatalf("create token: %v", err)
-	}
-
-	// Attempt to create another token using Bearer auth - must be rejected
-	body := bytes.NewBufferString(`{"name":"new"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/tokens", body)
-	req.Header.Set("Authorization", "Bearer "+plaintext)
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401 (token mgmt requires session), got %d", rec.Code)
-	}
-}
-
-func TestCreateToken_success(t *testing.T) {
-	truncateTokens(t)
-
-	body := bytes.NewBufferString(`{"name":"CI pipeline"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/tokens", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var resp struct {
-		storage.APIToken
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.ID == "" {
-		t.Error("expected non-empty ID")
-	}
-	if resp.Name != "CI pipeline" {
-		t.Errorf("name: got %q", resp.Name)
-	}
-	if len(resp.Token) != 71 {
-		t.Errorf("token length: got %d, want 71", len(resp.Token))
-	}
-}
-
-func TestCreateToken_missingName(t *testing.T) {
-	body := bytes.NewBufferString(`{}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/tokens", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
-}
-
-func TestCreateToken_unknownProject(t *testing.T) {
-	body := bytes.NewBufferString(`{"name":"x"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/no-such-project/tokens", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
-}
-
-func TestListTokens_empty(t *testing.T) {
-	truncateTokens(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/projects/test-project/tokens", nil)
-	req.AddCookie(authCookie())
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var resp struct {
-		Tokens []json.RawMessage `json:"tokens"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(resp.Tokens) != 0 {
-		t.Errorf("expected 0, got %d", len(resp.Tokens))
-	}
-}
-
-func TestListTokens_withData(t *testing.T) {
-	truncateTokens(t)
-
-	storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "tok-a", false)
-	storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "tok-b", false)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/projects/test-project/tokens", nil)
-	req.AddCookie(authCookie())
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	var resp struct {
-		Tokens []*storage.APIToken `json:"tokens"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(resp.Tokens) != 2 {
-		t.Errorf("expected 2, got %d", len(resp.Tokens))
-	}
-}
-
-func TestDeleteToken_success(t *testing.T) {
-	truncateTokens(t)
-
-	tok, _, _ := storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "deleteme", false)
-
-	req := httptest.NewRequest(http.MethodDelete,
-		fmt.Sprintf("/api/projects/test-project/tokens/%s", tok.ID), nil)
-	req.AddCookie(authCookie())
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("expected 204, got %d", rec.Code)
-	}
-}
-
-func TestDeleteToken_notFound(t *testing.T) {
-	req := httptest.NewRequest(http.MethodDelete,
-		"/api/projects/test-project/tokens/00000000-0000-0000-0000-000000000000", nil)
-	req.AddCookie(authCookie())
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
-}
-
-func TestListTokens_unknownProject(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/projects/no-such-project/tokens", nil)
-	req.AddCookie(authCookie())
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404 for unknown project, got %d", rec.Code)
-	}
-}
-
-func TestDeleteToken_unknownProject(t *testing.T) {
-	req := httptest.NewRequest(http.MethodDelete,
-		"/api/projects/no-such-project/tokens/00000000-0000-0000-0000-000000000000", nil)
-	req.AddCookie(authCookie())
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404 for unknown project, got %d", rec.Code)
 	}
 }
 
@@ -246,90 +55,6 @@ func TestBearerTokenAuth_invalidToken(t *testing.T) {
 	}
 }
 
-func TestCreateToken_writable_true(t *testing.T) {
-	truncateTokens(t)
-
-	body := bytes.NewBufferString(`{"name":"rw-token","writable":true}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/tokens", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		storage.APIToken
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !resp.Writable {
-		t.Error("expected Writable=true in response")
-	}
-}
-
-func TestCreateToken_writable_omitted_defaults_false(t *testing.T) {
-	truncateTokens(t)
-
-	body := bytes.NewBufferString(`{"name":"ro-token"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/test-project/tokens", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		storage.APIToken
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Writable {
-		t.Error("expected Writable=false when omitted from request")
-	}
-}
-
-func TestListTokens_writable_field_present(t *testing.T) {
-	truncateTokens(t)
-
-	storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rw", true)
-	storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "ro", false)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/projects/test-project/tokens", nil)
-	req.AddCookie(authCookie())
-	rec := httptest.NewRecorder()
-	tokenHandler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	var resp struct {
-		Tokens []*storage.APIToken `json:"tokens"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(resp.Tokens) != 2 {
-		t.Fatalf("expected 2, got %d", len(resp.Tokens))
-	}
-	writableCount := 0
-	for _, tok := range resp.Tokens {
-		if tok.Writable {
-			writableCount++
-		}
-	}
-	if writableCount != 1 {
-		t.Errorf("expected 1 writable token in list response, got %d", writableCount)
-	}
-}
-
 func TestBearerTokenAuth_wrongProject(t *testing.T) {
 	truncateTokens(t)
 
@@ -348,5 +73,105 @@ func TestBearerTokenAuth_wrongProject(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("expected 403 when token project != requested project, got %d", rec.Code)
+	}
+}
+
+func createGlobalToken(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewBufferString(body))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	tokenHandler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestCreateToken_writableFlag(t *testing.T) {
+	truncateTokens(t)
+	for body, want := range map[string]bool{
+		`{"name":"rw-token","writable":true,"project_id":"` + testProject.ID + `"}`: true,
+		`{"name":"ro-token","project_id":"` + testProject.ID + `"}`:                 false,
+	} {
+		rec := createGlobalToken(t, body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Token string            `json:"token"`
+			Meta  *storage.APIToken `json:"meta"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.Token == "" || resp.Meta.Writable != want {
+			t.Errorf("%s: token=%q writable=%v, want writable=%v", body, resp.Token, resp.Meta.Writable, want)
+		}
+	}
+}
+
+func TestCreateToken_unknownProject(t *testing.T) {
+	for _, projectID := range []string{"00000000-0000-0000-0000-000000000000", "not-a-uuid"} {
+		rec := createGlobalToken(t, `{"name":"x","project_id":"`+projectID+`"}`)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown project") {
+			t.Errorf("project %q: got %d %q, want 400 unknown project", projectID, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestListTokens_writableFieldPresent(t *testing.T) {
+	truncateTokens(t)
+	storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "rw", true)
+	storage.CreateAPIToken(context.Background(), testPool, testProject.ID, "ro", false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tokens", nil)
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	tokenHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var tokens []*storage.APIToken
+	if err := json.NewDecoder(rec.Body).Decode(&tokens); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	writable := 0
+	for _, tok := range tokens {
+		if tok.Writable {
+			writable++
+		}
+	}
+	if len(tokens) != 2 || writable != 1 {
+		t.Errorf("got %d tokens with %d writable, want 2 with 1 writable", len(tokens), writable)
+	}
+}
+
+// The project-scoped token routes were removed; /api/tokens replaces them.
+func TestProjectTokenRoutesAreGone(t *testing.T) {
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/projects/test-project/tokens"},
+		{http.MethodPost, "/api/projects/test-project/tokens"},
+		{http.MethodDelete, "/api/projects/test-project/tokens/00000000-0000-0000-0000-000000000000"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(`{"name":"x"}`))
+		req.AddCookie(authCookie())
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		tokenHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: got %d, want the route to be gone", tc.method, tc.path, rec.Code)
+		}
+		if rec.Code == http.StatusNotFound && !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+			t.Errorf("%s %s: 404 should be JSON, got %q", tc.method, tc.path, rec.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestUnknownAPIPathIsJSONNotFound(t *testing.T) {
+	for _, path := range []string{"/api/does-not-exist", "/api/projects/test-project/nothing-here"} {
+		rec := httptest.NewRecorder()
+		tokenHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+			t.Errorf("%s: got %d %q, want a JSON 404", path, rec.Code, rec.Header().Get("Content-Type"))
+		}
 	}
 }

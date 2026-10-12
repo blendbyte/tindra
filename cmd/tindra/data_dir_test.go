@@ -44,7 +44,7 @@ func TestCheckDataDir(t *testing.T) {
 func TestServeRejectsUnusableDataDirBeforeDatabase(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(dir, nil, 0o600))
-	cmd := serveCmd(config{dataDir: dir, databaseURL: "invalid"})
+	cmd := serveCmd(config{dataDir: dir, databaseURL: "invalid"}, nil)
 	require.ErrorContains(t, cmd.RunE(cmd, nil), "prepare DATA_DIR")
 }
 

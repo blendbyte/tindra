@@ -20,7 +20,7 @@ import (
 )
 
 func newHandlerAllowPrivate(buf *ingest.Buffer) http.Handler {
-	return api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, true, false, nil)
+	return api.NewRouter(api.Config{Pool: testPool, Events: buf, WebhookAllowPrivateIPs: true})
 }
 
 // apiPassthroughDSN builds a DSN that the forwarder will translate into

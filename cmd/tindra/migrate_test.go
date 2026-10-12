@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"io"
+	"io/fs"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -240,5 +243,62 @@ func TestNewMigratorRejectsUnsupportedDatabaseDriver(t *testing.T) {
 	m, err := newMigrator(cfg)
 	if m != nil || err == nil || !strings.Contains(err.Error(), "open migration database") {
 		t.Fatalf("migrator=%v err=%v", m, err)
+	}
+}
+
+func TestMigrationURLUsesPgxDriver(t *testing.T) {
+	cases := map[string]string{
+		"postgres://u:p@db:5432/tindra?sslmode=disable": "pgx5://u:p@db:5432/tindra?sslmode=disable",
+		"postgresql://db/tindra":                        "pgx5://db/tindra",
+		"pgx5://db/tindra":                              "pgx5://db/tindra",
+	}
+	for in, want := range cases {
+		if got := migrationURL(in); got != want {
+			t.Errorf("migrationURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The test databases are migrated by testutil, so run every migration from an
+// empty database through the real migrator once, the way a new install does.
+func TestMigrateFreshDatabase(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testUserPool.Exec(ctx, "CREATE DATABASE tindra_fresh_migrate"); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testUserPool.Exec(context.Background(), "DROP DATABASE IF EXISTS tindra_fresh_migrate WITH (FORCE)")
+	})
+	dsn, err := url.Parse(testUserDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dsn.Path = "/tindra_fresh_migrate"
+	cfg := inviteCfg()
+	cfg.databaseURL = dsn.String()
+
+	m, err := newMigrator(cfg)
+	if err != nil {
+		t.Fatalf("newMigrator: %v", err)
+	}
+	defer m.Close()
+	if err := m.Up(); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	version, dirty, err := m.Version()
+	if err != nil || dirty {
+		t.Fatalf("version=%d dirty=%v err=%v", version, dirty, err)
+	}
+
+	names, err := fs.Glob(migrations.FS, "*.up.sql")
+	if err != nil || len(names) == 0 {
+		t.Fatalf("list migrations: %v", err)
+	}
+	latest, err := strconv.Atoi(strings.SplitN(names[len(names)-1], "_", 2)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int(version) != latest {
+		t.Errorf("version = %d, want the latest migration %d", version, latest)
 	}
 }

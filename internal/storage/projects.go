@@ -270,23 +270,6 @@ func GetByPublicKey(ctx context.Context, pool *pgxpool.Pool, key string) (*Proje
 	return &p, nil
 }
 
-// GetByIDAndPublicKey looks up a project by its UUID and validates the public key in one query.
-// Returns nil if either the ID or the key doesn't match, preventing project enumeration.
-func GetByIDAndPublicKey(ctx context.Context, pool *pgxpool.Pool, id, publicKey string) (*Project, error) {
-	var p Project
-	err := pool.QueryRow(ctx, `
-		SELECT id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
-		FROM projects WHERE id = $1 AND public_key = $2
-	`, id, publicKey).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query: %w", err)
-	}
-	return &p, nil
-}
-
 func GetProjectBySlug(ctx context.Context, pool *pgxpool.Pool, slug string) (*Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx, `

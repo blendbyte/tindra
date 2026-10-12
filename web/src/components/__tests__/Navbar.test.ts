@@ -248,7 +248,7 @@ describe('Navbar', () => {
     })
   })
 
-  describe('project filter popover — empty state actions', () => {
+  describe('project filter popover: empty state actions', () => {
     it('navigates to create-project URL and closes popover when Create project is clicked', async () => {
       const wrapper = makeWrapper([])
       await wrapper.find('.nav__projects-trigger').trigger('click')

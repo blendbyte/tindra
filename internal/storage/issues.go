@@ -299,17 +299,6 @@ func GroupEvent(ctx context.Context, pool *pgxpool.Pool, eventID, fingerprint, l
 	return issue, created, regressed, nil
 }
 
-// LinkEventToIssue sets fingerprint and issue_id on an event row.
-func LinkEventToIssue(ctx context.Context, pool *pgxpool.Pool, eventID, issueID, fingerprint string) error {
-	_, err := pool.Exec(ctx, `
-		UPDATE events SET fingerprint = $1, issue_id = $2 WHERE id = $3
-	`, fingerprint, issueID, eventID)
-	if err != nil {
-		return fmt.Errorf("link event: %w", err)
-	}
-	return nil
-}
-
 // ListIssues returns the issues matching every field of filter, most recently
 // seen first. Unlike ListAllIssues it skips the per-issue user count, for
 // callers that only need the issue rows (alert payloads, the project API).

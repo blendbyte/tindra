@@ -86,16 +86,6 @@ export interface ServerSettings {
 }
 
 /** Returned by GET /api/stats - for the managed hosting control plane. */
-export interface InstanceStats {
-  projects: number
-  users: number
-  events_this_month: number
-  events_last_month: number
-  period_start: string
-  last_period_start: string
-  event_limit: number
-}
-
 export interface InstanceHealth {
   db_size_bytes: number
   events_total: number
@@ -476,11 +466,6 @@ export interface LogListPage {
 export interface HistogramBucket {
   time: string
   count: number
-}
-
-export interface HistogramResult {
-  buckets: HistogramBucket[]
-  bucket_size: 'hour' | 'day' | 'week'
 }
 
 export interface EventSummary {

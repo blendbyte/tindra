@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Geist Mono — variable font, weight axis 400–500 */
+/* Geist Mono: variable font, weight axis 400-500 */
 @font-face {
   font-family: 'Geist Mono';
   font-style: normal;
@@ -50,7 +50,7 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Hanken Grotesk — variable font, weight axis 400–700 */
+/* Hanken Grotesk: variable font, weight axis 400-700 */
 @font-face {
   font-family: 'Hanken Grotesk';
   font-style: normal;
@@ -2731,7 +2731,7 @@ a { color: inherit; text-decoration: none; }
 .tx-apdex--fair { color: var(--warning); }
 .tx-apdex--poor { color: var(--danger); }
 
-/* Transaction profile — samples table */
+/* Transaction profile: samples table */
 .tx-samples {
   padding-bottom: 32px;
 }
@@ -3328,7 +3328,7 @@ a { color: inherit; text-decoration: none; }
 }
 .span-name__caret:hover { color: var(--text-1); }
 
-/* Op prefix label — colored, monospace, bold-ish */
+/* Op prefix label: colored, monospace, bold-ish */
 .span-name__op-prefix {
   font-family: var(--mono);
   font-size: 11px;
@@ -3337,7 +3337,7 @@ a { color: inherit; text-decoration: none; }
   flex-shrink: 0;
   letter-spacing: -0.01em;
 }
-/* Op suffix (.query etc.) — dimmer */
+/* Op suffix (.query etc.): dimmer */
 .span-name__op-suffix {
   font-family: var(--mono);
   font-size: 10px;
@@ -3346,7 +3346,7 @@ a { color: inherit; text-decoration: none; }
   flex-shrink: 0;
   margin-left: -4px;
 }
-/* Description — truncates */
+/* Description: truncates */
 .span-name__desc {
   color: var(--text-1);
   white-space: nowrap;
@@ -4579,7 +4579,7 @@ a { color: inherit; text-decoration: none; }
   animation: toast-out 180ms ease-in both;
 }
 
-/* Type variants — left border + icon color */
+/* Type variants: left border + icon color */
 .toast--success { border-left-color: #16a34a; }
 .toast--success .toast__icon { color: #16a34a; }
 .toast--error   { border-left-color: var(--danger, #dc2626); }
@@ -5204,7 +5204,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media (max-width: 640px) {
-  /* stat-row: scroll horizontally — keeps design intact */
+  /* stat-row: scroll horizontally, which keeps the design intact */
   .stat-row { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .stat { flex: 0 0 auto; }
 
@@ -6425,7 +6425,7 @@ select.field__input {
 
 /* ── Responsive breakpoints ─────────────────────────────────────────────── */
 
-/* 1023px — tablet landscape: thin table columns */
+/* 1023px, tablet landscape: thin table columns */
 @media (max-width: 1023px) {
   /* Issue list: remove Users (col 6) + Owner (col 8); keep Env, Events, Last seen */
   .issuerow {
@@ -6439,7 +6439,7 @@ select.field__input {
 
 }
 
-/* 768px — tablet portrait + phones */
+/* 768px: tablet portrait + phones */
 @media (max-width: 768px) {
 
   /* Filter bar: horizontal scroll */
@@ -6543,7 +6543,7 @@ select.field__input {
   /* Settings tables scroll within the page on narrow screens. */
   .token-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-  /* Audit log: reflow to 2-line layout — kind+action on top, time+actor below; drop IP only */
+  /* Audit log: reflow to a 2-line layout (kind+action on top, time+actor below); drop IP only */
   .audit-row {
     grid-template-columns: 54px 1fr;
     grid-template-rows: auto auto;
@@ -6561,7 +6561,7 @@ select.field__input {
   .audit-toolbar .filterbar__search { width: 100%; min-width: 0 !important; margin-left: 0 !important; }
 }
 
-/* 1199px — tablet/narrow: hamburger nav */
+/* 1199px, tablet/narrow: hamburger nav */
 @media (max-width: 1199px) {
   /* Navbar: hide brand text */
   .nav__brand-text { display: none; }
@@ -7041,7 +7041,7 @@ select.field__input {
   text-decoration: underline;
 }
 
-/* Vital pill — inline status chip in the table */
+/* Vital pill: inline status chip in the table */
 .vital-pill {
   display: inline-block;
   font-size: 12px;
@@ -7090,7 +7090,7 @@ select.field__input {
 /* Highlight the expanded perf-table row */
 .perf-table__row.log-row--expanded td { background: var(--surface-2); }
 
-/* Level badges — also used by TransactionDetailView trace panel */
+/* Level badges, also used by the TransactionDetailView trace panel */
 .log-level {
   display: inline-flex;
   align-items: center;

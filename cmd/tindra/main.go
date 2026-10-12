@@ -15,7 +15,6 @@ import (
 	"time"
 
 	migrate "github.com/golang-migrate/migrate/v4"
-	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
 	"github.com/blendbyte/tindra/internal/alerts"
@@ -75,7 +74,7 @@ type config struct {
 
 func main() {
 	// Load .env if present - no-op in production where env vars are set externally.
-	_ = godotenv.Load()
+	env := loadDotenv(".env")
 
 	version.App = Version
 	api.AppVersion = Version
@@ -93,7 +92,7 @@ func main() {
 	}
 
 	root.AddCommand(
-		serveCmd(cfg),
+		serveCmd(cfg, env),
 		migrateCmd(cfg),
 		projectsCmd(cfg),
 		usersCmd(cfg),
@@ -277,7 +276,7 @@ func setupLogger(level, format string) {
 	}
 }
 
-func serveCmd(cfg config) *cobra.Command {
+func serveCmd(cfg config, env *dotenv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "serve",
 		Short: "Start the HTTP server",
@@ -386,7 +385,30 @@ func serveCmd(cfg config) *cobra.Command {
 				"rate_limit_envelope", cfg.rateLimitEnvelope,
 			)
 
-			handler := api.NewRouter(pool, buf, txBuf, logBuf, profBuf, smStore, oauthProviders, cfg.cookieSecure, cfg.corsOrigin, cfg.publicURL, cfg.statsAPIKey, cfg.billingURL, cfg.retentionDays, cfg.projectLimit, cfg.eventLimit, cfg.userLimit, cfg.rateLimitLogin, cfg.rateLimitEnvelope, evaluator, cfg.webhookAllowPrivateIPs, cfg.requireMFA, cfg.trustedProxies)
+			handler := api.NewRouter(api.Config{
+				Pool:                   pool,
+				Events:                 buf,
+				Transactions:           txBuf,
+				Logs:                   logBuf,
+				Profiles:               profBuf,
+				Sourcemaps:             smStore,
+				OAuthProviders:         oauthProviders,
+				CookieSecure:           cfg.cookieSecure,
+				CORSOrigin:             cfg.corsOrigin,
+				PublicURL:              cfg.publicURL,
+				StatsAPIKey:            cfg.statsAPIKey,
+				BillingURL:             cfg.billingURL,
+				RetentionDays:          cfg.retentionDays,
+				ProjectLimit:           cfg.projectLimit,
+				EventLimit:             cfg.eventLimit,
+				UserLimit:              cfg.userLimit,
+				RateLimitLogin:         cfg.rateLimitLogin,
+				RateLimitEnvelope:      cfg.rateLimitEnvelope,
+				Evaluator:              evaluator,
+				WebhookAllowPrivateIPs: cfg.webhookAllowPrivateIPs,
+				RequireMFA:             cfg.requireMFA,
+				TrustedProxies:         cfg.trustedProxies,
+			})
 			handler.SetRowLimits(cfg.logRowLimit, cfg.txRowLimit)
 			if !cfg.disableVersionCheck {
 				handler.StartVersionChecker(ctx)
@@ -400,7 +422,11 @@ func serveCmd(cfg config) *cobra.Command {
 					case <-ctx.Done():
 						return
 					case <-sighup:
-						_ = godotenv.Overload()
+						if env != nil {
+							if err := env.reload(); err != nil {
+								slog.Warn("reload .env", "err", err)
+							}
+						}
 						newCfg := loadConfig()
 						handler.SetLimits(newCfg.projectLimit, newCfg.eventLimit, newCfg.userLimit)
 						slog.Info("limits reloaded",

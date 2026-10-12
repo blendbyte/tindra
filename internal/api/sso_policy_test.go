@@ -49,7 +49,7 @@ func TestSSOPolicySurvivesProviderFailure(t *testing.T) {
 			}
 			providers := LoadOAuthProviders(t.Context())
 			require.Empty(t, providers)
-			h := NewRouter(pool, nil, nil, nil, nil, nil, providers, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+			h := NewRouter(Config{Pool: pool, OAuthProviders: providers})
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/providers", nil))
 			var config struct {

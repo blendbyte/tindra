@@ -14,21 +14,6 @@ const tagMaxLen = 200
 // the same one Sentry uses, so browser/OS detection matches Sentry's output.
 var uaParser = uaparser.NewFromSaved()
 
-// extractImplicitTags derives the standard set of tags that Sentry synthesises
-// from well-known event fields: level, environment, transaction, server_name,
-// request URL, contexts (browser/os/runtime/device/client_os), and the
-// exception mechanism (handled, mechanism type).
-//
-// These are merged with any explicit SDK-supplied tags, with explicit tags
-// taking priority on key conflicts.
-func extractImplicitTags(payload json.RawMessage) [][2]string {
-	p, ok := decodeEvent(payload)
-	if !ok {
-		return nil
-	}
-	return implicitTagsFrom(p)
-}
-
 func implicitTagsFrom(p eventPayload) [][2]string {
 	var request struct {
 		URL     looseString                `json:"url"`
@@ -115,7 +100,7 @@ func implicitTagsFrom(p eventPayload) [][2]string {
 		}
 	}
 
-	// Exception mechanism — use innermost (last) value, matching fingerprint behaviour.
+	// Exception mechanism: use the innermost (last) value, matching fingerprint behaviour.
 	if values := p.exceptions(); len(values) > 0 {
 		var mech struct {
 			Type    looseString `json:"type"`

@@ -133,7 +133,7 @@ func TestShowcaseDatabaseAndIngestion(t *testing.T) {
 	workers.Go(func() { profbuf.Run(ctx, pool) })
 	workers.Go(func() { issues.NewGrouper(pool).Run(ctx) })
 	defer func() { cancel(); workers.Wait() }()
-	router := api.NewRouter(pool, buf, txbuf, logbuf, profbuf, nil, nil, false, "", "", "", "", 30, 0, 0, 0, 10000, 10000, nil, false, false, nil)
+	router := api.NewRouter(api.Config{Pool: pool, Events: buf, Transactions: txbuf, Logs: logbuf, Profiles: profbuf, RetentionDays: 30, RateLimitLogin: 10000, RateLimitEnvelope: 10000})
 	server := httptest.NewServer(router)
 	defer server.Close()
 	target := dsn{baseURL: server.URL, projectID: project.ID, publicKey: project.PublicKey}

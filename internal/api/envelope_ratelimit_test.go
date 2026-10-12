@@ -28,7 +28,7 @@ func TestEnvelopeLimitUsesAuthenticatedProject(t *testing.T) {
 	require.NoError(t, err)
 	other, err := storage.CreateProject(t.Context(), testPool, uuid.NewString(), "Independent project")
 	require.NoError(t, err)
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 1, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10), RateLimitEnvelope: 1})
 	request := func(hint, key, transport string) (*httptest.ResponseRecorder, bool) {
 		body := &envelopeReadTracker{Reader: strings.NewReader(eventEnvelope(uuid.NewString(), `{"message":"test"}`))}
 		path := "/api/" + hint + "/envelope/"
@@ -70,7 +70,7 @@ func TestEnvelopeLimitUsesAuthenticatedProject(t *testing.T) {
 func TestEnvelopeLimitIgnoresUnauthenticatedRequests(t *testing.T) {
 	project, err := storage.CreateProject(t.Context(), testPool, uuid.NewString(), "Authenticated quota")
 	require.NoError(t, err)
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 1, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10), RateLimitEnvelope: 1})
 	for _, key := range []string{"", "invalid-key", project.PublicKey} {
 		req := httptest.NewRequest("POST", "/api/123/envelope/", strings.NewReader(eventEnvelope(uuid.NewString(), `{}`)))
 		req.Header.Set("X-Sentry-Auth", sentryAuthHeader(key))
@@ -90,7 +90,7 @@ func TestEnvelopeLimitIgnoresUnauthenticatedRequests(t *testing.T) {
 }
 
 func TestEnvelopeLimitCanBeDisabled(t *testing.T) {
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10)})
 	for range 3 {
 		req := httptest.NewRequest("POST", "/api/123/envelope/", strings.NewReader(eventEnvelope(uuid.NewString(), `{}`)))
 		req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))

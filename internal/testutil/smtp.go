@@ -25,7 +25,7 @@ type FakeSMTPServer struct {
 	FailCmd string
 	// AdvertiseSTARTTLS, if set, includes STARTTLS in the EHLO banner.
 	// The server responds "220 Ready" and immediately closes the connection,
-	// so the client's TLS handshake fails — useful for testing the starttls
+	// so the client's TLS handshake fails, which is useful for testing the starttls
 	// error path in callers.
 	AdvertiseSTARTTLS bool
 }

@@ -30,7 +30,7 @@ func TestMFAReplacementPreservesActiveFactor(t *testing.T) {
 	require.NoError(t, storage.EnableMFA(t.Context(), pool, user.ID))
 	session, err := storage.CreateSession(t.Context(), pool, user.ID)
 	require.NoError(t, err)
-	h := NewRouter(pool, nil, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := NewRouter(Config{Pool: pool, RequireMFA: true})
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.AddCookie(&http.Cookie{Name: "tindra_session", Value: session.Token})

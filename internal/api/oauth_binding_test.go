@@ -37,7 +37,7 @@ func TestOAuthStateBoundToInitiatingBrowser(t *testing.T) {
 		email := uuid.NewString() + "@binding.example.com"
 		_, err := storage.CreateOAuthUser(t.Context(), pool, email)
 		require.NoError(t, err)
-		h := NewRouter(pool, nil, nil, nil, nil, nil, []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, secure, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+		h := NewRouter(Config{Pool: pool, OAuthProviders: []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, CookieSecure: secure})
 		start := func() (string, *http.Cookie) {
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/admission/redirect", nil))

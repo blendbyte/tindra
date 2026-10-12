@@ -98,7 +98,7 @@ describe('router auth guard', () => {
   })
 
   describe('double-login bug: ready-gate prevents re-fetch after app init', () => {
-    it('redirects to /login when ready=true but user is null — init() skips the fetch', async () => {
+    it('redirects to /login when ready=true but user is null: init() skips the fetch', async () => {
       // Simulate app boot: init() ran, no session, sets ready=true, user stays null.
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
       const { useAuthStore } = await import('@/stores/auth')
@@ -107,7 +107,7 @@ describe('router auth guard', () => {
       expect(store.ready).toBe(true)
       expect(store.user).toBeNull()
 
-      // After login the cookie exists, but ready is still true — the bug scenario.
+      // After login the cookie exists, but ready is still true: the bug scenario.
       // Swap fetch for one that would succeed to prove it isn't called.
       const fetchAfterLogin = vi.fn().mockResolvedValue({
         ok: true,
@@ -118,12 +118,12 @@ describe('router auth guard', () => {
       const router = buildGuardRouter()
       await router.push('/dashboard')
 
-      // init() was skipped entirely — no fetch, user still null, guard redirected.
+      // init() was skipped entirely: no fetch, user still null, guard redirected.
       expect(fetchAfterLogin).not.toHaveBeenCalled()
       expect(router.currentRoute.value.path).toBe('/login')
     })
 
-    it('allows navigation when ready is reset to false — init() re-fetches and gets the user', async () => {
+    it('allows navigation when ready is reset to false: init() re-fetches and gets the user', async () => {
       // Simulate app boot with no session.
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
       const { useAuthStore } = await import('@/stores/auth')

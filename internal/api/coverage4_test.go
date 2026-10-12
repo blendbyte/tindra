@@ -1,6 +1,6 @@
 package api_test
 
-// coverage4_test.go — additional tests targeting uncovered branches across
+// coverage4_test.go: additional tests targeting uncovered branches across
 // issues.go, extra.go, global.go, alerts.go, cron.go, mcp.go, events.go,
 // logs.go, ingest.go, middleware.go, and invites.go.
 
@@ -19,7 +19,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// issues.go — handleListIssues cursor parsing (lines 55-63)
+// issues.go: handleListIssues cursor parsing (lines 55-63)
 // ---------------------------------------------------------------------------
 
 func TestListIssues_validCursorParsing(t *testing.T) {
@@ -36,7 +36,7 @@ func TestListIssues_validCursorParsing(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// issues.go — handleGetIssue bad slug (line 86)
+// issues.go: handleGetIssue bad slug (line 86)
 // ---------------------------------------------------------------------------
 
 func TestGetIssue_badSlug(t *testing.T) {
@@ -52,7 +52,7 @@ func TestGetIssue_badSlug(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// issues.go — handleUpdateIssue bad slug and notFound paths
+// issues.go: handleUpdateIssue bad slug and notFound paths
 // ---------------------------------------------------------------------------
 
 func TestUpdateIssue_badSlug(t *testing.T) {
@@ -102,7 +102,7 @@ func TestUpdateIssue_ignoredHistory(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// issues.go — handleGetIssueFingerprints bad slug (line 180)
+// issues.go: handleGetIssueFingerprints bad slug (line 180)
 // ---------------------------------------------------------------------------
 
 func TestGetIssueFingerprints_badSlug(t *testing.T) {
@@ -118,7 +118,7 @@ func TestGetIssueFingerprints_badSlug(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// issues.go — handleMergeIssues bad slug (line 205)
+// issues.go: handleMergeIssues bad slug (line 205)
 // ---------------------------------------------------------------------------
 
 func TestMergeIssues_badSlug(t *testing.T) {
@@ -136,7 +136,7 @@ func TestMergeIssues_badSlug(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// issues.go — handleUnmergeIssue bad slug (line 277)
+// issues.go: handleUnmergeIssue bad slug (line 277)
 // ---------------------------------------------------------------------------
 
 func TestUnmergeIssue_badSlug(t *testing.T) {
@@ -152,7 +152,7 @@ func TestUnmergeIssue_badSlug(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// issues.go — handleListPerfEvents wrong bearer project (line 348)
+// issues.go: handleListPerfEvents wrong bearer project (line 348)
 // ---------------------------------------------------------------------------
 
 func TestListPerfEvents_wrongBearer(t *testing.T) {
@@ -178,7 +178,7 @@ func TestListPerfEvents_wrongBearer(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateMe actorID nil via bearer token (line 38)
+// extra.go: handleUpdateMe actorID nil via bearer token (line 38)
 // ---------------------------------------------------------------------------
 
 func TestUpdateMe_bearerToken(t *testing.T) {
@@ -195,7 +195,7 @@ func TestUpdateMe_bearerToken(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleChangePassword non-ErrInvalidPassword (lines 160-162)
+// extra.go: handleChangePassword non-ErrInvalidPassword (lines 160-162)
 // ---------------------------------------------------------------------------
 
 func TestChangePassword_shortNewPassword(t *testing.T) {
@@ -211,7 +211,7 @@ func TestChangePassword_shortNewPassword(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleCreateComment actorID nil via bearer token (line 208)
+// extra.go: handleCreateComment actorID nil via bearer token (line 208)
 // ---------------------------------------------------------------------------
 
 func TestCreateComment_bearerToken(t *testing.T) {
@@ -231,7 +231,7 @@ func TestCreateComment_bearerToken(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateComment actorID nil via bearer token (line 233)
+// extra.go: handleUpdateComment actorID nil via bearer token (line 233)
 // ---------------------------------------------------------------------------
 
 func TestUpdateComment_bearerToken(t *testing.T) {
@@ -249,7 +249,7 @@ func TestUpdateComment_bearerToken(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleDeleteComment actorID nil via bearer token (line 271)
+// extra.go: handleDeleteComment actorID nil via bearer token (line 271)
 // ---------------------------------------------------------------------------
 
 func TestDeleteComment_bearerToken(t *testing.T) {
@@ -265,7 +265,7 @@ func TestDeleteComment_bearerToken(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — truncSearch >200 chars (line 27)
+// global.go: truncSearch >200 chars (line 27)
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_longSearch(t *testing.T) {
@@ -280,7 +280,7 @@ func TestListAllIssues_longSearch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleUpdateProject bad passthrough_dsn (lines 224-228)
+// global.go: handleUpdateProject bad passthrough_dsn (lines 224-228)
 // ---------------------------------------------------------------------------
 
 func TestUpdateProject_badPassthroughDSN(t *testing.T) {
@@ -296,7 +296,7 @@ func TestUpdateProject_badPassthroughDSN(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleBulkUpdateIssues invalid status (lines 566-569)
+// global.go: handleBulkUpdateIssues invalid status (lines 566-569)
 // ---------------------------------------------------------------------------
 
 func TestBulkUpdateIssues_invalidStatus(t *testing.T) {
@@ -315,7 +315,7 @@ func TestBulkUpdateIssues_invalidStatus(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetTransactionErrors wrong bearer project (line 1196)
+// global.go: handleGetTransactionErrors wrong bearer project (line 1196)
 // ---------------------------------------------------------------------------
 
 func TestGetTransactionErrors_wrongBearer(t *testing.T) {
@@ -350,7 +350,7 @@ func TestGetTransactionErrors_wrongBearer(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetIssueTags with no events (tags==nil path, line 749)
+// global.go: handleGetIssueTags with no events (tags==nil path, line 749)
 // ---------------------------------------------------------------------------
 
 func TestGetIssueTags_noEvents(t *testing.T) {
@@ -367,7 +367,7 @@ func TestGetIssueTags_noEvents(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleCreateAlertRule bad webhook URL (line 74)
+// alerts.go: handleCreateAlertRule bad webhook URL (line 74)
 // ---------------------------------------------------------------------------
 
 func TestCreateAlertRule_badWebhookURL(t *testing.T) {
@@ -384,7 +384,7 @@ func TestCreateAlertRule_badWebhookURL(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleGetAlertRule bearer token match found=true (line 125)
+// alerts.go: handleGetAlertRule bearer token match found=true (line 125)
 // ---------------------------------------------------------------------------
 
 func TestGetAlertRule_bearerTokenMatch(t *testing.T) {
@@ -413,7 +413,7 @@ func TestGetAlertRule_bearerTokenMatch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule filter fields set (lines 203,209,215)
+// alerts.go: handleUpdateAlertRule filter fields set (lines 203,209,215)
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_setFilters(t *testing.T) {
@@ -442,7 +442,7 @@ func TestUpdateAlertRule_setFilters(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule parse error (lines 222,226)
+// alerts.go: handleUpdateAlertRule parse error (lines 222,226)
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_parseError(t *testing.T) {
@@ -472,7 +472,7 @@ func TestUpdateAlertRule_parseError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule clear filter fields (lines 258,263,268)
+// alerts.go: handleUpdateAlertRule clear filter fields (lines 258,263,268)
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_clearFilters(t *testing.T) {
@@ -508,7 +508,7 @@ func TestUpdateAlertRule_clearFilters(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule bad webhook URL on update (line 282)
+// alerts.go: handleUpdateAlertRule bad webhook URL on update (line 282)
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_badWebhookURL(t *testing.T) {
@@ -537,7 +537,7 @@ func TestUpdateAlertRule_badWebhookURL(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCreateMonitor missing schedule (line 50)
+// cron.go: handleCreateMonitor missing schedule (line 50)
 // ---------------------------------------------------------------------------
 
 func TestCreateMonitor_missingSchedule(t *testing.T) {
@@ -553,7 +553,7 @@ func TestCreateMonitor_missingSchedule(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleListCheckins unknown monitorID (line 171)
+// cron.go: handleListCheckins unknown monitorID (line 171)
 // ---------------------------------------------------------------------------
 
 func TestListCheckins_unknownMonitor(t *testing.T) {
@@ -568,7 +568,7 @@ func TestListCheckins_unknownMonitor(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// events.go — handleGetLatestEvent bad slug (line 16)
+// events.go: handleGetLatestEvent bad slug (line 16)
 // ---------------------------------------------------------------------------
 
 func TestGetLatestEvent_badSlug(t *testing.T) {
@@ -584,7 +584,7 @@ func TestGetLatestEvent_badSlug(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// logs.go — handleListLogs cursor_id param (line 28)
+// logs.go: handleListLogs cursor_id param (line 28)
 // ---------------------------------------------------------------------------
 
 func TestListLogs_cursorID(t *testing.T) {
@@ -598,7 +598,7 @@ func TestListLogs_cursorID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ingest.go — handleEnvelope bad gzip body (lines 84-86)
+// ingest.go: handleEnvelope bad gzip body (lines 84-86)
 // ---------------------------------------------------------------------------
 
 func TestEnvelope_badGzip(t *testing.T) {
@@ -615,7 +615,7 @@ func TestEnvelope_badGzip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// middleware.go — requirePerm blocks bearer token (lines 205-208)
+// middleware.go: requirePerm blocks bearer token (lines 205-208)
 // ---------------------------------------------------------------------------
 
 func TestRequirePerm_bearerTokenForbidden(t *testing.T) {
@@ -632,7 +632,7 @@ func TestRequirePerm_bearerTokenForbidden(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// invites.go — handleAcceptInvite CreateUser fails (weak password, lines 185-187)
+// invites.go: handleAcceptInvite CreateUser fails (weak password, lines 185-187)
 // ---------------------------------------------------------------------------
 
 func TestAcceptInvite_weakPassword(t *testing.T) {
@@ -658,7 +658,7 @@ func TestAcceptInvite_weakPassword(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — rawIDToAny empty raw (line 78): send request without "id" field
+// mcp.go: rawIDToAny empty raw (line 78): send request without "id" field
 // ---------------------------------------------------------------------------
 
 func TestMCP_rawIDToAny_noIDField(t *testing.T) {
@@ -673,7 +673,7 @@ func TestMCP_rawIDToAny_noIDField(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpCallTool invalid params (line 388): send params as non-object
+// mcp.go: mcpCallTool invalid params (line 388): send params as non-object
 // ---------------------------------------------------------------------------
 
 func TestMCP_callTool_invalidParams(t *testing.T) {
@@ -691,7 +691,7 @@ func TestMCP_callTool_invalidParams(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpProjectIDs session+project_id arg (line 456)
+// mcp.go: mcpProjectIDs session+project_id arg (line 456)
 // ---------------------------------------------------------------------------
 
 func TestMCP_projectIDs_sessionWithArg(t *testing.T) {
@@ -704,7 +704,7 @@ func TestMCP_projectIDs_sessionWithArg(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpArgLimit n<1 (line 479): send limit=0
+// mcp.go: mcpArgLimit n<1 (line 479): send limit=0
 // ---------------------------------------------------------------------------
 
 func TestMCP_argLimit_zero(t *testing.T) {
@@ -717,7 +717,7 @@ func TestMCP_argLimit_zero(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpGetOverview: monitorStates loop body (line 507)
+// mcp.go: mcpGetOverview: monitorStates loop body (line 507)
 // ---------------------------------------------------------------------------
 
 func TestMCP_getOverview_withMonitor(t *testing.T) {
@@ -742,7 +742,7 @@ func TestMCP_getOverview_withMonitor(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpGetOverview firing alert loop: nil LastFiredAt → continue (line 518)
+// mcp.go: mcpGetOverview firing alert loop: nil LastFiredAt → continue (line 518)
 // ---------------------------------------------------------------------------
 
 func TestMCP_getOverview_nilLastFiredAt(t *testing.T) {
@@ -768,7 +768,7 @@ func TestMCP_getOverview_nilLastFiredAt(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpGetOverview firing alert: firingCount++ (line 524)
+// mcp.go: mcpGetOverview firing alert: firingCount++ (line 524)
 // ---------------------------------------------------------------------------
 
 func TestMCP_getOverview_firingAlert(t *testing.T) {
@@ -808,7 +808,7 @@ func TestMCP_getOverview_firingAlert(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpGetOverview session+project_id: second if true→continue (line 521)
+// mcp.go: mcpGetOverview session+project_id: second if true→continue (line 521)
 // ---------------------------------------------------------------------------
 
 func TestMCP_getOverview_sessionProjectID_mismatch(t *testing.T) {
@@ -848,7 +848,7 @@ func TestMCP_getOverview_sessionProjectID_mismatch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpGetMonitor wrong bearer project (lines 644-647)
+// mcp.go: mcpGetMonitor wrong bearer project (lines 644-647)
 // ---------------------------------------------------------------------------
 
 func TestMCP_getMonitor_wrongBearer(t *testing.T) {
@@ -891,7 +891,7 @@ func TestMCP_getMonitor_wrongBearer(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — ruleMatchesProjects returns false (line 701) via list_alerts
+// mcp.go: ruleMatchesProjects returns false (line 701) via list_alerts
 // ---------------------------------------------------------------------------
 
 func TestMCP_listAlerts_sessionProjectIDFiltersGlobalRule(t *testing.T) {
@@ -927,7 +927,7 @@ func TestMCP_listAlerts_sessionProjectIDFiltersGlobalRule(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpCheckWrite manage_alerts denied (line 725)
+// mcp.go: mcpCheckWrite manage_alerts denied (line 725)
 // ---------------------------------------------------------------------------
 
 func TestMCP_createAlertRule_noManageAlerts(t *testing.T) {
@@ -942,7 +942,7 @@ func TestMCP_createAlertRule_noManageAlerts(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpListIssueEvents issue not found (line 792)
+// mcp.go: mcpListIssueEvents issue not found (line 792)
 // ---------------------------------------------------------------------------
 
 func TestMCP_listIssueEvents_notFound(t *testing.T) {
@@ -955,7 +955,7 @@ func TestMCP_listIssueEvents_notFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpListSpanSummaries hours clamping (lines 823,826)
+// mcp.go: mcpListSpanSummaries hours clamping (lines 823,826)
 // ---------------------------------------------------------------------------
 
 func TestMCP_listSpanSummaries_hoursClampLow(t *testing.T) {
@@ -977,7 +977,7 @@ func TestMCP_listSpanSummaries_hoursClampHigh(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpUpdateIssue id=="" (line 868)
+// mcp.go: mcpUpdateIssue id=="" (line 868)
 // ---------------------------------------------------------------------------
 
 func TestMCP_updateIssue_noID(t *testing.T) {
@@ -990,7 +990,7 @@ func TestMCP_updateIssue_noID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpBulkUpdateIssues paths (lines 954,963,967)
+// mcp.go: mcpBulkUpdateIssues paths (lines 954,963,967)
 // ---------------------------------------------------------------------------
 
 func TestMCP_bulkUpdate_emptyIDs(t *testing.T) {
@@ -1023,7 +1023,7 @@ func TestMCP_bulkUpdate_noStatus(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mcp.go — mcpCreateAlertRule paths (lines 1029,1035,1038,1042,1045,1046)
+// mcp.go: mcpCreateAlertRule paths (lines 1029,1035,1038,1042,1045,1046)
 // ---------------------------------------------------------------------------
 
 // Covers: webhook_url set (1029), threshold>0 (1035), window_mins>0 (1038),
@@ -1045,7 +1045,7 @@ func TestMCP_createAlertRule_eventCountBadWebhook(t *testing.T) {
 	}
 }
 
-// Covers: validateAlertRule fail (1042) — bad trigger name.
+// Covers: validateAlertRule fail (1042): bad trigger name.
 func TestMCP_createAlertRule_badTrigger(t *testing.T) {
 	truncateAlertRules(t)
 	result := toolCall(t, mcpHandler(), "create_alert_rule", map[string]any{
@@ -1061,7 +1061,7 @@ func TestMCP_createAlertRule_badTrigger(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// logs.go — handleListLogs hasMore cursor path (lines 49-54)
+// logs.go: handleListLogs hasMore cursor path (lines 49-54)
 // Insert 101 logs so the list endpoint returns has_more=true and sets the
 // cursor fields.
 // ---------------------------------------------------------------------------
@@ -1104,7 +1104,7 @@ func TestListLogs_hasMore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleListEventsForIssue hasMore cursor path (lines 906-911)
+// global.go: handleListEventsForIssue hasMore cursor path (lines 906-911)
 // Insert 51 events for one issue so has_more=true and cursor fields are set.
 // ---------------------------------------------------------------------------
 
@@ -1149,7 +1149,7 @@ func TestListEventsForIssue_hasMore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// storage/events.go — ListEventsForIssue tag-fetching loop body (lines 286-288)
+// storage/events.go: ListEventsForIssue tag-fetching loop body (lines 286-288)
 // Insert an event WITH a tag so the tag-fetching query returns rows and the
 // for tagRows.Next() body executes.
 // ---------------------------------------------------------------------------
@@ -1187,7 +1187,7 @@ func TestListEventsForIssue_withTags(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// storage/releases.go — ListReleases cursor path (lines 107-114)
+// storage/releases.go: ListReleases cursor path (lines 107-114)
 // Call storage.ListReleases directly with a cursor to cover the WHERE clause.
 // ---------------------------------------------------------------------------
 
@@ -1202,7 +1202,7 @@ func TestStorage_ListReleases_withCursor(t *testing.T) {
 		"INSERT INTO releases (project_id, version, deployed_at) VALUES ($1, 'v1.0.0-cursor-test', NOW() - interval '1 day')",
 		testProject.ID)
 
-	// Use a cursor that is "now" — all releases are older, so query returns them.
+	// Use a cursor that is "now": all releases are older, so query returns them.
 	now := time.Now().UTC()
 	fakeID := "ffffffff-ffff-ffff-ffff-ffffffffffff"
 	releases, err := storage.ListReleases(context.Background(), testPool, storage.ReleaseFilter{

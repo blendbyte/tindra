@@ -212,7 +212,7 @@ func TestTitle_invalidJSON(t *testing.T) {
 }
 
 func TestTitle_truncatesAtRuneBoundary(t *testing.T) {
-	// 201 three-byte runes — a byte-slice truncation at index 200 would land
+	// 201 three-byte runes: a byte-slice truncation at index 200 would land
 	// inside a multibyte character and produce invalid UTF-8.
 	long := strings.Repeat("あ", 201)
 	payload, _ := json.Marshal(map[string]string{"message": long})

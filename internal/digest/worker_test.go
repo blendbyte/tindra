@@ -60,7 +60,7 @@ func TestWorker_Run_nilEmailReturnsEarly(t *testing.T) {
 
 func TestWorker_Run_cancelStopsLoop(t *testing.T) {
 	sender := &mockEmailSender{}
-	// Use a nil pool — sendSlot guards against nil pool and returns early,
+	// Use a nil pool: sendSlot guards against nil pool and returns early,
 	// so this is safe regardless of the time of day. What we test is that
 	// cancelling the context stops the Run loop.
 	w := NewWorker(nil, sender, "https://example.com")
@@ -192,7 +192,7 @@ func TestWorker_sendSlot_callsDB(t *testing.T) {
 
 func TestWorker_sendSlot_nilPool_returnsWithoutPanic(t *testing.T) {
 	w := NewWorker(nil, &mockEmailSender{}, "https://example.com")
-	// nil pool guard at top of sendSlot — must return without panicking.
+	// nil pool guard at top of sendSlot: must return without panicking.
 	w.sendSlot(context.Background(), 0)
 }
 

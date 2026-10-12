@@ -70,7 +70,7 @@ const canAlertOnThis = computed(() => {
 const alertOnThisHint = computed(() => {
   if (canAlertOnThis.value) return 'Create an alert from these filters'
   if (alertProjectIds.value.length === 0) return 'Create a project first'
-  if (levelFilter.value === 'Warning') return 'Add a search — warning alerts need a message match'
+  if (levelFilter.value === 'Warning') return 'Add a search: warning alerts need a message match'
   return 'Set Level to Error or Fatal, or Warning with a search'
 })
 
@@ -87,7 +87,7 @@ function alertOnThis() {
 }
 
 // The project column only earns its space when the filter leaves more than one
-// project in play — with exactly one selected every row would repeat its name.
+// project in play; with exactly one selected every row would repeat its name.
 const showProject = computed(() => selectedProjectIds.value.length !== 1)
 const colCount = computed(() => (showProject.value ? 5 : 4))
 

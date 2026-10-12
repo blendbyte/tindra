@@ -158,14 +158,6 @@ func LogsReachThreshold(ctx context.Context, pool *pgxpool.Pool, filter LogFilte
 	return count >= threshold, nil
 }
 
-func DeleteLogsOlderThan(ctx context.Context, pool *pgxpool.Pool, cutoff time.Time) (int64, error) {
-	tag, err := pool.Exec(ctx, `DELETE FROM logs WHERE received_at < $1`, cutoff)
-	if err != nil {
-		return 0, fmt.Errorf("delete logs: %w", err)
-	}
-	return tag.RowsAffected(), nil
-}
-
 func appendLogWhere(filter LogFilter, where string, args []any) (string, []any) {
 	if len(filter.ProjectIDs) > 0 {
 		args = append(args, filter.ProjectIDs)

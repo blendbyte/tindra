@@ -153,7 +153,7 @@ func TestLoadConfig_negativeIngestBufferSize_ignored(t *testing.T) {
 
 func TestLoadConfig_trustedProxies_mixed(t *testing.T) {
 	clearEnv(t, "TRUSTED_PROXIES")
-	// One valid CIDR, one invalid entry — invalid should be skipped.
+	// One valid CIDR, one invalid entry: invalid should be skipped.
 	t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8, notanip, 192.168.0.0/16")
 	cfg := loadConfig()
 	if len(cfg.trustedProxies) != 2 {
@@ -208,7 +208,7 @@ func TestProjectsListCmd_withEventLimit(t *testing.T) {
 	// When eventLimit > 0, events column is "N / limit".
 	if !strings.Contains(output, "/ 5000") {
 		// tabwriter writes to os.Stdout not cmd.OutOrStdout for this command,
-		// so output may be empty — at minimum check no error occurred.
+		// so output may be empty: at minimum check no error occurred.
 		_ = output
 	}
 }

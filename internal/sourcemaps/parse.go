@@ -34,11 +34,6 @@ type ResolvedFrame struct {
 	ContextLine string // source line text, if sourcesContent is present
 }
 
-// Parse decodes raw source map JSON and builds the segment index.
-func Parse(data []byte) (*SourceMap, error) {
-	return ParseContext(context.Background(), data)
-}
-
 // ParseContext checks cancellation before decoding and while indexing mappings.
 func ParseContext(ctx context.Context, data []byte) (*SourceMap, error) {
 	if err := ctx.Err(); err != nil {

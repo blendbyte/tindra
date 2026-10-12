@@ -1,6 +1,6 @@
 package api_test
 
-// coverage9_test.go — additional tests targeting uncovered branches in
+// coverage9_test.go: additional tests targeting uncovered branches in
 // cron.go and issues.go.
 //
 // Cron gaps covered:
@@ -39,7 +39,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Cron: handleUpdateMonitor — resume (status=active) from paused
+// Cron: handleUpdateMonitor: resume (status=active) from paused
 // ---------------------------------------------------------------------------
 
 func TestUpdateMonitor_setStatus_activeResumesFromPaused(t *testing.T) {
@@ -62,7 +62,7 @@ func TestUpdateMonitor_setStatus_activeResumesFromPaused(t *testing.T) {
 		t.Fatalf("expected monitor to be paused before resume")
 	}
 
-	// Resume via PATCH status=active — exercises the previously-untested branch.
+	// Resume via PATCH status=active: exercises the previously-untested branch.
 	resumeBody, _ := json.Marshal(map[string]any{"status": "active"})
 	resumeReq := httptest.NewRequest(http.MethodPatch, "/api/monitors/"+m.ID, bytes.NewReader(resumeBody))
 	resumeReq.Header.Set("Content-Type", "application/json")
@@ -83,7 +83,7 @@ func TestUpdateMonitor_setStatus_activeResumesFromPaused(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: handleCronCheckinFinish — empty body (EOF) returns 400 "status required"
+// Cron: handleCronCheckinFinish: empty body (EOF) returns 400 "status required"
 // coverage2 tests a body of `{}` (missing key); this tests a zero-byte body
 // which triggers the json.Decode error path in the same condition.
 // ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ func TestCronCheckinFinish_emptyBodyEOF(t *testing.T) {
 		t.Fatalf("decode start: %v", err)
 	}
 
-	// PUT with zero-byte body — json.Decode returns EOF which satisfies the
+	// PUT with zero-byte body: json.Decode returns EOF which satisfies the
 	// "err != nil || req.Status == ''" condition at cron.go:297.
 	req := httptest.NewRequest(http.MethodPut,
 		fmt.Sprintf("/api/cron/%s/checkins/%s/", m.ID, startResp.ID),
@@ -126,7 +126,7 @@ func TestCronCheckinFinish_emptyBodyEOF(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: handleCronCheckinStart — nil body defaults status to "in_progress"
+// Cron: handleCronCheckinStart: nil body defaults status to "in_progress"
 // coverage2 tests `{}` (empty JSON object); this sends a nil body
 // so json.Decode fails and req.Status stays "" which defaults to "in_progress".
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ func TestCronCheckinStart_nilBodyDefaultsToInProgress(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: handleListCheckins — limit=0 falls back to default 50
+// Cron: handleListCheckins: limit=0 falls back to default 50
 // (the `if n, err := strconv.Atoi(s); err == nil && n > 0` condition is false)
 // ---------------------------------------------------------------------------
 
@@ -182,7 +182,7 @@ func TestListCheckins_limitZeroFallsBackToDefault(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: handleListCheckins — non-numeric limit falls back to default
+// Cron: handleListCheckins: non-numeric limit falls back to default
 // (strconv.Atoi returns error; the if-branch is skipped)
 // ---------------------------------------------------------------------------
 
@@ -204,7 +204,7 @@ func TestListCheckins_limitNonNumericFallsBack(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: handleListCheckins — resolveMonitor returns 404 (monitor not found)
+// Cron: handleListCheckins: resolveMonitor returns 404 (monitor not found)
 // ---------------------------------------------------------------------------
 
 func TestListCheckins_monitorNotFoundCov9(t *testing.T) {
@@ -220,7 +220,7 @@ func TestListCheckins_monitorNotFoundCov9(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: handleCronPing — paused monitor: verify no checkin is recorded
+// Cron: handleCronPing: paused monitor: verify no checkin is recorded
 // The existing TestCronPing_pausedMonitor (coverage2) only checks the 200
 // response code. This additionally asserts zero checkins are stored.
 // ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ func TestCronPing_pausedMonitor_zeroCheckinsCov9(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: resolveMonitor — enforceTokenProject mismatch (wrong-project bearer)
+// Cron: resolveMonitor: enforceTokenProject mismatch (wrong-project bearer)
 // A bearer token scoped to project B cannot read a monitor from project A.
 // (cron.go:419 enforceTokenProject returns false, writes 404)
 // ---------------------------------------------------------------------------
@@ -280,7 +280,7 @@ func TestGetMonitor_wrongProjectBearerCov9(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleGetIssue — issue belongs to a different project returns 404
+// Issues: handleGetIssue: issue belongs to a different project returns 404
 // (issues.go:97: issue.ProjectID != project.ID)
 // ---------------------------------------------------------------------------
 
@@ -315,7 +315,7 @@ func TestGetIssue_crossProjectReturns404(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleGetIssueFingerprints — issue belongs to different project
+// Issues: handleGetIssueFingerprints: issue belongs to different project
 // (issues.go:191: issue.ProjectID != project.ID)
 // ---------------------------------------------------------------------------
 
@@ -350,7 +350,7 @@ func TestGetIssueFingerprints_crossProjectReturns404(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleListIssues — cursor_time without cursor_id (inner if not entered)
+// Issues: handleListIssues: cursor_time without cursor_id (inner if not entered)
 // (issues.go:57-63: outer if(ct!="") entered but inner if(cid!="") skipped)
 // ---------------------------------------------------------------------------
 
@@ -374,7 +374,7 @@ func TestListIssues_cursorTimeAloneIsIgnored(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleListIssues — cursor_time with unparseable value silently ignored
+// Issues: handleListIssues: cursor_time with unparseable value silently ignored
 // (time.Parse fails at issues.go:58; filter.CursorTime stays nil)
 // ---------------------------------------------------------------------------
 
@@ -391,7 +391,7 @@ func TestListIssues_unparseableCursorTimeIgnored(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleUpdateIssue — status=ignored with ignore_count_limit
+// Issues: handleUpdateIssue: status=ignored with ignore_count_limit
 // via the project-slug route (not the global /api/issues route)
 // (issues.go:133-136 ignoreOpts with CountLimit set)
 // ---------------------------------------------------------------------------
@@ -424,7 +424,7 @@ func TestUpdateIssue_ignoredWithCountLimit_slugRoute(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleUpdateIssue — status=ignored with ignore_until
+// Issues: handleUpdateIssue: status=ignored with ignore_until
 // via the project-slug route
 // (issues.go:133-136 ignoreOpts with Until set; history records ignore_until)
 // ---------------------------------------------------------------------------
@@ -455,7 +455,7 @@ func TestUpdateIssue_ignoredWithIgnoreUntil_slugRoute(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleMergeIssues — bad JSON body triggers len(IssueIDs)<2 path
+// Issues: handleMergeIssues: bad JSON body triggers len(IssueIDs)<2 path
 // (issues.go:213: decode error → req.IssueIDs is nil → len < 2 → 400)
 // ---------------------------------------------------------------------------
 
@@ -474,7 +474,7 @@ func TestMergeIssues_badJsonBodyCov9(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleUnmergeIssue — empty fingerprints array returns 400
+// Issues: handleUnmergeIssue: empty fingerprints array returns 400
 // (issues.go:297: len(req.Fingerprints) == 0)
 // ---------------------------------------------------------------------------
 
@@ -497,7 +497,7 @@ func TestUnmergeIssue_emptyFingerprintsCov9(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Issues: handleListPerfEvents — same-project bearer token (pass-through path)
+// Issues: handleListPerfEvents: same-project bearer token (pass-through path)
 // enforceIssueProject returns true when token.ProjectID == issue.ProjectID.
 // (scope.go:36-37 "return true" after isBearer && projID == tokenProjID check)
 // ---------------------------------------------------------------------------

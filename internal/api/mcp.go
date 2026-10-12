@@ -1,13 +1,22 @@
 package api
 
-// MCP (Model Context Protocol) integration.
-// Transport: Streamable HTTP - single POST /mcp endpoint, JSON-RPC 2.0.
-// Auth: same requireAuth middleware as all other API routes (session cookie or Bearer token).
-// Bearer tokens are project-scoped; all queries are automatically filtered to that project.
-// Spec: https://spec.modelcontextprotocol.io/specification/2024-11-05/
+// MCP (Model Context Protocol) integration over the Streamable HTTP transport:
+// one POST /mcp endpoint speaking JSON-RPC 2.0, authenticated like every other
+// API route (session cookie or Bearer token; tokens are project-scoped and all
+// queries are filtered to that project).
+//
+// The endpoint serves both protocol eras on the same URL:
+//   - Modern clients (2026-07-28) are stateless: every request names its
+//     protocol version and capabilities in params._meta and mirrors key fields
+//     in MCP-Protocol-Version, Mcp-Method and Mcp-Name headers.
+//   - Legacy clients (2025-03-26 to 2025-11-25) open with an initialize
+//     handshake that negotiates the version.
+//
+// Spec: https://modelcontextprotocol.io/specification/2026-07-28
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +32,29 @@ import (
 )
 
 const mcpBodyLimit = 64 * 1024 // 64 KB
+
+// mcpModernVersion is the stateless protocol revision. The 2024-11-05 revision
+// used the HTTP+SSE transport, which Tindra never implemented, so it is not
+// offered to legacy clients.
+const mcpModernVersion = "2026-07-28"
+
+var mcpLegacyVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26"}
+
+const (
+	mcpMetaProtocolVersion    = "io.modelcontextprotocol/protocolVersion"
+	mcpMetaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
+	mcpMetaServerInfo         = "io.modelcontextprotocol/serverInfo"
+
+	mcpErrMethodNotFound      = -32601
+	mcpErrInvalidParams       = -32602
+	mcpErrHeaderMismatch      = -32020
+	mcpErrUnsupportedProtocol = -32022
+)
+
+// mcpInstructions is offered to the model when a client connects.
+const mcpInstructions = "Tindra is a self-hosted error tracking and performance monitoring server. " +
+	"Start with get_overview, then use list_issues and get_issue to investigate errors, " +
+	"list_transactions and get_transaction for slow requests, and get_logs for log lines."
 
 // --- JSON-RPC 2.0 wire types ---
 
@@ -43,6 +75,7 @@ type mcpResponse struct {
 type mcpErrBody struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 func mcpOK(id any, result any) mcpResponse {
@@ -84,43 +117,39 @@ func rawIDToAny(raw json.RawMessage) any {
 	return v
 }
 
-// handleMCPOAuthAS responds to OAuth Authorization Server discovery (RFC 8414).
-// Tindra does not implement an OAuth flow; tokens are pre-issued via the UI.
-// We return a minimal valid metadata document so strict clients don't reject the server.
-func (ro *router) handleMCPOAuthAS(w http.ResponseWriter, r *http.Request) {
-	issuer := ro.publicURL
-	if issuer == "" {
-		issuer = "https://" + r.Host
+func mcpServerInfo() map[string]any {
+	version := AppVersion
+	if version == "" {
+		version = "dev"
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"issuer":                   issuer,
-		"response_types_supported": []string{},
-		"bearer_methods_supported": []string{"header"},
-	})
+	return map[string]any{"name": "tindra", "version": version}
 }
 
-// handleMCPOAuthPR responds to Protected Resource Metadata discovery (RFC 9728).
-// Advertises Bearer token in Authorization header and points to this server as the AS.
-func (ro *router) handleMCPOAuthPR(w http.ResponseWriter, r *http.Request) {
-	resource := ro.publicURL
-	if resource == "" {
-		resource = "https://" + r.Host
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"resource":                 resource,
-		"authorization_servers":    []string{resource},
-		"bearer_methods_supported": []string{"header"},
-	})
+func mcpSupportedVersions() []string {
+	return append([]string{mcpModernVersion}, mcpLegacyVersions...)
 }
 
-// handleMCPGet handles GET /mcp — SSE is not supported; tell clients to use POST.
-func (ro *router) handleMCPGet(w http.ResponseWriter, r *http.Request) {
+func writeMCP(w http.ResponseWriter, status int, resp mcpResponse) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleWellKnownNotFound answers OAuth discovery with a JSON 404. Tindra issues
+// MCP tokens in Settings rather than through an OAuth flow, and without this
+// route the SPA fallback would answer discovery with an HTML page.
+func handleWellKnownNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+}
+
+// handleMCPMethodNotAllowed answers GET and DELETE on /mcp. Earlier transport
+// revisions used them for a server stream and session teardown; Tindra keeps
+// no sessions and only answers POST.
+func (ro *router) handleMCPMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Allow", "POST")
-	w.WriteHeader(http.StatusMethodNotAllowed)
-	json.NewEncoder(w).Encode(mcpRPCError(nil, -32000, "MCP requires POST with Content-Type: application/json and a Bearer token"))
+	writeMCP(w, http.StatusMethodNotAllowed, mcpRPCError(nil, -32000, "MCP requires POST with Content-Type: application/json and a Bearer token"))
 }
 
 // handleMCP is the single entry-point for the MCP Streamable HTTP transport.
@@ -142,14 +171,12 @@ func (ro *router) handleMCP(w http.ResponseWriter, r *http.Request) {
 
 	var req mcpRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mcpRPCError(nil, -32700, "parse error"))
+		writeMCP(w, http.StatusOK, mcpRPCError(nil, -32700, "parse error"))
 		return
 	}
 
 	if req.JSONRPC != "2.0" {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mcpRPCError(rawIDToAny(req.ID), -32600, "invalid request"))
+		writeMCP(w, http.StatusOK, mcpRPCError(rawIDToAny(req.ID), -32600, "invalid request"))
 		return
 	}
 
@@ -159,32 +186,154 @@ func (ro *router) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := ro.dispatchMCP(r.Context(), req)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	// The era follows from the request itself: modern requests name their
+	// protocol version in params._meta.
+	var p mcpParams
+	_ = json.Unmarshal(req.Params, &p)
+	if version, ok := p.protocolVersion(); ok {
+		status, resp := ro.serveModernMCP(r, req, p, version)
+		writeMCP(w, status, resp)
+		return
+	}
+	status, resp := ro.serveLegacyMCP(r.Context(), r, req)
+	writeMCP(w, status, resp)
 }
 
-func (ro *router) dispatchMCP(ctx context.Context, req mcpRequest) mcpResponse {
+// mcpParams holds the request fields the transport inspects before dispatch.
+type mcpParams struct {
+	Meta map[string]json.RawMessage `json:"_meta"`
+	Name string                     `json:"name"`
+}
+
+func (p mcpParams) protocolVersion() (string, bool) {
+	raw, ok := p.Meta[mcpMetaProtocolVersion]
+	if !ok {
+		return "", false
+	}
+	var v string
+	_ = json.Unmarshal(raw, &v)
+	return v, true
+}
+
+// serveModernMCP handles a stateless 2026-07-28 request after checking that
+// the mirrored headers agree with the body, so a proxy routing on headers and
+// this server acting on the body cannot disagree.
+func (ro *router) serveModernMCP(r *http.Request, req mcpRequest, p mcpParams, version string) (int, mcpResponse) {
 	id := rawIDToAny(req.ID)
+	mismatch := func(format string, args ...any) (int, mcpResponse) {
+		return http.StatusBadRequest, mcpRPCError(id, mcpErrHeaderMismatch, "Header mismatch: "+fmt.Sprintf(format, args...))
+	}
+	if h := r.Header.Get("MCP-Protocol-Version"); h != version {
+		return mismatch("MCP-Protocol-Version header %q does not match _meta protocol version %q", h, version)
+	}
+	if version != mcpModernVersion {
+		resp := mcpRPCError(id, mcpErrUnsupportedProtocol, "Unsupported protocol version")
+		resp.Error.Data = map[string]any{"supported": mcpSupportedVersions(), "requested": version}
+		return http.StatusBadRequest, resp
+	}
+	if h := r.Header.Get("Mcp-Method"); h != req.Method {
+		return mismatch("Mcp-Method header %q does not match method %q", h, req.Method)
+	}
+	if req.Method == "tools/call" {
+		h, err := decodeMCPHeader(r.Header.Get("Mcp-Name"))
+		if err != nil || h != p.Name {
+			return mismatch("Mcp-Name header does not match tool name %q", p.Name)
+		}
+	}
+	if _, ok := p.Meta[mcpMetaClientCapabilities]; !ok {
+		return http.StatusBadRequest, mcpRPCError(id, mcpErrInvalidParams, "_meta is missing "+mcpMetaClientCapabilities)
+	}
+
+	var resp mcpResponse
+	switch req.Method {
+	case "server/discover":
+		resp = mcpOK(id, map[string]any{
+			"supportedVersions": mcpSupportedVersions(),
+			"capabilities":      map[string]any{"tools": map[string]any{}},
+			"instructions":      mcpInstructions,
+			"ttlMs":             3_600_000,
+			"cacheScope":        "public",
+		})
+	case "tools/list":
+		// The tool list is the same for everyone, but it sits behind
+		// authentication, so shared caches should not keep it.
+		resp = mcpOK(id, map[string]any{"tools": mcpToolList(), "ttlMs": 3_600_000, "cacheScope": "private"})
+	case "tools/call":
+		resp = ro.mcpCallTool(r.Context(), id, req.Params)
+	default:
+		return http.StatusNotFound, mcpRPCError(id, mcpErrMethodNotFound, "method not found: "+req.Method)
+	}
+	if result, ok := resp.Result.(map[string]any); ok && resp.Error == nil {
+		result["resultType"] = "complete"
+		result["_meta"] = map[string]any{mcpMetaServerInfo: mcpServerInfo()}
+	}
+	status := http.StatusOK
+	if resp.Error != nil && resp.Error.Code == mcpErrInvalidParams {
+		status = http.StatusBadRequest
+	}
+	return status, resp
+}
+
+// decodeMCPHeader undoes the =?base64?...?= sentinel clients use for header
+// values that are not plain ASCII.
+func decodeMCPHeader(v string) (string, error) {
+	inner, ok := strings.CutPrefix(v, "=?base64?")
+	if !ok {
+		return v, nil
+	}
+	inner, ok = strings.CutSuffix(inner, "?=")
+	if !ok {
+		return "", errors.New("unterminated base64 header value")
+	}
+	b, err := base64.StdEncoding.DecodeString(inner)
+	return string(b), err
+}
+
+// serveLegacyMCP handles clients that negotiate a version with initialize.
+func (ro *router) serveLegacyMCP(ctx context.Context, r *http.Request, req mcpRequest) (int, mcpResponse) {
+	id := rawIDToAny(req.ID)
+	// Since 2025-06-18, requests after initialize name the negotiated version
+	// in this header; older clients omit it.
+	if h := r.Header.Get("MCP-Protocol-Version"); h != "" && req.Method != "initialize" {
+		if h == mcpModernVersion {
+			return http.StatusBadRequest, mcpRPCError(id, mcpErrInvalidParams, "_meta is missing "+mcpMetaProtocolVersion)
+		}
+		if !slices.Contains(mcpLegacyVersions, h) {
+			resp := mcpRPCError(id, mcpErrUnsupportedProtocol, "Unsupported protocol version")
+			resp.Error.Data = map[string]any{"supported": mcpSupportedVersions(), "requested": h}
+			return http.StatusBadRequest, resp
+		}
+	}
 	switch req.Method {
 	case "initialize":
-		return ro.mcpInitialize(id)
+		return http.StatusOK, mcpInitialize(id, req.Params)
 	case "ping":
-		return mcpOK(id, map[string]any{})
+		return http.StatusOK, mcpOK(id, map[string]any{})
 	case "tools/list":
-		return mcpOK(id, map[string]any{"tools": mcpToolList()})
+		return http.StatusOK, mcpOK(id, map[string]any{"tools": mcpToolList()})
 	case "tools/call":
-		return ro.mcpCallTool(ctx, id, req.Params)
+		return http.StatusOK, ro.mcpCallTool(ctx, id, req.Params)
 	default:
-		return mcpRPCError(id, -32601, "method not found: "+req.Method)
+		return http.StatusOK, mcpRPCError(id, mcpErrMethodNotFound, "method not found: "+req.Method)
 	}
 }
 
-func (ro *router) mcpInitialize(id any) mcpResponse {
+// mcpInitialize answers with the client's version when Tindra supports it and
+// otherwise with the newest legacy version, as the handshake requires.
+func mcpInitialize(id any, params json.RawMessage) mcpResponse {
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	_ = json.Unmarshal(params, &p)
+	version := mcpLegacyVersions[0]
+	if slices.Contains(mcpLegacyVersions, p.ProtocolVersion) {
+		version = p.ProtocolVersion
+	}
 	return mcpOK(id, map[string]any{
-		"protocolVersion": "2024-11-05",
+		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": "tindra", "version": "1.0"},
+		"serverInfo":      mcpServerInfo(),
+		"instructions":    mcpInstructions,
 	})
 }
 
@@ -221,7 +370,7 @@ func mcpToolList() []map[string]any {
 		},
 		{
 			"name":        "get_issue",
-			"description": "Returns full details for a single issue plus the latest event payload — exception, stack trace, breadcrumbs, request, user, and contexts, matching the issue detail UI. Pass offset to inspect older occurrences (0 = newest).",
+			"description": "Returns full details for a single issue plus the latest event payload: exception, stack trace, breadcrumbs, request, user, and contexts, matching the issue detail UI. Pass offset to inspect older occurrences (0 = newest).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

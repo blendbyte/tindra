@@ -55,7 +55,7 @@ func TestInvalidResetTokensNeverReachHashing(t *testing.T) {
 func TestPasswordResetRequestBounds(t *testing.T) {
 	pool := oauthDB(t)
 	f := seedRecovery(t, pool)
-	h := NewRouter(pool, nil, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := NewRouter(Config{Pool: pool})
 	for _, scenario := range []struct {
 		body   string
 		status int
@@ -80,7 +80,7 @@ func TestPasswordResetRequestBounds(t *testing.T) {
 }
 
 func TestPasswordResetRateLimitSharesBudgetAcrossTokensAndMethods(t *testing.T) {
-	h := NewRouter(oauthDB(t), nil, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 2, 0, nil, false, false, nil)
+	h := NewRouter(Config{Pool: oauthDB(t), RateLimitLogin: 2})
 	for i := range 3 {
 		method := "GET"
 		if i == 1 {
@@ -136,7 +136,7 @@ func TestPasswordResetConcurrencyBoundAndSlotRelease(t *testing.T) {
 	blocked, err := pgxpool.NewWithConfig(t.Context(), cfg)
 	require.NoError(t, err)
 	defer blocked.Close()
-	h := NewRouter(blocked, nil, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := NewRouter(Config{Pool: blocked})
 	results := make(chan int, 4)
 	// Always release waiting queries, including on assertion failure.
 	defer func() {

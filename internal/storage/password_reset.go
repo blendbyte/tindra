@@ -50,12 +50,6 @@ func GetPasswordResetUser(ctx context.Context, pool *pgxpool.Pool, token string)
 	return &u, nil
 }
 
-// UsePasswordResetToken resets credentials and revokes all existing authentication artifacts.
-func UsePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPassword string) (*User, error) {
-	user, _, err := usePasswordResetToken(ctx, pool, token, newPassword, false)
-	return user, err
-}
-
 // UsePasswordResetTokenWithSession includes the recovery session in the transaction.
 func UsePasswordResetTokenWithSession(ctx context.Context, pool *pgxpool.Pool, token, newPassword string) (*User, *Session, error) {
 	return usePasswordResetToken(ctx, pool, token, newPassword, true)

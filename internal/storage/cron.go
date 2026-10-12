@@ -52,6 +52,12 @@ type CronCheckin struct {
 }
 
 // ParseCronSchedule validates and parses a standard 5-field cron expression.
+//
+// robfig/cron is no longer developed, but only its parser is used and it
+// follows Vixie cron: when both day-of-month and day-of-week are restricted, a
+// day matching either one runs. The maintained alternatives we tried (gronx and
+// the netresearch fork) require both, which would silently move the expected
+// times of existing monitors. TestParseCronSchedule_dayFieldsMatchEither pins it.
 func ParseCronSchedule(expr string) (cron.Schedule, error) {
 	p := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	return p.Parse(expr)
@@ -420,25 +426,6 @@ func nextExpectedRun(ctx context.Context, db interface {
 // period with no check-in. A monitor whose job is still running is not missed.
 const MonitorOverdueSQL = `status = 'active' AND NOT is_running AND next_expected_at IS NOT NULL
 	AND next_expected_at + make_interval(secs => grace_period_secs) < NOW()`
-
-func GetCheckin(ctx context.Context, pool *pgxpool.Pool, id string) (*CronCheckin, error) {
-	var ci CronCheckin
-	err := pool.QueryRow(ctx, `
-		SELECT id, monitor_id, status, duration_ms, environment, started_at, finished_at, received_at
-		FROM cron_checkins WHERE id=$1`, id,
-	).Scan(
-		&ci.ID, &ci.MonitorID, &ci.Status,
-		&ci.DurationMs, &ci.Environment,
-		&ci.StartedAt, &ci.FinishedAt, &ci.ReceivedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query: %w", err)
-	}
-	return &ci, nil
-}
 
 func ListCheckins(ctx context.Context, pool *pgxpool.Pool, monitorID string, limit int) ([]*CronCheckin, error) {
 	if limit <= 0 || limit > 200 {

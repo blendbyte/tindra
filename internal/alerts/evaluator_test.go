@@ -1598,7 +1598,7 @@ func TestPayloadProjectName_fromProjectNames_multiProject(t *testing.T) {
 		ProjectNames: map[string]string{"pid-1": "Backend", "pid-2": "Frontend"},
 		Issues:       []*storage.Issue{{ProjectID: "pid-1"}, {ProjectID: "pid-2"}},
 	}
-	// multiple projects — falls back to ProjectID
+	// multiple projects: falls back to ProjectID
 	if got := payloadProjectName(p); got != "" {
 		t.Errorf("expected empty for multi-project, got %q", got)
 	}
@@ -1757,7 +1757,7 @@ func TestNotifyAutoResolved_skipsUnmatchedProject(t *testing.T) {
 		WebhookURL: &url, CooldownMins: 60,
 	})
 
-	// Issue belongs to a different project — rule should not fire.
+	// Issue belongs to a different project: rule should not fire.
 	issues := []*storage.Issue{{ID: "00000000-0000-0000-0000-000000000002", ProjectID: "00000000-0000-0000-0000-000000000099", Title: "N+1"}}
 	e := &Evaluator{pool: testPool, client: srvClient}
 	e.NotifyAutoResolved(context.Background(), issues)
@@ -2194,7 +2194,7 @@ func TestConditionMet_newIssue_withFilterLevel(t *testing.T) {
 		FilterLevel: &filterLevel,
 	}
 
-	// Insert issue with level 'error' (>= warning) — should match the filter
+	// Insert issue with level 'error' (>= warning): should match the filter
 	testPool.Exec(context.Background(), `
 		INSERT INTO issues (project_id, fingerprint, title, level, first_seen, last_seen)
 		VALUES ($1, 'fp-fl-new-issue', 'FilterLevel Issue', 'error', NOW(), NOW())

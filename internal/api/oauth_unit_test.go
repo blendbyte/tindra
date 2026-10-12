@@ -1,6 +1,6 @@
 package api
 
-// oauth_unit_test.go — white-box tests for the oauth.go provider structs,
+// oauth_unit_test.go: white-box tests for the oauth.go provider structs,
 // githubAPIGet helper, and LoadOAuthProviders. These run in package api so
 // they can reach unexported types and functions.
 
@@ -14,7 +14,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// githubProvider — constructor + Name + AuthCodeURL (no network)
+// githubProvider: constructor + Name + AuthCodeURL (no network)
 // ---------------------------------------------------------------------------
 
 func TestNewGitHubProvider_nameAndURL(t *testing.T) {
@@ -43,7 +43,7 @@ func TestNewGitHubProvider_callbackURL(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// githubAPIGet — mock HTTP server, covers the generic helper and its error paths
+// githubAPIGet: mock HTTP server, covers the generic helper and its error paths
 // ---------------------------------------------------------------------------
 
 func TestGithubAPIGet_success(t *testing.T) {
@@ -117,7 +117,7 @@ func TestGithubAPIGet_networkError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LoadOAuthProviders — no OAUTH_REDIRECT_BASE returns nil
+// LoadOAuthProviders: no OAUTH_REDIRECT_BASE returns nil
 // ---------------------------------------------------------------------------
 
 func TestLoadOAuthProviders_noBase_returnsNil(t *testing.T) {
@@ -185,7 +185,7 @@ func TestLoadOAuthProviders_github_trailingSlashStripped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LoadOAuthProviders — OIDC paths that call newOIDCProvider.
+// LoadOAuthProviders: OIDC paths that call newOIDCProvider.
 // We exercise the error-path (bad issuer) and the success-path (mock OIDC server).
 // ---------------------------------------------------------------------------
 
@@ -221,7 +221,7 @@ func TestLoadOAuthProviders_oidcCustomName(t *testing.T) {
 	defer t.Setenv("OIDC_PROVIDER_NAME", "")
 
 	providers := LoadOAuthProviders(context.Background())
-	// Provider will fail to init (unreachable), so 0 — but we exercised
+	// Provider will fail to init (unreachable), so 0: but we exercised
 	// the OIDC_PROVIDER_NAME branch and the custom-name code path.
 	if len(providers) != 0 {
 		t.Errorf("expected 0 on unreachable issuer, got %d", len(providers))
@@ -430,7 +430,7 @@ func mockOIDCServerWithToken(t *testing.T, tokenResp map[string]any) *httptest.S
 }
 
 // ---------------------------------------------------------------------------
-// oidcProvider.Exchange — error paths
+// oidcProvider.Exchange: error paths
 // ---------------------------------------------------------------------------
 
 func TestOIDCProvider_Exchange_tokenEndpointError(t *testing.T) {

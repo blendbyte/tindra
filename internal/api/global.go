@@ -1430,6 +1430,11 @@ func (ro *router) handleCreateTokenGlobal(w http.ResponseWriter, r *http.Request
 	}
 
 	token, plaintext, err := storage.CreateAPIToken(r.Context(), ro.pool, req.ProjectID, req.Name, req.Writable)
+	if pgErrorCode(err) == "23503" || pgErrorCode(err) == "22P02" {
+		// The project does not exist, or project_id is not even a UUID.
+		http.Error(w, "unknown project", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		slog.Error("create api token", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1624,4 +1629,13 @@ func (ro *router) handleGetWebVitalsPages(w http.ResponseWriter, r *http.Request
 		pages = []storage.WebVitalsPage{}
 	}
 	writeJSON(w, pages)
+}
+
+// pgErrorCode returns the SQLSTATE of a Postgres error, or "" for anything else.
+func pgErrorCode(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
 }

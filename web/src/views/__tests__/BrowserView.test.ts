@@ -249,7 +249,7 @@ describe('BrowserView', () => {
       expect(wrapper.find('.perf-table__skel-row').exists()).toBe(true)
     })
 
-    it('sorts by INP p75 column when clicked — shows sort icon', async () => {
+    it('sorts by INP p75 column when clicked: shows sort icon', async () => {
       setupMocks(makeSummary(), [makePage('/a'), makePage('/b')])
       const wrapper = mount(BrowserView, { global: { stubs } })
       const inpBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('INP'))!
@@ -257,7 +257,7 @@ describe('BrowserView', () => {
       expect(inpBtn.text()).toMatch(/[↓↑]/)
     })
 
-    it('sorts by CLS p75 column when clicked — shows sort icon', async () => {
+    it('sorts by CLS p75 column when clicked: shows sort icon', async () => {
       setupMocks(makeSummary(), [makePage('/a'), makePage('/b')])
       const wrapper = mount(BrowserView, { global: { stubs } })
       const clsBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('CLS'))!
@@ -274,7 +274,7 @@ describe('BrowserView', () => {
       expect(cwvBtn.text()).toMatch(/[↓↑]/)
     })
 
-    it('sorts by LCP p75 column when clicked — shows sort icon', async () => {
+    it('sorts by LCP p75 column when clicked: shows sort icon', async () => {
       setupMocks(makeSummary(), [makePage('/a'), makePage('/b')])
       const wrapper = mount(BrowserView, { global: { stubs } })
       const lcpBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('LCP'))!

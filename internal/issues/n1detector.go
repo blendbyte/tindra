@@ -19,7 +19,7 @@ import (
 const n1Threshold = 5
 
 // n1MinTotalMs is the minimum combined duration of the repeated spans.
-// Matches Sentry's N_PLUS_ONE_DB_DURATION_THRESHOLD — fast queries that
+// Matches Sentry's N_PLUS_ONE_DB_DURATION_THRESHOLD: fast queries that
 // happen to repeat are not worth surfacing as issues.
 const n1MinTotalMs = 50
 

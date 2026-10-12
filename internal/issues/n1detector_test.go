@@ -57,7 +57,7 @@ func TestN1Detector_createsIssueForRepeatedDbSpans(t *testing.T) {
 	txID := insertTestTransaction(t, "GET /api/users")
 	detector := issues.NewN1Detector(testPool)
 
-	// 8 spans × 10ms = 80ms — above both count and duration thresholds.
+	// 8 spans × 10ms = 80ms: above both count and duration thresholds.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/users",
@@ -131,7 +131,7 @@ func TestN1Detector_belowCountThreshold_noIssue(t *testing.T) {
 	txID := insertTestTransaction(t, "GET /api/products")
 	detector := issues.NewN1Detector(testPool)
 
-	// 4 spans — one below the count threshold of 5.
+	// 4 spans: one below the count threshold of 5.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/products",
@@ -151,7 +151,7 @@ func TestN1Detector_belowDurationThreshold_noIssue(t *testing.T) {
 	txID := insertTestTransaction(t, "GET /api/fast")
 	detector := issues.NewN1Detector(testPool)
 
-	// 6 spans × 5ms = 30ms — count passes but total duration is below 50ms.
+	// 6 spans × 5ms = 30ms: count passes but total duration is below 50ms.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/fast",
@@ -171,7 +171,7 @@ func TestN1Detector_normalizesQueryLiterals(t *testing.T) {
 	txID := insertTestTransaction(t, "GET /api/posts")
 	detector := issues.NewN1Detector(testPool)
 
-	// Each span has a different literal value — a real N+1 from an ORM that
+	// Each span has a different literal value: a real N+1 from an ORM that
 	// embeds values in query text. They should normalize to the same key.
 	spans := []ingest.BufferedSpan{
 		{Op: "db.query", Description: `select * from "posts" where "id" = 1`, DurationMs: 12},
@@ -368,7 +368,7 @@ func TestN1Detector_kindFilterReturnsOnlyPerfIssues(t *testing.T) {
 
 	txID := insertTestTransaction(t, "GET /api/mix")
 	detector := issues.NewN1Detector(testPool)
-	// 5 spans × 12ms = 60ms — clears both thresholds.
+	// 5 spans × 12ms = 60ms: clears both thresholds.
 	tx := ingest.BufferedTransaction{
 		ProjectID:   testProject.ID,
 		Transaction: "GET /api/mix",

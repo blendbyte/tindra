@@ -1,6 +1,6 @@
 package api_test
 
-// coverage2_test.go — additional tests targeting uncovered branches in
+// coverage2_test.go: additional tests targeting uncovered branches in
 // extra.go, cron.go, mfa.go, and alerts.go.
 
 import (
@@ -21,7 +21,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetMe: bearer-token requests are blocked by middleware
+// extra.go: handleGetMe: bearer-token requests are blocked by middleware
 // ---------------------------------------------------------------------------
 
 // TestGetMe_unauthenticated is already in extra_test.go; here we cover the
@@ -34,7 +34,7 @@ import (
 // path is the only uncovered branch (also unreachable). However we can cover
 // the nil-users-becomes-empty-slice path by calling with empty DB.
 func TestListUsers_emptySliceNotNil(t *testing.T) {
-	// Create a minimal DB state — don't truncate users (test user still needed),
+	// Create a minimal DB state: don't truncate users (test user still needed),
 	// just verify the endpoint returns a non-nil slice.
 	req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
 	req.AddCookie(authCookie())
@@ -54,7 +54,7 @@ func TestListUsers_emptySliceNotNil(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateUserPermissions: not-found path
+// extra.go: handleUpdateUserPermissions: not-found path
 // ---------------------------------------------------------------------------
 
 func TestUpdateUserPermissions_notFoundCov2(t *testing.T) {
@@ -85,7 +85,7 @@ func TestUpdateUserPermissions_badBody(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleDeleteUser: unauthenticated (actor == nil path)
+// extra.go: handleDeleteUser: unauthenticated (actor == nil path)
 // ---------------------------------------------------------------------------
 
 func TestDeleteUser_unauthenticated(t *testing.T) {
@@ -101,7 +101,7 @@ func TestDeleteUser_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleChangePassword: unauthenticated
+// extra.go: handleChangePassword: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestChangePassword_unauthenticated(t *testing.T) {
@@ -116,7 +116,7 @@ func TestChangePassword_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListComments: enforceIssueProject fails for wrong project
+// extra.go: handleListComments: enforceIssueProject fails for wrong project
 // with bearer token (the only path that triggers the project scope check).
 // ---------------------------------------------------------------------------
 
@@ -151,7 +151,7 @@ func TestListComments_bearerTokenWrongProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetRelease: bearer token wrong project → 404
+// extra.go: handleGetRelease: bearer token wrong project → 404
 // ---------------------------------------------------------------------------
 
 func TestGetRelease_bearerTokenWrongProject(t *testing.T) {
@@ -185,7 +185,7 @@ func TestGetRelease_bearerTokenWrongProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleListAuditLog: unauthenticated already tested; cover the
+// extra.go: handleListAuditLog: unauthenticated already tested; cover the
 // q search param (different branch from kind).
 // ---------------------------------------------------------------------------
 
@@ -201,7 +201,7 @@ func TestListAuditLog_withEmptyQuery(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleUpdateMe: unauthenticated already tested; cover weekly_digest
+// extra.go: handleUpdateMe: unauthenticated already tested; cover weekly_digest
 // false branch (distinct from the true branch already tested).
 // ---------------------------------------------------------------------------
 
@@ -226,7 +226,7 @@ func TestUpdateMe_weeklyDigestFalse(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleDeleteMonitor: not-found path
+// cron.go: handleDeleteMonitor: not-found path
 // ---------------------------------------------------------------------------
 
 func TestDeleteMonitor_notFound(t *testing.T) {
@@ -242,7 +242,7 @@ func TestDeleteMonitor_notFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleListMonitors: project_id filter (bearerProjectIDs branch)
+// cron.go: handleListMonitors: project_id filter (bearerProjectIDs branch)
 // ---------------------------------------------------------------------------
 
 func TestListMonitors_withProjectFilter(t *testing.T) {
@@ -268,7 +268,7 @@ func TestListMonitors_withProjectFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronPing: invalid status
+// cron.go: handleCronPing: invalid status
 // ---------------------------------------------------------------------------
 
 func TestCronPing_invalidStatus(t *testing.T) {
@@ -284,7 +284,7 @@ func TestCronPing_invalidStatus(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronPing: paused monitor silently accepts
+// cron.go: handleCronPing: paused monitor silently accepts
 // ---------------------------------------------------------------------------
 
 func TestCronPing_pausedMonitor(t *testing.T) {
@@ -303,7 +303,7 @@ func TestCronPing_pausedMonitor(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronPing: duration param (durationMs branch)
+// cron.go: handleCronPing: duration param (durationMs branch)
 // ---------------------------------------------------------------------------
 
 func TestCronPing_withDuration(t *testing.T) {
@@ -319,7 +319,7 @@ func TestCronPing_withDuration(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronPing: environment param branch
+// cron.go: handleCronPing: environment param branch
 // ---------------------------------------------------------------------------
 
 func TestCronPing_withEnvironment(t *testing.T) {
@@ -335,7 +335,7 @@ func TestCronPing_withEnvironment(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronCheckinStart: no status in body (defaults to in_progress)
+// cron.go: handleCronCheckinStart: no status in body (defaults to in_progress)
 // ---------------------------------------------------------------------------
 
 func TestCronCheckinStart_noStatusBody(t *testing.T) {
@@ -362,7 +362,7 @@ func TestCronCheckinStart_noStatusBody(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronCheckinStart: with environment in body
+// cron.go: handleCronCheckinStart: with environment in body
 // ---------------------------------------------------------------------------
 
 func TestCronCheckinStart_withEnvironment(t *testing.T) {
@@ -380,7 +380,7 @@ func TestCronCheckinStart_withEnvironment(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronCheckinFinish: missing status body → 400
+// cron.go: handleCronCheckinFinish: missing status body → 400
 // ---------------------------------------------------------------------------
 
 func TestCronCheckinFinish_missingStatus(t *testing.T) {
@@ -398,7 +398,7 @@ func TestCronCheckinFinish_missingStatus(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleOhDearFinished: no runtime (nil durationMs branch)
+// cron.go: handleOhDearFinished: no runtime (nil durationMs branch)
 // ---------------------------------------------------------------------------
 
 func TestOhDearFinished_noRuntime(t *testing.T) {
@@ -419,7 +419,7 @@ func TestOhDearFinished_noRuntime(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCreateMonitor: missing project_id
+// cron.go: handleCreateMonitor: missing project_id
 // ---------------------------------------------------------------------------
 
 func TestCreateMonitor_missingProjectID(t *testing.T) {
@@ -436,7 +436,7 @@ func TestCreateMonitor_missingProjectID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCreateMonitor: default grace period when 0
+// cron.go: handleCreateMonitor: default grace period when 0
 // ---------------------------------------------------------------------------
 
 func TestCreateMonitor_defaultGracePeriod(t *testing.T) {
@@ -468,7 +468,7 @@ func TestCreateMonitor_defaultGracePeriod(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleListCheckins: with limit param (int parse branch)
+// cron.go: handleListCheckins: with limit param (int parse branch)
 // ---------------------------------------------------------------------------
 
 func TestListCheckins_withInvalidLimit(t *testing.T) {
@@ -486,7 +486,7 @@ func TestListCheckins_withInvalidLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — resolveMonitor: enforceTokenProject path (bearer wrong project)
+// cron.go: resolveMonitor: enforceTokenProject path (bearer wrong project)
 // ---------------------------------------------------------------------------
 
 func TestGetMonitor_bearerTokenWrongProject(t *testing.T) {
@@ -514,7 +514,7 @@ func TestGetMonitor_bearerTokenWrongProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mfa.go — handleMFASetup: unauthenticated already covered; cover the path
+// mfa.go: handleMFASetup: unauthenticated already covered; cover the path
 // where an unenrolled user has a legacy secret.
 // ---------------------------------------------------------------------------
 
@@ -546,7 +546,7 @@ func TestMFASetup_withExistingSecret(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mfa.go — handleMFAConfirm: unauthenticated
+// mfa.go: handleMFAConfirm: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestMFAConfirm_unauthenticated(t *testing.T) {
@@ -562,7 +562,7 @@ func TestMFAConfirm_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mfa.go — handleMFADisable: unauthenticated
+// mfa.go: handleMFADisable: unauthenticated
 // ---------------------------------------------------------------------------
 
 func TestMFADisable_unauthenticated(t *testing.T) {
@@ -578,7 +578,7 @@ func TestMFADisable_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mfa.go — handleMFADisable: success (correct password, MFA was enabled)
+// mfa.go: handleMFADisable: success (correct password, MFA was enabled)
 // Uses a fresh user so the global testUser session is not disturbed.
 // ---------------------------------------------------------------------------
 
@@ -647,7 +647,7 @@ func TestMFADisable_successCov2(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mfa.go — handleMFAVerify: valid token + correct TOTP code → session cookie
+// mfa.go: handleMFAVerify: valid token + correct TOTP code → session cookie
 // (The full path through ConsumeMFAChallenge + CreateSession.)
 // This is already covered by TestMFA_setupConfirmAndLogin in auth_mfa_test.go,
 // but here we exercise it with a separately created user so it runs cleanly.
@@ -726,7 +726,7 @@ func TestMFAVerify_validTokenAndCode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleListAlertRules: unauthenticated returns 401
+// alerts.go: handleListAlertRules: unauthenticated returns 401
 // ---------------------------------------------------------------------------
 
 func TestListAlertRules_unauthenticated(t *testing.T) {
@@ -740,7 +740,7 @@ func TestListAlertRules_unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleListAlertRules: project_id bearer token filter (covers
+// alerts.go: handleListAlertRules: project_id bearer token filter (covers
 // the tokenProjID branch that sets projectID).
 // ---------------------------------------------------------------------------
 
@@ -776,7 +776,7 @@ func TestListAlertRules_bearerTokenProjectFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — validateAlertRule: filter_level valid / invalid
+// alerts.go: validateAlertRule: filter_level valid / invalid
 // ---------------------------------------------------------------------------
 
 func TestCreateAlertRule_withValidFilterLevel(t *testing.T) {
@@ -852,7 +852,7 @@ func TestCreateAlertRule_withValidMinOccurrences(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule: patch with explicit null for filter_level
+// alerts.go: handleUpdateAlertRule: patch with explicit null for filter_level
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_clearFilterLevel(t *testing.T) {
@@ -886,7 +886,7 @@ func TestUpdateAlertRule_clearFilterLevel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule: patch with explicit null for min_occurrences
+// alerts.go: handleUpdateAlertRule: patch with explicit null for min_occurrences
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_clearMinOccurrences(t *testing.T) {
@@ -919,7 +919,7 @@ func TestUpdateAlertRule_clearMinOccurrences(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule: update project_ids (HasProjectIDs branch)
+// alerts.go: handleUpdateAlertRule: update project_ids (HasProjectIDs branch)
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_updateProjectIDs(t *testing.T) {
@@ -960,12 +960,12 @@ func TestUpdateAlertRule_updateProjectIDs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetInstanceHealth: missing stats key → 503
+// global.go: handleGetInstanceHealth: missing stats key → 503
 // ---------------------------------------------------------------------------
 
 func TestGetInstanceHealth_noStatsKey(t *testing.T) {
 	// Handler created without a stats key returns 503 for /api/health.
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1)})
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -976,7 +976,7 @@ func TestGetInstanceHealth_noStatsKey(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetReleaseTransactions: bearer token correct project
+// extra.go: handleGetReleaseTransactions: bearer token correct project
 // ---------------------------------------------------------------------------
 
 func TestGetReleaseTransactions_bearerTokenCorrectProject(t *testing.T) {
@@ -1002,7 +1002,7 @@ func TestGetReleaseTransactions_bearerTokenCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetReleaseIssues: bearer token correct project
+// extra.go: handleGetReleaseIssues: bearer token correct project
 // ---------------------------------------------------------------------------
 
 func TestGetReleaseIssues_bearerTokenCorrectProject(t *testing.T) {
@@ -1028,7 +1028,7 @@ func TestGetReleaseIssues_bearerTokenCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetTransactionErrors: not-found path
+// global.go: handleGetTransactionErrors: not-found path
 // ---------------------------------------------------------------------------
 
 func TestGetTransactionErrors_notFoundCov2(t *testing.T) {
@@ -1044,7 +1044,7 @@ func TestGetTransactionErrors_notFoundCov2(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetTransactionErrors: bearer token correct project
+// global.go: handleGetTransactionErrors: bearer token correct project
 // (covers the enforceTokenProject branch that passes)
 // ---------------------------------------------------------------------------
 
@@ -1075,7 +1075,7 @@ func TestGetTransactionErrors_bearerTokenCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleListAllTokens: bearer token scoped (tokenProjID branch)
+// global.go: handleListAllTokens: bearer token scoped (tokenProjID branch)
 // ---------------------------------------------------------------------------
 
 func TestListAllTokens_bearerTokenScoped(t *testing.T) {
@@ -1102,7 +1102,7 @@ func TestListAllTokens_bearerTokenScoped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetProjectStats: bearerToken restricts to its project
+// global.go: handleGetProjectStats: bearerToken restricts to its project
 // (bearerProjectIDs with non-empty list skips ListProjects call)
 // ---------------------------------------------------------------------------
 
@@ -1128,7 +1128,7 @@ func TestGetProjectStats_bearerTokenFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleListAllIssues: with tag filter (tag_key + tag_value)
+// global.go: handleListAllIssues: with tag filter (tag_key + tag_value)
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_withTagFilter(t *testing.T) {
@@ -1144,7 +1144,7 @@ func TestListAllIssues_withTagFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleListAllIssues: with assignee_id filter
+// global.go: handleListAllIssues: with assignee_id filter
 // ---------------------------------------------------------------------------
 
 func TestListAllIssues_withAssigneeFilter(t *testing.T) {
@@ -1160,7 +1160,7 @@ func TestListAllIssues_withAssigneeFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go — handleGetProjectQuota: all fields present (uses project UUID)
+// global.go: handleGetProjectQuota: all fields present (uses project UUID)
 // The !rlResetAt.IsZero() branch only fires after rate limit bucket is active;
 // we just verify the non-zero quota fields are present.
 // ---------------------------------------------------------------------------
@@ -1188,7 +1188,7 @@ func TestGetProjectQuota_allFieldsPresent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleChangePassword: success with non-ErrInvalidPassword error
+// extra.go: handleChangePassword: success with non-ErrInvalidPassword error
 // path. The only reachable error is wrong password (tested) or DB error
 // (unreachable). Cover the remaining unauthenticated path via bearer token.
 // ---------------------------------------------------------------------------
@@ -1210,7 +1210,7 @@ func TestChangePassword_bearerTokenBlocked(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCreateMonitor: bad body (JSON decode fails)
+// cron.go: handleCreateMonitor: bad body (JSON decode fails)
 // ---------------------------------------------------------------------------
 
 func TestCreateMonitor_badBody(t *testing.T) {
@@ -1227,7 +1227,7 @@ func TestCreateMonitor_badBody(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go — handleCronPing: error status + no duration (covers the else
+// cron.go: handleCronPing: error status + no duration (covers the else
 // branch of the duration param check)
 // ---------------------------------------------------------------------------
 
@@ -1244,7 +1244,7 @@ func TestCronPing_errorNoDuration(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// alerts.go — handleUpdateAlertRule: patch with filter_environment null
+// alerts.go: handleUpdateAlertRule: patch with filter_environment null
 // ---------------------------------------------------------------------------
 
 func TestUpdateAlertRule_clearFilterEnvironment(t *testing.T) {
@@ -1277,7 +1277,7 @@ func TestUpdateAlertRule_clearFilterEnvironment(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go — handleGetReleaseTransactions / handleGetReleaseIssues:
+// extra.go: handleGetReleaseTransactions / handleGetReleaseIssues:
 // bearer token with unknown release (nil rel path inside token scope check)
 // ---------------------------------------------------------------------------
 

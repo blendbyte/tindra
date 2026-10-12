@@ -40,7 +40,7 @@ func TestSemverGT(t *testing.T) {
 }
 
 func newTestRouter() *Handle {
-	return NewRouter(nil, ingest.NewBuffer(1), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return NewRouter(Config{Events: ingest.NewBuffer(1)})
 }
 
 func TestCheckLatestVersion_updatesCache(t *testing.T) {

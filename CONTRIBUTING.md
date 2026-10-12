@@ -33,8 +33,21 @@ security updates in GitHub's repository settings.
 Pin remote GitHub Actions, including reusable workflows, to a full 40-character
 commit SHA with the version in a comment. Pin Docker actions to a SHA-256 digest.
 Run `bun scripts/check-action-pins.ts` to check workflows locally. CI runs this
-check on every pull request to `main`; administrators can require the
-`Check action SHA pins` check in the branch rules.
+check on every pull request to `main` as part of the `verify / Workflow safeguards`
+job; administrators can require that check in the branch rules. Docker base
+images are pinned to a tag plus digest, which Renovate updates together.
+
+## Running the checks locally
+
+CI runs the same commands; a pull request needs all of them to pass.
+
+- Go: `make test` starts a throwaway Postgres container per test package.
+  With `make db` running, `make test-fast` (or `TINDRA_TEST_DSN` pointing at a
+  Postgres server) reuses it and is much quicker. `make lint` runs golangci-lint.
+- Frontend, in `web/`: `bun run typecheck`, `bun run lint` and `bun run test`.
+- Scripts and workflows: `bun test scripts`.
+- Migrations only move forward: `make migrate-create name=<name>` creates the
+  next `.up.sql` file. There are no down migrations.
 
 For vulnerability reports, follow [the security policy](SECURITY.md).
 

@@ -155,24 +155,6 @@ type oauthState struct {
 	Verifier string
 }
 
-// ConsumeOAuthState looks up the state token, deletes it, and returns the stored provider and verifier.
-// Returns nil if not found or expired.
-func ConsumeOAuthState(ctx context.Context, pool *pgxpool.Pool, token string) (*oauthState, error) {
-	var s oauthState
-	err := pool.QueryRow(ctx, `
-		DELETE FROM oauth_states
-		WHERE token_hash = $1 AND expires_at > NOW()
-		RETURNING provider, verifier
-	`, tokenHash(token)).Scan(&s.Provider, &s.Verifier)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query: %w", err)
-	}
-	return &s, nil
-}
-
 // ConsumeBoundOAuthState consumes a state only when both its provider and
 // browser-held PKCE verifier match. Failed binding checks leave it untouched.
 func ConsumeBoundOAuthState(ctx context.Context, pool *pgxpool.Pool, token, provider, verifier string) (*oauthState, error) {

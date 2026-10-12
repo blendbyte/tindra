@@ -355,7 +355,7 @@ func TestStore_Delete_keepsFileWhenHashShared(t *testing.T) {
 	testPool.Exec(context.Background(), "TRUNCATE sourcemaps CASCADE")
 	store := sourcemaps.NewTestStore(testDataDir, testPool)
 
-	// Upload identical content under two different releases — same hash, two records.
+	// Upload identical content under two different releases: same hash, two records.
 	content := `{"version":3,"sources":["src/shared.js"],"mappings":"AAAA"}`
 	sm1, err := store.Upload(context.Background(), testProject.ID, "vA", "~/dist/shared.js", strings.NewReader(content))
 	if err != nil {
@@ -366,7 +366,7 @@ func TestStore_Delete_keepsFileWhenHashShared(t *testing.T) {
 		t.Fatalf("upload v2: %v", err)
 	}
 
-	// Delete the first record — file must stay because vB still references it.
+	// Delete the first record: file must stay because vB still references it.
 	ok, err := store.Delete(context.Background(), sm1.ID, testProject.ID)
 	if err != nil {
 		t.Fatalf("delete: %v", err)

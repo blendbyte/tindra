@@ -58,7 +58,7 @@ func TestPassthrough_forwardsScrubbedStoredItemsOnly(t *testing.T) {
 	}
 
 	// Loopback upstream: allow private IPs for this router only.
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, true, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10), WebhookAllowPrivateIPs: true})
 
 	event := `{"message":"checkout failed","user":{"email":"alice@example.com","id":"42"}}`
 	attachment := "secret attachment bytes"

@@ -738,7 +738,7 @@ func TestUserCount_byEmailFallback(t *testing.T) {
 	ctx := context.Background()
 
 	iss, _, _, _ := storage.UpsertIssue(ctx, testPool, project.ID, "fp-uc-email", "UC email", "error", "error", "", "", time.Now())
-	// No user.id — only email
+	// No user.id: only email
 	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"email":"alice@example.com"}}`)
 	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"email":"alice@example.com"}}`)
 	insertEventWithPayload(t, project.ID, iss.ID, `{"level":"error","user":{"email":"bob@example.com"}}`)
@@ -1101,7 +1101,7 @@ func TestCountAllIssues_allCommonFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	_ = n // result may be 0 since issue is open, not resolved — we just need the branches covered
+	_ = n // result may be 0 since issue is open, not resolved: we just need the branches covered
 }
 
 func TestCountAllIssues_tagFilters(t *testing.T) {

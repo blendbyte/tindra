@@ -551,7 +551,7 @@ describe('LogsView', () => {
       await chips.find(c => c.props('label') === 'Level')?.vm.$emit('change', 'Warning')
       expect(wrapper.find('button.export-menu__trigger').attributes('disabled')).toBeDefined()
       expect(wrapper.find('.alert-on-this').attributes('aria-label')).toBe(
-        'Add a search — warning alerts need a message match',
+        'Add a search: warning alerts need a message match',
       )
     })
 

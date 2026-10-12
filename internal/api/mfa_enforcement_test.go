@@ -25,7 +25,7 @@ func TestRequiredMFAEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewRouter(pool, nil, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := NewRouter(Config{Pool: pool, RequireMFA: true})
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -36,7 +36,7 @@ func TestRequiredMFAEnrollment(t *testing.T) {
 	}
 	for _, endpoint := range []struct{ method, path string }{
 		{"GET", "/api/projects"}, {"POST", "/api/projects"}, {"GET", "/api/tokens"},
-		{"GET", "/api/projects/example/tokens"}, {"POST", "/mcp"}, {"DELETE", "/api/auth/mfa"},
+		{"POST", "/mcp"}, {"DELETE", "/api/auth/mfa"},
 	} {
 		rec := request(endpoint.method, endpoint.path, "{}")
 		if rec.Code != 403 || rec.Header().Get("X-Tindra-MFA-Required") != "setup" {
@@ -118,7 +118,7 @@ func TestOAuthMFAChallenge(t *testing.T) {
 		if err := storage.EnableMFA(t.Context(), pool, user.ID); err != nil {
 			t.Fatal(err)
 		}
-		h := NewRouter(pool, nil, nil, nil, nil, nil, []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, true, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, required, nil)
+		h := NewRouter(Config{Pool: pool, OAuthProviders: []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, CookieSecure: true, RequireMFA: required})
 		state, err := storage.CreateOAuthState(t.Context(), pool, "admission", "verifier")
 		if err != nil {
 			t.Fatal(err)
@@ -186,7 +186,7 @@ func TestUnenrolledOAuthSessionIsRestricted(t *testing.T) {
 	if _, err := storage.CreateInvite(t.Context(), pool, "", email, "Invited"); err != nil {
 		t.Fatal(err)
 	}
-	h := NewRouter(pool, nil, nil, nil, nil, nil, []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, true, nil)
+	h := NewRouter(Config{Pool: pool, OAuthProviders: []oauthProvider{admissionProvider{mockProvider{name: "admission"}, email}}, RequireMFA: true})
 	state, err := storage.CreateOAuthState(t.Context(), pool, "admission", "verifier")
 	if err != nil {
 		t.Fatal(err)

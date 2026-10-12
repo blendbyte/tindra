@@ -71,7 +71,7 @@ func truncateEvents(t *testing.T) {
 }
 
 func newHandler(buf *ingest.Buffer) http.Handler {
-	return api.NewRouter(testPool, buf, nil, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return api.NewRouter(api.Config{Pool: testPool, Events: buf})
 }
 
 func eventEnvelope(eventID, payload string) string {
@@ -369,7 +369,7 @@ func postLogEnvelopeAs(t *testing.T, projectID, publicKey, body string) *httptes
 	defer cancel()
 	go logBuf.Run(ctx, testPool)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(1), nil, logBuf, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(1), Logs: logBuf})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/"+projectID+"/envelope/",
 		bytes.NewBufferString(body))
@@ -638,7 +638,7 @@ func TestHandleEnvelope_gzipLargeProfileItem(t *testing.T) {
 	_, _ = w.Write([]byte(body))
 	w.Close()
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: buf, Transactions: txBuf})
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", &gz)
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
@@ -702,8 +702,7 @@ func profileEnvelope(t *testing.T, itemType, fixtureFile string) string {
 }
 
 func newProfileHandler(profBuf *ingest.ProfileBuffer) http.Handler {
-	return api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, profBuf, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	return api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10), Profiles: profBuf})
 }
 
 func postEnvelope(t *testing.T, h http.Handler, body string) *httptest.ResponseRecorder {
@@ -861,8 +860,7 @@ func TestHandleEnvelope_transactionCarriesProfileLink(t *testing.T) {
 		fmt.Sprintf(`{"type":"transaction","length":%d}`, compact.Len()) + "\n" +
 		compact.String() + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-		0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: buf, Transactions: txBuf})
 	rec := postEnvelope(t, h, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -909,8 +907,7 @@ func TestHandleGetTransactionFlameGraph(t *testing.T) {
 	go profBuf.Run(bufCtx, testPool)
 	go txBuf.Run(bufCtx, testPool)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10), Transactions: txBuf, Profiles: profBuf})
 
 	// Ingest the profile and a transaction naming it, exactly as an SDK would.
 	rec := postEnvelope(t, h, profileEnvelope(t, "profile", "v1_php_laravel.json"))
@@ -1010,8 +1007,7 @@ func TestHandleGetTransactionFlameGraph(t *testing.T) {
 // failure. Both used to be untested, and they differ by status code alone.
 func TestHandleGetTransactionFlameGraph_errorPaths(t *testing.T) {
 	ctx := context.Background()
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10)})
 
 	get := func(t *testing.T, id string) int {
 		t.Helper()
@@ -1084,8 +1080,7 @@ func TestHandleEnvelope_transactionWithMixedTypeTraceData(t *testing.T) {
 	body := `{"event_id":"ee0e8400e29b41d4a716446655440000"}` + "\n" +
 		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-		0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: buf, Transactions: txBuf})
 	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1122,8 +1117,7 @@ func TestHandleEnvelope_numericThreadIDInTraceData(t *testing.T) {
 	body := `{"event_id":"110e8400e29b41d4a716446655440000"}` + "\n" +
 		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-		0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: buf, Transactions: txBuf})
 	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -1171,8 +1165,7 @@ func TestHandleEnvelope_profileBufferFullDropsOnlyTheProfile(t *testing.T) {
 	defer cancel()
 	go txBuf.Run(bufCtx, testPool)
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), txBuf, nil, profBuf, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10), Transactions: txBuf, Profiles: profBuf})
 
 	// One envelope carrying both, as the PHP SDK sends it.
 	const txName = "/buffer-full"
@@ -1242,8 +1235,7 @@ func TestHandleGetTransactionFlameGraph_tokenScopedToAnotherProject(t *testing.T
 		t.Fatalf("insert transaction: %v", err)
 	}
 
-	h := api.NewRouter(testPool, ingest.NewBuffer(10), nil, nil, nil, nil, nil,
-		false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: ingest.NewBuffer(10)})
 	req := httptest.NewRequest(http.MethodGet, "/api/transactions/"+txID+"/flamegraph", nil)
 	req.Header.Set("Authorization", "Bearer "+plaintext)
 	rec := httptest.NewRecorder()
@@ -1283,8 +1275,7 @@ func TestHandleEnvelope_oddlyShapedTraceData(t *testing.T) {
 			body := `{"event_id":"550e8400e29b41d4a716446655440000"}` + "\n" +
 				fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
 
-			h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-				0, 0, 0, 0, 0, 0, nil, false, false, nil)
+			h := api.NewRouter(api.Config{Pool: testPool, Events: buf, Transactions: txBuf})
 			if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d", rec.Code)
 			}
@@ -1357,7 +1348,7 @@ func TestHandleEnvelope_longTransactionUserIdentity(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	payload := fmt.Sprintf(`{"transaction":"/long-user-review","user":{"id":%q},"start_timestamp":1704067200,"timestamp":1704067201}`, identity)
 	body := "{}\n{\"type\":\"transaction\"}\n" + payload + "\n"
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "", 0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: buf, Transactions: txBuf})
 	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/", strings.NewReader(body))
 	req.Header.Set("X-Sentry-Auth", sentryAuthHeader(testProject.PublicKey))
 	rec := httptest.NewRecorder()
@@ -1413,8 +1404,7 @@ func TestHandleEnvelope_transactionWithNulBytes(t *testing.T) {
 	body := `{"event_id":"130e8400e29b41d4a716446655440000"}` + "\n" +
 		fmt.Sprintf(`{"type":"transaction","length":%d}`, len(payload)) + "\n" + payload + "\n"
 
-	h := api.NewRouter(testPool, buf, txBuf, nil, nil, nil, nil, false, "", "", "", "",
-		0, 0, 0, 0, 0, 0, nil, false, false, nil)
+	h := api.NewRouter(api.Config{Pool: testPool, Events: buf, Transactions: txBuf})
 	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}

@@ -271,7 +271,7 @@ func TestScrubTransaction_SpanData(t *testing.T) {
 }
 
 func TestScrubEvent_UnknownBuiltin_ignored(t *testing.T) {
-	// An unknown builtin name must be skipped entirely — it must not fall
+	// An unknown builtin name must be skipped entirely: it must not fall
 	// through to treating p.Pattern as a user-supplied regex.
 	payload := json.RawMessage(`{"message":"alice@example.com"}`)
 	cfg := ScrubConfig{

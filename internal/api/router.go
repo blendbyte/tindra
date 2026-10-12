@@ -6,6 +6,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -115,44 +116,75 @@ func (h *Handle) SetRowLimits(logRowLimit, txRowLimit int) {
 	h.ro.txRowLimit = txRowLimit
 }
 
-func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.TransactionBuffer, logBuf *ingest.LogBuffer, profBuf *ingest.ProfileBuffer, smStore *sourcemaps.Store, oauthProviders []oauthProvider, cookieSecure bool, corsOrigin string, publicURL string, statsAPIKey string, billingURL string, retentionDays int, projectLimit int, eventLimit int, userLimit int, rateLimitLogin int, rateLimitEnvelope int, evaluator *alerts.Evaluator, webhookAllowPrivateIPs bool, requireMFA bool, trustedProxies []*net.IPNet) *Handle {
+// Config holds what NewRouter needs. Zero values are safe for tests: no
+// limits, no rate limiting and no optional integrations.
+type Config struct {
+	Pool         *pgxpool.Pool
+	Events       *ingest.Buffer
+	Transactions *ingest.TransactionBuffer
+	Logs         *ingest.LogBuffer
+	Profiles     *ingest.ProfileBuffer
+	Sourcemaps   *sourcemaps.Store
+	// OAuthProviders comes from LoadOAuthProviders.
+	OAuthProviders []oauthProvider
+
+	CookieSecure bool
+	CORSOrigin   string
+	PublicURL    string
+	StatsAPIKey  string
+	BillingURL   string
+
+	RetentionDays     int
+	ProjectLimit      int
+	EventLimit        int
+	UserLimit         int
+	RateLimitLogin    int
+	RateLimitEnvelope int
+
+	Evaluator              *alerts.Evaluator
+	WebhookAllowPrivateIPs bool
+	RequireMFA             bool
+	TrustedProxies         []*net.IPNet
+}
+
+func NewRouter(cfg Config) *Handle {
 	ro := &router{
-		pool:                   pool,
-		buf:                    buf,
-		txBuf:                  txBuf,
-		logBuf:                 logBuf,
-		smStore:                smStore,
-		oauthProviders:         oauthProviders,
+		pool:                   cfg.Pool,
+		buf:                    cfg.Events,
+		txBuf:                  cfg.Transactions,
+		logBuf:                 cfg.Logs,
+		smStore:                cfg.Sourcemaps,
+		oauthProviders:         cfg.OAuthProviders,
 		ssoOnly:                oauthConfigured(),
-		cookieSecure:           cookieSecure,
-		corsOrigin:             corsOrigin,
-		publicURL:              publicURL,
-		profBuf:                profBuf,
+		cookieSecure:           cfg.CookieSecure,
+		corsOrigin:             cfg.CORSOrigin,
+		publicURL:              cfg.PublicURL,
+		profBuf:                cfg.Profiles,
 		encodeProfile:          ingest.NewBufferedProfile,
-		statsAPIKey:            statsAPIKey,
-		billingURL:             billingURL,
-		retentionDays:          retentionDays,
-		evaluator:              evaluator,
-		passthroughClient:      alerts.NewWebhookClient(webhookAllowPrivateIPs),
-		webhookAllowPrivateIPs: webhookAllowPrivateIPs,
-		requireMFA:             requireMFA,
-		trustedProxies:         trustedProxies,
+		statsAPIKey:            cfg.StatsAPIKey,
+		billingURL:             cfg.BillingURL,
+		retentionDays:          cfg.RetentionDays,
+		evaluator:              cfg.Evaluator,
+		passthroughClient:      alerts.NewWebhookClient(cfg.WebhookAllowPrivateIPs),
+		webhookAllowPrivateIPs: cfg.WebhookAllowPrivateIPs,
+		requireMFA:             cfg.RequireMFA,
+		trustedProxies:         cfg.TrustedProxies,
 		startedAt:              time.Now().UTC(),
 	}
-	ro.projectLimit.Store(int32(projectLimit))
-	ro.eventLimit.Store(int32(eventLimit))
-	ro.userLimit.Store(int32(userLimit))
+	ro.projectLimit.Store(int32(cfg.ProjectLimit))
+	ro.eventLimit.Store(int32(cfg.EventLimit))
+	ro.userLimit.Store(int32(cfg.UserLimit))
 
-	loginRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
-	resetRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
+	loginRL := newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
+	resetRL := newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
 	ro.forwarder = ingest.NewForwarder(ro.passthroughClient, passthroughWorkers, passthroughQueueSize)
 	ro.projectKeys = newProjectKeyCache(10_000)
 	ro.monthlyCount = &monthlyCountCache{}
 	ro.observations = newObservationDedup()
 	ro.unknownKeyRL = newRateLimiter(60, time.Minute)
 	ro.unknownKeyRL.maxKeys = 100_000
-	ro.envelopeRL = newRateLimiter(rateLimitEnvelope, time.Minute)
-	ro.loginEmailRL = newRateLimiter(rateLimitLogin, 15*time.Minute)
+	ro.envelopeRL = newRateLimiter(cfg.RateLimitEnvelope, time.Minute)
+	ro.loginEmailRL = newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
 	ro.reauthRL = newRateLimiter(10, 15*time.Minute)
 	ro.cronPingRL = newRateLimiter(5, time.Minute)
 	// Monitor IDs come from the URL, so cap how many distinct keys an attacker
@@ -314,13 +346,10 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.Post("/mcp", ro.handleMCP)
 	})
 
-	// Session-only: token management and MFA management cannot be done via Bearer token.
+	// Session-only: password and MFA management cannot be done via Bearer token.
+	// Token management (/api/tokens) rejects bearer tokens in requirePerm.
 	r.Group(func(r chi.Router) {
 		r.Use(ro.requireSessionAuth)
-
-		r.Get("/api/projects/{projectSlug}/tokens", ro.handleListTokens)
-		r.With(ro.requirePerm("manage_projects")).Post("/api/projects/{projectSlug}/tokens", ro.handleCreateToken)
-		r.With(ro.requirePerm("manage_projects")).Delete("/api/projects/{projectSlug}/tokens/{tokenID}", ro.handleDeleteToken)
 
 		r.Patch("/api/me/password", ro.handleChangePassword)
 
@@ -386,14 +415,25 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 		r.With(ro.requirePerm("manage_projects")).Delete("/api/uptime-monitors/{monitorID}", ro.handleDeleteUptimeMonitor)
 	})
 
-	// MCP OAuth discovery endpoints — must be registered before the SPA catch-all so
+	// MCP OAuth discovery endpoints: must be registered before the SPA catch-all so
 	// clients get JSON instead of index.html when probing for OAuth metadata.
-	r.Get("/.well-known/oauth-authorization-server", ro.handleMCPOAuthAS)
-	r.Get("/.well-known/oauth-protected-resource", ro.handleMCPOAuthPR)
-	// GET /mcp for clients probing SSE support — we only support POST; return 405 JSON.
-	r.Get("/mcp", ro.handleMCPGet)
+	// MCP tokens come from Settings, not an OAuth flow: answer discovery with a
+	// JSON 404 instead of the SPA's HTML.
+	r.Get("/.well-known/*", handleWellKnownNotFound)
+	// Only POST carries MCP messages; older clients probe GET and DELETE.
+	r.Get("/mcp", ro.handleMCPMethodNotAllowed)
+	r.Delete("/mcp", ro.handleMCPMethodNotAllowed)
 
-	r.NotFound(embeddedAssets().ServeHTTP)
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		// Unknown API paths are errors, not app routes. Answering them with the
+		// SPA's index.html gave API clients a 200 HTML page, which apiFetch
+		// then read as an empty response.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeJSONStatus(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		embeddedAssets().ServeHTTP(w, r)
+	})
 
 	return &Handle{Handler: r, ro: ro}
 }
