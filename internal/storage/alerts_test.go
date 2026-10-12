@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -327,11 +328,12 @@ func TestMarkAlertFired(t *testing.T) {
 		t.Fatal("last_fired_at should be nil before firing")
 	}
 
-	storage.MarkAlertFired(context.Background(), testPool, created.ID)
+	firedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	require.NoError(t, storage.MarkAlertFired(context.Background(), testPool, created.ID, firedAt))
 
 	got, _ := storage.GetAlertRule(context.Background(), testPool, created.ID)
-	if got.LastFiredAt == nil {
-		t.Error("last_fired_at should be set after MarkAlertFired")
+	if got.LastFiredAt == nil || !got.LastFiredAt.Equal(firedAt) {
+		t.Errorf("last_fired_at should be the evaluation time %v, got %v", firedAt, got.LastFiredAt)
 	}
 }
 

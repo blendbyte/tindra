@@ -779,3 +779,91 @@ func TestRecordCheckin_setsReceivedAt(t *testing.T) {
 		t.Errorf("received_at %v outside expected window [%v, %v]", ci.ReceivedAt, before, after)
 	}
 }
+
+func monitorNextExpected(t *testing.T, id string) *time.Time {
+	t.Helper()
+	var next *time.Time
+	require.NoError(t, testPool.QueryRow(context.Background(), `SELECT next_expected_at FROM cron_monitors WHERE id = $1`, id).Scan(&next))
+	return next
+}
+
+// Every check-in, including a failed or still-running one, moves the next
+// expected run forward; only a run with no check-in is missed.
+func TestCheckins_anyStatusAdvancesNextExpected(t *testing.T) {
+	p := setupProjectForCron(t)
+	ctx := context.Background()
+	for _, status := range []string{"error", "in_progress"} {
+		m, err := storage.CreateCronMonitor(ctx, testPool, &storage.CronMonitor{ProjectID: p.ID, Name: "advance " + status, Schedule: "0 * * * *", GracePeriodSecs: 60})
+		require.NoError(t, err)
+		_, err = testPool.Exec(ctx, `UPDATE cron_monitors SET next_expected_at = NOW() - interval '2 hours' WHERE id = $1`, m.ID)
+		require.NoError(t, err)
+
+		now := time.Now().UTC()
+		ci := &storage.CronCheckin{Status: status}
+		if status == "in_progress" {
+			ci.StartedAt = &now
+		} else {
+			ci.FinishedAt = &now
+		}
+		_, err = storage.RecordCheckin(ctx, testPool, m.ID, ci)
+		require.NoError(t, err)
+		next := monitorNextExpected(t, m.ID)
+		require.NotNil(t, next)
+		require.True(t, next.After(now), "%s check-in must move next_expected_at into the future, got %v", status, next)
+	}
+}
+
+// A job that is still running past its expected time is not reported missed.
+func TestListOverdueMonitors_skipsRunningJobs(t *testing.T) {
+	p := setupProjectForCron(t)
+	ctx := context.Background()
+	m, err := storage.CreateCronMonitor(ctx, testPool, &storage.CronMonitor{ProjectID: p.ID, Name: "long job", Schedule: "0 * * * *", GracePeriodSecs: 60})
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `UPDATE cron_monitors SET next_expected_at = NOW() - interval '2 hours', is_running = TRUE WHERE id = $1`, m.ID)
+	require.NoError(t, err)
+
+	overdue, err := storage.ListOverdueMonitors(ctx, testPool, []string{p.ID})
+	require.NoError(t, err)
+	require.Empty(t, overdue)
+
+	_, err = testPool.Exec(ctx, `UPDATE cron_monitors SET is_running = FALSE WHERE id = $1`, m.ID)
+	require.NoError(t, err)
+	overdue, err = storage.ListOverdueMonitors(ctx, testPool, []string{p.ID})
+	require.NoError(t, err)
+	require.Len(t, overdue, 1)
+}
+
+// Changing the schedule or resuming a paused monitor recomputes the next run
+// instead of keeping a stale one that would be reported missed at once.
+func TestUpdateCronMonitor_recomputesNextExpected(t *testing.T) {
+	p := setupProjectForCron(t)
+	ctx := context.Background()
+	m, err := storage.CreateCronMonitor(ctx, testPool, &storage.CronMonitor{ProjectID: p.ID, Name: "reschedule", Schedule: "0 * * * *", GracePeriodSecs: 60})
+	require.NoError(t, err)
+	stale := func() {
+		_, err := testPool.Exec(ctx, `UPDATE cron_monitors SET next_expected_at = NOW() - interval '3 days' WHERE id = $1`, m.ID)
+		require.NoError(t, err)
+	}
+
+	stale()
+	m.Schedule = "0 3 * * *"
+	_, err = storage.UpdateCronMonitor(ctx, testPool, m)
+	require.NoError(t, err)
+	require.True(t, monitorNextExpected(t, m.ID).After(time.Now()), "schedule change")
+
+	m.Status = "paused"
+	_, err = storage.UpdateCronMonitor(ctx, testPool, m)
+	require.NoError(t, err)
+	stale()
+	m.Status = "active"
+	_, err = storage.UpdateCronMonitor(ctx, testPool, m)
+	require.NoError(t, err)
+	require.True(t, monitorNextExpected(t, m.ID).After(time.Now()), "resume")
+
+	// A plain rename keeps the expected time as it is.
+	stale()
+	m.Name = "renamed"
+	_, err = storage.UpdateCronMonitor(ctx, testPool, m)
+	require.NoError(t, err)
+	require.True(t, monitorNextExpected(t, m.ID).Before(time.Now()), "rename")
+}

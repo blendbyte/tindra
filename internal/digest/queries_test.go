@@ -435,12 +435,23 @@ func TestIssuesSummary_regressedIssues(t *testing.T) {
 	}
 	storage.UpsertIssue(context.Background(), testPool, p.ID, "fp-reg", "Regressed Issue", "error", "error", "", "", now.AddDate(0, 0, -1))
 
-	s, err := issuesSummary(context.Background(), testPool, []string{p.ID}, from, now)
+	// regressed_at is server time, so the window must end after the regression.
+	s, err := issuesSummary(context.Background(), testPool, []string{p.ID}, from, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if s.Regressed != 1 {
 		t.Errorf("regressed count: got %d, want 1", s.Regressed)
+	}
+
+	// A regression from before the report week is not this week's news.
+	testPool.Exec(context.Background(), `UPDATE issues SET regressed_at = $2 WHERE id = $1`, iss.ID, from.Add(-time.Hour))
+	s, err = issuesSummary(context.Background(), testPool, []string{p.ID}, from, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Regressed != 0 {
+		t.Errorf("regressed before the window: got %d, want 0", s.Regressed)
 	}
 }
 

@@ -63,7 +63,7 @@ func TestProfileBuffer_writesAndReadsBackV1(t *testing.T) {
 		t.Fatal("push failed")
 	}
 
-	time.Sleep(400 * time.Millisecond)
+	waitForProfileWrites(t, buf)
 
 	var (
 		format      int16
@@ -137,7 +137,7 @@ func TestProfileBuffer_writesV2Chunk(t *testing.T) {
 	if !buf.Push(stubProfile(t, "v2_python_chunk.json", "profile_chunk")) {
 		t.Fatal("push failed")
 	}
-	time.Sleep(400 * time.Millisecond)
+	waitForProfileWrites(t, buf)
 
 	var (
 		format    int16
@@ -196,7 +196,7 @@ func TestProfileChunks_rangeLookupByProfiler(t *testing.T) {
 			t.Fatal("push failed")
 		}
 	}
-	time.Sleep(400 * time.Millisecond)
+	waitForProfileWrites(t, buf)
 
 	// The lookup the read path will issue: bounded on start_ts because chunks
 	// cannot exceed 66s, then filtered on end_ts for true overlap.
@@ -245,7 +245,7 @@ func TestProfileBuffer_flushesOnShutdown(t *testing.T) {
 	}
 	// Cancel well inside the 200ms tick so the drain path is what writes it.
 	cancel()
-	time.Sleep(300 * time.Millisecond)
+	waitForProfileWrites(t, buf)
 
 	var count int
 	if err := testPool.QueryRow(context.Background(),
@@ -329,7 +329,7 @@ func TestProfileBuffer_deduplicatesARedeliveredChunk(t *testing.T) {
 			t.Fatal("push failed")
 		}
 	}
-	time.Sleep(500 * time.Millisecond)
+	waitForProfileWrites(t, buf)
 
 	var count int
 	if err := testPool.QueryRow(context.Background(),
@@ -362,7 +362,7 @@ func TestProfileBuffer_flushesOnceTheBatchIsFull(t *testing.T) {
 			t.Fatalf("push %d failed", i)
 		}
 	}
-	time.Sleep(500 * time.Millisecond)
+	waitForProfileWrites(t, buf)
 
 	var count int
 	if err := testPool.QueryRow(context.Background(),
@@ -456,8 +456,23 @@ func TestProfileBuffer_releasesBytesOnFlush(t *testing.T) {
 		t.Fatal("expected the queue to be holding bytes")
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	waitForProfileWrites(t, buf)
 	if q := buf.QueuedBytes(); q != 0 {
 		t.Errorf("queued bytes = %d after the flush, want 0", q)
 	}
+}
+
+// waitForProfileWrites waits until the writer has handled everything pushed so
+// far (persisted, deduplicated or dropped), instead of sleeping a fixed time
+// that a slow CI runner can exceed.
+func waitForProfileWrites(t *testing.T, buf *ingest.ProfileBuffer) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		s := buf.Stats()
+		var dropped uint64
+		for _, n := range s.Dropped {
+			dropped += n
+		}
+		return s.Queued == 0 && s.Pending == 0 && s.Persisted+dropped+s.Unknown >= s.Accepted
+	}, 10*time.Second, 10*time.Millisecond)
 }

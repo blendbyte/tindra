@@ -48,7 +48,8 @@ func issuesSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []string,
 	err := pool.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (WHERE first_seen >= $2 AND first_seen < $3)           AS new_count,
-			COUNT(*) FILTER (WHERE status = 'regressed')                            AS regressed_count,
+			COUNT(*) FILTER (WHERE status = 'regressed'
+			                   AND regressed_at >= $2 AND regressed_at < $3)        AS regressed_count,
 			COUNT(*) FILTER (WHERE status = 'open' AND first_seen < $2)            AS ongoing_count
 		FROM issues
 		WHERE project_id = ANY($1)

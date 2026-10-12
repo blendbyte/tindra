@@ -2874,3 +2874,124 @@ func TestEnrichPayload_newIssueAcrossRuleProjects(t *testing.T) {
 		t.Errorf("expected only the production issue from the second project, got %v", titles)
 	}
 }
+
+// An issue from a client whose clock runs behind has an old first_seen, but it
+// is new to Tindra and must still trigger a new-issue alert.
+func TestConditionMet_newIssue_usesServerCreationTime(t *testing.T) {
+	ctx := context.Background()
+	testPool.Exec(ctx, "DELETE FROM issues WHERE project_id = $1", testProject.ID)
+	lastFired := time.Now().Add(-time.Minute)
+	rule := &storage.AlertRule{ProjectIDs: []string{testProject.ID}, Trigger: "new_issue", LastFiredAt: &lastFired}
+
+	clientClock := time.Now().Add(-6 * time.Hour)
+	if _, _, _, err := storage.UpsertIssue(ctx, testPool, testProject.ID, "fp-slow-clock", "Slow clock", "error", "error", "", "", clientClock); err != nil {
+		t.Fatal(err)
+	}
+	met, details, err := testEvaluator(nil).conditionMet(ctx, rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !met || details["new_issue_count"] != 1 {
+		t.Errorf("expected the slow-clock issue to count as new, got met=%v details=%v", met, details)
+	}
+}
+
+// last_fired_at is the evaluation time captured before counting, so an issue
+// created while the alert was being delivered is picked up next time.
+func TestFire_marksEvaluationTime(t *testing.T) {
+	ctx := context.Background()
+	rule, err := storage.CreateAlertRule(ctx, testPool, webhookRule(testProject.ID, "https://203.0.113.1/hook"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	asOf := time.Now().Add(-30 * time.Second).Truncate(time.Microsecond)
+	e := testEvaluator(nil)
+	e.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+	})}
+	e.fire(ctx, rule, map[string]any{"new_issue_count": 1}, asOf)
+
+	got, err := storage.GetAlertRule(ctx, testPool, rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastFiredAt == nil || !got.LastFiredAt.Equal(asOf) {
+		t.Errorf("last_fired_at = %v, want the evaluation time %v", got.LastFiredAt, asOf)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Disabling a rule cancels its pending retries instead of delivering them.
+func TestRetryFiring_disabledRuleIsNotDelivered(t *testing.T) {
+	testPool.Exec(context.Background(), "TRUNCATE alert_rules, alert_firings CASCADE")
+	var calls int
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(200)
+	}))
+	client := srv.Client() // NewTestServer starts lazily; srv.URL is empty before this
+	url := srv.URL
+	rule, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "disabled retry", Enabled: false,
+		Trigger: "new_issue", Channel: "webhook", WebhookURL: &url, CooldownMins: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testPool.Exec(context.Background(), `
+		INSERT INTO alert_firings (rule_id, trigger, channel, status, attempt, next_retry_at, payload)
+		VALUES ($1, 'new_issue', 'webhook', 'pending', 1, NOW() - interval '1 minute', '{"rule_id":"x"}'::jsonb)`, rule.ID)
+
+	(&Evaluator{pool: testPool, client: client}).processRetries(context.Background())
+
+	if calls != 0 {
+		t.Errorf("a disabled rule's retry was delivered %d times", calls)
+	}
+	var status, errMsg string
+	testPool.QueryRow(context.Background(), `SELECT status, COALESCE(error, '') FROM alert_firings WHERE rule_id = $1`, rule.ID).Scan(&status, &errMsg)
+	if status != "failed" || !strings.Contains(errMsg, "disabled") {
+		t.Errorf("status=%q error=%q, want failed with a disabled note", status, errMsg)
+	}
+}
+
+// Auto-resolve notifications honour the rule's environment filter.
+func TestNotifyAutoResolved_appliesEnvironmentFilter(t *testing.T) {
+	testPool.Exec(context.Background(), "DELETE FROM alert_rules")
+	var received []byte
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	client := srv.Client() // NewTestServer starts lazily; srv.URL is empty before this
+	url := srv.URL
+	env := "production"
+	if _, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
+		ProjectIDs: []string{testProject.ID}, Name: "prod only", Enabled: true, Trigger: "new_issue",
+		Channel: "webhook", WebhookURL: &url, CooldownMins: 60, FilterEnvironment: &env,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staging, production := "staging", "production"
+	e := &Evaluator{pool: testPool, client: client}
+
+	e.NotifyAutoResolved(context.Background(), []*storage.Issue{{ID: "00000000-0000-0000-0000-0000000000a1", ProjectID: testProject.ID, Title: "staging N+1", Environment: &staging}})
+	if received != nil {
+		t.Fatal("a staging issue must not notify a production-only rule")
+	}
+	e.NotifyAutoResolved(context.Background(), []*storage.Issue{{ID: "00000000-0000-0000-0000-0000000000a2", ProjectID: testProject.ID, Title: "prod N+1", Environment: &production}})
+	if received == nil {
+		t.Fatal("a production issue should notify")
+	}
+}
+
+func TestItemCountFromPayload_uptime(t *testing.T) {
+	for key, n := range map[string]int{"down_count": 2, "recovered_count": 3} {
+		got := itemCountFromPayload(AlertPayload{Details: map[string]any{key: n}})
+		if got == nil || *got != n {
+			t.Errorf("%s: item count = %v, want %d", key, got, n)
+		}
+	}
+}

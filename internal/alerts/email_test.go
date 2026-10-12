@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -688,5 +689,68 @@ func TestSmtpSender_authRejected(t *testing.T) {
 	}}
 	if err := s.Send(context.Background(), EmailMessage{To: "t@x.com", Subject: "s", Text: "t"}); err == nil {
 		t.Error("expected error when AUTH credentials are rejected")
+	}
+}
+
+// silentSMTPServer accepts connections and never answers, like a hung server.
+func silentSMTPServer(t *testing.T) (host string, port int) {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { conn.Close() })
+		}
+	}()
+	addr := ln.Addr().(*net.TCPAddr)
+	return "127.0.0.1", addr.Port
+}
+
+func TestSMTPSend_hungServerTimesOut(t *testing.T) {
+	old := smtpTimeout
+	smtpTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { smtpTimeout = old })
+
+	host, port := silentSMTPServer(t)
+	s := &smtpSender{cfg: smtpConfig{Host: host, Port: port, From: "noreply@example.com"}}
+	start := time.Now()
+	err := s.Send(context.Background(), EmailMessage{To: "a@example.com", Subject: "x", Text: "y"})
+	if err == nil {
+		t.Fatal("expected an error from a server that never answers")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("send took %v; the timeout did not apply", elapsed)
+	}
+}
+
+func TestSMTPSend_cancelledContextAborts(t *testing.T) {
+	host, port := silentSMTPServer(t)
+	s := &smtpSender{cfg: smtpConfig{Host: host, Port: port, From: "noreply@example.com"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	if err := s.Send(ctx, EmailMessage{To: "a@example.com", Subject: "x", Text: "y"}); err == nil {
+		t.Fatal("expected an error after cancellation")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("send took %v after cancellation", elapsed)
+	}
+}
+
+func TestSMTPBuildMessage_encodesNonASCIISubject(t *testing.T) {
+	msg := smtpBuildMessage("noreply@example.com", EmailMessage{To: "a@example.com", Subject: "Ärger: 数据库 down", Text: "body"})
+	if !strings.Contains(msg, "Subject: =?utf-8?q?") {
+		t.Errorf("non-ASCII subject must be RFC 2047 encoded:\n%s", msg)
+	}
+	plain := smtpBuildMessage("noreply@example.com", EmailMessage{To: "a@example.com", Subject: "plain subject", Text: "body"})
+	if !strings.Contains(plain, "Subject: plain subject\r\n") {
+		t.Errorf("ASCII subject should stay readable:\n%s", plain)
 	}
 }

@@ -543,13 +543,16 @@ type DigestUser struct {
 	Name  string
 }
 
-// ListDigestDueUsers returns all opted-in users whose digest has never been
-// sent or was last sent more than 7 days ago. Pass force=true to ignore the
+// ListDigestDueUsers returns all opted-in users who have not received a
+// digest this ISO week (since Monday 00:00 UTC). A calendar week rather than a
+// 7-day cooldown, because send times drift by up to the window's length and a
+// strict cooldown would then skip whole weeks. Pass force=true to ignore the
 // time filter and return all opted-in users regardless.
 func ListDigestDueUsers(ctx context.Context, pool *pgxpool.Pool, force bool) ([]DigestUser, error) {
 	q := `SELECT id, email, name FROM users WHERE weekly_digest = TRUE AND email <> ''`
 	if !force {
-		q += ` AND (digest_last_sent_at IS NULL OR digest_last_sent_at < NOW() - INTERVAL '7 days')`
+		q += ` AND (digest_last_sent_at IS NULL
+			OR digest_last_sent_at < date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`
 	}
 	q += ` ORDER BY created_at ASC`
 	rows, err := pool.Query(ctx, q)

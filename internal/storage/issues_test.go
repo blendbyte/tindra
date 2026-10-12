@@ -1177,14 +1177,16 @@ func TestListIssues_appliesAllFilters(t *testing.T) {
 		_, _, _, err := storage.UpsertIssue(ctx, testPool, tc.project, tc.fp, "Issue "+tc.fp, "error", "error", tc.env, "", time.Now())
 		require.NoError(t, err)
 	}
-	_, _, _, err = storage.UpsertIssue(ctx, testPool, a.ID, "lf-a-old", "Old issue", "error", "error", "production", "", old)
+	oldIssue, _, _, err := storage.UpsertIssue(ctx, testPool, a.ID, "lf-a-old", "Old issue", "error", "error", "production", "", old)
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `UPDATE issues SET created_at = $2 WHERE id = $1`, oldIssue.ID, old)
 	require.NoError(t, err)
 
 	got, err := storage.ListIssues(ctx, testPool, storage.IssueFilter{
-		ProjectIDs:  []string{a.ID, b.ID},
-		Environment: "production",
-		Since:       new(time.Now().Add(-time.Hour)),
-		Limit:       50,
+		ProjectIDs:   []string{a.ID, b.ID},
+		Environment:  "production",
+		CreatedSince: new(time.Now().Add(-time.Hour)),
+		Limit:        50,
 	})
 	require.NoError(t, err)
 	fps := []string{}

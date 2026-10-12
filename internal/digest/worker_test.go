@@ -280,3 +280,20 @@ func TestWorker_send_realPool_withUser(t *testing.T) {
 		t.Errorf("unexpected To: %q", sender.messages[0].To)
 	}
 }
+
+func TestReportWeek_isTheLastFullISOWeek(t *testing.T) {
+	for _, now := range []time.Time{
+		time.Date(2026, 10, 12, 7, 30, 0, 0, time.UTC),  // Monday morning, send window
+		time.Date(2026, 10, 12, 10, 59, 0, 0, time.UTC), // Monday, end of window
+		time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC),  // Thursday (CLI send)
+		time.Date(2026, 10, 18, 23, 59, 0, 0, time.UTC), // Sunday night
+	} {
+		from, to := reportWeek(now)
+		if want := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC); !from.Equal(want) {
+			t.Errorf("reportWeek(%v) from = %v, want %v", now, from, want)
+		}
+		if want := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC); !to.Equal(want) {
+			t.Errorf("reportWeek(%v) to = %v, want %v", now, to, want)
+		}
+	}
+}

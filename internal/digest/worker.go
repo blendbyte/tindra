@@ -25,13 +25,12 @@ const (
 func userDigestSlot(userID string) int {
 	h := fnv.New32a()
 	h.Write([]byte(userID))
-	return int(h.Sum32()) % digestWindowHours
+	return int(h.Sum32() % digestWindowHours)
 }
 
 // Worker sends weekly digest emails to opted-in users.
-// It ticks hourly and fires only within the 07:00–09:00 UTC send window to
-// ensure emails arrive at a predictable time regardless of when the server
-// started.
+// It ticks hourly and fires only within the Monday 07:00-11:00 UTC send window
+// so emails arrive at a predictable time regardless of when the server started.
 type Worker struct {
 	pool      *pgxpool.Pool
 	email     alerts.EmailSender
@@ -82,6 +81,9 @@ func (w *Worker) sendDue(ctx context.Context) {
 	w.sendSlot(ctx, slot)
 }
 
+// sendSlot sends to due users whose slot is the current one or an earlier
+// one. Earlier slots catch up users whose hour was missed (a restart, or the
+// instance being down); users already sent this week are not due any more.
 func (w *Worker) sendSlot(ctx context.Context, slot int) {
 	if w.pool == nil {
 		return
@@ -93,7 +95,7 @@ func (w *Worker) sendSlot(ctx context.Context, slot int) {
 	}
 	var slotUsers []storage.DigestUser
 	for _, u := range users {
-		if userDigestSlot(u.ID) == slot {
+		if userDigestSlot(u.ID) <= slot {
 			slotUsers = append(slotUsers, u)
 		}
 	}
@@ -133,10 +135,8 @@ func (w *Worker) sendToUsers(ctx context.Context, users []storage.DigestUser) {
 		projectIDs[i] = p.ID
 	}
 
-	now := time.Now().UTC()
-	from := now.Truncate(24*time.Hour).AddDate(0, 0, -6)
-
-	report, err := w.buildReport(ctx, projectIDs, from, now)
+	from, to := reportWeek(time.Now().UTC())
+	report, err := w.buildReport(ctx, projectIDs, from, to)
 	if err != nil {
 		slog.Error("digest: build report", "err", err)
 		return
@@ -170,6 +170,16 @@ func (w *Worker) sendToUsers(ctx context.Context, users []storage.DigestUser) {
 
 		slog.Info("digest: sent", "user", u.ID, "email", u.Email)
 	}
+}
+
+// reportWeek returns the last complete ISO week before now: Monday 00:00 UTC
+// to the following Monday 00:00 UTC. A fixed calendar week means every day is
+// covered exactly once, whatever hour the digest is sent.
+func reportWeek(now time.Time) (from, to time.Time) {
+	now = now.UTC()
+	daysSinceMonday := (int(now.Weekday()) + 6) % 7
+	to = time.Date(now.Year(), now.Month(), now.Day()-daysSinceMonday, 0, 0, 0, 0, time.UTC)
+	return to.AddDate(0, 0, -7), to
 }
 
 func (w *Worker) buildReport(ctx context.Context, projectIDs []string, from, to time.Time) (*Report, error) {

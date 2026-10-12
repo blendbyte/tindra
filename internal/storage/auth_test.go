@@ -810,3 +810,35 @@ func TestChangeUserPassword_oauthUser(t *testing.T) {
 		t.Error("expected error for OAuth user with no password hash")
 	}
 }
+
+// A user is due again from Monday 00:00 UTC, even if last week's digest went
+// out less than seven days ago (a later send hour than this week's).
+func TestListDigestDueUsers_dueEachISOWeek(t *testing.T) {
+	truncateUsers(t)
+	ctx := context.Background()
+	u, _ := storage.CreateUser(ctx, testPool, "dweek@example.com", "password1234")
+	storage.UpdateUserWeeklyDigest(ctx, testPool, u.ID, true)
+
+	due := func() bool {
+		users, err := storage.ListDigestDueUsers(ctx, testPool, false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		for _, du := range users {
+			if du.ID == u.ID {
+				return true
+			}
+		}
+		return false
+	}
+	// Last sent shortly before this week began: due again now.
+	testPool.Exec(ctx, `UPDATE users SET digest_last_sent_at = date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' - interval '1 minute' WHERE id = $1`, u.ID)
+	if !due() {
+		t.Error("a digest sent last week must not block this week's")
+	}
+	// Sent this week: not due.
+	testPool.Exec(ctx, `UPDATE users SET digest_last_sent_at = date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' + interval '1 minute' WHERE id = $1`, u.ID)
+	if due() {
+		t.Error("a digest sent this week must block another one")
+	}
+}

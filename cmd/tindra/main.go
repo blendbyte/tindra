@@ -20,6 +20,7 @@ import (
 
 	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/api"
+	"github.com/blendbyte/tindra/internal/background"
 	"github.com/blendbyte/tindra/internal/digest"
 	"github.com/blendbyte/tindra/internal/ingest"
 	"github.com/blendbyte/tindra/internal/issues"
@@ -105,18 +106,6 @@ func main() {
 }
 
 func loadConfig() config {
-	bufSize := 10000
-	if s := strings.TrimSpace(os.Getenv("INGEST_BUFFER_SIZE")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			bufSize = n
-		}
-	}
-	profileBufSize := 500
-	if s := strings.TrimSpace(os.Getenv("PROFILE_BUFFER_SIZE")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			profileBufSize = n
-		}
-	}
 	bindAddr := os.Getenv("BIND_ADDR")
 	if bindAddr == "" {
 		bindAddr = ":8080"
@@ -128,70 +117,6 @@ func loadConfig() config {
 	logLevel := os.Getenv("LOG_LEVEL")
 	if logLevel == "" {
 		logLevel = "info"
-	}
-	retentionDays := 90
-	if s := strings.TrimSpace(os.Getenv("RETENTION_DAYS")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			retentionDays = n
-		}
-	}
-	projectLimit := 0
-	if s := strings.TrimSpace(os.Getenv("PROJECT_LIMIT")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
-			projectLimit = n
-		}
-	}
-	eventLimit := 0
-	if s := strings.TrimSpace(os.Getenv("EVENT_LIMIT")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
-			eventLimit = n
-		}
-	}
-	userLimit := 0
-	if s := strings.TrimSpace(os.Getenv("USER_LIMIT")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
-			userLimit = n
-		}
-	}
-	logRowLimit := 0
-	if s := strings.TrimSpace(os.Getenv("LOG_ROW_LIMIT")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			logRowLimit = n
-		}
-	}
-	txRowLimit := 0
-	if s := strings.TrimSpace(os.Getenv("TX_ROW_LIMIT")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			txRowLimit = n
-		}
-	}
-	// Profiles carry their own retention window and a byte budget rather than
-	// following RETENTION_DAYS. They are orders of magnitude larger per unit of
-	// time than anything else stored, so the 90-day default would run to tens of
-	// gigabytes for a handful of continuously profiled processes.
-	profileRetentionDays := 7
-	if s := strings.TrimSpace(os.Getenv("PROFILE_RETENTION_DAYS")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			profileRetentionDays = n
-		}
-	}
-	profileStorageLimitMB := 2048
-	if s := strings.TrimSpace(os.Getenv("PROFILE_STORAGE_LIMIT_MB")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			profileStorageLimitMB = n
-		}
-	}
-	rateLimitLogin := 10
-	if s := strings.TrimSpace(os.Getenv("RATE_LIMIT_LOGIN")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			rateLimitLogin = n
-		}
-	}
-	rateLimitEnvelope := 300
-	if s := strings.TrimSpace(os.Getenv("RATE_LIMIT_ENVELOPE")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			rateLimitEnvelope = n
-		}
 	}
 	var trustedProxies []*net.IPNet
 	if s := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES")); s != "" {
@@ -214,36 +139,87 @@ func loadConfig() config {
 	}
 
 	return config{
-		databaseURL:            os.Getenv("DATABASE_URL"),
-		bindAddr:               bindAddr,
-		logLevel:               logLevel,
-		logFormat:              os.Getenv("LOG_FORMAT"),
-		ingestBufferSize:       bufSize,
-		profileBufferSize:      profileBufSize,
-		dataDir:                dataDir,
-		retentionDays:          retentionDays,
-		cookieSecure:           os.Getenv("COOKIE_SECURE") == "true",
-		corsOrigin:             os.Getenv("CORS_ORIGIN"),
-		publicURL:              os.Getenv("PUBLIC_URL"),
-		statsAPIKey:            os.Getenv("STATS_API_KEY"),
-		billingURL:             strings.TrimSpace(os.Getenv("BILLING_URL")),
-		projectLimit:           projectLimit,
-		eventLimit:             eventLimit,
-		userLimit:              userLimit,
-		logRowLimit:            logRowLimit,
-		txRowLimit:             txRowLimit,
-		profileRetentionDays:   profileRetentionDays,
-		profileStorageLimitMB:  profileStorageLimitMB,
-		rateLimitLogin:         rateLimitLogin,
-		rateLimitEnvelope:      rateLimitEnvelope,
-		webhookAllowPrivateIPs: os.Getenv("WEBHOOK_ALLOW_PRIVATE_IPS") == "true",
-		uptimeAllowPrivateIPs:  os.Getenv("UPTIME_ALLOW_PRIVATE_IPS") == "true",
-		requireMFA:             os.Getenv("REQUIRE_MFA") != "false",
+		databaseURL:       os.Getenv("DATABASE_URL"),
+		bindAddr:          bindAddr,
+		logLevel:          logLevel,
+		logFormat:         os.Getenv("LOG_FORMAT"),
+		ingestBufferSize:  envInt("INGEST_BUFFER_SIZE", 10000, 1),
+		profileBufferSize: envInt("PROFILE_BUFFER_SIZE", 500, 1),
+		dataDir:           dataDir,
+		retentionDays:     envInt("RETENTION_DAYS", 90, 0),
+		cookieSecure:      envBool("COOKIE_SECURE", false),
+		corsOrigin:        os.Getenv("CORS_ORIGIN"),
+		publicURL:         os.Getenv("PUBLIC_URL"),
+		statsAPIKey:       os.Getenv("STATS_API_KEY"),
+		billingURL:        strings.TrimSpace(os.Getenv("BILLING_URL")),
+		projectLimit:      envInt("PROJECT_LIMIT", 0, 0),
+		eventLimit:        envInt("EVENT_LIMIT", 0, 0),
+		userLimit:         envInt("USER_LIMIT", 0, 0),
+		logRowLimit:       envInt("LOG_ROW_LIMIT", 0, 0),
+		txRowLimit:        envInt("TX_ROW_LIMIT", 0, 0),
+		// Profiles carry their own retention window and a byte budget rather
+		// than following RETENTION_DAYS. They are orders of magnitude larger
+		// per unit of time than anything else stored, so the 90-day default
+		// would run to tens of gigabytes for a few continuously profiled processes.
+		profileRetentionDays:   envInt("PROFILE_RETENTION_DAYS", 7, 0),
+		profileStorageLimitMB:  envInt("PROFILE_STORAGE_LIMIT_MB", 2048, 0),
+		rateLimitLogin:         envInt("RATE_LIMIT_LOGIN", 10, 0),
+		rateLimitEnvelope:      envInt("RATE_LIMIT_ENVELOPE", 300, 0),
+		webhookAllowPrivateIPs: envBool("WEBHOOK_ALLOW_PRIVATE_IPS", false),
+		uptimeAllowPrivateIPs:  envBool("UPTIME_ALLOW_PRIVATE_IPS", false),
+		requireMFA:             requireMFAFromEnv(),
 		trustedProxies:         trustedProxies,
-		skipAutoMigrate:        os.Getenv("SKIP_AUTO_MIGRATE") == "true",
-		disableVersionCheck:    os.Getenv("DISABLE_VERSION_CHECK") == "true",
+		skipAutoMigrate:        envBool("SKIP_AUTO_MIGRATE", false),
+		disableVersionCheck:    envBool("DISABLE_VERSION_CHECK", false),
 		socketMode:             parseSocketMode(os.Getenv("SOCKET_MODE"), 0660),
 	}
+}
+
+// envInt reads an integer of at least minimum from the environment. Unset
+// means def. An invalid value warns and uses def, so a typo shows up in the
+// log instead of silently changing behaviour.
+func envInt(name string, def, minimum int) int {
+	s := strings.TrimSpace(os.Getenv(name))
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < minimum {
+		fmt.Fprintf(os.Stderr, "warn: invalid %s %q (want an integer >= %d), using %d\n", name, s, minimum, def)
+		return def
+	}
+	return n
+}
+
+// requireMFAFromEnv keeps MFA enforcement on unless REQUIRE_MFA is exactly
+// "false" (any case). A security control is only switched off explicitly, so
+// values like "0" or "no" keep it on, with a warning.
+func requireMFAFromEnv() bool {
+	s := strings.TrimSpace(os.Getenv("REQUIRE_MFA"))
+	switch {
+	case s == "" || strings.EqualFold(s, "true"):
+		return true
+	case strings.EqualFold(s, "false"):
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "warn: invalid REQUIRE_MFA %q (want true or false), keeping MFA required\n", s)
+	return true
+}
+
+// envBool reads a boolean from the environment, accepting the usual spellings
+// (true/false, 1/0, TRUE/FALSE). Unset means def. An invalid value warns and
+// uses def: for example COOKIE_SECURE=yes used to switch secure cookies off.
+func envBool(name string, def bool) bool {
+	s := strings.TrimSpace(os.Getenv(name))
+	if s == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warn: invalid %s %q (want true or false), using %t\n", name, s, def)
+		return def
+	}
+	return b
 }
 
 // parseSocketMode parses an octal string like "0666" into a FileMode.
@@ -369,64 +345,31 @@ func serveCmd(cfg config) *cobra.Command {
 				profBuf.Run(writerCtx, pool)
 			}()
 
-			grouper := issues.NewGrouper(pool)
-			go grouper.Run(ctx)
-
 			emailSender, err := alerts.NewEmailSenderFromEnv()
 			if err != nil {
 				return fmt.Errorf("email sender: %w", err)
 			}
 			evaluator := alerts.NewEvaluator(pool, emailSender, cfg.publicURL, cfg.webhookAllowPrivateIPs)
-			go evaluator.Run(ctx)
 
 			api.AppEmailSender = emailSender
 
 			smStore := sourcemaps.NewStore(cfg.dataDir, pool)
 			oauthProviders := api.LoadOAuthProviders(ctx)
 
-			go retention.NewWorker(pool, cfg.retentionDays).
-				WithRowLimits(cfg.logRowLimit, cfg.txRowLimit).
-				WithProfileLimits(cfg.profileRetentionDays, cfg.profileStorageLimitMB).
-				Run(ctx)
-			go digest.NewWorker(pool, emailSender, cfg.publicURL).Run(ctx)
-			go uptime.NewWorker(pool, cfg.uptimeAllowPrivateIPs).Run(ctx)
-
-			go func() {
-				ticker := time.NewTicker(60 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						n, err := storage.ExpireIgnoredIssues(ctx, pool)
-						if err != nil {
-							slog.Error("expire ignored issues", "err", err)
-						} else if n > 0 {
-							slog.Info("expired ignored issues", "count", n)
-						}
-					}
-				}
-			}()
-
-			go func() {
-				ticker := time.NewTicker(24 * time.Hour)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						resolved, err := storage.AutoResolvePerformanceIssues(ctx, pool, 14*24*time.Hour)
-						if err != nil {
-							slog.Error("auto-resolve performance issues", "err", err)
-						} else if len(resolved) > 0 {
-							slog.Info("auto-resolved performance issues", "count", len(resolved))
-							evaluator.NotifyAutoResolved(ctx, resolved)
-						}
-					}
-				}
-			}()
+			// Background jobs. The grouper is safe to run on every instance;
+			// the rest run on one instance at a time (see package background).
+			waitJobs := background.Start(ctx, pool, []background.Job{
+				{Name: "grouper", Run: issues.NewGrouper(pool).Run},
+				{Name: "alerts", Singleton: true, Run: evaluator.Run},
+				{Name: "retention", Singleton: true, Run: retention.NewWorker(pool, cfg.retentionDays).
+					WithRowLimits(cfg.logRowLimit, cfg.txRowLimit).
+					WithProfileLimits(cfg.profileRetentionDays, cfg.profileStorageLimitMB).
+					Run},
+				{Name: "digest", Singleton: true, Run: digest.NewWorker(pool, emailSender, cfg.publicURL).Run},
+				{Name: "uptime", Singleton: true, Run: uptime.NewWorker(pool, cfg.uptimeAllowPrivateIPs).Run},
+				{Name: "expire-snoozes", Singleton: true, Run: expireSnoozesJob(pool)},
+				{Name: "auto-resolve", Singleton: true, Run: autoResolveJob(pool, evaluator)},
+			})
 
 			startupLog.Info("starting tindra",
 				"version", Version,
@@ -508,6 +451,9 @@ func serveCmd(cfg config) *cobra.Command {
 			<-txBufDone
 			<-logBufDone
 			<-profBufDone
+			// Background jobs stop with ctx; let them finish before the
+			// deferred pool.Close so they never hit a closed pool.
+			waitJobs()
 			if serveErr != nil && serveErr != http.ErrServerClosed {
 				return fmt.Errorf("serve: %w", serveErr)
 			}

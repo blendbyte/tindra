@@ -64,6 +64,14 @@ func (e *Evaluator) evaluate(ctx context.Context) {
 		return
 	}
 	for _, rule := range rules {
+		// Take the database clock before counting and store exactly that as
+		// last_fired_at. Anything created after it, including while this
+		// alert is being delivered, is counted on the next pass, not lost.
+		var asOf time.Time
+		if err := e.pool.QueryRow(ctx, `SELECT now()`).Scan(&asOf); err != nil {
+			slog.Error("alert evaluation clock", "err", err)
+			return
+		}
 		met, details, err := e.conditionMet(ctx, rule)
 		if err != nil {
 			slog.Error("condition check", "rule", rule.ID, "err", err)
@@ -72,7 +80,7 @@ func (e *Evaluator) evaluate(ctx context.Context) {
 		if !met {
 			continue
 		}
-		e.fire(ctx, rule, details)
+		e.fire(ctx, rule, details, asOf)
 	}
 }
 
@@ -135,7 +143,7 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			clauses = append(clauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(args)))
 		}
 		args = append(args, since)
-		clauses = append(clauses, fmt.Sprintf("first_seen > $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("created_at > $%d", len(args)))
 		where, args := appendIssueFilters(rule, strings.Join(clauses, " AND "), args)
 		var count int
 		if err := e.pool.QueryRow(ctx,
@@ -179,7 +187,7 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			since = *rule.LastFiredAt
 		}
 		args := []any{since}
-		where := "(first_seen > $1 OR regressed_at > $1)"
+		where := "(created_at > $1 OR regressed_at > $1)"
 		if len(rule.ProjectIDs) > 0 {
 			args = append(args, rule.ProjectIDs)
 			where += " AND project_id = ANY($2::uuid[])"
@@ -187,7 +195,7 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 		where, args = appendIssueFilters(rule, where, args)
 		var newCount, regressedCount int
 		if err := e.pool.QueryRow(ctx,
-			"SELECT COUNT(*) FILTER (WHERE first_seen > $1), COUNT(*) FILTER (WHERE regressed_at > $1) FROM issues WHERE "+where, args...,
+			"SELECT COUNT(*) FILTER (WHERE created_at > $1), COUNT(*) FILTER (WHERE regressed_at > $1) FROM issues WHERE "+where, args...,
 		).Scan(&newCount, &regressedCount); err != nil {
 			return false, nil, fmt.Errorf("new_or_regressed count: %w", err)
 		}
@@ -261,11 +269,7 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			args = append(args, rule.ProjectIDs)
 			clauses = append(clauses, fmt.Sprintf("project_id = ANY($%d::uuid[])", len(args)))
 		}
-		clauses = append(clauses,
-			"status = 'active'",
-			"next_expected_at IS NOT NULL",
-			"next_expected_at + make_interval(secs => grace_period_secs) < NOW()",
-		)
+		clauses = append(clauses, storage.MonitorOverdueSQL)
 		where := strings.Join(clauses, " AND ")
 		var count int
 		if err := e.pool.QueryRow(ctx,
@@ -466,11 +470,11 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			since = *rule.LastFiredAt
 		}
 		issues, err := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
-			ProjectIDs:  rule.ProjectIDs,
-			Limit:       5,
-			Since:       &since,
-			Levels:      filterLevels,
-			Environment: filterEnv,
+			ProjectIDs:   rule.ProjectIDs,
+			Limit:        5,
+			CreatedSince: &since,
+			Levels:       filterLevels,
+			Environment:  filterEnv,
 		})
 		if err == nil {
 			payload.Issues = issues
@@ -497,11 +501,11 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			since = *rule.LastFiredAt
 		}
 		newIssues, _ := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
-			ProjectIDs:  rule.ProjectIDs,
-			Since:       &since,
-			Limit:       5,
-			Levels:      filterLevels,
-			Environment: filterEnv,
+			ProjectIDs:   rule.ProjectIDs,
+			CreatedSince: &since,
+			Limit:        5,
+			Levels:       filterLevels,
+			Environment:  filterEnv,
 		})
 		regIssues, _ := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
 			ProjectIDs:     rule.ProjectIDs,
@@ -626,7 +630,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 	}
 }
 
-func (e *Evaluator) fire(ctx context.Context, rule *storage.AlertRule, details map[string]any) {
+func (e *Evaluator) fire(ctx context.Context, rule *storage.AlertRule, details map[string]any, asOf time.Time) {
 	payload := AlertPayload{
 		RuleID:    rule.ID,
 		RuleName:  rule.Name,
@@ -638,14 +642,19 @@ func (e *Evaluator) fire(ctx context.Context, rule *storage.AlertRule, details m
 	e.enrichPayload(ctx, &payload, rule)
 
 	statusCode, deliveryErr := e.deliver(ctx, rule, payload)
-	e.logFiring(ctx, rule.ID, rule.Channel, payload, 1, statusCode, deliveryErr)
+	// Once delivery has been attempted the bookkeeping must happen even if
+	// shutdown cancels ctx now, or the alert would be sent again on restart.
+	bookkeeping := context.WithoutCancel(ctx)
+	e.logFiring(bookkeeping, rule.ID, rule.Channel, payload, 1, statusCode, deliveryErr)
 	if deliveryErr != nil {
 		slog.Error("alert delivery failed", "rule", rule.ID, "channel", rule.Channel, "err", deliveryErr)
 	}
 
 	// Update last_fired_at regardless of delivery outcome - a broken endpoint
 	// must not cause a flood of retries within the same cooldown window.
-	storage.MarkAlertFired(ctx, e.pool, rule.ID)
+	if err := storage.MarkAlertFired(bookkeeping, e.pool, rule.ID, asOf); err != nil {
+		slog.Error("mark alert fired", "rule", rule.ID, "err", err)
+	}
 }
 
 // deliver dispatches the payload to the configured channel and returns the HTTP
@@ -673,7 +682,7 @@ func itemCountFromPayload(payload AlertPayload) *int {
 	for k, v := range payload.Details {
 		switch k {
 		case "new_issue_count", "regressed_count", "event_count", "log_count",
-			"missed_count", "error_count", "resolved_count":
+			"missed_count", "error_count", "resolved_count", "down_count", "recovered_count":
 			if n, ok := v.(int); ok {
 				total += n
 				found = true
@@ -731,20 +740,34 @@ func (e *Evaluator) processRetries(ctx context.Context) {
 }
 
 func (e *Evaluator) retryFiring(ctx context.Context, f *storage.AlertFiring) {
+	// Once a delivery is attempted its outcome must be recorded even if
+	// shutdown cancels ctx, or the firing would be retried (and resent) again.
+	record := context.WithoutCancel(ctx)
+	resolve := func(status string, attempt int, statusCode *int, msg *string) {
+		if err := storage.ResolveAlertFiring(record, e.pool, f.ID, status, attempt, statusCode, msg); err != nil {
+			slog.Error("resolve alert firing", "firing", f.ID, "err", err)
+		}
+	}
+
 	rule, err := storage.GetAlertRule(ctx, e.pool, f.RuleID)
 	if err != nil || rule == nil {
 		msg := "rule not found"
 		if err != nil {
 			msg = err.Error()
 		}
-		storage.ResolveAlertFiring(ctx, e.pool, f.ID, "failed", f.Attempt+1, nil, &msg)
+		resolve("failed", f.Attempt+1, nil, &msg)
+		return
+	}
+	if !rule.Enabled {
+		msg := "rule disabled; retry cancelled"
+		resolve("failed", f.Attempt, nil, &msg)
 		return
 	}
 
 	var payload AlertPayload
 	if err := json.Unmarshal(f.Payload, &payload); err != nil {
 		msg := fmt.Sprintf("unmarshal payload: %v", err)
-		storage.ResolveAlertFiring(ctx, e.pool, f.ID, "failed", f.Attempt+1, nil, &msg)
+		resolve("failed", f.Attempt+1, nil, &msg)
 		return
 	}
 
@@ -752,17 +775,21 @@ func (e *Evaluator) retryFiring(ctx context.Context, f *storage.AlertFiring) {
 	statusCode, deliveryErr := e.deliver(ctx, rule, payload)
 
 	if deliveryErr == nil {
-		storage.ResolveAlertFiring(ctx, e.pool, f.ID, "success", attempt, statusCode, nil)
-	} else {
-		errStr := deliveryErr.Error()
-		if attempt < maxDeliveryAttempts {
-			nextRetry := time.Now().Add(retryDelays[attempt-1])
-			payloadJSON, _ := json.Marshal(payload)
-			storage.ScheduleAlertFiringRetry(ctx, e.pool, f.ID, attempt, nextRetry, statusCode, &errStr, payloadJSON)
-		} else {
-			storage.ResolveAlertFiring(ctx, e.pool, f.ID, "failed", attempt, statusCode, &errStr)
-			slog.Error("alert delivery permanently failed", "firing", f.ID, "rule", f.RuleID, "attempts", attempt, "err", deliveryErr)
-		}
+		resolve("success", attempt, statusCode, nil)
+		return
+	}
+	errStr := deliveryErr.Error()
+	if attempt >= maxDeliveryAttempts {
+		resolve("failed", attempt, statusCode, &errStr)
+		return
+	}
+	nextRetry := time.Now().Add(retryDelays[attempt-1])
+	payloadJSON, _ := json.Marshal(payload)
+	if err := storage.ScheduleAlertFiringRetry(record, e.pool, f.ID, attempt, nextRetry, statusCode, &errStr, payloadJSON); err != nil {
+		// Leaving the row as it was would retry it every pass without ever
+		// counting the attempt, so give up on it instead.
+		slog.Error("schedule alert retry", "firing", f.ID, "err", err)
+		resolve("failed", attempt, statusCode, &errStr)
 	}
 }
 
@@ -793,13 +820,24 @@ func (e *Evaluator) NotifyAutoResolved(ctx context.Context, issues []*storage.Is
 			continue
 		}
 
-		var ruleIssues []*storage.Issue
+		var candidates []*storage.Issue
 		if len(rule.ProjectIDs) == 0 {
-			ruleIssues = issues
+			candidates = issues
 		} else {
 			for _, pid := range rule.ProjectIDs {
-				ruleIssues = append(ruleIssues, byProject[pid]...)
+				candidates = append(candidates, byProject[pid]...)
 			}
+		}
+		// Apply the rule's own filters, as its regular firings do.
+		var ruleIssues []*storage.Issue
+		for _, iss := range candidates {
+			if rule.FilterEnvironment != nil && (iss.Environment == nil || *iss.Environment != *rule.FilterEnvironment) {
+				continue
+			}
+			if rule.MinOccurrences != nil && iss.EventCount < int64(*rule.MinOccurrences) {
+				continue
+			}
+			ruleIssues = append(ruleIssues, iss)
 		}
 		if len(ruleIssues) == 0 {
 			continue
@@ -819,7 +857,7 @@ func (e *Evaluator) NotifyAutoResolved(ctx context.Context, issues []*storage.Is
 		}
 
 		statusCode, deliveryErr := e.deliver(ctx, rule, payload)
-		e.logFiring(ctx, rule.ID, rule.Channel, payload, 1, statusCode, deliveryErr)
+		e.logFiring(context.WithoutCancel(ctx), rule.ID, rule.Channel, payload, 1, statusCode, deliveryErr)
 		if deliveryErr != nil {
 			slog.Error("auto-resolve notification failed", "rule", rule.ID, "channel", rule.Channel, "err", deliveryErr)
 		}

@@ -133,22 +133,35 @@ func TestForwarder_upstreamErrorAndBadDSNsAreContained(t *testing.T) {
 
 func TestForwarder_dropsWhenQueueFull(t *testing.T) {
 	release := make(chan struct{})
+	inFlight := make(chan struct{}, 1)
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case inFlight <- struct{}{}:
+		default:
+		}
 		<-release
 	}))
 	dsn := buildDSN(srv, "k", "1")
 	f := ingest.NewForwarder(srv.Client(), 1, 1)
 
-	// One envelope in flight, one queued, the rest dropped.
+	// The single worker takes the first envelope and blocks upstream.
+	if !f.Enqueue(dsn, []byte("{}\n")) {
+		t.Fatal("first envelope refused")
+	}
+	select {
+	case <-inFlight:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first envelope never reached upstream")
+	}
+	// One more fits in the queue; the rest are dropped.
 	accepted := 0
-	for range 5 {
+	for range 4 {
 		if f.Enqueue(dsn, []byte("{}\n")) {
 			accepted++
 		}
-		time.Sleep(20 * time.Millisecond) // let the worker pick up the first one
 	}
-	if accepted != 2 || f.Dropped() != 3 {
-		t.Errorf("accepted=%d dropped=%d, want 2 and 3", accepted, f.Dropped())
+	if accepted != 1 || f.Dropped() != 3 {
+		t.Errorf("accepted=%d dropped=%d, want 1 and 3", accepted, f.Dropped())
 	}
 
 	close(release)

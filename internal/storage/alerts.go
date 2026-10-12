@@ -255,10 +255,14 @@ func DeleteAlertRule(ctx context.Context, pool *pgxpool.Pool, id string) (bool, 
 	return tag.RowsAffected() == 1, nil
 }
 
-// MarkAlertFired sets last_fired_at to now. Always called even on delivery
-// failure so a broken endpoint can't cause a spam loop.
-func MarkAlertFired(ctx context.Context, pool *pgxpool.Pool, id string) {
-	_, _ = pool.Exec(ctx, `UPDATE alert_rules SET last_fired_at = NOW() WHERE id = $1`, id)
+// MarkAlertFired sets last_fired_at to firedAt, the instant the evaluation
+// counted up to. Always called even on delivery failure so a broken endpoint
+// can't cause a spam loop.
+func MarkAlertFired(ctx context.Context, pool *pgxpool.Pool, id string, firedAt time.Time) error {
+	if _, err := pool.Exec(ctx, `UPDATE alert_rules SET last_fired_at = $2 WHERE id = $1`, id, firedAt); err != nil {
+		return fmt.Errorf("mark fired: %w", err)
+	}
+	return nil
 }
 
 // setAlertRuleProjects replaces all project associations for a rule within an

@@ -76,21 +76,18 @@ func (w *Worker) enabled() bool {
 // RunOnce runs a single purge cycle and reports whether a telemetry deletion
 // budget was exhausted. Useful for testing and explicit maintenance passes.
 func (w *Worker) RunOnce(ctx context.Context) bool {
-	if !w.enabled() {
-		return false
-	}
 	return w.purge(ctx)
 }
 
 // Run starts the retention loop. Call in a dedicated goroutine.
 // Runs immediately, then hourly when caught up or after five minutes when a
-// telemetry deletion budget was exhausted. Passes never overlap.
+// telemetry deletion budget was exhausted. Passes never overlap. It runs even
+// without retention limits, because housekeeping (expired sessions and tokens,
+// the per-rule alert firing cap) is needed regardless.
 func (w *Worker) Run(ctx context.Context) {
 	if !w.enabled() {
-		slog.Info("retention: disabled (no retention limits configured)")
-		return
+		slog.Info("retention: no retention limits configured; only housekeeping runs")
 	}
-
 	runPurgeLoop(ctx, w.purge)
 }
 
@@ -120,6 +117,10 @@ func (w *Worker) purge(ctx context.Context) bool {
 		cronCheckinsDeleted                 int64
 	)
 
+	// Housekeeping does not depend on any retention setting.
+	firingsDeleted = w.purgeAlertFirings(ctx)
+	w.purgeExpiredAuthTokens(ctx)
+
 	// Row caps and profile policies run independently of the general age window.
 	if w.retentionDays > 0 {
 		cutoff := time.Now().AddDate(0, 0, -w.retentionDays)
@@ -130,8 +131,6 @@ func (w *Worker) purge(ctx context.Context) bool {
 		logsDeleted = w.purgeLogs(ctx, cutoff)
 		uptimeChecksDeleted = w.purgeUptimeChecks(ctx, cutoff)
 		cronCheckinsDeleted = w.purgeCronCheckins(ctx, cutoff)
-		firingsDeleted = w.purgeAlertFirings(ctx)
-		w.purgeExpiredAuthTokens(ctx)
 	}
 	logsCapDeleted = w.purgeLogsRowCap(ctx)
 	txCapDeleted = w.purgeTransactionsRowCap(ctx)
@@ -493,16 +492,28 @@ func (w *Worker) purgeRowCap(ctx context.Context, table, timeColumn string, limi
 	return total
 }
 
-// purgeExpiredAuthTokens removes short-lived tokens that are past their expiry.
-// These are cleaned up here as a convenience - they're harmless if they linger,
-// but keeping the tables tidy avoids unbounded growth.
+// expiredInviteGrace keeps expired invites listed for a while, so admins can
+// see that an invite lapsed and send a new one.
+const expiredInviteGrace = 30 * 24 * time.Hour
+
+// purgeExpiredAuthTokens removes expired sessions and one-time tokens. They no
+// longer authenticate anything, but without cleanup the tables grow forever.
 func (w *Worker) purgeExpiredAuthTokens(ctx context.Context) {
-	cutoff := time.Now()
-	for _, table := range []string{"oauth_states", "mfa_challenges"} {
+	now := time.Now()
+	for _, t := range []struct {
+		table  string
+		cutoff time.Time
+	}{
+		{"oauth_states", now},
+		{"mfa_challenges", now},
+		{"sessions", now},
+		{"password_reset_tokens", now},
+		{"user_invites", now.Add(-expiredInviteGrace)},
+	} {
 		if ctx.Err() != nil {
 			return
 		}
-		w.purgeExpiredTokenTable(ctx, table, cutoff)
+		w.purgeExpiredTokenTable(ctx, t.table, t.cutoff)
 	}
 }
 

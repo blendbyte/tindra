@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"mime/quotedprintable"
+	"net"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -207,8 +209,13 @@ func (s *httpSender) Send(ctx context.Context, msg EmailMessage) error {
 	return nil
 }
 
+// smtpTimeout bounds one whole SMTP conversation (connect, TLS, auth, send).
+// The stdlib client has no timeouts of its own, so without this a server that
+// accepts the connection and then goes silent would block alerting, digests
+// and invite emails indefinitely.
+var smtpTimeout = 60 * time.Second
+
 // smtpSender supports STARTTLS (port 587) and implicit TLS (port 465).
-// Context cancellation is not propagated - a known limitation of the stdlib smtp package.
 type smtpConfig struct {
 	Host     string
 	Port     int
@@ -220,36 +227,49 @@ type smtpConfig struct {
 type smtpSender struct{ cfg smtpConfig }
 
 func (s *smtpSender) Send(ctx context.Context, msg EmailMessage) error {
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(s.cfg.Port))
 	tlsCfg := &tls.Config{ServerName: s.cfg.Host}
 
-	var c *smtp.Client
+	deadline := time.Now().Add(smtpTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	dialer := &net.Dialer{Deadline: deadline}
+	var conn net.Conn
+	var err error
 	if s.cfg.Port == 465 {
 		// Implicit TLS (SMTPS) - connect with TLS from the start.
-		conn, err := (&tls.Dialer{Config: tlsCfg}).DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return fmt.Errorf("tls dial: %w", err)
-		}
-		c, err = smtp.NewClient(conn, s.cfg.Host)
-		if err != nil {
-			conn.Close()
-			return fmt.Errorf("smtp client: %w", err)
-		}
+		conn, err = (&tls.Dialer{NetDialer: dialer, Config: tlsCfg}).DialContext(ctx, "tcp", addr)
 	} else {
-		// STARTTLS (port 587) or plain (port 25).
-		var err error
-		c, err = smtp.Dial(addr)
-		if err != nil {
-			return fmt.Errorf("dial: %w", err)
-		}
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
+	}
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	// The deadline covers every later read and write, including after
+	// STARTTLS (which wraps conn). Cancelling ctx closes the connection, so a
+	// shutdown does not wait for a slow server either.
+	if err := conn.SetDeadline(deadline); err != nil {
+		conn.Close()
+		return fmt.Errorf("set deadline: %w", err)
+	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+
+	c, err := smtp.NewClient(conn, s.cfg.Host)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer c.Close()
+	if s.cfg.Port != 465 {
+		// STARTTLS (port 587) when offered, otherwise plain (port 25).
 		if ok, _ := c.Extension("STARTTLS"); ok {
 			if err = c.StartTLS(tlsCfg); err != nil {
-				c.Close()
 				return fmt.Errorf("starttls: %w", err)
 			}
 		}
 	}
-	defer c.Close()
 
 	// Only authenticate when credentials are provided AND the server advertises AUTH.
 	if s.cfg.Username != "" {
@@ -306,8 +326,10 @@ func qpEncode(s string) string {
 // When msg.HTML is set it produces a multipart/alternative message with a plain-text
 // fallback; otherwise it sends a simple text/plain message.
 func smtpBuildMessage(from string, msg EmailMessage) string {
+	// Subjects carry issue titles; non-ASCII text needs RFC 2047 encoding or
+	// strict mail servers reject or mangle the message.
 	baseHeaders := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\n",
-		sanitizeHeader(from), sanitizeHeader(msg.To), sanitizeHeader(msg.Subject))
+		sanitizeHeader(from), sanitizeHeader(msg.To), mime.QEncoding.Encode("utf-8", sanitizeHeader(msg.Subject)))
 
 	if msg.HTML == "" {
 		return baseHeaders +

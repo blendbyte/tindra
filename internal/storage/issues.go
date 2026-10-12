@@ -64,7 +64,7 @@ type IssueFilter struct {
 	CursorTime     *time.Time
 	CursorID       *string
 	Limit          int
-	Since          *time.Time // first_seen > Since
+	CreatedSince   *time.Time // created_at > CreatedSince (server time the issue was created)
 	SinceLast      *time.Time // last_seen > SinceLast
 	SinceRegressed *time.Time // regressed_at > SinceRegressed
 	UserIdentity   string     // issues with at least one event from this app user
@@ -403,9 +403,9 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 		}
 		q += sub + `)`
 	}
-	if filter.Since != nil {
-		args = append(args, *filter.Since)
-		q += fmt.Sprintf(" AND first_seen > $%d", len(args))
+	if filter.CreatedSince != nil {
+		args = append(args, *filter.CreatedSince)
+		q += fmt.Sprintf(" AND created_at > $%d", len(args))
 	}
 	if filter.SinceLast != nil {
 		args = append(args, *filter.SinceLast)

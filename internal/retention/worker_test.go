@@ -671,16 +671,63 @@ func TestWorker_deletesOldUptimeChecks(t *testing.T) {
 	}
 }
 
-func TestWorker_Run_disabled(t *testing.T) {
+// Without retention limits the worker still does housekeeping: expired
+// sessions, reset tokens and long-expired invites are purged, live ones kept.
+func TestWorker_Run_withoutLimitsStillDoesHousekeeping(t *testing.T) {
+	ctx := context.Background()
+	u, err := storage.CreateUser(ctx, testPool, "housekeeping@example.com", "password1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", u.ID) })
+	for _, q := range []string{
+		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ('hk-expired', $1, NOW() - interval '1 hour')`,
+		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ('hk-live', $1, NOW() + interval '1 hour')`,
+		`INSERT INTO password_reset_tokens (token_hash, user_id, expires_at) VALUES ('hk-reset-expired', $1, NOW() - interval '1 hour')`,
+	} {
+		if _, err := testPool.Exec(ctx, q, u.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{
+		`INSERT INTO user_invites (token_hash, email, expires_at) VALUES ('hk-invite-old', 'old@example.com', NOW() - interval '40 days')`,
+		`INSERT INTO user_invites (token_hash, email, expires_at) VALUES ('hk-invite-recent', 'recent@example.com', NOW() - interval '1 day')`,
+	} {
+		if _, err := testPool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
-		retention.NewWorker(testPool, 0).Run(context.Background())
+		retention.NewWorker(testPool, 0).Run(runCtx)
 		close(done)
 	}()
+	exists := func(table, hash string) bool {
+		var n int
+		testPool.QueryRow(ctx, "SELECT count(*) FROM "+table+" WHERE token_hash = $1", hash).Scan(&n)
+		return n > 0
+	}
+	purged := func() bool {
+		return !exists("sessions", "hk-expired") && !exists("password_reset_tokens", "hk-reset-expired") && !exists("user_invites", "hk-invite-old")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !purged() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Error("Run with retentionDays=0 should return immediately")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run must stop when its context is cancelled")
+	}
+
+	if !purged() {
+		t.Error("expired sessions, reset tokens and long-expired invites must be purged")
+	}
+	if !exists("sessions", "hk-live") || !exists("user_invites", "hk-invite-recent") {
+		t.Error("live sessions and recently expired invites must be kept")
 	}
 }
 

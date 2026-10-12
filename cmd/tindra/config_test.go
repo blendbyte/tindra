@@ -270,3 +270,54 @@ func TestNewHTTPServer_timeouts(t *testing.T) {
 		t.Error("ReadTimeout would cut off large sourcemap uploads; use per-route deadlines")
 	}
 }
+
+func TestEnvInt(t *testing.T) {
+	t.Setenv("TINDRA_TEST_INT", "")
+	if got := envInt("TINDRA_TEST_INT", 7, 0); got != 7 {
+		t.Errorf("unset: got %d, want default 7", got)
+	}
+	for value, want := range map[string]int{"42": 42, " 5 ": 5, "abc": 7, "-1": 7, "0": 0} {
+		t.Setenv("TINDRA_TEST_INT", value)
+		if got := envInt("TINDRA_TEST_INT", 7, 0); got != want {
+			t.Errorf("envInt(%q) = %d, want %d", value, got, want)
+		}
+	}
+}
+
+func TestEnvBool(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "true": true, "TRUE": true, "1": true, "false": false, "0": false, "yes": false} {
+		t.Setenv("TINDRA_TEST_BOOL", value)
+		if got := envBool("TINDRA_TEST_BOOL", false); got != want {
+			t.Errorf("envBool(%q) = %v, want %v", value, got, want)
+		}
+	}
+	// Invalid values keep the default rather than flipping it.
+	t.Setenv("TINDRA_TEST_BOOL", "yes")
+	if !envBool("TINDRA_TEST_BOOL", true) {
+		t.Error("an invalid value must keep a true default")
+	}
+}
+
+// COOKIE_SECURE=1 used to switch secure cookies off because only "true" counted.
+func TestLoadConfig_cookieSecureAcceptsOne(t *testing.T) {
+	t.Setenv("COOKIE_SECURE", "1")
+	if !loadConfig().cookieSecure {
+		t.Error("COOKIE_SECURE=1 should enable secure cookies")
+	}
+}
+
+func TestLoadConfig_negativeLimitsRejected(t *testing.T) {
+	t.Setenv("PROJECT_LIMIT", "-5")
+	if got := loadConfig().projectLimit; got != 0 {
+		t.Errorf("PROJECT_LIMIT=-5 should fall back to 0 (unlimited), got %d", got)
+	}
+}
+
+func TestRequireMFAFromEnv(t *testing.T) {
+	for value, want := range map[string]bool{"": true, "true": true, "FALSE": false, "false": false, "0": true, "no": true} {
+		t.Setenv("REQUIRE_MFA", value)
+		if got := requireMFAFromEnv(); got != want {
+			t.Errorf("REQUIRE_MFA=%q: got %v, want %v", value, got, want)
+		}
+	}
+}

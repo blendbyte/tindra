@@ -235,12 +235,23 @@ func CreateCronMonitor(ctx context.Context, pool *pgxpool.Pool, m *CronMonitor) 
 	return nil, ErrMonitorSlugTaken
 }
 
+// UpdateCronMonitor saves m. When the schedule changes, or a paused monitor is
+// resumed, the next expected run is recomputed from the new schedule and the
+// current time; keeping the old value would report an immediate false miss.
 func UpdateCronMonitor(ctx context.Context, pool *pgxpool.Pool, m *CronMonitor) (*CronMonitor, error) {
+	var nextAt *time.Time
+	if sched, err := ParseCronSchedule(m.Schedule); err == nil {
+		next := sched.Next(time.Now().UTC())
+		nextAt = &next
+	}
 	row := pool.QueryRow(ctx, `
-		UPDATE cron_monitors SET name=$2, slug=$3, schedule=$4, grace_period_secs=$5, status=$6
+		UPDATE cron_monitors SET name=$2, slug=$3, schedule=$4, grace_period_secs=$5, status=$6,
+			next_expected_at = CASE
+				WHEN next_expected_at IS NOT NULL AND (schedule IS DISTINCT FROM $4 OR (status = 'paused' AND $6 = 'active'))
+				THEN $7 ELSE next_expected_at END
 		WHERE id=$1
 		RETURNING `+cronMonitorCols,
-		m.ID, m.Name, m.Slug, m.Schedule, m.GracePeriodSecs, m.Status,
+		m.ID, m.Name, m.Slug, m.Schedule, m.GracePeriodSecs, m.Status, nextAt,
 	)
 	updated, err := scanCronMonitor(row.Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -360,42 +371,55 @@ func FinishCheckin(ctx context.Context, pool *pgxpool.Pool, monitorID, checkinID
 	return &updated, nil
 }
 
+// updateMonitorAfterCheckin records a check-in on its monitor. Any check-in
+// (started, ok or error) means the job ran for the current slot, so each one
+// moves next_expected_at to the schedule's next run. Only a run with no
+// check-in at all is "missed"; failures are reported as errors instead.
 func updateMonitorAfterCheckin(ctx context.Context, tx pgx.Tx, monitorID, status string) error {
 	now := time.Now().UTC()
+	nextAt, err := nextExpectedRun(ctx, tx, monitorID, now)
+	if err != nil {
+		return err
+	}
 	switch status {
 	case "in_progress":
-		_, err := tx.Exec(ctx,
-			`UPDATE cron_monitors SET is_running=TRUE WHERE id=$1`, monitorID)
-		return err
+		_, err = tx.Exec(ctx,
+			`UPDATE cron_monitors SET is_running=TRUE, next_expected_at=$2 WHERE id=$1`, monitorID, nextAt)
 	case "ok":
-		var schedule string
-		var graceSecs int
-		err := tx.QueryRow(ctx,
-			`SELECT schedule, grace_period_secs FROM cron_monitors WHERE id=$1`, monitorID,
-		).Scan(&schedule, &graceSecs)
-		if err != nil {
-			return fmt.Errorf("get schedule: %w", err)
-		}
-		sched, parseErr := ParseCronSchedule(schedule)
-		if parseErr != nil {
-			return fmt.Errorf("parse schedule: %w", parseErr)
-		}
-		nextAt := sched.Next(now)
 		_, err = tx.Exec(ctx, `
 			UPDATE cron_monitors SET
 				is_running=FALSE, last_ok_at=$2, next_expected_at=$3,
 				last_checkin_status='ok', last_checkin_at=$2
 			WHERE id=$1`, monitorID, now, nextAt)
-		return err
 	case "error":
-		_, err := tx.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
 			UPDATE cron_monitors SET
-				is_running=FALSE, last_checkin_status='error', last_checkin_at=$2
-			WHERE id=$1`, monitorID, now)
-		return err
+				is_running=FALSE, next_expected_at=$3,
+				last_checkin_status='error', last_checkin_at=$2
+			WHERE id=$1`, monitorID, now, nextAt)
 	}
-	return nil
+	return err
 }
+
+// nextExpectedRun returns the monitor's next scheduled run after now.
+func nextExpectedRun(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, monitorID string, now time.Time) (time.Time, error) {
+	var schedule string
+	if err := db.QueryRow(ctx, `SELECT schedule FROM cron_monitors WHERE id=$1`, monitorID).Scan(&schedule); err != nil {
+		return time.Time{}, fmt.Errorf("get schedule: %w", err)
+	}
+	sched, err := ParseCronSchedule(schedule)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse schedule: %w", err)
+	}
+	return sched.Next(now), nil
+}
+
+// MonitorOverdueSQL selects monitors whose expected run has passed its grace
+// period with no check-in. A monitor whose job is still running is not missed.
+const MonitorOverdueSQL = `status = 'active' AND NOT is_running AND next_expected_at IS NOT NULL
+	AND next_expected_at + make_interval(secs => grace_period_secs) < NOW()`
 
 func GetCheckin(ctx context.Context, pool *pgxpool.Pool, id string) (*CronCheckin, error) {
 	var ci CronCheckin
@@ -486,9 +510,7 @@ func ListOverdueMonitors(ctx context.Context, pool *pgxpool.Pool, projectIDs []s
 		query string
 		args  []any
 	)
-	base := `SELECT ` + cronMonitorCols + ` FROM cron_monitors
-		WHERE status='active' AND next_expected_at IS NOT NULL
-		  AND next_expected_at + make_interval(secs => grace_period_secs) < NOW()`
+	base := `SELECT ` + cronMonitorCols + ` FROM cron_monitors WHERE ` + MonitorOverdueSQL
 	if len(projectIDs) > 0 {
 		args = append(args, projectIDs)
 		query = base + ` AND project_id = ANY($1::uuid[]) ORDER BY next_expected_at`

@@ -41,23 +41,29 @@ func CreateAlertFiring(ctx context.Context, pool *pgxpool.Pool, f *AlertFiring) 
 }
 
 // ResolveAlertFiring marks a firing as success or permanently failed (clears retry state).
-func ResolveAlertFiring(ctx context.Context, pool *pgxpool.Pool, id string, status string, attempt int, statusCode *int, errMsg *string) {
-	_, _ = pool.Exec(ctx, `
+func ResolveAlertFiring(ctx context.Context, pool *pgxpool.Pool, id string, status string, attempt int, statusCode *int, errMsg *string) error {
+	if _, err := pool.Exec(ctx, `
 		UPDATE alert_firings
 		SET status=$2, attempt=$3, status_code=$4, error=$5, next_retry_at=NULL, payload=NULL
 		WHERE id=$1`,
 		id, status, attempt, statusCode, errMsg,
-	)
+	); err != nil {
+		return fmt.Errorf("resolve alert firing: %w", err)
+	}
+	return nil
 }
 
 // ScheduleAlertFiringRetry updates a firing to indicate another attempt is pending.
-func ScheduleAlertFiringRetry(ctx context.Context, pool *pgxpool.Pool, id string, attempt int, nextRetryAt time.Time, statusCode *int, errMsg *string, payload []byte) {
-	_, _ = pool.Exec(ctx, `
+func ScheduleAlertFiringRetry(ctx context.Context, pool *pgxpool.Pool, id string, attempt int, nextRetryAt time.Time, statusCode *int, errMsg *string, payload []byte) error {
+	if _, err := pool.Exec(ctx, `
 		UPDATE alert_firings
 		SET status='pending', attempt=$2, next_retry_at=$3, status_code=$4, error=$5, payload=$6
 		WHERE id=$1`,
 		id, attempt, nextRetryAt, statusCode, errMsg, nullableJSON(payload),
-	)
+	); err != nil {
+		return fmt.Errorf("schedule alert firing retry: %w", err)
+	}
+	return nil
 }
 
 // ListAlertFirings returns the most recent firings for a rule (newest first).
