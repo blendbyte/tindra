@@ -24,7 +24,7 @@ vi.mock('@/utils/formatters', () => ({
   formatPct: vi.fn((n: number) => `${n}%`),
 }))
 
-import DBQueriesView from '../DBQueriesView.vue'
+import SpanTable from '@/components/SpanTable.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
@@ -37,20 +37,21 @@ const stubs = {
   SpanSamplesPanel: { name: 'SpanSamplesPanel', emits: ['close'], template: '<div />' },
 }
 
-const makeSpan = (description: string, op = 'db.query') => ({
+const makeSpan = (description: string, op = 'cache.get') => ({
   description,
   op,
-  rate: 2.1,
-  p50: 18,
-  p95: 80,
-  time_pct: 12.3,
+  rate: 1.5,
+  p50: 12,
+  p95: 45,
+  time_pct: 5.2,
   error_rate: 0,
+  miss_rate: 20,
 })
 
 const makeTimeseries = () => ({
   buckets: [
-    { time: '2024-01-01T00:00:00Z', count: 10, p50: 18 },
-    { time: '2024-01-01T01:00:00Z', count: 20, p50: 22 },
+    { time: '2024-01-01T00:00:00Z', count: 10, p50: 12 },
+    { time: '2024-01-01T01:00:00Z', count: 20, p50: 15 },
   ],
   bucket_size: 'hour' as const,
 })
@@ -73,119 +74,129 @@ beforeEach(() => {
   vi.mocked(usePerformanceStore).mockReset()
 })
 
-describe('DBQueriesView', () => {
+describe('SpanTable (cache)', () => {
   describe('loading state', () => {
     it('shows skeleton rows while loading', () => {
       setupMocks([], true)
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       expect(wrapper.find('.perf-table__skel-row').exists()).toBe(true)
     })
   })
 
   describe('empty state', () => {
-    it('shows "No database spans in this window" when there are no spans', () => {
+    it('shows "No cache spans in this window" when there are no spans', () => {
       setupMocks([])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      expect(wrapper.text()).toContain('No database spans in this window')
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      expect(wrapper.text()).toContain('No cache spans in this window')
     })
   })
 
   describe('error state', () => {
     it('shows an error message when loading fails', () => {
       setupMocks([], false, true)
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      expect(wrapper.text()).toContain("Couldn't load query data")
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      expect(wrapper.text()).toContain("Couldn't load cache data")
     })
 
     it('shows a Retry button on error', () => {
       setupMocks([], false, true)
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       expect(wrapper.find('.txerror .btn').text()).toBe('Retry')
     })
   })
 
   describe('loaded spans', () => {
-    it('renders a row for each query span', () => {
-      setupMocks([makeSpan('SELECT * FROM users'), makeSpan('INSERT INTO logs')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+    it('renders a row for each span', () => {
+      setupMocks([makeSpan('user:profile:123'), makeSpan('session:abc')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       const rows = wrapper.findAll('.perf-table__row--clickable')
       expect(rows.length).toBe(2)
     })
 
-    it('displays the query description', () => {
-      setupMocks([makeSpan('SELECT * FROM users')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      expect(wrapper.text()).toContain('SELECT * FROM users')
+    it('displays the span description', () => {
+      setupMocks([makeSpan('user:profile:123')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      expect(wrapper.text()).toContain('user:profile:123')
     })
 
     it('renders table column headers', () => {
-      setupMocks([makeSpan('SELECT 1')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      setupMocks([makeSpan('user:profile')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       expect(wrapper.text()).toContain('Description')
-      expect(wrapper.text()).toContain('QPM')
+      expect(wrapper.text()).toContain('RPM')
       expect(wrapper.text()).toContain('P50')
-      expect(wrapper.text()).toContain('P95')
+      expect(wrapper.text()).toContain('Miss rate')
+    })
+
+    it('renders the miss rate column', () => {
+      setupMocks([makeSpan('user:profile')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      expect(wrapper.text()).toContain('Miss rate')
     })
   })
 
   describe('filter input', () => {
-    it('renders the queries filter input', () => {
+    it('renders the keys filter input', () => {
       setupMocks([])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      expect(wrapper.find('input[aria-label="Filter queries"]').exists()).toBe(true)
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      expect(wrapper.find('input[aria-label="Filter keys"]').exists()).toBe(true)
     })
 
-    it('shows "No queries match" when search has no results', async () => {
-      setupMocks([makeSpan('SELECT * FROM users')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      await wrapper.find('input[aria-label="Filter queries"]').setValue('nonexistent_zzz')
-      expect(wrapper.text()).toContain('No queries match')
+    it('shows "No keys match" when search has no results', async () => {
+      setupMocks([makeSpan('user:profile')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      await wrapper.find('input[aria-label="Filter keys"]').setValue('zzz')
+      expect(wrapper.text()).toContain('No keys match')
     })
   })
 
   describe('sorting', () => {
-    it('renders sorting buttons for each column', () => {
-      setupMocks([makeSpan('SELECT 1')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      const sortBtns = wrapper.findAll('.col-sort')
-      expect(sortBtns.length).toBeGreaterThan(0)
-    })
-
-    it('changes active sort column when clicked', async () => {
-      setupMocks([makeSpan('SELECT 1'), makeSpan('SELECT 2')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      const p50Btn = wrapper.findAll('.col-sort').find(b => b.text().includes('P50'))!
-      await p50Btn.trigger('click')
-      expect(p50Btn.classes()).toContain('col-sort--active')
+    it('toggles sort direction on column header click', async () => {
+      setupMocks([makeSpan('a'), makeSpan('b')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      const p50btn = wrapper.findAll('.col-sort').find(b => b.text().includes('P50'))!
+      await p50btn.trigger('click')
+      await p50btn.trigger('click')
+      expect(wrapper.text()).toBeTruthy()
     })
   })
 
   describe('timeseries chart section', () => {
     it('renders the timeseries section when data is available', () => {
-      setupMocks([makeSpan('SELECT 1')], false, false, makeTimeseries())
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      setupMocks([makeSpan('a')], false, false, makeTimeseries())
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       expect(wrapper.find('.txcharts').exists()).toBe(true)
     })
 
     it('does not render the timeseries section when data is empty', () => {
-      setupMocks([makeSpan('SELECT 1')], false, false, { buckets: [], bucket_size: 'hour' })
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      setupMocks([makeSpan('a')], false, false, { buckets: [], bucket_size: 'hour' })
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       expect(wrapper.find('.txcharts').exists()).toBe(false)
     })
   })
 
+  describe('row click', () => {
+    it('renders clickable rows', () => {
+      setupMocks([makeSpan('user:profile:123'), makeSpan('session:abc')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      const rows = wrapper.findAll('.perf-table__row--clickable')
+      expect(rows.length).toBe(2)
+    })
+  })
+
   describe('retry button', () => {
-    it('shows a Retry button on error', () => {
+    it('calls refetch when Retry is clicked', async () => {
       setupMocks([], false, true)
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
-      expect(wrapper.find('.txerror .btn').text()).toBe('Retry')
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
+      await wrapper.find('.txerror .btn').trigger('click')
+      expect(wrapper.text()).toContain('Retry')
     })
   })
 
   describe('FilterChip interactions', () => {
     it('updates windowHrs when Window FilterChip changes', async () => {
       setupMocks([])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
       usePerformanceStore().windowHrs = '7d'
       await wrapper.vm.$nextTick()
@@ -194,7 +205,7 @@ describe('DBQueriesView', () => {
 
     it('updates envFilter when Env FilterChip changes', async () => {
       setupMocks([])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
       usePerformanceStore().envFilter = 'production'
       await wrapper.vm.$nextTick()
@@ -204,15 +215,15 @@ describe('DBQueriesView', () => {
 
   describe('row click and panel', () => {
     it('opens SpanSamplesPanel when a row is clicked', async () => {
-      setupMocks([makeSpan('SELECT * FROM users')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      setupMocks([makeSpan('user:profile:123')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       await wrapper.find('.perf-table__row--clickable').trigger('click')
       expect(wrapper.findComponent({ name: 'SpanSamplesPanel' }).exists()).toBe(true)
     })
 
     it('closes SpanSamplesPanel on close event', async () => {
-      setupMocks([makeSpan('SELECT * FROM users')])
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      setupMocks([makeSpan('user:profile:123')])
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       await wrapper.find('.perf-table__row--clickable').trigger('click')
       const panel = wrapper.findComponent({ name: 'SpanSamplesPanel' })
       await panel.vm.$emit('close')
@@ -226,7 +237,7 @@ describe('DBQueriesView', () => {
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
         .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
-      const wrapper = mount(DBQueriesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'cache' }, global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')
       expect(refetchFn).toHaveBeenCalled()
     })

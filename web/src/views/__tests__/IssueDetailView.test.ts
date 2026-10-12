@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, toValue } from 'vue'
 
 const pushMock = vi.fn()
+const prefetchQuery = vi.fn()
 const replaceMock = vi.fn()
 
 vi.mock('vue-router', () => ({
@@ -14,13 +15,16 @@ vi.mock('vue-router', () => ({
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
   useMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: ref(false) })),
-  useQueryClient: vi.fn(() => ({ invalidateQueries: vi.fn() })),
+  useQueryClient: vi.fn(() => ({ invalidateQueries: vi.fn(), prefetchQuery })),
   keepPreviousData: undefined,
 }))
 
 vi.mock('@/stores/issueNav', () => ({
   useIssueNavStore: vi.fn(() => ({ ids: [], prevId: () => null, nextId: () => null })),
 }))
+
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn() }))
+vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => ({ confirm: confirmMock }) }))
 
 vi.mock('@/composables/useToast', () => ({
   useToast: vi.fn(() => ({ show: vi.fn() })),
@@ -52,7 +56,7 @@ vi.mock('@/stores/appUser', () => ({
 }))
 
 import IssueDetailView from '../IssueDetailView.vue'
-import { useQuery } from '@tanstack/vue-query'
+import { useQuery, useMutation } from '@tanstack/vue-query'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { apiFetch } from '@/api/client'
 import { flushPromises } from '@vue/test-utils'
@@ -88,31 +92,61 @@ const baseIssue = {
   ignore_count: null,
 }
 
-function setupQueries(issue = baseIssue as unknown, overrides: any[] = []) {
-  // useQuery call order in IssueDetailView:
-  // 1. me, 2. issue, 3. currentEvent, 4. perfEvents,
-  // 5. comments, 6. history, 7. users, 8. linkedTransaction (trace),
-  // 9. traceSpans, 10. issueTags, 11. histogram
-  const defaults = [
-    { data: ref({ id: 'user-1', permissions: { manage_issues: true } }) }, // 1. me
-    { data: ref(issue), isError: ref(false), refetch: vi.fn() },           // 2. issue
-    { data: ref(null) },                                                    // 3. currentEvent
-    { data: ref([]) },                                                      // 4. perfEvents
-    { data: ref([]) },                                                      // 5. comments
-    { data: ref([]) },                                                      // 6. history
-    { data: ref([]) },                                                      // 7. users
-    { data: ref(null) },                                                    // 8. linkedTransaction
-    { data: ref(null) },                                                    // 9. traceSpans
-    { data: ref(null) },                                                    // 10. issueTags
-    { data: ref(null) },                                                    // 11. histogram
-  ]
+// The view and its sections each create their own queries, so a query is
+// recognised by its key instead of by call order. Overrides passed to
+// setupQueries are positional, in the order of QUERY_NAMES.
+const QUERY_NAMES = [
+  'me', 'issue', 'currentEvent', 'perfEvents', 'comments', 'history',
+  'users', 'linkedTransaction', 'traceSpans', 'issueTags', 'histogram',
+] as const
+type QueryName = typeof QUERY_NAMES[number]
 
-  const mocks = defaults.map((d, i) => ({ ...d, ...(overrides[i] ?? {}) }))
-  vi.mocked(useQuery).mockReset()
-  for (const m of mocks) {
-    vi.mocked(useQuery).mockReturnValueOnce(m as any)
+// The third element of an ['issues', id, ...] key names the issue query.
+const ISSUE_SUBQUERIES: Record<string, QueryName> = {
+  events: 'currentEvent',
+  'perf-events': 'perfEvents',
+  comments: 'comments',
+  history: 'history',
+  trace: 'linkedTransaction',
+  tags: 'issueTags',
+  histogram: 'histogram',
+}
+
+function queryName(key: unknown[]): QueryName | undefined {
+  if (key[0] === 'me') return 'me'
+  if (key[0] === 'users') return 'users'
+  if (key[0] === 'transactions' && key[2] === 'spans') return 'traceSpans'
+  if (key[0] === 'issues') return key.length === 2 ? 'issue' : ISSUE_SUBQUERIES[key[2] as string]
+  return undefined
+}
+
+function setupQueries(issue = baseIssue as unknown, overrides: any[] = []) {
+  const defaults: Record<QueryName, Record<string, unknown>> = {
+    me: { data: ref({ id: 'user-1', permissions: { manage_issues: true } }) },
+    issue: { data: ref(issue), isError: ref(false), refetch: vi.fn() },
+    currentEvent: { data: ref(null) },
+    perfEvents: { data: ref([]) },
+    comments: { data: ref([]) },
+    history: { data: ref([]) },
+    users: { data: ref([]) },
+    linkedTransaction: { data: ref(null) },
+    traceSpans: { data: ref(null) },
+    issueTags: { data: ref(null) },
+    histogram: { data: ref(null) },
   }
-  vi.mocked(useQuery).mockReturnValue({ data: ref(undefined) } as any)
+
+  const mocks = Object.fromEntries(QUERY_NAMES.map((name, i) => [name, { ...defaults[name], ...overrides[i] }]))
+  vi.mocked(useQuery).mockReset()
+  vi.mocked(useQuery).mockImplementation(((options: { queryKey: unknown }) => {
+    const name = queryName(toValue(options.queryKey) as unknown[])
+    return (name && mocks[name]) || { data: ref(undefined) }
+  }) as any)
+}
+
+// queryOptions returns the options the named query was created with.
+function queryOptions(name: QueryName) {
+  const call = vi.mocked(useQuery).mock.calls.find(([options]) => queryName(toValue((options as { queryKey: unknown }).queryKey) as unknown[]) === name)
+  return call![0] as unknown as { queryKey: { value: unknown[] } }
 }
 
 beforeEach(() => {
@@ -495,6 +529,24 @@ describe('IssueDetailView', () => {
       setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.find('.section__badge--method').text()).toBe('GET')
+    })
+
+    it('lets keyboard users collapse a section and announces its state', async () => {
+      const eventWithRequest = {
+        id: 'evt-1',
+        payload: { request: { method: 'GET', url: 'https://example.com/health' } },
+      }
+      localStorage.removeItem('tindra:issue:collapsed')
+      setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const head = wrapper.findAll('.section__head').find(h => h.text().includes('HTTP Request'))!
+      expect(head.attributes('role')).toBe('button')
+      expect(head.attributes('tabindex')).toBe('0')
+      expect(head.attributes('aria-expanded')).toBe('true')
+      await head.trigger('keydown', { key: 'Enter' })
+      expect(head.attributes('aria-expanded')).toBe('false')
+      expect(wrapper.find('.req-section').exists()).toBe(false)
+      localStorage.removeItem('tindra:issue:collapsed')
     })
 
     it('renders request headers table', () => {
@@ -1003,23 +1055,28 @@ describe('IssueDetailView', () => {
     })
 
     it('confirmDeleteComment calls deleteComment when confirm returns true', async () => {
-      vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+      confirmMock.mockResolvedValue(true)
       setupQueries(baseIssue, [{}, {}, {}, {}, { data: ref([ownComment]) }])
+      const before = vi.mocked(useMutation).mock.results.length
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      const deleteBtn = wrapper.find('.activity-action--danger')
-      await deleteBtn.trigger('click')
-      expect(vi.mocked(window.confirm)).toHaveBeenCalled()
-      vi.unstubAllGlobals()
+      // The view creates two mutations, then the activity section creates
+      // postComment, saveEdit and deleteComment, so deleteComment is the fifth.
+      const deleteMutate = vi.mocked(useMutation).mock.results[before + 4].value.mutate
+      await wrapper.find('.activity-action--danger').trigger('click')
+      await flushPromises()
+      expect(deleteMutate).toHaveBeenCalledWith('c-1')
     })
 
     it('confirmDeleteComment does not delete when confirm returns false', async () => {
-      vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
+      confirmMock.mockResolvedValue(false)
       setupQueries(baseIssue, [{}, {}, {}, {}, { data: ref([ownComment]) }])
+      const before = vi.mocked(useMutation).mock.results.length
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      const deleteBtn = wrapper.find('.activity-action--danger')
-      await deleteBtn.trigger('click')
-      expect(vi.mocked(window.confirm)).toHaveBeenCalledWith('Delete this comment?')
-      vi.unstubAllGlobals()
+      const deleteMutate = vi.mocked(useMutation).mock.results[before + 4].value.mutate
+      await wrapper.find('.activity-action--danger').trigger('click')
+      await flushPromises()
+      expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Delete this comment?', danger: true }))
+      expect(deleteMutate).not.toHaveBeenCalled()
     })
   })
 
@@ -1242,20 +1299,14 @@ describe('IssueDetailView', () => {
   describe('error state - button clicks', () => {
     it('calls refetchIssue when Try again button is clicked', async () => {
       const refetchFn = vi.fn()
-      vi.mocked(useQuery)
-        .mockReturnValueOnce({ data: ref({ id: 'user-1', permissions: { manage_issues: true } }) } as any)
-        .mockReturnValueOnce({ data: ref(undefined), isError: ref(true), refetch: refetchFn } as any)
-        .mockReturnValue({ data: ref(undefined) } as any)
+      setupQueries(undefined, [{}, { data: ref(undefined), isError: ref(true), refetch: refetchFn }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')
       expect(refetchFn).toHaveBeenCalled()
     })
 
     it('navigates to /issues when back link is clicked in error state', async () => {
-      vi.mocked(useQuery)
-        .mockReturnValueOnce({ data: ref({ id: 'user-1', permissions: { manage_issues: true } }) } as any)
-        .mockReturnValueOnce({ data: ref(undefined), isError: ref(true), refetch: vi.fn() } as any)
-        .mockReturnValue({ data: ref(undefined) } as any)
+      setupQueries(undefined, [{}, { data: ref(undefined), isError: ref(true), refetch: vi.fn() }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       await wrapper.find('.detail-breadcrumb__back').trigger('click')
       expect(pushMock).toHaveBeenCalledWith('/issues')
@@ -1407,6 +1458,28 @@ describe('IssueDetailView', () => {
     })
   })
 
+  describe('status feedback', () => {
+    it('confirms a status change only after the server accepted it', async () => {
+      setupQueries()
+      const { useToast } = await import('@/composables/useToast')
+      const before = vi.mocked(useMutation).mock.results.length
+      const toastsBefore = vi.mocked(useToast).mock.results.length
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const show = vi.mocked(useToast).mock.results[toastsBefore].value.show
+      // updateStatus is the view's first mutation.
+      const mutate = vi.mocked(useMutation).mock.results[before].value.mutate
+      await wrapper.findAll('.btn--primary').find(b => b.text().includes('Resolve'))!.trigger('click')
+      expect(mutate).toHaveBeenCalledWith({ status: 'resolved' }, expect.anything())
+      expect(show).not.toHaveBeenCalled()
+      mutate.mock.calls.at(-1)![1].onSuccess()
+      expect(show).toHaveBeenCalledWith('Resolved', expect.any(Function))
+      // Undo restores the previous status.
+      show.mock.calls.at(-1)![1]()
+      expect(mutate).toHaveBeenLastCalledWith({ status: 'open' })
+      wrapper.unmount()
+    })
+  })
+
   describe('IgnoreButton emit handling', () => {
     it('emitting ignore with status and ignore_until calls updateStatus with payload', async () => {
       setupQueries()
@@ -1469,6 +1542,20 @@ describe('IssueDetailView', () => {
   })
 
   describe('user with manage_issues = false', () => {
+    it('hides status and assignment actions and ignores their shortcuts', async () => {
+      setupQueries(baseIssue, [{ data: ref({ id: 'user-1', permissions: { manage_issues: false } }) }])
+      const before = vi.mocked(useMutation).mock.results.length
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const labels = wrapper.findAll('.detail-breadcrumb__actions .btn').map(b => b.text())
+      expect(labels.some(l => l.includes('Resolve') || l.includes('Assign'))).toBe(false)
+      expect(wrapper.findComponent({ name: 'IgnoreButton' }).exists()).toBe(false)
+      for (const key of ['e', 'i', 'a']) document.dispatchEvent(new KeyboardEvent('keydown', { key }))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.assign-popover').exists()).toBe(false)
+      for (const r of vi.mocked(useMutation).mock.results.slice(before)) expect(r.value.mutate).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
     it('does not show delete button for other users comments when manage_issues is false', () => {
       const otherComment = {
         id: 'c-other',
@@ -2000,4 +2087,57 @@ describe('linked setup events', () => {
   expect(replaceMock).toHaveBeenCalledWith({ query: { event_id: undefined, check: 'keep' } })
   wrapper.unmount()
  })
+})
+
+describe('moving between issues', () => {
+  it('resets per-issue state when the route switches to another issue', async () => {
+    const { reactive, nextTick } = await import('vue')
+    const route = reactive({ params: { id: 'iss-123' }, query: {} as Record<string, string> })
+    vi.mocked(useRoute).mockReturnValue(route as any)
+    vi.mocked(apiFetch).mockResolvedValue({ events: [], has_more: false, next_cursor_time: null, next_cursor_id: null })
+    setupQueries({ ...baseIssue, event_count: 10 }, [{}, {}, { data: ref({ id: 'evt-1', payload: {} }) }])
+    const wrapper = mount(IssueDetailView, { global: { stubs } })
+
+    await wrapper.findAll('.eventnav__btn').find(b => b.text().includes('Older'))!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Show all')!.trigger('click')
+    await wrapper.find('textarea').setValue('half-written comment')
+    const eventQuery = queryOptions('currentEvent')
+    expect(eventQuery.queryKey.value[3]).toBe(1)
+
+    route.params.id = 'iss-456'
+    await nextTick()
+
+    expect(eventQuery.queryKey.value[1]).toBe('iss-456')
+    expect(eventQuery.queryKey.value[3]).toBe(0)
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.findAll('button').some(b => b.text() === 'Hide list')).toBe(false)
+  })
+
+  it('opens an event picked from the list by its ID', async () => {
+    vi.mocked(useRoute).mockReturnValue({ params: { id: 'iss-123' }, query: {} } as any)
+    vi.mocked(apiFetch).mockResolvedValue({
+      events: [{ id: 'evt-picked', timestamp: '2024-01-01T00:00:00Z', received_at: '2024-01-01T00:00:00Z', level: 'error', environment: null, release: null, tags: {} }],
+      has_more: false, next_cursor_time: null, next_cursor_id: null,
+    })
+    setupQueries(baseIssue, [{}, {}, { data: ref({ id: 'evt-1', payload: {} }) }])
+    const wrapper = mount(IssueDetailView, { global: { stubs } })
+    await wrapper.findAll('button').find(b => b.text() === 'Show all')!.trigger('click')
+    await flushPromises()
+    replaceMock.mockClear()
+    await wrapper.find('.evttable tbody tr').trigger('click')
+    expect(replaceMock).toHaveBeenCalledWith({ query: { event_id: 'evt-picked' } })
+  })
+})
+
+describe('section prefetch', () => {
+  it('requests comments, history and tags while the issue is still loading', () => {
+    prefetchQuery.mockClear()
+    setupQueries(undefined)
+    mount(IssueDetailView, { global: { stubs } })
+    expect(prefetchQuery.mock.calls.map(([q]) => q.queryKey)).toEqual([
+      ['issues', 'iss-123', 'comments'],
+      ['issues', 'iss-123', 'history'],
+      ['issues', 'iss-123', 'tags'],
+    ])
+  })
 })

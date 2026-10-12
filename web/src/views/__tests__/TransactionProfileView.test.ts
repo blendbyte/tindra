@@ -1,7 +1,7 @@
 import { useInvestigationStore } from '@/stores/investigation'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 
 let routeQueryOverride: Record<string, string> = { name: '/api/users', op: 'http.server' }
 
@@ -34,8 +34,18 @@ vi.mock('@/stores/auth', () => ({
 import TransactionProfileView from '../TransactionProfileView.vue'
 import { useQuery, useInfiniteQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+
+interface QueryOptionsMock {
+  queryKey: Ref<unknown[]>
+  queryFn?: (context: { signal: AbortSignal }) => unknown
+  enabled: Ref<boolean>
+}
+
+function queryCalls() {
+  return vi.mocked(useQuery).mock.calls.map(([opts]) => opts as QueryOptionsMock)
+}
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -757,7 +767,7 @@ describe('TransactionProfileView', () => {
       routeQueryOverride = { name: '/api/users', op: 'http.server', project_id: 'route-proj-99' }
       setupMocks([])
       mount(TransactionProfileView, { global: { stubs } })
-      const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
+      const queryKey = queryCalls()[0].queryKey.value as string[]
       expect(queryKey[2]).not.toContain('project_id=route-proj-99')
     })
 
@@ -772,7 +782,7 @@ describe('TransactionProfileView', () => {
         isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
       } as any)
       mount(TransactionProfileView, { global: { stubs } })
-      const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
+      const queryKey = queryCalls()[0].queryKey.value as string[]
       expect(queryKey[2]).toContain('store-proj-1')
       expect(queryKey[2]).not.toContain('route-proj-99')
     })
@@ -788,7 +798,7 @@ describe('TransactionProfileView', () => {
         isFetchingNextPage: ref(false), isLoading: ref(false), isError: ref(false), refetch: vi.fn(),
       } as any)
       mount(TransactionProfileView, { global: { stubs } })
-      const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
+      const queryKey = queryCalls()[0].queryKey.value as string[]
       expect(queryKey[2]).toContain('project_id=store-proj-42')
     })
 
@@ -796,7 +806,7 @@ describe('TransactionProfileView', () => {
       routeQueryOverride = { name: '/api/users', op: 'http.server' }
       setupMocks([])
       mount(TransactionProfileView, { global: { stubs } })
-      const queryKey = vi.mocked(useQuery).mock.calls[0][0].queryKey.value as string[]
+      const queryKey = queryCalls()[0].queryKey.value as string[]
       expect(queryKey[2]).not.toContain('project_id=')
     })
   })

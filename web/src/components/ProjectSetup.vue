@@ -8,6 +8,7 @@ import { useConfig } from '@/composables/useConfig'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/Icon.vue'
+import { useClipboard } from '@/composables/useClipboard'
 
 const props = defineProps<{ project: ProjectMetadata; focus?: string }>()
 const emit = defineEmits<{ continue: [] }>()
@@ -74,9 +75,9 @@ const snippet = computed(() => {
   return `import * as Sentry from ${JSON.stringify(pkg)}\n\nSentry.init({\n  dsn: ${JSON.stringify(dsn.value)}\n})\n\nSentry.withScope((scope) => {\n  scope.setTag("tindra_setup", ${JSON.stringify(marker)})\n  Sentry.captureException(new Error("Hello, Tindra!"))\n})${sdk.value === 'node' ? '\n\nawait Sentry.flush(5000)' : ''}`
 })
 
-async function copy(value: string, label: string) {
-  try { await navigator.clipboard.writeText(value); toast.show(`${label} copied`) }
-  catch { toast.show('Could not copy. Select the text and copy it manually.', 'error') }
+const clipboard = useClipboard()
+function copy(value: string, label: string) {
+  clipboard.copy(value, `${label} copied`)
 }
 function finish() {
   try { sessionStorage.setItem(`tindra:setup-dismissed:${props.project.id}`, '1') } catch { /* Optional tab preference. */ }

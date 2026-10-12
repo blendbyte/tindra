@@ -22,7 +22,8 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       const isPublic =
         here === '/login' || here.startsWith('/invite/') || here.startsWith('/reset-password/')
       if (!isPublic) {
-        window.location.href = '/login'
+        // Come back here after signing in again.
+        window.location.href = `/login?redirect=${encodeURIComponent(here + window.location.search)}`
         return undefined as T
       }
     }

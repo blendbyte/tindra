@@ -9,8 +9,13 @@ import { useAuthStore } from '@/stores/auth'
 import type { User } from '@/api/types'
 import IssueDetailView from '../IssueDetailView.vue'
 import SettingsView from '../SettingsView.vue'
+import OverviewTab from '../settings/OverviewTab.vue'
+import ProjectsTab from '../settings/ProjectsTab.vue'
+import AlertsTab from '../settings/AlertsTab.vue'
+import AuditTab from '../settings/AuditTab.vue'
 import DashboardView from '../DashboardView.vue'
-import MonitorsView from '../MonitorsView.vue'
+import CronMonitorsView from '../monitors/CronMonitorsView.vue'
+import UptimeMonitorsView from '../monitors/UptimeMonitorsView.vue'
 import TransactionDetailView from '../TransactionDetailView.vue'
 import TransactionProfileView from '../TransactionProfileView.vue'
 import ReleaseDetailView from '../ReleaseDetailView.vue'
@@ -18,9 +23,13 @@ import IssueListView from '../IssueListView.vue'
 import ReleasesView from '../ReleasesView.vue'
 import LogsView from '../LogsView.vue'
 import LoginView from '../LoginView.vue'
-import DBQueriesView from '../DBQueriesView.vue'
+import SpanTable from '@/components/SpanTable.vue'
 import SpanSamplesPanel from '@/components/SpanSamplesPanel.vue'
 import QuotaBanner from '@/components/QuotaBanner.vue'
+
+// Dashboard widgets own most dashboard queries, so render them for real.
+const dashboardWidgets = Object.fromEntries(['KpiStripWidget', 'ProjectOverviewWidget', 'TransactionDensityWidget', 'MonitorsWidget',
+  'HotIssuesWidget', 'SlowTransactionsWidget', 'AlertsWidget', 'ReleasesWidget'].map(name => [name, false]))
 
 // Keep Vue Query and apiFetch real: requests must reach fetch with a signal,
 // and removing their last observer must cancel the actual network operation.
@@ -38,7 +47,7 @@ let pinia: ReturnType<typeof createPinia>
 type Request = { url: string; signal: AbortSignal; resolve: (data: unknown) => void }
 let requests: Request[]
 
-async function open(component: Component, path: string, seed: [unknown[], unknown][] = [], props: Record<string, unknown> = {}) {
+async function open(component: Component, path: string, seed: [unknown[], unknown][] = [], props: Record<string, unknown> = {}, stubs: Record<string, boolean> = {}) {
   requests = []
   vi.stubGlobal('fetch', vi.fn((url: string, init: RequestInit) => new Promise<Response>((resolve, reject) => {
     const signal = init.signal as AbortSignal
@@ -63,7 +72,7 @@ async function open(component: Component, path: string, seed: [unknown[], unknow
   if (path.includes('project_id=')) useInvestigationStore(pinia).projectIds = new URL(path, 'http://test').searchParams.getAll('project_id')
   await router.push(path)
   await router.isReady()
-  wrapper = shallowMount(component, { props, global: { directives: { tooltip: {} }, plugins: [pinia, router, [VueQueryPlugin, { queryClient: client }]] } })
+  wrapper = shallowMount(component, { props, global: { stubs, directives: { tooltip: {} }, plugins: [pinia, router, [VueQueryPlugin, { queryClient: client }]] } })
   await flushPromises()
   return wrapper
 }
@@ -98,7 +107,7 @@ describe('view request lifecycle', () => {
       [['issues', 'issue-1'], { id: 'issue-1', title: 'Failure', kind: 'error', event_count: 1, status: 'open', first_seen: '2026-01-01', last_seen: '2026-01-01' }],
       [['issues', 'issue-1', 'events', 0, ''], { payload: { contexts: { trace: { trace_id: 'trace-1' } } } }],
       [['issues', 'issue-1', 'trace', 0, ''], { id: 'tx-1' }],
-    ])
+    ], {}, { IssueTracePreview: false, IssueTags: false, IssueActivity: false })
     await expectCancelled(['/api/me', '/api/issues/issue-1', '/api/issues/issue-1/events/latest?offset=0',
       '/api/issues/issue-1/comments', '/api/issues/issue-1/history', '/api/users',
       '/api/issues/issue-1/trace?offset=0', '/api/transactions/tx-1/spans',
@@ -108,24 +117,30 @@ describe('view request lifecycle', () => {
   it('loads performance issue samples without requesting an error event', async () => {
     await open(IssueDetailView, '/issues/issue-1', [
       [['issues', 'issue-1'], { id: 'issue-1', title: 'N+1', kind: 'n1_query', event_count: 1, status: 'open', first_seen: '2026-01-01', last_seen: '2026-01-01' }],
-    ])
+    ], {}, { IssuePerfTransactions: false })
     expect(requests.some(r => r.url.includes('/events/latest'))).toBe(false)
     await expectCancelled(['/api/issues/issue-1/perf-events'])
   })
 
-  it.each(['overview', 'audit', 'alerts'])('cancels settings reads on the %s tab', async tab => {
-    await open(SettingsView, `/settings/${tab}`)
-    const urls = ['/api/config', '/api/tokens', '/api/projects', '/api/users', '/api/me', '/api/invites', '/api/settings']
-    if (tab === 'overview') urls.push('/api/instance/health')
-    if (tab === 'audit') urls.push('/api/audit?kind=&q=')
-    if (tab === 'alerts') urls.push('/api/alert-rules')
+  it('cancels the settings shell read of the current user', async () => {
+    await open(SettingsView, '/settings/audit')
+    await expectCancelled(['/api/me'])
+  })
+
+  // Each settings tab owns its queries, so only the visible tab's reads run.
+  it.each([
+    ['overview', OverviewTab, ['/api/me', '/api/projects', '/api/users', '/api/settings', '/api/instance/health']],
+    ['audit', AuditTab, ['/api/audit?kind=&q=']],
+    ['alerts', AlertsTab, ['/api/me', '/api/projects', '/api/alert-rules']],
+  ] as const)('cancels settings reads on the %s tab', async (tab, component, urls) => {
+    await open(component, `/settings/${tab}`)
     expect(requests.some(r => r.url.includes('/quota'))).toBe(false)
     expect(requests.some(r => r.url.includes('/firings'))).toBe(false)
-    await expectCancelled(urls)
+    await expectCancelled([...urls])
   })
 
   it('cancels dashboard reads and uses lightweight overview endpoints', async () => {
-    await open(DashboardView, '/')
+    await open(DashboardView, '/', [], {}, dashboardWidgets)
     await expectCancelled(['/api/me', '/api/setup-status', '/api/issues/overview?',
       '/api/transactions/summaries?hours=24', '/api/transactions/counts?hours=168',
       '/api/releases/health?', '/api/alert-rules', '/api/uptime-monitors?', '/api/monitors?', '/api/projects/stats'])
@@ -151,10 +166,14 @@ describe('view request lifecycle', () => {
       '/api/transactions?hours=24&name=checkout&op=http.server&project_id=p1'])
   })
 
-  it('does not fetch monitor history until a monitor is expanded', async () => {
-    await open(MonitorsView, '/monitors/cron')
+  it.each([
+    ['/monitors/cron', CronMonitorsView, '/api/monitors?', '/api/uptime-monitors'],
+    ['/monitors/uptime', UptimeMonitorsView, '/api/uptime-monitors?', '/api/monitors'],
+  ])('loads only its own monitor list on %s and no history until expanded', async (path, view, list, other) => {
+    await open(view, path)
     expect(requests.some(r => /\/(checkins|checks|stats)/.test(r.url))).toBe(false)
-    await expectCancelled(['/api/monitors?', '/api/uptime-monitors?'])
+    expect(requests.some(r => r.url.startsWith(other))).toBe(false)
+    await expectCancelled([list])
   })
 
   it('cancels quota usage and settings requests when the banner is removed', async () => {
@@ -177,7 +196,7 @@ describe('filtered request lifecycle', () => {
   })
 
   it('cancels query summaries and timeseries together', async () => {
-    await open(DBQueriesView, '/performance/db')
+    await open(SpanTable, '/performance/queries', [], { kind: 'db' })
     await expectCancelled(['/api/spans/db?hours=24', '/api/spans/db/timeseries?hours=24'])
   })
 
@@ -194,7 +213,7 @@ describe('filtered request lifecycle', () => {
       interval_secs: 60, timeout_secs: 10, expected_codes: '200-299', consecutive_failures: 0,
     }
     const key = kind === 'cron' ? 'monitors' : 'uptime-monitors'
-    const view = await open(MonitorsView, `/monitors/${kind}`, [[[key, ''], [monitor]]])
+    const view = await open(kind === 'cron' ? CronMonitorsView : UptimeMonitorsView, `/monitors/${kind}`, [[[key, ''], [monitor]]])
     expect(requests.some(r => /\/(checkins|checks|stats)/.test(r.url))).toBe(false)
     await view.get('.monrow:not(.monrow--header)').trigger('click')
     await flushPromises()
@@ -207,7 +226,7 @@ describe('filtered request lifecycle', () => {
   })
 
   it('loads project quota only when expanded and cancels it on collapse', async () => {
-    const view = await open(SettingsView, '/settings/projects', [[['projects', 'usage'], projects]])
+    const view = await open(ProjectsTab, '/settings/projects', [[['projects', 'usage'], projects]])
     expect(requests.some(r => r.url.endsWith('/quota'))).toBe(false)
     await view.get('.proj-card__head--row').trigger('click')
     await flushPromises()
@@ -218,7 +237,7 @@ describe('filtered request lifecycle', () => {
   })
 
   it('unwraps alert rules and loads delivery history only for an expanded rule', async () => {
-    const view = await open(SettingsView, '/settings/alerts')
+    const view = await open(AlertsTab, '/settings/alerts')
     const rule = { id: 'rule-1', name: 'New errors', enabled: true, trigger: 'new_issue', channel: 'email', project_ids: ['p1'], email_to: 'admin@example.com' }
     request('/api/alert-rules').resolve({ rules: [rule] })
     await flushPromises()
@@ -232,7 +251,7 @@ describe('filtered request lifecycle', () => {
   })
 
   it('treats an empty alert response as no configured rules', async () => {
-    const view = await open(SettingsView, '/settings/alerts')
+    const view = await open(AlertsTab, '/settings/alerts')
     request('/api/alert-rules').resolve({})
     await flushPromises()
     expect(client.getQueryData(['alert-rules'])).toEqual([])
@@ -240,7 +259,7 @@ describe('filtered request lifecycle', () => {
   })
 
   it('unwraps dashboard alert responses instead of caching their transport wrapper', async () => {
-    await open(DashboardView, '/')
+    await open(DashboardView, '/', [], {}, dashboardWidgets)
     request('/api/alert-rules').resolve({ rules: [] })
     await flushPromises()
     expect(client.getQueryData(['alert-rules'])).toEqual([])
@@ -266,7 +285,7 @@ describe('pagination cancellation', () => {
 
 describe('monitor project metadata refresh', () => {
   it('shares the initial metadata request and refetches it through the monitor observer', async () => {
-    await open(MonitorsView, '/monitors/cron')
+    await open(CronMonitorsView, '/monitors/cron')
     const url = '/api/projects/metadata'
     expect(requests.filter(r => r.url === url)).toHaveLength(1)
     request(url).resolve(projects)

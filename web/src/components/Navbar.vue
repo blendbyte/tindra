@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { useInvestigationStore } from '@/stores/investigation'
 import { investigationQuery } from '@/router/investigation'
 const investigation = useInvestigationStore()
@@ -261,7 +262,9 @@ async function logout() {
               <div
                 v-for="p in filteredProjects"
                 :key="p.id"
+                v-clickable
                 class="popover__item"
+                :aria-pressed="projects.selectedIds.includes(p.id)"
                 @click="toggleProject(p.id)"
               >
                 <span
@@ -305,6 +308,7 @@ async function logout() {
           class="nav__icon-btn"
           :aria-current="route.path.startsWith('/settings') ? 'page' : undefined"
           title="Settings"
+          aria-label="Settings"
           @click="router.push('/settings')"
         >
           <Icon name="cog" :size="14" />
@@ -324,6 +328,7 @@ async function logout() {
       <button
         class="nav__icon-btn nav__secondary-action"
         title="Log out"
+        aria-label="Log out"
         @click="logout"
       >
         <Icon name="log-out" :size="14" />

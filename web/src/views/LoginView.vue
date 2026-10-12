@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { safeRedirect } from '@/router/guard'
 import Icon from '@/components/Icon.vue'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
@@ -92,7 +93,7 @@ async function submit() {
     } else {
       await qc.resetQueries()
       auth.ready = false
-      router.push('/dashboard')
+      router.push(safeRedirect(route.query.redirect))
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'invalid credentials'
@@ -112,7 +113,7 @@ async function submitMFA() {
     })
     await qc.resetQueries()
     auth.ready = false
-    router.push('/dashboard')
+    router.push(safeRedirect(route.query.redirect))
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'invalid code'
     mfaCode.value = ''

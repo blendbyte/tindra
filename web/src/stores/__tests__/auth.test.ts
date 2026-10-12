@@ -7,7 +7,11 @@ const mockUser: User = {
   id: '1',
   email: 'test@example.com',
   name: 'Test User',
-  role: 'member',
+  has_password: true,
+  mfa_enabled: false,
+  weekly_digest: false,
+  timezone: 'UTC',
+  permissions: { manage_projects: false, manage_users: false, manage_alerts: false, manage_issues: false },
   created_at: '2025-01-01T00:00:00Z',
 }
 

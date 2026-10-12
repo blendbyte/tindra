@@ -70,7 +70,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
         <span class="optag" :class="`optag--${row.op.split('.')[0]}`">{{ row.op }}</span>
         <span class="samples-panel__title">{{ row.description || '(no description)' }}</span>
       </div>
-      <button class="icon-btn" @click="emit('close')" title="Close">
+      <button class="icon-btn" title="Close" aria-label="Close samples" @click="emit('close')">
         <Icon name="x" :size="16" />
       </button>
     </div>

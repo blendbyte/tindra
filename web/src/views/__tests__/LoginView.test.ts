@@ -121,7 +121,29 @@ describe('LoginView', () => {
       }))
     })
 
-    it('redirects to /issues after a successful login', async () => {
+    it('redirects to /dashboard after a successful login', async () => {
+      vi.mocked(apiFetch).mockResolvedValue({})
+      const wrapper = mountLogin()
+      await wrapper.find('#email').setValue('user@example.com')
+      await wrapper.find('#password').setValue('secret')
+      await wrapper.find('form').trigger('submit')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(pushMock).toHaveBeenCalledWith('/dashboard')
+    })
+
+    it('returns to the page that required the login', async () => {
+      routeMock.query = { redirect: '/issues/42?event_id=abc' }
+      vi.mocked(apiFetch).mockResolvedValue({})
+      const wrapper = mountLogin()
+      await wrapper.find('#email').setValue('user@example.com')
+      await wrapper.find('#password').setValue('secret')
+      await wrapper.find('form').trigger('submit')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(pushMock).toHaveBeenCalledWith('/issues/42?event_id=abc')
+    })
+
+    it('ignores a redirect to another site', async () => {
+      routeMock.query = { redirect: '//evil.example/phish' }
       vi.mocked(apiFetch).mockResolvedValue({})
       const wrapper = mountLogin()
       await wrapper.find('#email').setValue('user@example.com')
@@ -240,6 +262,16 @@ describe('LoginView', () => {
       await wrapper.find('.login__submit').trigger('click')
       await new Promise((r) => setTimeout(r, 0))
       expect(pushMock).toHaveBeenCalledWith('/dashboard')
+    })
+
+    it('returns to the requested page after MFA', async () => {
+      routeMock.query = { redirect: '/monitors' }
+      const wrapper = await triggerMfa()
+      vi.mocked(apiFetch).mockResolvedValue({})
+      await wrapper.find('.login__mfa-code').setValue('123456')
+      await wrapper.find('.login__submit').trigger('click')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(pushMock).toHaveBeenCalledWith('/monitors')
     })
 
     it('disables the Verify button when fewer than 6 digits are entered', async () => {

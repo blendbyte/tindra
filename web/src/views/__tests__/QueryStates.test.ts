@@ -11,7 +11,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn().mockResolvedValue(undefined) }),
 }))
 vi.mock('@/api/client', () => ({ apiFetch: vi.fn() }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { timezone: 'UTC', permissions: {} } }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { timezone: 'UTC', permissions: {} }, setUser: () => {} }) }))
 vi.mock('@/stores/appUser', () => ({
   useAppUserStore: () => ({ identity: '', label: '', clear: vi.fn() }),
   routeUserIdentity: (q: Record<string, string>) => q.user ?? '',

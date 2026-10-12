@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { computed, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
@@ -198,6 +199,8 @@ function levelClass(level: string) {
               v-for="tx in transactions"
               :key="`${tx.transaction}|${tx.op}`"
               class="rel-tx-row"
+              v-clickable
+              role="link"
               @click="router.push({ name: 'transaction-profile', query: { name: tx.transaction, op: tx.op } })"
             >
               <div class="rel-tx-name">
@@ -231,6 +234,8 @@ function levelClass(level: string) {
                   v-for="issue in newIssues"
                   :key="issue.id"
                   class="rel-issue-row"
+                  v-clickable
+                  role="link"
                   @click="router.push(`/issues/${issue.id}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
@@ -252,6 +257,8 @@ function levelClass(level: string) {
                   v-for="issue in regressedIssues"
                   :key="issue.id"
                   class="rel-issue-row"
+                  v-clickable
+                  role="link"
                   @click="router.push(`/issues/${issue.id}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
@@ -273,6 +280,8 @@ function levelClass(level: string) {
                   v-for="issue in ongoingIssues"
                   :key="issue.id"
                   class="rel-issue-row"
+                  v-clickable
+                  role="link"
                   @click="router.push(`/issues/${issue.id}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />

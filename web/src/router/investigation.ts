@@ -18,7 +18,7 @@ export function investigationQuery(state: ReturnType<typeof useInvestigationStor
     project_id: state.projectIds.length ? [...state.projectIds].sort() : 'all',
     environment: state.environment === 'All' ? 'all' : state.environment,
     range: state.absolute ? 'custom' : state.range === 'All' ? 'all' : state.range,
-    ...(state.absolute ?? {}),
+    ...state.absolute,
   }
 }
 export function installInvestigationRouter(router: Router, pinia: Pinia) {

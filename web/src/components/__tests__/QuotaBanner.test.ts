@@ -23,13 +23,17 @@ import QuotaBanner from '../QuotaBanner.vue'
 function makeProject(id: string, eventCount: number): Project {
   return {
     id, name: `Project ${id}`, public_key: id, slug: id,
-    passthrough_dsn: null, created_at: '2025-01-01T00:00:00Z',
-    event_count: eventCount,
+    passthrough_dsn: null, scrub_fields: [], profiling_enabled: false, scrub_patterns: [],
+    created_at: '2025-01-01T00:00:00Z',
+    event_count: eventCount, events_24h: 0, storage_bytes: 0, log_count: 0, tx_count: 0,
   }
 }
 
 function makeSettings(eventLimit: number): ServerSettings {
-  return { event_limit: eventLimit, project_limit: 0, user_limit: 0, version: '0', commit: '' }
+  return {
+    event_limit: eventLimit, project_limit: 0, user_limit: 0, log_row_limit: 0, tx_row_limit: 0,
+    version: '0', commit: '', update_available: false,
+  }
 }
 
 describe('QuotaBanner', () => {

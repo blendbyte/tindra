@@ -94,7 +94,7 @@ describe('ToastStack', () => {
   })
 
   it('shows an undo button when onUndo is provided', async () => {
-    useToast().show('Project created', vi.fn())
+    useToast().show('Project created', vi.fn<() => void>())
     const wrapper = mount(ToastStack)
     await nextTick()
     expect(wrapper.find('.toast__undo').exists()).toBe(true)

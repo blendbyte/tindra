@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { ref, computed, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useInfiniteQuery } from '@tanstack/vue-query'
@@ -338,6 +339,8 @@ function projectName(projectId: string) {
             :key="s.id"
             class="tx-sample-row"
             :class="{ 'tx-sample-row--selected': selectedIdx === i }"
+            v-clickable
+            role="link"
             @click="router.push(`/transactions/${s.id}`)"
           >
             <span class="tx-sample-row__time">{{ formatTime(s.start_timestamp) }}</span>

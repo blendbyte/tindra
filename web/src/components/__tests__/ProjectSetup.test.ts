@@ -3,7 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia } from 'pinia'
 import { apiFetch, ApiError } from '@/api/client'
-import type { SetupCheck, SetupStatus } from '@/api/setup'
+import type { SetupCheck, SetupExample, SetupStatus } from '@/api/setup'
 import ProjectSetup from '../ProjectSetup.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { User } from '@/api/types'
@@ -21,6 +21,9 @@ let status: SetupStatus
 let check: SetupCheck
 let wrapper: VueWrapper | undefined
 let client: QueryClient
+function makeExample(id: string): SetupExample {
+  return { id, issue_id: null, received_at: status.checked_at, environment: '', sdk: '', release: '' }
+}
 beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear()
@@ -138,11 +141,11 @@ describe('Project setup', () => {
   })
 
   it('re-verifies the diagnosed event after an upload when newer traffic arrives', async () => {
-    status.examples.events = { id: 'original-event', received_at: status.checked_at }
+    status.examples.events = makeExample('original-event')
     await render()
     useAuthStore().user = { permissions: { manage_projects: true } } as User
     await click('Verify source maps')
-    status.examples.events = { id: 'newer-event', received_at: status.checked_at }
+    status.examples.events = makeExample('newer-event')
     await wrapper!.find('input[id$="-release"]').setValue('v1')
     await wrapper!.find('input[id$="-url"]').setValue('~/app.js')
     const file = wrapper!.find('input[type="file"]')
@@ -320,7 +323,7 @@ it.each([true, false])('ignores a stale upload result (success: %s)', async succ
 })
 
 it('links received transactions and matching profiles to their exact records', async () => {
- status.examples.transactions = { id: 'stored-transaction', received_at: status.checked_at }
+ status.examples.transactions = makeExample('stored-transaction')
  status.profile_transaction_id = 'profiled-transaction'
  status.receipts = ['transactions', 'profile_chunks'].map(kind => ({ kind: kind as 'transactions' | 'profile_chunks', first_received_at: status.checked_at, last_received_at: status.checked_at, latest_id: 'stored-record' }))
  await render()
@@ -344,7 +347,7 @@ it('can replace a saved setup check that the server no longer has', async () => 
 
 it('distinguishes a stored event awaiting issue processing from an expired event', async () => {
  status.check = { ...check, received_at: status.checked_at, event_id: 'processing-event' }
- status.examples.test = { id: 'processing-event', received_at: status.checked_at }
+ status.examples.test = makeExample('processing-event')
  await render()
  expect(wrapper!.text()).toContain('Its issue link will appear once processing finishes')
  expect(wrapper!.text()).not.toContain('event has been removed or expired')

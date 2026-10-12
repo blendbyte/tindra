@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref, nextTick } from 'vue'
+import { ref } from 'vue'
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('@/utils/formatters', () => ({
   formatPct: vi.fn((n: number) => `${n}%`),
 }))
 
-import CachesView from '../CachesView.vue'
+import SpanTable from '@/components/SpanTable.vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
@@ -37,21 +37,20 @@ const stubs = {
   SpanSamplesPanel: { name: 'SpanSamplesPanel', emits: ['close'], template: '<div />' },
 }
 
-const makeSpan = (description: string, op = 'cache.get') => ({
+const makeJob = (description: string, op = 'task.run') => ({
   description,
   op,
-  rate: 1.5,
-  p50: 12,
-  p95: 45,
-  time_pct: 5.2,
+  rate: 0.5,
+  p50: 500,
+  p95: 2000,
+  time_pct: 8.1,
   error_rate: 0,
-  miss_rate: 20,
 })
 
 const makeTimeseries = () => ({
   buckets: [
-    { time: '2024-01-01T00:00:00Z', count: 10, p50: 12 },
-    { time: '2024-01-01T01:00:00Z', count: 20, p50: 15 },
+    { time: '2024-01-01T00:00:00Z', count: 5, p50: 30 },
+    { time: '2024-01-01T01:00:00Z', count: 8, p50: 35 },
   ],
   bucket_size: 'hour' as const,
 })
@@ -74,129 +73,100 @@ beforeEach(() => {
   vi.mocked(usePerformanceStore).mockReset()
 })
 
-describe('CachesView', () => {
+describe('SpanTable (jobs)', () => {
   describe('loading state', () => {
     it('shows skeleton rows while loading', () => {
       setupMocks([], true)
-      const wrapper = mount(CachesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       expect(wrapper.find('.perf-table__skel-row').exists()).toBe(true)
     })
   })
 
   describe('empty state', () => {
-    it('shows "No cache spans in this window" when there are no spans', () => {
+    it('shows "No job or queue spans in this window" when there are no spans', () => {
       setupMocks([])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      expect(wrapper.text()).toContain('No cache spans in this window')
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
+      expect(wrapper.text()).toContain('No job or queue spans in this window')
     })
   })
 
   describe('error state', () => {
     it('shows an error message when loading fails', () => {
       setupMocks([], false, true)
-      const wrapper = mount(CachesView, { global: { stubs } })
-      expect(wrapper.text()).toContain("Couldn't load cache data")
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
+      expect(wrapper.text()).toContain("Couldn't load job data")
     })
 
     it('shows a Retry button on error', () => {
       setupMocks([], false, true)
-      const wrapper = mount(CachesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       expect(wrapper.find('.txerror .btn').text()).toBe('Retry')
     })
   })
 
   describe('loaded spans', () => {
-    it('renders a row for each span', () => {
-      setupMocks([makeSpan('user:profile:123'), makeSpan('session:abc')])
-      const wrapper = mount(CachesView, { global: { stubs } })
+    it('renders a row for each job span', () => {
+      setupMocks([makeJob('send_email_job'), makeJob('cleanup_old_records')])
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       const rows = wrapper.findAll('.perf-table__row--clickable')
       expect(rows.length).toBe(2)
     })
 
-    it('displays the span description', () => {
-      setupMocks([makeSpan('user:profile:123')])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      expect(wrapper.text()).toContain('user:profile:123')
+    it('displays the job description', () => {
+      setupMocks([makeJob('send_email_job')])
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
+      expect(wrapper.text()).toContain('send_email_job')
     })
 
     it('renders table column headers', () => {
-      setupMocks([makeSpan('user:profile')])
-      const wrapper = mount(CachesView, { global: { stubs } })
+      setupMocks([makeJob('send_email_job')])
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       expect(wrapper.text()).toContain('Description')
-      expect(wrapper.text()).toContain('RPM')
+      expect(wrapper.text()).toContain('TPM')
       expect(wrapper.text()).toContain('P50')
-      expect(wrapper.text()).toContain('Miss rate')
+      expect(wrapper.text()).toContain('P95')
     })
 
-    it('renders the miss rate column', () => {
-      setupMocks([makeSpan('user:profile')])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      expect(wrapper.text()).toContain('Miss rate')
+    it('displays op tag for each row', () => {
+      setupMocks([makeJob('my_job', 'task.run')])
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
+      expect(wrapper.find('.optag--task').exists()).toBe(true)
     })
   })
 
   describe('filter input', () => {
-    it('renders the keys filter input', () => {
+    it('renders the jobs filter input', () => {
       setupMocks([])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      expect(wrapper.find('input[aria-label="Filter keys"]').exists()).toBe(true)
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
+      expect(wrapper.find('input[aria-label="Filter jobs"]').exists()).toBe(true)
     })
 
-    it('shows "No keys match" when search has no results', async () => {
-      setupMocks([makeSpan('user:profile')])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      await wrapper.find('input[aria-label="Filter keys"]').setValue('zzz')
-      expect(wrapper.text()).toContain('No keys match')
-    })
-  })
-
-  describe('sorting', () => {
-    it('toggles sort direction on column header click', async () => {
-      setupMocks([makeSpan('a'), makeSpan('b')])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      const p50btn = wrapper.findAll('.col-sort').find(b => b.text().includes('P50'))!
-      await p50btn.trigger('click')
-      await p50btn.trigger('click')
-      expect(wrapper.text()).toBeTruthy()
+    it('shows "No jobs match" when search has no results', async () => {
+      setupMocks([makeJob('send_email_job')])
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
+      await wrapper.find('input[aria-label="Filter jobs"]').setValue('nonexistent_zzz')
+      expect(wrapper.text()).toContain('No jobs match')
     })
   })
 
   describe('timeseries chart section', () => {
     it('renders the timeseries section when data is available', () => {
-      setupMocks([makeSpan('a')], false, false, makeTimeseries())
-      const wrapper = mount(CachesView, { global: { stubs } })
+      setupMocks([makeJob('worker')], false, false, makeTimeseries())
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       expect(wrapper.find('.txcharts').exists()).toBe(true)
     })
 
     it('does not render the timeseries section when data is empty', () => {
-      setupMocks([makeSpan('a')], false, false, { buckets: [], bucket_size: 'hour' })
-      const wrapper = mount(CachesView, { global: { stubs } })
+      setupMocks([makeJob('worker')], false, false, { buckets: [], bucket_size: 'hour' })
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       expect(wrapper.find('.txcharts').exists()).toBe(false)
-    })
-  })
-
-  describe('row click', () => {
-    it('renders clickable rows', () => {
-      setupMocks([makeSpan('user:profile:123'), makeSpan('session:abc')])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      const rows = wrapper.findAll('.perf-table__row--clickable')
-      expect(rows.length).toBe(2)
-    })
-  })
-
-  describe('retry button', () => {
-    it('calls refetch when Retry is clicked', async () => {
-      setupMocks([], false, true)
-      const wrapper = mount(CachesView, { global: { stubs } })
-      await wrapper.find('.txerror .btn').trigger('click')
-      expect(wrapper.text()).toContain('Retry')
     })
   })
 
   describe('FilterChip interactions', () => {
     it('updates windowHrs when Window FilterChip changes', async () => {
       setupMocks([])
-      const wrapper = mount(CachesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
       usePerformanceStore().windowHrs = '7d'
       await wrapper.vm.$nextTick()
@@ -205,7 +175,7 @@ describe('CachesView', () => {
 
     it('updates envFilter when Env FilterChip changes', async () => {
       setupMocks([])
-      const wrapper = mount(CachesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       expect(wrapper.findAllComponents({ name: 'FilterChip' })).toHaveLength(0)
       usePerformanceStore().envFilter = 'production'
       await wrapper.vm.$nextTick()
@@ -215,29 +185,30 @@ describe('CachesView', () => {
 
   describe('row click and panel', () => {
     it('opens SpanSamplesPanel when a row is clicked', async () => {
-      setupMocks([makeSpan('user:profile:123')])
-      const wrapper = mount(CachesView, { global: { stubs } })
-      await wrapper.find('.perf-table__row--clickable').trigger('click')
+      setupMocks([makeJob('send_email_job')])
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
+      const row = wrapper.find('.perf-table__row--clickable')
+      await row.trigger('click')
       expect(wrapper.findComponent({ name: 'SpanSamplesPanel' }).exists()).toBe(true)
     })
 
     it('closes SpanSamplesPanel on close event', async () => {
-      setupMocks([makeSpan('user:profile:123')])
-      const wrapper = mount(CachesView, { global: { stubs } })
+      setupMocks([makeJob('send_email_job')])
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       await wrapper.find('.perf-table__row--clickable').trigger('click')
       const panel = wrapper.findComponent({ name: 'SpanSamplesPanel' })
       await panel.vm.$emit('close')
       expect(wrapper.findComponent({ name: 'SpanSamplesPanel' }).exists()).toBe(false)
     })
 
-    it('calls refetch when Retry is clicked on error', async () => {
+    it('calls refetch when Retry button is clicked', async () => {
       const refetchFn = vi.fn()
       vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
       vi.mocked(usePerformanceStore).mockReturnValue({ windowHrs: '24h', envFilter: 'All' } as any)
       vi.mocked(useQuery)
         .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(true), refetch: refetchFn } as any)
         .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
-      const wrapper = mount(CachesView, { global: { stubs } })
+      const wrapper = mount(SpanTable, { props: { kind: 'jobs' }, global: { stubs } })
       await wrapper.find('.txerror .btn').trigger('click')
       expect(refetchFn).toHaveBeenCalled()
     })

@@ -1,6 +1,6 @@
 import { useInvestigationStore } from '@/stores/investigation'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref, computed, reactive, nextTick } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import type { SpanSummary } from '@/api/types'
 
 vi.mock('@tanstack/vue-query', () => ({
@@ -118,7 +118,7 @@ describe('useSpanTable', () => {
   describe('toggleSort', () => {
     it('flips direction when clicking the same column', () => {
       setupMocks()
-      const { sortCol, sortDir, toggleSort } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
+      const { sortDir, toggleSort } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
       expect(sortDir.value).toBe('desc')
       toggleSort('time_pct')
       expect(sortDir.value).toBe('asc')
@@ -337,7 +337,7 @@ describe('useSpanTable', () => {
       vi.mocked(usePerformanceStore).mockReturnValue(perfMock as any)
       vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [] } as any)
       vi.mocked(useQuery)
-        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(false), refetch: vi.fn(), isError: ref(false), refetch: vi.fn() } as any)
+        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
         .mockReturnValueOnce({ data: ref(null), isError: ref(false), refetch: vi.fn() } as any)
 
       const { search } = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
@@ -352,7 +352,7 @@ describe('useSpanTable', () => {
 
 it('closes samples when the shared investigation scope changes', async () => {
   setupMocks([makeSummary()])
-  const table = useSpanTable('db')
+  const table = useSpanTable({ endpoint: 'db', queryKeyPrefix: 'db' })
   table.selectedRow.value = makeSummary()
   useInvestigationStore().environment = 'preview'
   await nextTick()

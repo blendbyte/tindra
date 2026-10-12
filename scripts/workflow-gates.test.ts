@@ -87,6 +87,7 @@ test('Go and frontend unit suites cannot be replaced by build-only checks', () =
     step.uses?.startsWith('golangci/golangci-lint-action@'),
   )).toBe(true)
   expect(verify.jobs['frontend-test'].steps.map((step: any) => step.run)).toContain('bun run test:coverage')
+  expect(verify.jobs['frontend-test'].steps.map((step: any) => step.run)).toContain('bun run lint')
 })
 
 test('vulnerability scan uses the toolchain that ships in releases', () => {

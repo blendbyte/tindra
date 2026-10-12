@@ -181,7 +181,8 @@ function onKey(e: KeyboardEvent) {
 function onGlobalKey(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
-    ui.cmdOpen ? ui.closeCmd() : ui.openCmd()
+    if (ui.cmdOpen) ui.closeCmd()
+    else ui.openCmd()
   }
   if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); go('/issues') }
   if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); go('/performance') }

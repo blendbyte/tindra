@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/Icon.vue'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
+import { useClipboard } from '@/composables/useClipboard'
 
 const router = useRouter()
 const qc = useQueryClient()
@@ -54,9 +55,11 @@ async function submit() {
   }
 }
 
+const { copy } = useClipboard()
+
 function copySecret() {
   if (setupData.value) {
-    navigator.clipboard?.writeText(setupData.value.secret).catch(() => {})
+    copy(setupData.value.secret, 'Secret copied')
   }
 }
 </script>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { ref, onMounted, onUnmounted } from 'vue'
 import Icon from './Icon.vue'
 
@@ -80,6 +81,9 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
       :class="{ 'btn--active': open }"
       @click.stop="open = !open"
       title="Ignore with limit"
+      aria-label="Ignore with limit"
+      aria-haspopup="true"
+      :aria-expanded="open"
     >
       <Icon name="chevron-down" :size="11" />
     </button>
@@ -90,10 +94,11 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
         <div
           v-for="opt in timeOptions"
           :key="opt.ms"
+          v-clickable
           class="popover__item"
           @click="ignoreUntil(opt.ms)"
         >{{ opt.label }}</div>
-        <div class="popover__item" @click="showCustom = !showCustom">
+        <div v-clickable class="popover__item" :aria-expanded="showCustom" @click="showCustom = !showCustom">
           Custom date&hellip;
         </div>
         <div v-if="showCustom" class="ignore-btn__custom">
@@ -101,6 +106,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
             v-model="customDate"
             type="datetime-local"
             class="ignore-btn__date-input"
+            aria-label="Ignore until"
             @keydown.enter="ignoreCustomDate"
           />
           <button class="btn btn--primary ignore-btn__date-ok" @click="ignoreCustomDate">OK</button>
@@ -110,6 +116,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
         <div
           v-for="n in countOptions"
           :key="n"
+          v-clickable
           class="popover__item"
           @click="ignoreCount(n)"
         >{{ n.toLocaleString() }} time{{ n === 1 ? '' : 's' }}</div>

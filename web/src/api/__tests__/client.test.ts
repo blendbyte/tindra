@@ -91,14 +91,14 @@ describe('apiFetch', () => {
     const assign = vi.fn()
     Object.defineProperty(window, 'location', {
       writable: true,
-      value: { pathname: '/issues', href: '' },
+      value: { pathname: '/issues', search: '?status=open', href: '' },
     })
     Object.defineProperty(window.location, 'href', {
       set: assign,
       get: () => '',
     })
     await apiFetch('/api/issues')
-    expect(assign).toHaveBeenCalledWith('/login')
+    expect(assign).toHaveBeenCalledWith('/login?redirect=%2Fissues%3Fstatus%3Dopen')
   })
 
   it('throws ApiError on 401 from auth endpoints instead of redirecting', async () => {

@@ -1,9 +1,35 @@
-import { QueryClient } from '@tanstack/vue-query'
+import { MutationCache, QueryClient } from '@tanstack/vue-query'
+import { useToast } from '@/composables/useToast'
+import { ApiError } from './client'
+
+// mutationErrorMessage turns a failed request into text a user can act on.
+// Server errors are plain text for 4xx responses, so those are shown as is.
+export function mutationErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 403) return 'You do not have permission to do that.'
+    const text = err.message.trim()
+    if (err.status < 500 && text && text.length <= 200) return text
+    return 'Something went wrong on the server. Try again.'
+  }
+  if (err instanceof TypeError) return 'Could not reach the server. Check your connection and try again.'
+  return 'Something went wrong. Try again.'
+}
 
 // Briefly reuse telemetry when navigating or refocusing. Polling and explicit
 // invalidation still refresh it; identity and administrative queries stay fresh.
+//
+// Mutations without their own onError still report failures, so a click never
+// fails silently.
 export function createQueryClient() {
-  const client = new QueryClient()
+  const { show } = useToast()
+  const client = new QueryClient({
+    mutationCache: new MutationCache({
+      onError: (err, _variables, _context, mutation) => {
+        if (mutation.options.onError) return
+        show(mutationErrorMessage(err), 'error')
+      },
+    }),
+  })
   for (const key of [
     'issues', 'transactions', 'transaction-summaries', 'transaction-summaries-comp',
     'transaction-timeseries', 'transaction-profile-summaries',

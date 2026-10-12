@@ -1,16 +1,15 @@
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-
-interface AppConfig {
-  public_url: string
-  require_mfa: boolean
-}
+import { useAuthStore, type AppConfig } from '@/stores/auth'
 
 export function useConfig() {
+  const auth = useAuthStore()
   const { data } = useQuery({
     queryKey: ['config'],
     queryFn: ({ signal }) => apiFetch<AppConfig>('/api/config', { signal }),
+    // The auth store already fetched this at startup.
+    initialData: () => auth.config ?? undefined,
     staleTime: Infinity,
   })
 

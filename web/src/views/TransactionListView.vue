@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
+import { useToast } from '@/composables/useToast'
 import { investigationQuery } from '@/router/investigation'
 import { useInvestigationStore } from '@/stores/investigation'
 import type { Transaction, TransactionSummary, TxTimeseries, ReleaseMetadata, TransactionListPage } from '@/api/types'
@@ -146,6 +147,7 @@ const { data: tracePage, isLoading: tracesLoading, isError: tracesError, refetch
   enabled: computed(() => userMode.value),
 })
 
+const { show: showToast } = useToast()
 const extraTraces = ref<Transaction[]>([])
 const tracesMoreCursor = ref<{ cursor_time: string; cursor_id: string } | null>(null)
 const loadingMoreTraces = ref(false)
@@ -180,6 +182,8 @@ async function loadMoreTraces() {
     tracesMoreCursor.value = page.next_cursor_id && page.next_cursor_time
       ? { cursor_time: page.next_cursor_time, cursor_id: page.next_cursor_id }
       : null
+  } catch {
+    if (version === paginationVersion) showToast('Could not load more traces. Try again.', 'error')
   } finally {
     if (version === paginationVersion) loadingMoreTraces.value = false
   }

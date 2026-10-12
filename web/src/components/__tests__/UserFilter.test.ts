@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, reactive, ref, unref } from 'vue'
+import { nextTick, reactive, ref, unref, type MaybeRef } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import type { AppUser } from '@/api/types'
 
@@ -232,7 +232,7 @@ describe('UserFilter', () => {
     await w.find('[aria-label="Filter by user"]').trigger('click')
     const opts = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as {
       queryFn: (context: { signal: AbortSignal }) => unknown
-      queryKey: unknown
+      queryKey: MaybeRef<readonly unknown[]>
       enabled: unknown
     }
     opts.queryFn({ signal: new AbortController().signal })
@@ -245,7 +245,7 @@ describe('UserFilter', () => {
     vi.useFakeTimers()
     const wrapper = mountFilter()
     await wrapper.find('[aria-label="Filter by user"]').trigger('click')
-    const opts = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as { queryKey: unknown }
+    const opts = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as { queryKey: MaybeRef<readonly unknown[]> }
     const input = wrapper.find('input[aria-label="Search people"]')
     await input.setValue('ali')
     vi.advanceTimersByTime(199)
@@ -264,7 +264,7 @@ describe('UserFilter', () => {
     vi.useFakeTimers()
     const wrapper = mountFilter()
     await wrapper.find('[aria-label="Filter by user"]').trigger('click')
-    const opts = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as { queryKey: unknown }
+    const opts = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as { queryKey: MaybeRef<readonly unknown[]> }
     const input = wrapper.find('input[aria-label="Search people"]')
     await input.setValue('alice')
     vi.advanceTimersByTime(200)

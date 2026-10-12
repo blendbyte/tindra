@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { useToast } from '@/composables/useToast'
 import { mount, flushPromises } from '@vue/test-utils'
-import { reactive, ref } from 'vue'
+import { reactive, ref, type Ref } from 'vue'
 
 const pushMock = vi.fn()
 const replaceMock = vi.fn()
@@ -53,6 +54,16 @@ import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
+
+interface QueryOptionsMock {
+  queryKey: Ref<unknown[]>
+  queryFn?: (context: { signal: AbortSignal }) => unknown
+  enabled: Ref<boolean>
+}
+
+function queryCalls() {
+  return vi.mocked(useQuery).mock.calls.map(([opts]) => opts as QueryOptionsMock)
+}
 
 const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
@@ -493,8 +504,8 @@ describe('TransactionListView', () => {
       setupMocks([], false, false, [{ id: 'url-proj-id', name: 'App', slug: 'app' }])
       mount(TransactionListView, { global: { stubs } })
       // rawSummaries useQuery is call index 1; queryKey is ['transaction-summaries', txParams]
-      const summariesCall = vi.mocked(useQuery).mock.calls[1]
-      const txParamsRef = { value: summariesCall[0].queryKey.value[2] }
+      const summariesCall = queryCalls()[1]
+      const txParamsRef = { value: summariesCall.queryKey.value[2] }
       expect(txParamsRef.value).not.toContain('project_id=url-proj-id')
     })
 
@@ -502,8 +513,8 @@ describe('TransactionListView', () => {
       routeQueryOverride = {}
       setupMocks([], false, false, [{ id: 'store-proj-id', name: 'App', slug: 'app' }], ['store-proj-id'])
       mount(TransactionListView, { global: { stubs } })
-      const summariesCall = vi.mocked(useQuery).mock.calls[1]
-      const txParamsRef = { value: summariesCall[0].queryKey.value[2] }
+      const summariesCall = queryCalls()[1]
+      const txParamsRef = { value: summariesCall.queryKey.value[2] }
       expect(txParamsRef.value).toContain('project_id=store-proj-id')
     })
 
@@ -549,7 +560,7 @@ describe('TransactionListView', () => {
       const sortButton = wrapper.find('.col-sort')
       if (sortButton.exists()) await sortButton.trigger('click')
       else await wrapper.vm.$nextTick()
-      const params = vi.mocked(useQuery).mock.calls[2][0].queryKey.value[2]
+      const params = queryCalls()[2].queryKey.value[2]
       expect(params).toContain('user=u-1')
       expect(params).not.toContain('op=')
       expect(params).not.toContain('release=')
@@ -626,16 +637,36 @@ describe('TransactionListView', () => {
       expect(wrapper.text()).not.toContain('/three')
     })
 
+    it('reports a failed load more and lets the user retry', async () => {
+      routeQueryOverride = { user: 'u-1' }
+      setupMocks(
+        [],
+        false,
+        false,
+        [{ id: '1', name: 'App', slug: 'app' }],
+        [],
+        { transactions: [makeTrace('t1', '/one')], next_cursor_id: 'c2', next_cursor_time: '2024-01-01T01:00:00Z' },
+      )
+      vi.mocked(apiFetch).mockRejectedValueOnce(new Error('offline'))
+      const { toasts } = useToast()
+      toasts.value = []
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      await wrapper.find('.list-footer .btn').trigger('click')
+      await flushPromises()
+      expect(toasts.value.map(t => t.message)).toEqual(['Could not load more traces. Try again.'])
+      expect(wrapper.find('.list-footer .btn').text()).toBe('Load more')
+    })
+
     it('puts user on the traces query and disables summaries', () => {
       routeQueryOverride = { user: 'u-1' }
       setupMocks()
       mount(TransactionListView, { global: { stubs } })
-      const tracesCall = vi.mocked(useQuery).mock.calls[2]
-      const traceParams = { value: tracesCall[0].queryKey.value[2] }
+      const tracesCall = queryCalls()[2]
+      const traceParams = { value: tracesCall.queryKey.value[2] }
       expect(traceParams.value).toContain('user=u-1')
-      expect(tracesCall[0].enabled.value).toBe(true)
-      expect(vi.mocked(useQuery).mock.calls[1][0].enabled.value).toBe(false)
-      for (const [opts] of vi.mocked(useQuery).mock.calls) {
+      expect(tracesCall.enabled.value).toBe(true)
+      expect(queryCalls()[1].enabled.value).toBe(false)
+      for (const opts of queryCalls()) {
         opts.queryFn?.({ signal: new AbortController().signal })
       }
     })

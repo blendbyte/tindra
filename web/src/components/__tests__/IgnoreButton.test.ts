@@ -61,7 +61,7 @@ describe('IgnoreButton', () => {
       const thirtyMin = items.find((i) => i.text() === 'For 30 minutes')!
       await thirtyMin.trigger('click')
 
-      const emitted = wrapper.emitted('ignore') as [unknown[]][]
+      const emitted = wrapper.emitted('ignore') as unknown[][]
       const payload = emitted[0][0] as { status: string; ignore_until: string }
       expect(payload.status).toBe('ignored')
       const until = new Date(payload.ignore_until)
@@ -97,7 +97,7 @@ describe('IgnoreButton', () => {
       await wrapper.find('.ignore-btn__date-input').setValue('2025-12-31T23:59')
       await wrapper.find('.ignore-btn__date-ok').trigger('click')
 
-      const emitted = wrapper.emitted('ignore') as [unknown[]][]
+      const emitted = wrapper.emitted('ignore') as unknown[][]
       const payload = emitted[0][0] as { status: string; ignore_until: string }
       expect(payload.status).toBe('ignored')
       expect(payload.ignore_until).toContain('2025-12-31')

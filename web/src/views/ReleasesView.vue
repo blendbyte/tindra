@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { useToast } from '@/composables/useToast'
 import { useInvestigationStore } from '@/stores/investigation'
 import { formatDuration } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
@@ -41,6 +43,7 @@ const { data: firstPage, isFetching, isError, refetch } = useQuery({
 
 })
 
+const { show: showToast } = useToast()
 let moreController: AbortController | undefined
 function cancelMore() {
   moreController?.abort()
@@ -77,8 +80,8 @@ async function loadMore() {
     nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
       ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
       : null
-  } catch (error) {
-    if (!controller.signal.aborted) throw error
+  } catch {
+    if (!controller.signal.aborted) showToast('Could not load more releases. Try again.', 'error')
   } finally {
     if (moreController === controller) isFetchingMore.value = false
   }
@@ -131,10 +134,6 @@ const projectName = computed(() => {
   const map = new Map((projects.projects ?? []).map((p) => [p.id, p.name]))
   return (id: string) => map.get(id) ?? ''
 })
-
-const showProject = computed(() =>
-  new Set(allReleases.value.map((r) => r.project_id)).size > 1
-)
 
 function formatCount(n: number) {
   if (n === 0) return '–'
@@ -205,6 +204,8 @@ function formatCount(n: number) {
             v-for="r in sorted"
             :key="r.id"
             class="relrow"
+            v-clickable
+            role="link"
             @click="router.push(`/releases/${r.id}`)"
           >
             <div class="rel-version">

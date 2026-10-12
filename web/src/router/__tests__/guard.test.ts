@@ -3,13 +3,17 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { defineComponent } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import type { User } from '@/api/types'
+import { authGuard, safeRedirect } from '../guard'
 
 const mockUser: User = {
   id: '1',
   email: 'test@example.com',
   name: 'Test User',
-  role: 'member',
+  has_password: true,
   mfa_enabled: true,
+  weekly_digest: false,
+  timezone: 'UTC',
+  permissions: { manage_projects: false, manage_users: false, manage_alerts: false, manage_issues: false },
   created_at: '2025-01-01T00:00:00Z',
 }
 
@@ -18,7 +22,6 @@ const mockUserNoMFA: User = {
   mfa_enabled: false,
 }
 
-// Mirrors the beforeEach guard from router/index.ts — update both together if the logic changes.
 function buildGuardRouter() {
   const r = createRouter({
     history: createWebHistory(),
@@ -31,18 +34,10 @@ function buildGuardRouter() {
         component: defineComponent({ template: '<div />' }),
         meta: { requiresAuth: true },
       },
+      { path: '/issues/:id', component: defineComponent({ template: '<div />' }), meta: { requiresAuth: true } },
     ],
   })
-
-  r.beforeEach(async (to) => {
-    const { useAuthStore } = await import('@/stores/auth')
-    const auth = useAuthStore()
-    await auth.init()
-    if (to.meta.requiresAuth && !auth.user) return '/login'
-    if (to.meta.requiresAuth && auth.user && !auth.user.mfa_enabled && to.name !== 'setup-mfa') return '/setup-mfa'
-    if (to.name === 'setup-mfa' && auth.user?.mfa_enabled) return '/dashboard'
-  })
-
+  r.beforeEach(authGuard)
   return r
 }
 
@@ -74,6 +69,14 @@ describe('router auth guard', () => {
     const router = buildGuardRouter()
     await router.push('/dashboard')
     expect(router.currentRoute.value.path).toBe('/login')
+  })
+
+  it('remembers the requested page so login can return to it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+    const router = buildGuardRouter()
+    await router.push('/issues/42?event_id=abc')
+    expect(router.currentRoute.value.path).toBe('/login')
+    expect(router.currentRoute.value.query.redirect).toBe('/issues/42?event_id=abc')
   })
 
   it('allows navigation to a protected route when /api/me returns a user', async () => {
@@ -182,5 +185,17 @@ describe('router auth guard', () => {
       await router.push('/dashboard')
       expect(router.currentRoute.value.path).toBe('/dashboard')
     })
+  })
+})
+
+describe('safeRedirect', () => {
+  it('keeps same-origin paths', () => {
+    expect(safeRedirect('/issues/42?event_id=abc')).toBe('/issues/42?event_id=abc')
+  })
+
+  it('falls back to the dashboard for anything that could leave the site', () => {
+    for (const value of [undefined, '', 'https://evil.example', '//evil.example', '/\\evil.example', 'issues', ['/issues'], '/login', '/login?redirect=/x']) {
+      expect(safeRedirect(value)).toBe('/dashboard')
+    }
   })
 })

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
@@ -8,6 +9,7 @@ import { formatDuration } from '@/utils/formatters'
 import { useTimezone } from '@/composables/useTimezone'
 import Icon from '@/components/Icon.vue'
 import FlameGraphView from '@/components/FlameGraph.vue'
+import { useClipboard } from '@/composables/useClipboard'
 
 const route = useRoute()
 const router = useRouter()
@@ -181,8 +183,10 @@ function formatAbsTimestamp(ms: number): string {
   })
 }
 
+const { copy } = useClipboard()
+
 async function copySpanId(id: string) {
-  await navigator.clipboard.writeText(id)
+  if (!(await copy(id))) return
   copiedSpanId.value = id
   setTimeout(() => { copiedSpanId.value = null }, 1500)
 }
@@ -432,7 +436,7 @@ function collapseAll() {
 
 async function copyTraceId() {
   if (!tx.value) return
-  await navigator.clipboard.writeText(tx.value.trace_id)
+  if (!(await copy(tx.value.trace_id))) return
   copiedTraceId.value = true
   setTimeout(() => { copiedTraceId.value = false }, 1500)
 }
@@ -732,7 +736,7 @@ function traceErrorOffset(e: TraceError): string {
           </div>
           <div class="stat__sub">{{ new Date(tx.start_timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: tz }) }}</div>
         </div>
-        <div class="stat stat--copyable" v-tooltip="copiedTraceId ? 'Copied!' : 'Click to copy full trace ID'" @click="copyTraceId">
+        <div class="stat stat--copyable" v-tooltip="copiedTraceId ? 'Copied!' : 'Click to copy full trace ID'" v-clickable aria-label="Copy trace ID" @click="copyTraceId">
           <div class="stat__label">Trace ID</div>
           <div class="stat__value stat__value--mono stat__value--sm">
             {{ copiedTraceId ? 'Copied!' : tx.trace_id.slice(0, 16) + '…' }}
@@ -758,7 +762,7 @@ function traceErrorOffset(e: TraceError): string {
         placeholder="Search spans  /"
         spellcheck="false"
       />
-      <button v-if="spanQuery" class="trace-search__clear" @click="spanQuery = ''">
+      <button v-if="spanQuery" class="trace-search__clear" aria-label="Clear span search" @click="spanQuery = ''">
         <Icon name="x" :size="12" />
       </button>
       <span v-if="spanQuery" class="trace-search__count">
@@ -774,17 +778,20 @@ function traceErrorOffset(e: TraceError): string {
         <button
           class="span-tree-btn"
           v-tooltip="'Zoom out (-)'"
+          aria-label="Zoom out"
           @click="zoomAt(0.5, 1.3)"
         ><Icon name="minus" :size="10" /></button>
         <button
           v-if="isZoomed"
           class="span-tree-btn span-tree-btn--reset"
           v-tooltip="'Reset zoom'"
+          aria-label="Reset zoom"
           @click="resetZoom"
         ><Icon name="maximize-2" :size="10" /></button>
         <button
           class="span-tree-btn"
           v-tooltip="'Zoom in (+)'"
+          aria-label="Zoom in"
           @click="zoomAt(0.5, 1 / 1.3)"
         ><Icon name="plus" :size="10" /></button>
       </div>
@@ -934,7 +941,7 @@ function traceErrorOffset(e: TraceError): string {
                   <div class="span-detail__section-title">General</div>
                   <div class="span-detail__grid">
                     <span class="span-detail__k">Span ID</span>
-                    <span class="span-detail__v span-detail__v--copy" @click="copySpanId(row.span.span_id)">
+                    <span class="span-detail__v span-detail__v--copy" v-clickable aria-label="Copy span ID" @click="copySpanId(row.span.span_id)">
                       <span class="span-detail__mono">{{ row.span.span_id }}</span>
                       <span class="span-detail__copy-hint">{{ copiedSpanId === row.span.span_id ? 'Copied!' : 'Copy' }}</span>
                     </span>

@@ -40,7 +40,10 @@ import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 
 function makeProject(id: string, name: string, slug = id): Project {
-  return { id, name, public_key: id, slug, created_at: '', platform: 'javascript' } as Project
+  return {
+    id, name, public_key: id, slug, passthrough_dsn: null, scrub_fields: [], profiling_enabled: false,
+    scrub_patterns: [], created_at: '', event_count: 0, events_24h: 0, storage_bytes: 0, log_count: 0, tx_count: 0,
+  }
 }
 
 const globalStubs = {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { reactive, ref } from 'vue'
+import { reactive, ref, toValue } from 'vue'
 
 // Provide a localStorage shim for happy-dom (which requires --localstorage-file)
 let lsStore: Record<string, string> = {}
@@ -64,13 +64,25 @@ const stubs = {
   BrandMark: { template: '<span />' },
 }
 
-// Queries are called in declaration order: me, issues, tx-summaries, tx-timeseries, releases, alert-rules, proj-stats
+// The view and its widgets each own some queries, so results are resolved by
+// query key rather than call order. An unknown key fails loudly.
+function queryName(options: any): string {
+  const [head, sub] = toValue(options.queryKey) as unknown[]
+  return head === 'projects' ? `projects/${String(sub)}` : String(head)
+}
+
+// Returns the options of the first useQuery call with the given name.
+function queryOptions(name: string): any {
+  return vi.mocked(useQuery).mock.calls.map(c => c[0]).find(o => queryName(o) === name)
+}
+
 function setupQueries({
   manageAlerts = false,
   issues = undefined as unknown,
   issuesFetching = false,
   txSummaries = undefined as unknown,
   txFetching = false,
+  txCounts = undefined as unknown,
   releases = undefined as unknown,
   alertRules = [] as unknown[],
   alertsLoading = false,
@@ -82,17 +94,23 @@ function setupQueries({
   projStatsFetching = false,
 } = {}) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects } as any)
-  vi.mocked(useQuery)
-    .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: manageAlerts } }) } as any)
-    .mockReturnValueOnce({ data: ref(projectSetup ?? undefined), refetch: vi.fn() } as any)
-    .mockReturnValueOnce({ data: ref(issues), isFetching: ref(issuesFetching) } as any)
-    .mockReturnValueOnce({ data: ref(txSummaries), isFetching: ref(txFetching) } as any)
-    .mockReturnValueOnce({ data: ref(undefined) } as any)
-    .mockReturnValueOnce({ data: ref(releases), isFetching: ref(false) } as any)
-    .mockReturnValueOnce({ data: ref(alertRules), isLoading: ref(alertsLoading) } as any)
-    .mockReturnValueOnce({ data: ref(uptimeMonitors) } as any)
-    .mockReturnValueOnce({ data: ref(cronMonitors) } as any)
-    .mockReturnValueOnce({ data: ref(projectIssueCounts), isFetching: ref(projStatsFetching) } as any)
+  const results: Record<string, unknown> = {
+    'me': { data: ref({ permissions: { manage_alerts: manageAlerts } }) },
+    'projects/setup': { data: ref(projectSetup ?? undefined), refetch: vi.fn() },
+    'issues': { data: ref(issues), isFetching: ref(issuesFetching) },
+    'dash-tx': { data: ref(txSummaries), isFetching: ref(txFetching) },
+    'dash-tx-counts': { data: ref(txCounts) },
+    'releases': { data: ref(releases), isFetching: ref(false) },
+    'alert-rules': { data: ref(alertRules), isLoading: ref(alertsLoading) },
+    'uptime-monitors': { data: ref(uptimeMonitors) },
+    'monitors': { data: ref(cronMonitors) },
+    'projects/stats': { data: ref(projectIssueCounts), isFetching: ref(projStatsFetching) },
+  }
+  vi.mocked(useQuery).mockImplementation(((options: any) => {
+    const name = queryName(options)
+    if (!(name in results)) throw new Error(`unexpected query ${name}`)
+    return results[name]
+  }) as any)
 }
 
 function makeWrapper(options?: Parameters<typeof setupQueries>[0]) {
@@ -118,7 +136,7 @@ describe('DashboardView', () => {
   it('requests the lightweight issue overview', async () => {
     setupQueries()
     const wrapper = mount(DashboardView, { global: { stubs } })
-    const query = vi.mocked(useQuery).mock.calls[2]?.[0] as any
+    const query = queryOptions('issues')
     expect(query.queryKey.value).toEqual(['issues', 'overview', ''])
     await query.queryFn({ signal: new AbortController().signal })
     expect(apiFetch).toHaveBeenCalledWith('/api/issues/overview?', { signal: expect.any(AbortSignal) })
@@ -127,7 +145,7 @@ describe('DashboardView', () => {
   it('requests only recent release health for the dashboard', async () => {
     setupQueries()
     const wrapper = mount(DashboardView, { global: { stubs } })
-    const query = vi.mocked(useQuery).mock.calls[5]?.[0] as any
+    const query = queryOptions('releases')
     expect(query.queryKey.value).toEqual(['releases', 'health', ''])
     await query.queryFn({ signal: new AbortController().signal })
     expect(apiFetch).toHaveBeenCalledWith('/api/releases/health?', { signal: expect.any(AbortSignal) })
@@ -136,7 +154,7 @@ describe('DashboardView', () => {
   it('requests count-only buckets for the weekly heatmap', async () => {
     setupQueries()
     const wrapper = mount(DashboardView, { global: { stubs } })
-    const query = vi.mocked(useQuery).mock.calls[4]?.[0] as any
+    const query = queryOptions('dash-tx-counts')
     expect(query.queryKey.value[0]).toBe('dash-tx-counts')
     await query.queryFn({ signal: new AbortController().signal })
     expect(apiFetch).toHaveBeenCalledWith('/api/transactions/counts?hours=168', { signal: expect.any(AbortSignal) })
@@ -346,7 +364,6 @@ describe('DashboardView', () => {
         p50: 100, p95: 500, failure_rate: 8, time_spent_ms: 5000, project_id: 'p1',
       }]
       const wrapper = makeWrapper({ txSummaries })
-      const errEl = wrapper.find('.db-kpi__value[style*="danger"]')
       expect(wrapper.text()).toContain('8.0%')
     })
   })
@@ -469,20 +486,32 @@ describe('DashboardView', () => {
         time: new Date(now.getTime() - 3_600_000).toISOString(),
         count: 1200,
       }
-      vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'App', slug: 'app', event_count: 1 }] } as any)
-      vi.mocked(useQuery)
-        .mockReturnValueOnce({ data: ref({ permissions: { manage_alerts: false } }) } as any)
-        .mockReturnValueOnce({ data: ref([{ id: 'p1', event_count: 1 }]) } as any)
-        .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref({ buckets: [bucket] }) } as any)
-        .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref([]), isLoading: ref(false) } as any)
-        .mockReturnValueOnce({ data: ref([]) } as any) // uptime monitors
-        .mockReturnValueOnce({ data: ref([]) } as any) // cron monitors
-        .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
+      setupQueries({
+        projects: [{ id: 'p1', name: 'App', slug: 'app', event_count: 1 }],
+        txCounts: { buckets: [bucket] },
+      })
       const wrapper = mount(DashboardView, { global: { stubs } })
       expect(wrapper.text()).toContain('Transaction density')
+      expect(wrapper.find('.db-heatmap__cell[data-tip*="1.2k events"]').exists()).toBe(true)
+    })
+  })
+
+  describe('widget layout', () => {
+    it('places each widget in its column in the original order', () => {
+      const wrapper = makeWrapper({ uptimeMonitors: [{ id: 'u1', name: 'API', status: 'active', state: 'up' }] })
+      const titles = (column: string) => wrapper.findAll(`${column} .db-sec__title`).map(t => t.text())
+      expect(titles('.db-main')).toEqual(['Transaction density · Last 7 days', 'Monitors', 'Hottest Issues', 'Slowest Transactions'])
+      expect(titles('.db-aside')).toEqual(['Recent Alerts', 'Release Health'])
+      const page = wrapper.find('.page').element.children
+      expect([...page].map(el => el.className)).toEqual(['db-kpis', 'db-body'])
+    })
+
+    it('fetches widget data only once the dashboard itself is shown', () => {
+      makeWrapper({ projectSetup: [{ id: 'p1', setup_complete: false }] })
+      expect(queryOptions('projects/setup')).toBeDefined()
+      expect(queryOptions('issues')).toBeDefined()
+      expect(queryOptions('alert-rules')).toBeUndefined()
+      expect(queryOptions('dash-tx-counts')).toBeUndefined()
     })
   })
 
@@ -602,7 +631,7 @@ describe('DashboardView', () => {
           ],
         })
         const rows = wrapper.findAll('.db-proj-row')
-        // p2 has 10 issues, p1 has 3 — descending means p2 (Backend) first
+        // p2 has 10 issues and p1 has 3, so descending puts p2 (Backend) first
         expect(rows[0].text()).toContain('Backend')
         expect(rows[1].text()).toContain('Frontend')
       })
@@ -789,7 +818,7 @@ describe('DashboardView', () => {
 
     it('requests setup milestones instead of monthly usage', async () => {
       const wrapper = makeWrapper()
-      const query = vi.mocked(useQuery).mock.calls[1]?.[0] as any
+      const query = queryOptions('projects/setup')
       await query.queryFn({ signal: new AbortController().signal })
       expect(apiFetch).toHaveBeenCalledWith('/api/setup-status', { signal: expect.any(AbortSignal) })
       wrapper.unmount()
@@ -797,7 +826,7 @@ describe('DashboardView', () => {
   })
 })
 
-describe('DashboardView — monitor summary widget', () => {
+describe('DashboardView: monitor summary widget', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
   const uptime = (overrides = {}) => ({

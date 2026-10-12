@@ -300,6 +300,7 @@ watch(() => props.graph, resetZoom)
         class="span-tree-btn"
         type="button"
         v-tooltip="'Reset zoom (Esc)'"
+        aria-label="Reset zoom"
         @click="resetZoom"
       ><Icon name="maximize-2" :size="10" /></button>
     </div>

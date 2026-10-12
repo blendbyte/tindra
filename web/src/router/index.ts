@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { authGuard } from './guard'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -56,19 +57,22 @@ export const router = createRouter({
     {
       path: '/performance/queries',
       name: 'perf-queries',
-      component: () => import('@/views/DBQueriesView.vue'),
+      component: () => import('@/views/SpanTableView.vue'),
+      props: { kind: 'db' },
       meta: { requiresAuth: true, title: 'Queries' },
     },
     {
       path: '/performance/caches',
       name: 'perf-caches',
-      component: () => import('@/views/CachesView.vue'),
+      component: () => import('@/views/SpanTableView.vue'),
+      props: { kind: 'cache' },
       meta: { requiresAuth: true, title: 'Caches' },
     },
     {
       path: '/performance/jobs',
       name: 'perf-jobs',
-      component: () => import('@/views/JobsView.vue'),
+      component: () => import('@/views/SpanTableView.vue'),
+      props: { kind: 'jobs' },
       meta: { requiresAuth: true, title: 'Jobs' },
     },
     {
@@ -102,13 +106,13 @@ export const router = createRouter({
     {
       path: '/monitors/cron',
       name: 'monitors-cron',
-      component: () => import('@/views/MonitorsView.vue'),
+      component: () => import('@/views/monitors/CronMonitorsView.vue'),
       meta: { requiresAuth: true, title: 'Cron Monitors' },
     },
     {
       path: '/monitors/uptime',
       name: 'monitors-uptime',
-      component: () => import('@/views/MonitorsView.vue'),
+      component: () => import('@/views/monitors/UptimeMonitorsView.vue'),
       meta: { requiresAuth: true, title: 'Uptime Monitors' },
     },
     {
@@ -183,11 +187,4 @@ router.afterEach((to) => {
   document.title = title ? `${title} - ${base}` : base
 })
 
-router.beforeEach(async (to) => {
-  const { useAuthStore } = await import('@/stores/auth')
-  const auth = useAuthStore()
-  await auth.init()
-  if (to.meta.requiresAuth && !auth.user) return '/login'
-  if (to.meta.requiresAuth && auth.user && auth.requireMfa && !auth.user.mfa_enabled && to.name !== 'setup-mfa') return '/setup-mfa'
-  if (to.name === 'setup-mfa' && auth.user?.mfa_enabled) return '/dashboard'
-})
+router.beforeEach(authGuard)

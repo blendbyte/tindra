@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
@@ -218,6 +219,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
         class="filterbar__refresh"
         :class="{ 'filterbar__refresh--fetching': isFetching }"
         title="Refresh"
+        aria-label="Refresh logs"
         @click="investigation.refresh(); refetch()"
       >
         <Icon name="refresh-cw" :size="11" :class="{ 'filterbar__refresh-spin': isFetching }" />
@@ -294,6 +296,8 @@ onUnmounted(() => clearTimeout(debounceTimer))
             <tr
               class="perf-table__row perf-table__row--clickable"
               :class="{ 'log-row--expanded': expandedId === log.id }"
+              v-clickable
+              :aria-expanded="expandedId === log.id"
               @click="toggleRow(log.id)"
             >
               <td class="log-time-col">

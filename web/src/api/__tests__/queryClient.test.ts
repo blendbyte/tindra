@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, defineComponent, h, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { focusManager, QueryClient, useQuery, VueQueryPlugin } from '@tanstack/vue-query'
-import { apiFetch } from '../client'
-import { createQueryClient } from '../queryClient'
+import { apiFetch, ApiError } from '../client'
+import { createQueryClient, mutationErrorMessage } from '../queryClient'
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -144,5 +144,37 @@ describe('query request lifecycle', () => {
     const qc = client()
     expect(qc.defaultQueryOptions({ queryKey: ['me'] }).staleTime ?? 0).toBe(0)
     expect(qc.defaultQueryOptions({ queryKey: ['settings'] }).staleTime ?? 0).toBe(0)
+  })
+})
+
+describe('mutation errors', () => {
+  async function runFailing(options: { onError?: () => void } = {}, err: unknown = new ApiError(400, 'name is required\n')) {
+    const { useToast } = await import('@/composables/useToast')
+    const { toasts } = useToast()
+    toasts.value = []
+    const queryClient = client()
+    const mutation = queryClient.getMutationCache().build(queryClient, {
+      mutationFn: () => Promise.reject(err),
+      retry: false,
+      ...options,
+    })
+    await mutation.execute(undefined).catch(() => {})
+    return toasts.value.map(t => ({ message: t.message, type: t.type }))
+  }
+
+  it('shows a toast when a mutation has no error handler', async () => {
+    expect(await runFailing()).toEqual([{ message: 'name is required', type: 'error' }])
+  })
+
+  it('leaves errors to mutations that handle them', async () => {
+    expect(await runFailing({ onError: () => {} })).toEqual([])
+  })
+
+  it('explains permission, server and network failures', () => {
+    expect(mutationErrorMessage(new ApiError(403, 'forbidden'))).toBe('You do not have permission to do that.')
+    expect(mutationErrorMessage(new ApiError(500, 'internal error'))).toBe('Something went wrong on the server. Try again.')
+    expect(mutationErrorMessage(new ApiError(400, ''))).toBe('Something went wrong on the server. Try again.')
+    expect(mutationErrorMessage(new TypeError('Failed to fetch'))).toBe('Could not reach the server. Check your connection and try again.')
+    expect(mutationErrorMessage('boom')).toBe('Something went wrong. Try again.')
   })
 })

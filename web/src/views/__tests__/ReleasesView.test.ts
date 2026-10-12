@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { useToast } from '@/composables/useToast'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
@@ -371,6 +372,33 @@ describe('ReleasesView', () => {
       await wrapper.find('.list-footer .btn').trigger('click')
       await flushPromises()
       expect(vi.mocked(apiFetch)).toHaveBeenCalled()
+    })
+
+    it('reports a failed load more and lets the user retry', async () => {
+      const dataRef = ref<any>(undefined)
+      vi.mocked(useProjectsStore).mockReturnValue({ projects: [{ id: 'proj-1', name: 'App' }], selectedIds: [] } as any)
+      vi.mocked(useQuery).mockReturnValue({
+        data: dataRef,
+        isFetching: ref(false),
+        isError: ref(false),
+        refetch: vi.fn(),
+      } as any)
+      vi.mocked(apiFetch).mockRejectedValueOnce(new Error('offline'))
+      const { toasts } = useToast()
+      toasts.value = []
+      const wrapper = mount(ReleasesView, { global: { stubs } })
+      dataRef.value = {
+        releases: [makeRelease('r1', 'v1.0.0')],
+        total: 2,
+        has_more: true,
+        next_cursor_time: '2024-01-01T00:00:00Z',
+        next_cursor_id: 'abc123',
+      }
+      await wrapper.vm.$nextTick()
+      await wrapper.find('.list-footer .btn').trigger('click')
+      await flushPromises()
+      expect(toasts.value.map(t => t.message)).toEqual(['Could not load more releases. Try again.'])
+      expect(wrapper.find('.list-footer .btn').text()).toContain('Load 1 more')
     })
 
     it('shows isFetchingMore loading text while loading more', async () => {

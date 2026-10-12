@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { useToast } from '@/composables/useToast'
 import { mount, flushPromises } from '@vue/test-utils'
-import { reactive, ref } from 'vue'
+import { reactive, ref, type Ref } from 'vue'
 
 const routeState = { query: {} as Record<string, unknown> }
 
@@ -46,6 +47,16 @@ import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { usePerformanceStore } from '@/stores/performance'
 import { apiFetch } from '@/api/client'
+
+interface QueryOptionsMock {
+  queryKey: Ref<unknown[]>
+  queryFn?: (context: { signal: AbortSignal }) => unknown
+  enabled: Ref<boolean>
+}
+
+function queryCalls() {
+  return vi.mocked(useQuery).mock.calls.map(([opts]) => opts as QueryOptionsMock)
+}
 
 const stubs = {
   Icon: { template: '<span />' },
@@ -424,6 +435,25 @@ describe('BrowserView', () => {
       expect(refetchPageloads).toHaveBeenCalled()
     })
 
+    it('reports a failed load more and lets the user retry', async () => {
+      routeState.query = { user: 'u-1' }
+      setupMocks(undefined, undefined, false, {
+        data: {
+          transactions: [makePageload('t1', '/one')],
+          next_cursor_id: 'c2',
+          next_cursor_time: '2024-01-01T01:00:00Z',
+        },
+      })
+      vi.mocked(apiFetch).mockRejectedValueOnce(new Error('offline'))
+      const { toasts } = useToast()
+      toasts.value = []
+      const wrapper = mount(BrowserView, { global: { stubs } })
+      await wrapper.find('.list-footer .btn').trigger('click')
+      await flushPromises()
+      expect(toasts.value.map(t => t.message)).toEqual(['Could not load more page loads. Try again.'])
+      expect(wrapper.find('.list-footer .btn').text()).toBe('Load more')
+    })
+
     it('loads more page loads from the cursor', async () => {
       routeState.query = { user: 'u-1' }
       setupMocks(undefined, undefined, false, {
@@ -462,12 +492,12 @@ describe('BrowserView', () => {
       routeState.query = { user: 'u-1' }
       setupMocks()
       mount(BrowserView, { global: { stubs } })
-      const [summaryCall, pagesCall, pageloadsCall] = vi.mocked(useQuery).mock.calls
-      expect(summaryCall[0].enabled.value).toBe(false)
-      expect(pagesCall[0].enabled.value).toBe(false)
-      expect(pageloadsCall[0].enabled.value).toBe(true)
-      for (const [opts] of vi.mocked(useQuery).mock.calls) {
-        opts.queryKey?.value
+      const [summaryCall, pagesCall, pageloadsCall] = queryCalls()
+      expect(summaryCall.enabled.value).toBe(false)
+      expect(pagesCall.enabled.value).toBe(false)
+      expect(pageloadsCall.enabled.value).toBe(true)
+      for (const opts of queryCalls()) {
+        void opts.queryKey?.value // evaluates the computed key
         opts.queryFn?.({ signal: new AbortController().signal })
       }
     })

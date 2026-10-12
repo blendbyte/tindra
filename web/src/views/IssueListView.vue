@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vClickable } from '@/directives/clickable'
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useWindowVirtualizer } from '@tanstack/vue-virtual'
 import { useRouter, useRoute } from 'vue-router'
@@ -18,6 +19,8 @@ import BrandMark from '@/components/BrandMark.vue'
 import IgnoreButton from '@/components/IgnoreButton.vue'
 import type { IgnorePayload } from '@/components/IgnoreButton.vue'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
+import { useMe } from '@/composables/useMe'
+import { useDebounced } from '@/composables/useDebounced'
 
 const router = useRouter()
 const route = useRoute()
@@ -61,22 +64,23 @@ const assigneeFilter = ref(qp('assignee', 'All', 'assignee'))
 const tagKey = ref(qp('tag_key', ''))
 const tagValue = ref(qp('tag_value', ''))
 const search = ref(qp('q', ''))
+// Server queries, the URL and exports follow the search after typing pauses;
+// filtering the rows already loaded stays instant.
+const serverSearch = useDebounced(search, 300)
 const selectedIdx = ref(-1)
 const searchInput = ref<HTMLInputElement | null>(null)
 const assigneeOpen = ref(false)
 const assigneeEl = ref<HTMLElement | null>(null)
 
 
-const { data: me } = useQuery({
-  queryKey: ['me'],
-  queryFn: ({ signal }) => apiFetch<User>('/api/me', { signal }),
-})
+const { data: me } = useMe()
+// Status changes need manage_issues; hide the actions rather than let them fail.
+const canManageIssues = computed(() => !!me.value?.permissions.manage_issues)
 
 // Server-side filter values sent as query params.
 const serverStatus = computed(() => statusFilter.value === 'All' ? '' : statusFilter.value.toLowerCase())
 const serverLevel = computed(() => levelFilter.value === 'All' ? '' : levelFilter.value.toLowerCase())
 const serverEnv = computed(() => envFilter.value === 'All' ? '' : envFilter.value)
-const serverSince = computed(() => sinceFilter.value === 'All' ? '' : sinceFilter.value)
 const serverAssigneeId = computed(() => {
   if (assigneeFilter.value === 'All' || assigneeFilter.value === '') return ''
   if (assigneeFilter.value === 'me') return me.value?.id ?? ''
@@ -110,7 +114,7 @@ function resetPagination() {
 
 function buildIssueParams(cursor: Cursor) {
   const params = new URLSearchParams()
-  if (search.value) params.set('q', search.value)
+  if (serverSearch.value) params.set('q', serverSearch.value)
   if (serverStatus.value) params.set('status', serverStatus.value)
   if (serverLevel.value) params.set('level', serverLevel.value)
   if (serverEnv.value) params.set('env', serverEnv.value)
@@ -128,7 +132,7 @@ function buildIssueParams(cursor: Cursor) {
 
 function exportIssues(format: 'csv' | 'json') {
   const params = new URLSearchParams()
-  if (search.value) params.set('q', search.value)
+  if (serverSearch.value) params.set('q', serverSearch.value)
   if (serverStatus.value) params.set('status', serverStatus.value)
   if (serverLevel.value) params.set('level', serverLevel.value)
   if (serverEnv.value) params.set('env', serverEnv.value)
@@ -199,10 +203,13 @@ async function loadMore() {
   }
 }
 
-const { data: users = [] } = useQuery({
+// data is a ref, so a destructuring default never applies: without this the
+// list threw (and rendered blank) while /api/users was loading or failing.
+const { data: usersData } = useQuery({
   queryKey: ['users'],
   queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
 })
+const users = computed(() => usersData.value ?? [])
 
 function projectName(projectId: string) {
   return (projects.projects as { id: string; name: string }[])?.find((p) => p.id === projectId)?.name ?? projectId
@@ -280,7 +287,8 @@ const allSelected = computed(
 )
 
 function toggleSelect(id: string) {
-  selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id)
+  if (selectedIds.has(id)) selectedIds.delete(id)
+  else selectedIds.add(id)
 }
 
 function toggleAll() {
@@ -305,22 +313,25 @@ const { mutate: bulkUpdate } = useMutation({
 function bulkResolve() {
   const ids = [...selectedIds]
   const n = ids.length
-  bulkUpdate({ ids, status: 'resolved' })
-  showToast(`Resolved ${n} issue${n === 1 ? '' : 's'}`, () => bulkUpdate({ ids, status: 'open' }))
+  bulkUpdate({ ids, status: 'resolved' }, {
+    onSuccess: () => showToast(`Resolved ${n} issue${n === 1 ? '' : 's'}`, () => bulkUpdate({ ids, status: 'open' })),
+  })
 }
 
 function bulkIgnore(payload?: IgnorePayload) {
   const ids = [...selectedIds]
   const n = ids.length
-  bulkUpdate({ ids, ...payload ?? { status: 'ignored' } })
-  showToast(`Ignored ${n} issue${n === 1 ? '' : 's'}`, () => bulkUpdate({ ids, status: 'open' }))
+  bulkUpdate({ ids, ...payload ?? { status: 'ignored' } }, {
+    onSuccess: () => showToast(`Ignored ${n} issue${n === 1 ? '' : 's'}`, () => bulkUpdate({ ids, status: 'open' })),
+  })
 }
 
 function bulkUnignore() {
   const ids = [...selectedIds]
   const n = ids.length
-  bulkUpdate({ ids, status: 'open' })
-  showToast(`Unignored ${n} issue${n === 1 ? '' : 's'}`, () => bulkUpdate({ ids, status: 'ignored' }))
+  bulkUpdate({ ids, status: 'open' }, {
+    onSuccess: () => showToast(`Unignored ${n} issue${n === 1 ? '' : 's'}`, () => bulkUpdate({ ids, status: 'ignored' })),
+  })
 }
 
 const mergeConfirm = ref(false)
@@ -394,22 +405,25 @@ function navigateIssue(e: MouseEvent, idx: number, id: string) {
 function resolveSelected() {
   const cur = sorted.value[selectedIdx.value]
   if (!cur || cur.status === 'resolved') return
-  updateStatus({ id: cur.id, status: 'resolved' })
-  showToast(`Resolved: ${cur.title}`, () => updateStatus({ id: cur.id, status: 'open' }))
+  updateStatus({ id: cur.id, status: 'resolved' }, {
+    onSuccess: () => showToast(`Resolved: ${cur.title}`, () => updateStatus({ id: cur.id, status: 'open' })),
+  })
 }
 
 function ignoreSelected(payload?: IgnorePayload) {
   const cur = sorted.value[selectedIdx.value]
   if (!cur || cur.status === 'ignored') return
-  updateStatus({ id: cur.id, ...(payload ?? { status: 'ignored' }) })
-  showToast(`Ignored: ${cur.title}`, () => updateStatus({ id: cur.id, status: 'open' }))
+  updateStatus({ id: cur.id, ...(payload ?? { status: 'ignored' }) }, {
+    onSuccess: () => showToast(`Ignored: ${cur.title}`, () => updateStatus({ id: cur.id, status: 'open' })),
+  })
 }
 
 function unignoreSelected() {
   const cur = sorted.value[selectedIdx.value]
   if (!cur || cur.status !== 'ignored') return
-  updateStatus({ id: cur.id, status: 'open' })
-  showToast(`Unignored: ${cur.title}`, () => updateStatus({ id: cur.id, status: 'ignored' }))
+  updateStatus({ id: cur.id, status: 'open' }, {
+    onSuccess: () => showToast(`Unignored: ${cur.title}`, () => updateStatus({ id: cur.id, status: 'ignored' })),
+  })
 }
 
 function onKey(e: KeyboardEvent) {
@@ -420,9 +434,10 @@ function onKey(e: KeyboardEvent) {
   else if (e.key.toLowerCase() === 'k') { e.preventDefault(); selectedIdx.value = Math.max(0, selectedIdx.value < 0 ? 0 : selectedIdx.value - 1) }
   else if (e.key === 'Enter') { const cur = sorted.value[selectedIdx.value]; if (cur) openIssue(cur.id) }
   else if (e.key.toLowerCase() === 'x') { const cur = sorted.value[selectedIdx.value]; if (cur) toggleSelect(cur.id) }
-  else if (e.key.toLowerCase() === 'e') { selectedIds.size > 0 ? bulkResolve() : resolveSelected() }
-  else if (e.key.toLowerCase() === 'i') { selectedIds.size > 0 ? bulkIgnore() : ignoreSelected() }
-  else if (e.key.toLowerCase() === 'u') { selectedIds.size > 0 ? bulkUnignore() : unignoreSelected() }
+  else if (!canManageIssues.value) return
+  else if (e.key.toLowerCase() === 'e') { if (selectedIds.size > 0) bulkResolve(); else resolveSelected() }
+  else if (e.key.toLowerCase() === 'i') { if (selectedIds.size > 0) bulkIgnore(); else ignoreSelected() }
+  else if (e.key.toLowerCase() === 'u') { if (selectedIds.size > 0) bulkUnignore(); else unignoreSelected() }
 }
 
 function onMouseDownGlobal(e: MouseEvent) {
@@ -483,7 +498,7 @@ const noOpenIssues = computed(() => statusFilter.value === 'Open' && !isFiltered
 
 // Sync filter/sort state → URL so F5 restores the same view.
 watch(
-  [statusFilter, levelFilter, assigneeFilter, tagKey, tagValue, search, sortCol, sortDir, lensIdentity],
+  [statusFilter, levelFilter, assigneeFilter, tagKey, tagValue, serverSearch, sortCol, sortDir, lensIdentity],
   () => {
     const query = { ...route.query }
     for (const key of ['status', 'level', 'assignee', 'tag_key', 'tag_value', 'user', 'q', 'sort', 'dir']) delete query[key]
@@ -493,7 +508,7 @@ watch(
     if (tagKey.value) query.tag_key = tagKey.value
     if (tagValue.value) query.tag_value = tagValue.value
     if (lensIdentity.value) query.user = lensIdentity.value
-    if (search.value) query.q = search.value
+    if (serverSearch.value) query.q = serverSearch.value
     if (sortCol.value !== 'last_seen' || sortDir.value !== 'desc') {
       query.sort = sortCol.value
       query.dir = sortDir.value
@@ -534,6 +549,8 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         <button
           class="filterchip"
           :class="{ 'filterchip--active': assigneeFilter !== 'All' }"
+          aria-haspopup="true"
+          :aria-expanded="assigneeOpen"
           @click="assigneeOpen = !assigneeOpen"
         >
           <span class="filterchip__label">Assignee:</span>
@@ -543,26 +560,32 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         <div v-if="assigneeOpen" class="popover" style="left: 0; right: auto; min-width: 160px">
           <div class="popover__list">
             <div
+              v-clickable
               class="popover__item"
               :class="{ 'popover__item--active': assigneeFilter === 'All' }"
+              :aria-pressed="assigneeFilter === 'All'"
               @click="assigneeFilter = 'All'; assigneeOpen = false"
             >All</div>
             <div
+              v-clickable
               class="popover__item"
               :class="{ 'popover__item--active': assigneeFilter === 'me' }"
+              :aria-pressed="assigneeFilter === 'me'"
               @click="assigneeFilter = 'me'; assigneeOpen = false"
             >Me</div>
             <div
               v-for="u in (users as User[])"
               :key="u.id"
+              v-clickable
               class="popover__item"
               :class="{ 'popover__item--active': assigneeFilter === u.id }"
+              :aria-pressed="assigneeFilter === u.id"
               @click="assigneeFilter = u.id; assigneeOpen = false"
             >{{ u.name || u.email }}</div>
           </div>
         </div>
       </div>
-      <button v-if="tagKey" class="tag-chip" @click="tagKey = ''; tagValue = ''">
+      <button v-if="tagKey" class="tag-chip" title="Remove tag filter" :aria-label="`Remove tag filter ${tagKey}${tagValue ? `: ${tagValue}` : ''}`" @click="tagKey = ''; tagValue = ''">
         <span class="tag-chip__k">{{ tagKey }}</span>
         <template v-if="tagValue">
           <span class="tag-chip__sep">:</span>
@@ -591,6 +614,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         class="filterbar__refresh"
         :class="{ 'filterbar__refresh--fetching': isFetching }"
         :title="isFetching ? 'Refreshing…' : 'Refresh now (auto every 30s)'"
+        aria-label="Refresh issues"
         @click="investigation.refresh(); refetch()"
       >
         <Icon name="refresh-cw" :size="11" :class="{ 'filterbar__refresh-spin': isFetching }" />
@@ -626,6 +650,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           class="row-check row-check--header"
           :checked="allSelected"
           :indeterminate="selectedIds.size > 0 && !allSelected"
+          aria-label="Select all issues"
           @click.stop
           @change="toggleAll"
         />
@@ -662,7 +687,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
       <div ref="listContainerRef" :style="{ height: `${totalVirtualSize}px`, position: 'relative' }">
         <div
           v-for="vRow in virtualRows"
-          :key="vRow.key"
+          :key="String(vRow.key)"
           :data-index="vRow.index"
           class="issuerow"
           :class="{
@@ -679,6 +704,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
             type="checkbox"
             class="row-check"
             :checked="selectedIds.has(sorted[vRow.index]?.id)"
+            :aria-label="`Select ${sorted[vRow.index]?.title ?? 'issue'}`"
             @click.stop
             @change="toggleSelect(sorted[vRow.index].id)"
           />
@@ -828,10 +854,13 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         </template>
         <template v-else>
           <span class="bulkbar__count">{{ selectedIds.size }} selected</span>
-          <button class="btn btn--primary" @click="bulkResolve">Resolve</button>
-          <IgnoreButton @ignore="bulkIgnore" />
-          <button class="btn" @click="bulkUnignore">Unignore</button>
-          <button v-if="canMerge" class="btn" @click="mergeConfirm = true">Merge</button>
+          <template v-if="canManageIssues">
+            <button class="btn btn--primary" @click="bulkResolve">Resolve</button>
+            <IgnoreButton @ignore="bulkIgnore" />
+            <button class="btn" @click="bulkUnignore">Unignore</button>
+            <button v-if="canMerge" class="btn" @click="mergeConfirm = true">Merge</button>
+          </template>
+          <span v-else class="bulkbar__count">You need the manage issues permission to change them.</span>
           <button class="btn btn--ghost" @click="selectedIds.clear()">Clear</button>
         </template>
       </div>

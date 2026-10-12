@@ -1,7 +1,7 @@
 import { useInvestigationStore } from '@/stores/investigation'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 
 const pushMock = vi.fn()
 const replaceMock = vi.fn()
@@ -63,7 +63,7 @@ vi.mock('@/stores/appUser', () => ({
 }))
 
 import IssueListView from '../IssueListView.vue'
-import { useQuery } from '@tanstack/vue-query'
+import { useQuery, useMutation } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { useWindowVirtualizer } from '@tanstack/vue-virtual'
 import { apiFetch } from '@/api/client'
@@ -80,7 +80,13 @@ const stubs = {
   UserFilter: { template: '<div class="user-filter-stub" />' },
 }
 
-function setupMocks({ projects = [], selectedIds = [], issueData = { issues: [], total: 0, has_more: false } as unknown } = {}) {
+interface SetupMocksOptions {
+  projects?: { id: string; name: string; slug?: string }[]
+  selectedIds?: string[]
+  issueData?: unknown
+}
+
+function setupMocks({ projects = [], selectedIds = [], issueData = { issues: [], total: 0, has_more: false } }: SetupMocksOptions = {}) {
   vi.mocked(useProjectsStore).mockReturnValue({
     projects,
     isSuccess: true,
@@ -697,7 +703,9 @@ const virtualIssue = {
   ignore_count: null,
 }
 
-function setupWithVirtualRow(issue = virtualIssue, extraIssues: any[] = []) {
+const issueManager = { id: 'user-1', timezone: 'UTC', permissions: { manage_issues: true } }
+
+function setupWithVirtualRow(issue = virtualIssue, extraIssues: any[] = [], me: unknown = issueManager) {
   vi.mocked(useWindowVirtualizer).mockReturnValueOnce(ref({
     getVirtualItems: () => [{ index: 0, start: 0, size: 52, key: 0 }],
     getTotalSize: () => 52,
@@ -714,7 +722,7 @@ function setupWithVirtualRow(issue = virtualIssue, extraIssues: any[] = []) {
   const allIssues = [issue, ...extraIssues]
 
   vi.mocked(useQuery)
-    .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
+    .mockReturnValueOnce({ data: ref(me), isFetching: ref(false) } as any)
     .mockReturnValueOnce({
       data: ref({ issues: allIssues, total: allIssues.length, has_more: false }),
       isFetching: ref(false),
@@ -1290,7 +1298,6 @@ describe('URL sync watch', () => {
       .mockReturnValueOnce({ data: ref({ issues: [], total: 0, has_more: false }), isFetching: ref(false), isError: ref(false), refetch: vi.fn() } as any)
       .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
     const wrapper = mount(IssueListView, { global: { stubs } })
-    const chips = wrapper.findAllComponents({ name: 'FilterChip' })
     useInvestigationStore().environment = 'staging'
     await wrapper.vm.$nextTick() // env
     await wrapper.vm.$nextTick()
@@ -1625,8 +1632,8 @@ describe('confirmMerge early return', () => {
       setupMocks({ selectedIds: ['store-proj-id'] })
       mount(IssueListView, { global: { stubs } })
       // The issues query is call index 1; the key contains the exact request parameters.
-      const issuesCall = vi.mocked(useQuery).mock.calls[1]
-      const queryKey = issuesCall[0].queryKey.value as string[]
+      const issuesCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
+      const queryKey = issuesCall.queryKey.value
       expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['store-proj-id'])
     })
 
@@ -1634,8 +1641,8 @@ describe('confirmMerge early return', () => {
       routeQueryOverride = {}
       setupMocks({ selectedIds: ['store-proj-id'] })
       mount(IssueListView, { global: { stubs } })
-      const issuesCall = vi.mocked(useQuery).mock.calls[1]
-      const queryKey = issuesCall[0].queryKey.value as string[]
+      const issuesCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
+      const queryKey = issuesCall.queryKey.value
       expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['store-proj-id'])
     })
 
@@ -1643,8 +1650,8 @@ describe('confirmMerge early return', () => {
       routeQueryOverride = {}
       setupMocks({ selectedIds: [] })
       mount(IssueListView, { global: { stubs } })
-      const issuesCall = vi.mocked(useQuery).mock.calls[1]
-      const queryKey = issuesCall[0].queryKey.value as string[]
+      const issuesCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
+      const queryKey = issuesCall.queryKey.value
       expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual([])
     })
   })
@@ -1661,7 +1668,14 @@ it('preserves the next-page cursor when mounting with cached issues', () => {
 it('sends the same search and time bounds to the list and export endpoints', async () => {
   setupMocks({ projects: [{ id: '1', name: 'App' }] })
   const wrapper = mount(IssueListView, { global: { stubs } })
-  await wrapper.find('input[aria-label="Search issues"]').setValue('checkout timeout')
+  vi.useFakeTimers()
+  try {
+    await wrapper.find('input[aria-label="Search issues"]').setValue('checkout timeout')
+    // The server query follows the search once typing pauses.
+    await vi.advanceTimersByTimeAsync(300)
+  } finally {
+    vi.useRealTimers()
+  }
   const options = vi.mocked(useQuery).mock.calls.find(call => (call[0] as any).queryKey?.value?.[0] === 'issues')![0] as any
   const signal = new AbortController().signal
   await options.queryFn({ signal })
@@ -1676,4 +1690,64 @@ it('sends the same search and time bounds to the list and export endpoints', asy
   } finally {
     window.history.replaceState(null, '', previous)
   }
+})
+
+it('debounces the server search instead of querying on every keystroke', async () => {
+  setupMocks({ projects: [{ id: '1', name: 'App' }] })
+  const wrapper = mount(IssueListView, { global: { stubs } })
+  const options = vi.mocked(useQuery).mock.calls.find(call => (call[0] as any).queryKey?.value?.[0] === 'issues')![0] as any
+  vi.useFakeTimers()
+  try {
+    const input = wrapper.find('input[aria-label="Search issues"]')
+    for (const partial of ['c', 'ch', 'che']) {
+      await input.setValue(partial)
+      await vi.advanceTimersByTimeAsync(100)
+    }
+    expect(options.queryKey.value[1]).not.toContain('q=')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(options.queryKey.value[1]).toContain('q=che')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+describe('issue permissions and feedback', () => {
+  it('hides status actions from users without manage_issues', async () => {
+    setupWithVirtualRow(virtualIssue, [], { id: 'user-2', timezone: 'UTC', permissions: { manage_issues: false } })
+    const before = vi.mocked(useMutation).mock.results.length
+    const wrapper = mount(IssueListView, { global: { stubs }, attachTo: document.body })
+    await wrapper.find('.row-check--header').trigger('change')
+    expect(wrapper.findAll('.bulkbar .btn').some(b => b.text() === 'Resolve')).toBe(false)
+    expect(wrapper.find('.bulkbar').text()).toContain('manage issues permission')
+
+    // Every status action goes through one of this mount's mutations.
+    const mutates = vi.mocked(useMutation).mock.results.slice(before).map(r => r.value.mutate as ReturnType<typeof vi.fn>)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
+    for (const mutate of mutates) expect(mutate).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('labels the selection checkboxes for screen readers', () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.find('.row-check--header').attributes('aria-label')).toBe('Select all issues')
+    expect(wrapper.find('.issuerow:not(.issuerow--header) .row-check').attributes('aria-label')).toBe(`Select ${virtualIssue.title}`)
+  })
+
+  it('shows the success toast only after the server confirmed the change', async () => {
+    setupWithVirtualRow()
+    const before = vi.mocked(useMutation).mock.results.length
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    await wrapper.find('.row-check--header').trigger('change')
+    // bulkUpdate is the component's first mutation.
+    const mutate = vi.mocked(useMutation).mock.results[before].value.mutate as ReturnType<typeof vi.fn>
+    const { useToast } = await import('@/composables/useToast')
+    const show = vi.mocked(useToast).mock.results.at(-1)!.value.show as ReturnType<typeof vi.fn>
+    show.mockClear()
+    await wrapper.find('.bulkbar .btn--primary').trigger('click')
+    expect(show).not.toHaveBeenCalled()
+    const callbacks = mutate.mock.calls.at(-1)![1] as { onSuccess: () => void }
+    callbacks.onSuccess()
+    expect(show).toHaveBeenCalledWith('Resolved 1 issue', expect.any(Function))
+  })
 })

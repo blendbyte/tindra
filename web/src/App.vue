@@ -11,6 +11,7 @@ import QuotaBanner from '@/components/QuotaBanner.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import ShortcutsModal from '@/components/ShortcutsModal.vue'
 import ToastStack from '@/components/ToastStack.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import InvestigationError from '@/components/InvestigationError.vue'
 
 const route = useRoute()
@@ -42,6 +43,7 @@ watch(
     <RouterView v-else />
     <CommandPalette v-if="!isLogin" />
     <ShortcutsModal v-if="!isLogin" />
+    <ConfirmDialog />
     <ToastStack />
   </div>
 </template>
