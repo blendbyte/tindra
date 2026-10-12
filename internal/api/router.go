@@ -61,6 +61,10 @@ type router struct {
 	evaluator              *alerts.Evaluator
 	passthroughClient      *http.Client
 	forwarder              *ingest.Forwarder
+	projectKeys            *projectKeyCache   // envelope public-key lookups
+	monthlyCount           *monthlyCountCache // EVENT_LIMIT checks
+	observations           *observationDedup  // setup observation writes
+	unknownKeyRL           *rateLimiter       // per-IP budget for invalid DSN keys
 	retentionDays          int
 	webhookAllowPrivateIPs bool
 	requireMFA             bool
@@ -142,6 +146,11 @@ func NewRouter(pool *pgxpool.Pool, buf *ingest.Buffer, txBuf *ingest.Transaction
 	loginRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
 	resetRL := newRateLimiter(rateLimitLogin, 15*time.Minute)
 	ro.forwarder = ingest.NewForwarder(ro.passthroughClient, passthroughWorkers, passthroughQueueSize)
+	ro.projectKeys = newProjectKeyCache(10_000)
+	ro.monthlyCount = &monthlyCountCache{}
+	ro.observations = newObservationDedup()
+	ro.unknownKeyRL = newRateLimiter(60, time.Minute)
+	ro.unknownKeyRL.maxKeys = 100_000
 	ro.envelopeRL = newRateLimiter(rateLimitEnvelope, time.Minute)
 	ro.loginEmailRL = newRateLimiter(rateLimitLogin, 15*time.Minute)
 	ro.reauthRL = newRateLimiter(10, 15*time.Minute)

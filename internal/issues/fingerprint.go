@@ -23,13 +23,26 @@ import (
 // grouper keeps routing events to an existing v1 issue so the switch to v2 does
 // not duplicate issues that already exist.
 
+// eventPayload is the one decode of an event that grouping needs. Scalars use
+// tolerant types and nested objects stay raw until used, so a single oddly
+// shaped field cannot make the whole payload undecodable (which would change
+// its fingerprint).
 type eventPayload struct {
-	Fingerprint []looseString   `json:"fingerprint"`
-	Platform    string          `json:"platform"`
+	Fingerprint json.RawMessage `json:"fingerprint"`
+	Platform    looseString     `json:"platform"`
 	Exception   json.RawMessage `json:"exception"`
 	Message     messageField    `json:"message"`
 	LogEntry    messageField    `json:"logentry"`
 	Transaction looseString     `json:"transaction"`
+
+	// Metadata and implicit-tag sources.
+	Level       looseString     `json:"level"`
+	Environment looseString     `json:"environment"`
+	Release     looseString     `json:"release"`
+	ServerName  looseString     `json:"server_name"`
+	Tags        json.RawMessage `json:"tags"`
+	Request     json.RawMessage `json:"request"`
+	Contexts    json.RawMessage `json:"contexts"`
 }
 
 type exceptionValue struct {
@@ -38,6 +51,22 @@ type exceptionValue struct {
 	Stacktrace *struct {
 		Frames []stackFrame `json:"frames"`
 	} `json:"stacktrace"`
+	Mechanism json.RawMessage `json:"mechanism"`
+}
+
+// decodeEvent decodes raw once; ok is false only for malformed JSON.
+func decodeEvent(raw json.RawMessage) (p eventPayload, ok bool) {
+	return p, json.Unmarshal(raw, &p) == nil
+}
+
+// fingerprintParts returns the SDK-supplied fingerprint, tolerating non-string
+// entries; nil when absent or not a list.
+func (p eventPayload) fingerprintParts() []looseString {
+	var parts []looseString
+	if len(p.Fingerprint) > 0 && json.Unmarshal(p.Fingerprint, &parts) == nil {
+		return parts
+	}
+	return nil
 }
 
 type stackFrame struct {
@@ -135,8 +164,12 @@ func (p eventPayload) message() messageField {
 // Priority: explicit SDK fingerprint (with {{ default }} expansion), then the
 // innermost exception, then the message, then the transaction.
 func Compute(raw json.RawMessage) (fingerprint, legacy string) {
-	var p eventPayload
-	if err := json.Unmarshal(raw, &p); err != nil {
+	p, ok := decodeEvent(raw)
+	return computeFrom(p, ok)
+}
+
+func computeFrom(p eventPayload, ok bool) (fingerprint, legacy string) {
+	if !ok {
 		// Never hash the raw payload: it contains the event ID and timestamp,
 		// so every occurrence would become its own issue.
 		return sha256hex([]byte("unparseable")), ""
@@ -149,9 +182,9 @@ func Compute(raw json.RawMessage) (fingerprint, legacy string) {
 }
 
 func fingerprintFor(p eventPayload, def string) string {
-	if len(p.Fingerprint) > 0 {
-		parts := make([]string, len(p.Fingerprint))
-		for i, part := range p.Fingerprint {
+	if custom := p.fingerprintParts(); len(custom) > 0 {
+		parts := make([]string, len(custom))
+		for i, part := range custom {
 			switch part {
 			case "{{ default }}", "{{default}}":
 				parts[i] = def
@@ -235,8 +268,12 @@ func frameKeys(e exceptionValue) []string {
 // Title extracts a short human-readable title from a Sentry event payload.
 // Uses the last (innermost) exception for consistency with Compute.
 func Title(raw json.RawMessage) string {
-	var p eventPayload
-	if err := json.Unmarshal(raw, &p); err != nil {
+	p, ok := decodeEvent(raw)
+	return titleFrom(p, ok)
+}
+
+func titleFrom(p eventPayload, ok bool) string {
+	if !ok {
 		return "Unknown error"
 	}
 	if values := p.exceptions(); len(values) > 0 {

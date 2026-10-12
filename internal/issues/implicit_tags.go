@@ -22,28 +22,21 @@ var uaParser = uaparser.NewFromSaved()
 // These are merged with any explicit SDK-supplied tags, with explicit tags
 // taking priority on key conflicts.
 func extractImplicitTags(payload json.RawMessage) [][2]string {
-	var p struct {
-		Level       string `json:"level"`
-		Environment string `json:"environment"`
-		Transaction string `json:"transaction"`
-		ServerName  string `json:"server_name"`
-		Request     struct {
-			URL     string                     `json:"url"`
-			Headers map[string]json.RawMessage `json:"headers"`
-		} `json:"request"`
-		Contexts  map[string]json.RawMessage `json:"contexts"`
-		Exception struct {
-			Values []struct {
-				Mechanism struct {
-					Type    string `json:"type"`
-					Handled *bool  `json:"handled"`
-				} `json:"mechanism"`
-			} `json:"values"`
-		} `json:"exception"`
-	}
-	if err := json.Unmarshal(payload, &p); err != nil {
+	p, ok := decodeEvent(payload)
+	if !ok {
 		return nil
 	}
+	return implicitTagsFrom(p)
+}
+
+func implicitTagsFrom(p eventPayload) [][2]string {
+	var request struct {
+		URL     looseString                `json:"url"`
+		Headers map[string]json.RawMessage `json:"headers"`
+	}
+	_ = json.Unmarshal(p.Request, &request)
+	var contexts map[string]json.RawMessage
+	_ = json.Unmarshal(p.Contexts, &contexts)
 
 	var tags [][2]string
 	add := func(k, v string) {
@@ -55,15 +48,15 @@ func extractImplicitTags(payload json.RawMessage) [][2]string {
 		tags = append(tags, [2]string{k, v})
 	}
 
-	add("level", p.Level)
-	add("environment", p.Environment)
-	add("transaction", p.Transaction)
-	add("server_name", p.ServerName)
-	add("url", p.Request.URL)
+	add("level", string(p.Level))
+	add("environment", string(p.Environment))
+	add("transaction", string(p.Transaction))
+	add("server_name", string(p.ServerName))
+	add("url", string(request.URL))
 
 	// Extract from contexts: browser, os, runtime, device, client_os, etc.
 	addedContexts := make(map[string]bool)
-	for ctxKey, raw := range p.Contexts {
+	for ctxKey, raw := range contexts {
 		var ctx struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
@@ -91,7 +84,7 @@ func extractImplicitTags(payload json.RawMessage) [][2]string {
 	// supply explicit context objects (e.g. PHP SDK sends headers only; JS
 	// SDK may omit browser context for unrecognised user agents).
 	// uap-go uses the same database as Sentry's server-side enrichment.
-	if ua := extractUserAgent(p.Request.Headers); ua != "" {
+	if ua := extractUserAgent(request.Headers); ua != "" {
 		client := uaParser.Parse(ua)
 
 		if !addedContexts["browser"] && client.UserAgent.Family != "Other" {
@@ -123,9 +116,13 @@ func extractImplicitTags(payload json.RawMessage) [][2]string {
 	}
 
 	// Exception mechanism — use innermost (last) value, matching fingerprint behaviour.
-	if len(p.Exception.Values) > 0 {
-		mech := p.Exception.Values[len(p.Exception.Values)-1].Mechanism
-		add("mechanism", mech.Type)
+	if values := p.exceptions(); len(values) > 0 {
+		var mech struct {
+			Type    looseString `json:"type"`
+			Handled *bool       `json:"handled"`
+		}
+		_ = json.Unmarshal(values[len(values)-1].Mechanism, &mech)
+		add("mechanism", string(mech.Type))
 		if mech.Handled != nil {
 			if *mech.Handled {
 				add("handled", "yes")

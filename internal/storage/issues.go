@@ -70,6 +70,11 @@ type IssueFilter struct {
 	UserIdentity   string     // issues with at least one event from this app user
 }
 
+// issueUserCountSQL counts the distinct users (id, username or email) behind
+// the events of issue i, from events_issue_user_identity without reading payloads.
+const issueUserCountSQL = `(SELECT count(DISTINCT user_identity) FROM events
+		WHERE issue_id = i.id AND user_identity IS NOT NULL)`
+
 // issueSelectCols is the canonical SELECT column list for the issues table.
 const issueSelectCols = `id, project_id, fingerprint, title, level, kind, first_seen, last_seen, event_count, status, assignee_id, environment, ignore_until, ignore_count_limit, ignore_count, first_release`
 
@@ -372,20 +377,17 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 		q += fmt.Sprintf(" AND title ILIKE $%d", len(args))
 	}
 	if filter.TagKey != "" {
+		// A correlated EXISTS probes event_tags_issue_key (issue_id, key, value)
+		// per candidate issue and stops at the page limit, instead of collecting
+		// every matching tag row across all projects first. event_tags has no
+		// "id" column, so the bare id refers to the outer issue.
 		args = append(args, filter.TagKey)
-		keyIdx := len(args)
+		cond := fmt.Sprintf("t.key = $%d", len(args))
 		if filter.TagValue != "" {
 			args = append(args, filter.TagValue)
-			q += fmt.Sprintf(
-				" AND id IN (SELECT DISTINCT issue_id FROM event_tags WHERE key = $%d AND value = $%d AND issue_id IS NOT NULL)",
-				keyIdx, len(args),
-			)
-		} else {
-			q += fmt.Sprintf(
-				" AND id IN (SELECT DISTINCT issue_id FROM event_tags WHERE key = $%d AND issue_id IS NOT NULL)",
-				keyIdx,
-			)
+			cond += fmt.Sprintf(" AND t.value = $%d", len(args))
 		}
+		q += " AND EXISTS (SELECT 1 FROM event_tags t WHERE t.issue_id = id AND " + cond + ")"
 	}
 	projIdx := 0
 	if len(filter.ProjectIDs) > 0 {
@@ -446,8 +448,7 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 		i.first_seen, i.last_seen, i.event_count, i.status,
 		i.assignee_id, i.environment,
 		i.ignore_until, i.ignore_count_limit, i.ignore_count,
-		(SELECT COUNT(identity) FROM (SELECT COALESCE(payload->'user'->>'id',payload->'user'->>'username',payload->'user'->>'email',payload->'user'->>'ip_address') AS identity FROM events
-		 WHERE issue_id = i.id GROUP BY 1) identities) AS user_count
+		` + issueUserCountSQL + ` AS user_count
 	FROM issues i WHERE TRUE`
 	q, args := addCommonFilters(q, []any{}, filter)
 
@@ -555,12 +556,7 @@ func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error
 		    ORDER BY received_at DESC LIMIT 1
 		) e ON TRUE
 		LEFT JOIN releases r ON r.project_id = i.project_id AND r.version = e.release
-		LEFT JOIN LATERAL (
-		    SELECT COUNT(identity) AS cnt FROM (
-		      SELECT COALESCE(payload->'user'->>'id',payload->'user'->>'username',payload->'user'->>'email',payload->'user'->>'ip_address') AS identity FROM events
-		      WHERE issue_id = i.id GROUP BY 1
-		    ) identities
-		) u ON TRUE
+		LEFT JOIN LATERAL (SELECT `+issueUserCountSQL+` AS cnt) u ON TRUE
 		WHERE i.id = $1
 	`, id).Scan(
 		&iss.ID, &iss.ProjectID, &iss.Fingerprint, &iss.Title,

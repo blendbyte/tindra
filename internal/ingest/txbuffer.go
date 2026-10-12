@@ -2,11 +2,12 @@ package ingest
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
-	"fmt"
+	"maps"
+	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -102,11 +103,9 @@ func writeTxBatch(ctx context.Context, pool batchSender, batch []BufferedTransac
 	txIDs := make([]string, len(batch))
 	rows := make([][]any, 0, len(batch))
 	for i, tx := range batch {
-		var id [16]byte
-		_, _ = rand.Read(id[:])
-		id[6] = (id[6] & 0x0f) | 0x40
-		id[8] = (id[8] & 0x3f) | 0x80
-		txIDs[i] = fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16])
+		// Time-ordered (v7) IDs keep primary-key inserts at the right edge of
+		// the index instead of scattering them like random v4 IDs.
+		txIDs[i] = uuid.Must(uuid.NewV7()).String()
 		rows = append(rows, []any{txIDs[i], tx.ProjectID, nilStr(tx.TraceID), nilStr(tx.SpanID), tx.Transaction,
 			tx.Op, tx.Status, tx.DurationMs, tx.StartTimestamp, tx.Timestamp,
 			nilStr(tx.Environment), nilStr(tx.Release), nilStr(tx.Platform), nilJSON(tx.Measurements),
@@ -142,44 +141,30 @@ func writeTxBatch(ctx context.Context, pool batchSender, batch []BufferedTransac
 		return nil, err
 	}
 
-	// Phase 2: insert spans referencing the transaction IDs
-	type indexedSpan struct {
-		txID        string
-		projectID   string
-		environment string
-		release     string
-		sp          BufferedSpan
-	}
-	var toInsert []indexedSpan
+	// Phase 2: insert spans referencing the transaction IDs, many rows per
+	// statement (a flush can carry tens of thousands of spans).
+	var spanRows [][]any
 	for i, tx := range batch {
-		if txIDs[i] == "" {
-			continue
-		}
 		for _, sp := range tx.Spans {
-			toInsert = append(toInsert, indexedSpan{txIDs[i], tx.ProjectID, tx.Environment, tx.Release, sp})
+			spanRows = append(spanRows, []any{
+				txIDs[i], sp.SpanID, nilStr(sp.ParentSpanID), sp.Op, nilStr(sp.Description),
+				sp.StartTimestamp, sp.Timestamp, sp.DurationMs, sp.Status, nilJSON(sp.Data),
+				tx.ProjectID, nilStr(tx.Environment), nilStr(tx.Release),
+			})
 		}
 	}
-
-	spanBatch := &pgx.Batch{}
-	for _, s := range toInsert {
-		spanBatch.Queue(`
-			INSERT INTO spans
-				(transaction_id, span_id, parent_span_id, op, description,
-				 start_timestamp, timestamp, duration_ms, status, data,
-				 project_id, environment, release)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-		`,
-			s.txID, s.sp.SpanID, nilStr(s.sp.ParentSpanID), s.sp.Op, nilStr(s.sp.Description),
-			s.sp.StartTimestamp, s.sp.Timestamp, s.sp.DurationMs, s.sp.Status, nilJSON(s.sp.Data),
-			s.projectID, nilStr(s.environment), nilStr(s.release),
-		)
-	}
-	if err := execBatch(ctx, pool, spanBatch); err != nil {
-		return nil, err
+	if len(spanRows) > 0 {
+		spanBatch := &pgx.Batch{}
+		queueInserts(spanBatch, `INSERT INTO spans
+			(transaction_id, span_id, parent_span_id, op, description,
+			 start_timestamp, timestamp, duration_ms, status, data,
+			 project_id, environment, release) VALUES `, "", spanRows, 10)
+		if err := execBatch(ctx, pool, spanBatch); err != nil {
+			return nil, err
+		}
 	}
 
 	// Upsert releases for any transaction that carries a release.
-	type releaseKey struct{ projectID, version string }
 	seen := map[releaseKey]struct{}{}
 	for _, tx := range batch {
 		if tx.Release != "" {
@@ -190,7 +175,8 @@ func writeTxBatch(ctx context.Context, pool batchSender, batch []BufferedTransac
 		return txIDs, nil
 	}
 	rb := &pgx.Batch{}
-	for k := range seen {
+	// Sorted, so concurrent flushes take release row locks in the same order.
+	for _, k := range slices.SortedFunc(maps.Keys(seen), compareReleaseKeys) {
 		rb.Queue(`INSERT INTO releases (project_id, version) VALUES ($1, $2) ON CONFLICT (project_id, version) DO NOTHING`, k.projectID, k.version)
 	}
 	if err := execBatch(ctx, pool, rb); err != nil {

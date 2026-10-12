@@ -30,9 +30,11 @@ func TestIssueCountIdentityParity(t *testing.T) {
 		_, err = testPool.Exec(ctx, `INSERT INTO events(project_id,issue_id,timestamp,payload) VALUES($1,$2,now(),$3)`, p.ID, issue.ID, json.RawMessage(payload))
 		require.NoError(t, err)
 	}
+	// User counts use the same identity as the app-users page and the user
+	// filter (id, else username, else email); IP-only users are not counted.
 	check := func() {
 		var old int
-		require.NoError(t, testPool.QueryRow(ctx, `SELECT count(DISTINCT COALESCE(payload->'user'->>'id',payload->'user'->>'username',payload->'user'->>'email',payload->'user'->>'ip_address')) FROM events WHERE issue_id=$1`, issue.ID).Scan(&old))
+		require.NoError(t, testPool.QueryRow(ctx, `SELECT count(DISTINCT user_identity) FROM events WHERE issue_id=$1`, issue.ID).Scan(&old))
 		detail, err := storage.GetIssue(ctx, testPool, issue.ID)
 		require.NoError(t, err)
 		require.EqualValues(t, old, detail.UserCount)
@@ -42,6 +44,9 @@ func TestIssueCountIdentityParity(t *testing.T) {
 		require.EqualValues(t, old, list[0].UserCount)
 	}
 	check()
+	var ipOnly int
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT count(*) FROM events WHERE issue_id=$1 AND payload->'user'->>'ip_address' = 'ip' AND user_identity IS NULL`, issue.ID).Scan(&ipOnly))
+	require.Equal(t, 1, ipOnly, "the IP-only event has no identity and is not counted")
 	_, err = testPool.Exec(ctx, `UPDATE events SET payload='{"user":{"email":"scrubbed"}}' WHERE project_id=$1`, p.ID)
 	require.NoError(t, err)
 	check()

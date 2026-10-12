@@ -130,3 +130,27 @@ func TestInsertIssueHistory_nilDetailsDefaultsToEmpty(t *testing.T) {
 		t.Error("expected non-nil details map even when inserted nil")
 	}
 }
+
+func TestInsertIssueHistoryBatch(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	a := seedIssueWithEvent(t, project.ID, "fp-hist-batch-a", "A")
+	b := seedIssueWithEvent(t, project.ID, "fp-hist-batch-b", "B")
+	now := time.Now().UTC()
+	err := storage.InsertIssueHistoryBatch(ctx, testPool, []storage.IssueHistoryEntry{
+		{IssueID: a.ID, EventType: "status_changed", Details: map[string]any{"to": "resolved"}, CreatedAt: now},
+		{IssueID: b.ID, EventType: "status_changed", CreatedAt: now},
+	})
+	if err != nil {
+		t.Fatalf("batch insert: %v", err)
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		entries, err := storage.GetIssueHistory(ctx, testPool, id)
+		if err != nil || len(entries) != 1 || entries[0].EventType != "status_changed" {
+			t.Errorf("issue %s: entries=%v err=%v", id, entries, err)
+		}
+	}
+	if err := storage.InsertIssueHistoryBatch(ctx, testPool, nil); err != nil {
+		t.Errorf("empty batch: %v", err)
+	}
+}

@@ -147,7 +147,9 @@ func TestMigrateCmd_noChange(t *testing.T) {
 // which must execute their batches separately and outside a transaction.
 func TestMigratePerformanceIndexes(t *testing.T) {
 	ctx := context.Background()
-	for _, name := range []string{"transactions_start_id", "logs_timestamp_id", "transactions_project_release", "events_issue_received_id", "perf_events_transaction", "transactions_received_id", "logs_received_id", "events_received_id", "uptime_checks_checked_id"} {
+	// transactions_project_release was replaced by a covering index in 0034,
+	// so it is absent at head; replaying 0016 recreates it.
+	for _, name := range []string{"transactions_start_id", "logs_timestamp_id", "events_issue_received_id", "perf_events_transaction", "transactions_received_id", "logs_received_id", "events_received_id", "uptime_checks_checked_id"} {
 		if _, err := testUserPool.Exec(ctx, "DROP INDEX "+name); err != nil {
 			t.Fatal(err)
 		}

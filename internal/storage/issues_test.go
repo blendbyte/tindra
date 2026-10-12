@@ -1271,3 +1271,42 @@ func TestUpsertIssue_concurrentRegressionReportedOnce(t *testing.T) {
 
 	require.False(t, <-regressed, "the regression was already reported by the first event")
 }
+
+// The tag filter matches issues with an event carrying the tag, with or
+// without a value, in every list and count variant.
+func TestIssueFilters_tagMatchesOnlyTaggedIssues(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	chrome := seedIssueWithEvent(t, project.ID, "fp-tag-chrome", "Chrome issue")
+	firefox := seedIssueWithEvent(t, project.ID, "fp-tag-firefox", "Firefox issue")
+	seedIssueWithEvent(t, project.ID, "fp-tag-none", "Untagged issue")
+	for issueID, browser := range map[string]string{chrome.ID: "Chrome", firefox.ID: "Firefox"} {
+		_, err := testPool.Exec(ctx, `
+			INSERT INTO event_tags (event_id, issue_id, project_id, key, value)
+			SELECT id, $1, $2, 'browser', $3 FROM events WHERE issue_id = $1`, issueID, project.ID, browser)
+		require.NoError(t, err)
+	}
+
+	ids := func(issues []*storage.Issue) []string {
+		out := []string{}
+		for _, iss := range issues {
+			out = append(out, iss.ID)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		value string
+		want  []string
+	}{{"", []string{chrome.ID, firefox.ID}}, {"Chrome", []string{chrome.ID}}} {
+		filter := storage.IssueFilter{ProjectIDs: []string{project.ID}, TagKey: "browser", TagValue: tc.value, Limit: 50}
+		list, err := storage.ListIssues(ctx, testPool, filter)
+		require.NoError(t, err)
+		require.ElementsMatch(t, tc.want, ids(list), "ListIssues value=%q", tc.value)
+		all, err := storage.ListAllIssues(ctx, testPool, filter)
+		require.NoError(t, err)
+		require.ElementsMatch(t, tc.want, ids(all), "ListAllIssues value=%q", tc.value)
+		n, err := storage.CountAllIssues(ctx, testPool, filter)
+		require.NoError(t, err)
+		require.Equal(t, len(tc.want), n, "CountAllIssues value=%q", tc.value)
+	}
+}

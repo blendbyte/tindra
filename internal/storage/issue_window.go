@@ -34,7 +34,7 @@ func windowIssueCTE(filter IssueFilter, bounds TimeRange) (string, []any) {
 		origin = "(SELECT COALESCE(min(timestamp),$2::timestamptz - INTERVAL '1 second') FROM matching)"
 	}
 	return `WITH matching AS MATERIALIZED (
- SELECT issue_id, timestamp, environment, COALESCE(payload->'user'->>'id',payload->'user'->>'username',payload->'user'->>'email',payload->'user'->>'ip_address') AS identity
+ SELECT issue_id, timestamp, environment, user_identity AS identity
  FROM events WHERE ` + where + `), scoped AS (
  SELECT issue_id, count(*) AS window_count, count(DISTINCT identity) AS window_users,
  min(timestamp) AS window_first, max(timestamp) AS window_last,

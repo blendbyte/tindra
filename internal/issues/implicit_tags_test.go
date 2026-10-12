@@ -310,3 +310,17 @@ func TestCapTags_truncatesKeysAndValues(t *testing.T) {
 		t.Errorf("short tags must be unchanged, got %v", tags[1])
 	}
 }
+
+// A non-string level used to make implicit tag extraction drop every tag.
+func TestExtractImplicitTags_toleratesOddFields(t *testing.T) {
+	tags := map[string]string{}
+	for _, tag := range extractImplicitTags(json.RawMessage(`{"level":40,"environment":"production","request":"GET /","contexts":[1]}`)) {
+		tags[tag[0]] = tag[1]
+	}
+	if tags["environment"] != "production" {
+		t.Errorf("environment tag lost: %v", tags)
+	}
+	if tags["level"] != "40" {
+		t.Errorf("numeric level should still be tagged as text, got %v", tags)
+	}
+}

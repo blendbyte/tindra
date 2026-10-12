@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,6 +29,26 @@ func InsertIssueHistory(ctx context.Context, pool *pgxpool.Pool, e IssueHistoryE
 	`, e.IssueID, e.ActorID, e.EventType, e.Details, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert issue history: %w", err)
+	}
+	return nil
+}
+
+// InsertIssueHistoryBatch writes several history entries in one round trip,
+// for bulk operations that touch many issues at once.
+func InsertIssueHistoryBatch(ctx context.Context, pool *pgxpool.Pool, entries []IssueHistoryEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	b := &pgx.Batch{}
+	for _, e := range entries {
+		if e.Details == nil {
+			e.Details = map[string]any{}
+		}
+		b.Queue(`INSERT INTO issue_history (issue_id, actor_id, event_type, details, created_at) VALUES ($1, $2, $3, $4, $5)`,
+			e.IssueID, e.ActorID, e.EventType, e.Details, e.CreatedAt)
+	}
+	if err := pool.SendBatch(ctx, b).Close(); err != nil {
+		return fmt.Errorf("insert issue history batch: %w", err)
 	}
 	return nil
 }

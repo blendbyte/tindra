@@ -3,6 +3,7 @@ package ingest_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -454,5 +455,38 @@ func TestBufferSanitizedPayloadUsedByEnrichment(t *testing.T) {
 				t.Fatalf("sanitized event failed: %+v", s)
 			}
 		})
+	}
+}
+
+// Spans are written many per statement; a flush spanning several statements
+// must still link every span to its own transaction.
+func TestTransactionBuffer_manySpansAcrossChunks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	buf := ingest.NewTransactionBuffer(4)
+	now := time.Now().UTC()
+	counts := map[string]int{"trace-many-spans-a": 1500, "trace-many-spans-b": 700}
+	for traceID, n := range counts {
+		spans := make([]ingest.BufferedSpan, n)
+		for i := range spans {
+			spans[i] = ingest.BufferedSpan{SpanID: fmt.Sprintf("%s-%d", traceID, i), Op: "db.query", StartTimestamp: now, Timestamp: now}
+		}
+		buf.Push(ingest.BufferedTransaction{
+			ProjectID: testProject.ID, TraceID: traceID, Transaction: "/many", Op: "http.server", Status: "ok",
+			StartTimestamp: now, Timestamp: now, Spans: spans,
+		})
+	}
+	cancel()
+	buf.Run(ctx, testPool)
+
+	for traceID, want := range counts {
+		var got int
+		if err := testPool.QueryRow(context.Background(), `
+			SELECT count(*) FROM spans s JOIN transactions t ON t.id = s.transaction_id
+			WHERE t.trace_id = $1 AND s.span_id LIKE $1 || '-%'`, traceID).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s: %d spans linked to their transaction, want %d", traceID, got, want)
+		}
 	}
 }

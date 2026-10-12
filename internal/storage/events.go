@@ -191,16 +191,23 @@ func GetEventForIssueByID(ctx context.Context, pool *pgxpool.Pool, issueID, even
 }
 
 // GetEventForIssueAtOffset returns the event at position offset (0 = newest) for an issue.
+// The position is found with an index-only scan of events_issue_received_id,
+// and only the one matching row is read from the table. Skipping with OFFSET
+// over full rows read every skipped event, which made "oldest event" on a
+// busy issue scan its whole history.
 func GetEventForIssueAtOffset(ctx context.Context, pool *pgxpool.Pool, issueID string, offset int) (*EventRow, error) {
 	if offset < 0 {
 		offset = 0
 	}
 	row := pool.QueryRow(ctx, `
-		SELECT id, release, trace_id, received_at, payload
-		FROM events
-		WHERE issue_id = $1
-		ORDER BY received_at DESC, id DESC
-		LIMIT 1 OFFSET $2
+		WITH target AS (
+			SELECT id FROM events
+			WHERE issue_id = $1
+			ORDER BY received_at DESC, id DESC
+			LIMIT 1 OFFSET $2
+		)
+		SELECT e.id, e.release, e.trace_id, e.received_at, e.payload
+		FROM events e JOIN target t ON e.id = t.id
 	`, issueID, offset)
 
 	var ev EventRow

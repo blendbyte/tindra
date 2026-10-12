@@ -1,8 +1,11 @@
 package ingest
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -79,7 +82,6 @@ func writeBatch(ctx context.Context, pool batchSender, batch []BufferedEvent) er
 	}
 
 	// Upsert releases for any event that carries a release field.
-	type releaseKey struct{ projectID, version string }
 	seen := map[releaseKey]struct{}{}
 	for _, e := range batch {
 		var partial struct {
@@ -93,11 +95,19 @@ func writeBatch(ctx context.Context, pool batchSender, batch []BufferedEvent) er
 		return nil
 	}
 	rb := &pgx.Batch{}
-	for k := range seen {
+	// Sorted, so concurrent flushes take release row locks in the same order.
+	for _, k := range slices.SortedFunc(maps.Keys(seen), compareReleaseKeys) {
 		rb.Queue(`INSERT INTO releases (project_id, version) VALUES ($1, $2) ON CONFLICT (project_id, version) DO NOTHING`, k.projectID, k.version)
 	}
 	if err := execBatch(ctx, pool, rb); err != nil {
 		return err
 	}
 	return nil
+}
+
+// releaseKey identifies a release row to upsert.
+type releaseKey struct{ projectID, version string }
+
+func compareReleaseKeys(a, b releaseKey) int {
+	return cmp.Or(cmp.Compare(a.projectID, b.projectID), cmp.Compare(a.version, b.version))
 }

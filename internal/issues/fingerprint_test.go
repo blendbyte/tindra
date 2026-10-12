@@ -350,3 +350,13 @@ func TestCompute_v2CollapsesRecursion(t *testing.T) {
 		t.Error("recursion depth must not split issues")
 	}
 }
+
+// One malformed nested field must not change the fingerprint: nested objects
+// are decoded lazily, so a string "request" or array "contexts" is ignored.
+func TestCompute_oddNestedFieldsDoNotAffectFingerprint(t *testing.T) {
+	clean := json.RawMessage(`{"exception":{"values":[{"type":"E","value":"x"}]},"level":"error"}`)
+	odd := json.RawMessage(`{"exception":{"values":[{"type":"E","value":"x","mechanism":"not-an-object"}]},"level":40,"request":"GET /","contexts":[1,2],"tags":"oops"}`)
+	if fingerprintOf(clean) != fingerprintOf(odd) {
+		t.Error("odd nested fields changed the fingerprint")
+	}
+}

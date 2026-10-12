@@ -293,6 +293,7 @@ func (ro *router) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p, err := storage.UpdateProject(r.Context(), ro.pool, id, req.Name, req.Slug, req.PassthroughDSN, req.ProfilingEnabled)
+	ro.projectKeys.invalidate() // settings apply to ingestion at once
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -342,6 +343,7 @@ func (ro *router) handleUpdateProjectPrivacy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	p, err := storage.UpdateProjectScrubbing(r.Context(), ro.pool, id, req.ScrubFields, req.ScrubPatterns)
+	ro.projectKeys.invalidate() // settings apply to ingestion at once
 	if err != nil {
 		slog.Error("update project privacy", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -410,6 +412,7 @@ func (ro *router) handleGetProjectQuota(w http.ResponseWriter, r *http.Request) 
 func (ro *router) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "projectID")
 	found, err := storage.DeleteProjectByID(r.Context(), ro.pool, id)
+	ro.projectKeys.invalidate() // settings apply to ingestion at once
 	if err != nil {
 		slog.Error("delete project", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -706,16 +709,14 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 			historyDetails["ignore_count_limit"] = *req.IgnoreCountLimit
 		}
 	}
+	entries := make([]storage.IssueHistoryEntry, 0, len(updated))
 	for _, issueID := range updated {
-		if err := storage.InsertIssueHistory(r.Context(), ro.pool, storage.IssueHistoryEntry{
-			IssueID:   issueID,
-			ActorID:   actor,
-			EventType: "status_changed",
-			Details:   historyDetails,
-			CreatedAt: now,
-		}); err != nil {
-			slog.Error("insert bulk issue history", "err", err, "issue_id", issueID)
-		}
+		entries = append(entries, storage.IssueHistoryEntry{
+			IssueID: issueID, ActorID: actor, EventType: "status_changed", Details: historyDetails, CreatedAt: now,
+		})
+	}
+	if err := storage.InsertIssueHistoryBatch(r.Context(), ro.pool, entries); err != nil {
+		slog.Error("insert bulk issue history", "err", err)
 	}
 	writeJSON(w, map[string]any{"updated": len(updated)})
 }

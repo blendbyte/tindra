@@ -1046,16 +1046,14 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 		Details:   map[string]any{"status": status, "count": len(updated)},
 	})
 	now := time.Now().UTC()
+	entries := make([]storage.IssueHistoryEntry, 0, len(updated))
 	for _, issueID := range updated {
-		if err := storage.InsertIssueHistory(ctx, ro.pool, storage.IssueHistoryEntry{
-			IssueID:   issueID,
-			ActorID:   actor,
-			EventType: "status_changed",
-			Details:   map[string]any{"to": status},
-			CreatedAt: now,
-		}); err != nil {
-			slog.Error("insert bulk issue history (mcp)", "err", err, "issue_id", issueID)
-		}
+		entries = append(entries, storage.IssueHistoryEntry{
+			IssueID: issueID, ActorID: actor, EventType: "status_changed", Details: map[string]any{"to": status}, CreatedAt: now,
+		})
+	}
+	if err := storage.InsertIssueHistoryBatch(ctx, ro.pool, entries); err != nil {
+		slog.Error("insert bulk issue history (mcp)", "err", err)
 	}
 	b, _ := json.MarshalIndent(map[string]any{"updated": len(updated)}, "", "  ")
 	return string(b), nil

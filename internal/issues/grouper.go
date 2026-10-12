@@ -168,29 +168,27 @@ func (g *Grouper) readPage(ctx context.Context, cursor *groupingCursor) ([]rawEv
 
 func (g *Grouper) group(ctx context.Context, e rawEvent) (bool, error) {
 
-	fp, legacyFP := Compute(e.Payload)
-	title := Title(e.Payload)
-
-	var partial struct {
-		Level       string          `json:"level"`
-		Environment string          `json:"environment"`
-		Release     string          `json:"release"`
-		Tags        json.RawMessage `json:"tags"`
-	}
-	_ = json.Unmarshal(e.Payload, &partial)
-	level := partial.Level
+	// Decode once for the fingerprint, title, metadata and implicit tags.
+	payload, ok := decodeEvent(e.Payload)
+	fp, legacyFP := computeFrom(payload, ok)
+	title := titleFrom(payload, ok)
+	level := string(payload.Level)
 	if level == "" {
 		level = "error"
 	}
 
-	issue, isNew, wasRegressed, err := storage.GroupEvent(ctx, g.pool, e.ID, fp, legacyFP, title, level, partial.Environment, partial.Release)
+	issue, isNew, wasRegressed, err := storage.GroupEvent(ctx, g.pool, e.ID, fp, legacyFP, title, level, string(payload.Environment), string(payload.Release))
 	if err != nil {
 		return false, err
 	}
 	if issue == nil {
 		return false, nil
 	}
-	tags := capTags(mergeImplicitTags(storage.ParseTags(partial.Tags), extractImplicitTags(e.Payload)))
+	var implicit [][2]string
+	if ok {
+		implicit = implicitTagsFrom(payload)
+	}
+	tags := capTags(mergeImplicitTags(storage.ParseTags(payload.Tags), implicit))
 	if len(tags) > 0 {
 		if err := storage.InsertEventTags(ctx, g.pool, e.ID, issue.ID, e.ProjectID, tags); err != nil {
 			slog.Error("insert tags", "err", err)

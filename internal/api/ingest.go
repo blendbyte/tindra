@@ -100,13 +100,25 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 	// routing hint and the JS SDK truncates UUID project IDs via parseInt
 	// (e.g. "4915a9dc-..." becomes "4915"), so it cannot be used for lookup.
 	// The public key is unique and is the real authentication credential.
-	project, err := storage.GetByPublicKey(r.Context(), ro.pool, publicKey)
+	// Clients that keep presenting unknown keys are throttled per IP, so random
+	// keys cannot each cost a database lookup.
+	ipKey := ipRateLimitKey(r.RemoteAddr)
+	if ro.unknownKeyRL != nil {
+		if count, _ := ro.unknownKeyRL.peek(ipKey); count >= ro.unknownKeyRL.limit {
+			http.Error(w, "too many requests with invalid keys", http.StatusTooManyRequests)
+			return
+		}
+	}
+	project, err := ro.projectKeys.lookup(r.Context(), ro.pool, publicKey)
 	if err != nil {
 		slog.Error("project lookup", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if project == nil {
+		if ro.unknownKeyRL != nil {
+			ro.unknownKeyRL.allow(ipKey)
+		}
 		http.Error(w, "invalid key", http.StatusUnauthorized)
 		return
 	}
@@ -131,6 +143,9 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 		for _, observation := range observations {
 			items = append(items, observation)
 		}
+		if items = ro.observations.filter(project.ID, items); len(items) == 0 {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 200*time.Millisecond)
 		defer cancel()
 		if err := storage.RecordSetupObservations(ctx, ro.pool, project.ID, items); err != nil {
@@ -139,7 +154,7 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if lim := ro.eventLimit.Load(); lim > 0 {
-		count, err := storage.CountMonthlyEvents(r.Context(), ro.pool)
+		count, err := ro.monthlyCount.get(r.Context(), ro.pool)
 		if err != nil {
 			slog.Error("count monthly events", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
