@@ -11,3 +11,16 @@ internal/ui/dist/
 .env.local
 coverage.out
 *.test
+.env.*
+!.env.example
+**/node_modules/
+**/.DS_Store
+web/coverage/
+web/test-results/
+web/playwright-report/
+web/.vitest/
+*.out
+*.prof
+.idea/
+.vscode/
+.claude/

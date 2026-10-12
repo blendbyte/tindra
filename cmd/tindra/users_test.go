@@ -205,6 +205,51 @@ func TestCreateUserCmd_success(t *testing.T) {
 	}
 }
 
+func TestCreateUserCmd_passwordFromStdin(t *testing.T) {
+	truncateUsersAndInvites(t)
+
+	cmd := usersCreateCmd(inviteCfg())
+	cmd.SetIn(strings.NewReader("stdin-password-1234\nignored second line\n"))
+	cmd.SetArgs([]string{"--email", "admin@example.com", "--password-stdin"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	user, err := storage.GetUserByEmail(context.Background(), testUserPool, "admin@example.com")
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	ok, err := storage.VerifyUserPassword(context.Background(), testUserPool, user.ID, "stdin-password-1234")
+	if err != nil || !ok {
+		t.Errorf("password read from stdin was not stored (ok=%v, err=%v)", ok, err)
+	}
+}
+
+func TestCreateUserCmd_passwordSources(t *testing.T) {
+	cases := []struct {
+		name  string
+		args  []string
+		stdin string
+		want  string
+	}{
+		{"both flags", []string{"--password", "password1234", "--password-stdin"}, "password1234\n", "not both"},
+		{"empty stdin", []string{"--password-stdin"}, "", "read password from stdin"},
+		// A pipe is not a terminal, so there is no prompt to fall back to.
+		{"no flag without a terminal", nil, "", "--password-stdin"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := usersCreateCmd(inviteCfg())
+			cmd.SetIn(strings.NewReader(tc.stdin))
+			cmd.SetArgs(append([]string{"--email", "admin@example.com"}, tc.args...))
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestCreateUserCmd_limitReached(t *testing.T) {
 	truncateUsersAndInvites(t)
 

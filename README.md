@@ -81,10 +81,10 @@ make run
 
 The frontend build supplies the assets embedded by Go. The development database listens on `127.0.0.1:5432`, uses the credentials in `.env.example`, and stores data in a separate `tindra-dev` volume. The backend applies migrations on startup and listens on port 8080.
 
-Once the backend is running, create an account in another terminal, replacing the example password with your own (at least 12 characters), then start the frontend:
+Once the backend is running, create an account in another terminal (it asks for a password of at least 12 characters without echoing it), then start the frontend:
 
 ```bash
-make cli ARGS='users create --email you@example.com --password "your-local-password"'
+make cli ARGS='users create --email you@example.com'
 cd web
 bun run dev
 ```

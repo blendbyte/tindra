@@ -88,6 +88,7 @@ test('Go and frontend unit suites cannot be replaced by build-only checks', () =
   )).toBe(true)
   expect(verify.jobs['frontend-test'].steps.map((step: any) => step.run)).toContain('bun run test:coverage')
   expect(verify.jobs['frontend-test'].steps.map((step: any) => step.run)).toContain('bun run lint')
+  expect(verify.jobs['action-pins'].steps.map((step: any) => step.run)).toContain('bun test scripts/install.test.ts')
 })
 
 test('vulnerability scan uses the toolchain that ships in releases', () => {
@@ -104,6 +105,30 @@ test('Docker builder uses the same Go version as go.mod', () => {
   const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8')
   expect(goVersion).toBeDefined()
   expect(dockerfile).toContain(`golang:${goVersion}-alpine`)
+})
+
+test('Docker base images are pinned and Bun matches the frontend toolchain', () => {
+  const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8')
+  const froms = [...dockerfile.matchAll(/^FROM\s+(?:--platform=\S+\s+)?(\S+)/gm)].map(m => m[1])
+  expect(froms.length).toBe(3)
+  for (const image of froms) expect(image).toMatch(/:[^@]+@sha256:[0-9a-f]{64}$/)
+
+  const pkg = JSON.parse(readFileSync(new URL('../web/package.json', import.meta.url), 'utf8'))
+  const bunVersion = pkg.packageManager?.match(/^bun@(\d+\.\d+\.\d+)$/)?.[1]
+  expect(bunVersion).toBeDefined()
+  expect(froms[0]).toStartWith(`oven/bun:${bunVersion}`)
+  for (const job of Object.values(verify.jobs) as any[]) {
+    for (const step of job.steps.filter((s: any) => s.uses?.startsWith('oven-sh/setup-bun@'))) {
+      expect(step.with?.['bun-version-file']).toBe('web/package.json')
+    }
+  }
+
+  // vue-tsc cannot check .vue files under Bun's runtime, so the image only
+  // bundles; publishing jobs already require the type-checked verify run.
+  expect(dockerfile).toContain('RUN bunx vite build')
+  expect(dockerfile).not.toMatch(/^RUN .*(vue-tsc|bun run build)/m)
+  expect(dockerfile).toContain('HEALTHCHECK')
+  expect(dockerfile).toContain('CMD ["/tindra", "healthcheck"]')
 })
 
 test('release binaries consume the frontend artifact from mandatory verification', () => {

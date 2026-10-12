@@ -35,7 +35,7 @@ ask() {
 }
 
 ask_password() {
-  # ask_password VAR "Prompt"  — reads without echo, confirms, enforces min length
+  # ask_password VAR "Prompt": reads without echo, confirms, enforces min length
   local __var="$1" __prompt="$2"
   while true; do
     printf "   %s: " "$__prompt"
@@ -141,9 +141,31 @@ case "$HOST_PORT" in
   ''|*[!0-9]*) die "Port must be a number." ;;
 esac
 
+# Docker publishes ports with its own firewall rules, which take precedence
+# over host firewalls such as ufw. Binding to loopback keeps Tindra reachable
+# only through a reverse proxy on this machine.
+printf "   ${DIM}With a reverse proxy on this machine, Tindra only listens on 127.0.0.1.${RESET}\n"
+ask_yn PROXY_LOCAL "Is your reverse proxy (Caddy, nginx, Traefik...) on this machine?" "y"
+
+if [ "$PROXY_LOCAL" = "y" ]; then
+  PORT_BINDING="127.0.0.1:${HOST_PORT}:8080"
+  # The proxy's requests reach the container from Docker's network gateway,
+  # so trust the private ranges Docker assigns. Nothing else can connect,
+  # because the port is bound to loopback.
+  TRUSTED_PROXIES="127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+  ok "Listening on 127.0.0.1:${HOST_PORT}"
+else
+  PORT_BINDING="${HOST_PORT}:8080"
+  warn "Port ${HOST_PORT} will be reachable from other machines. Docker bypasses ufw/firewalld rules."
+  printf "   ${DIM}If a proxy on another machine forwards to Tindra, enter its IP so client IPs${RESET}\n"
+  printf "   ${DIM}are read from X-Forwarded-For. Otherwise every login shares the proxy's IP${RESET}\n"
+  printf "   ${DIM}and a few failed attempts lock everyone out.${RESET}\n"
+  ask TRUSTED_PROXIES "Proxy IP or CIDR (empty if none)" ""
+fi
+
 # ── first account ─────────────────────────────────────────────────────────────
 step "First account"
-printf "   ${DIM}Tindra has no sign-up page — this creates your admin account.${RESET}\n"
+printf "   ${DIM}Tindra has no sign-up page, so this creates your admin account.${RESET}\n"
 
 while true; do
   ask FIRST_EMAIL "Email"
@@ -164,7 +186,7 @@ if command -v openssl >/dev/null 2>&1; then
 elif [ -r /dev/urandom ]; then
   DB_PASSWORD="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 48 || true)"
 else
-  die "Cannot generate a random password — install openssl and try again."
+  die "Cannot generate a random password. Install openssl and try again."
 fi
 
 [ -n "$DB_PASSWORD" ] || die "Password generation failed."
@@ -173,6 +195,9 @@ ok "48-character random password generated"
 # ── write docker-compose.yml ──────────────────────────────────────────────────
 step "Writing docker-compose.yml"
 
+# The file holds the database password, so only the owner may read it.
+(umask 077 && : > "$COMPOSE_FILE")
+chmod 600 "$COMPOSE_FILE"
 cat > "$COMPOSE_FILE" << EOF
 services:
   postgres:
@@ -195,7 +220,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 75s
     ports:
-      - "${HOST_PORT}:8080"
+      - "${PORT_BINDING}"
     environment:
       DATABASE_URL: "postgres://tindra:${DB_PASSWORD}@postgres:5432/tindra?sslmode=disable"
       PUBLIC_URL: "${PUBLIC_URL}"
@@ -205,6 +230,8 @@ services:
       # Set a secret bearer token to enable operator metrics at /metrics.
       # STATS_API_KEY: "replace-with-a-secret"
       COOKIE_SECURE: "${COOKIE_SECURE}"
+      # Proxies whose X-Forwarded-For is trusted for client IPs (login limits, audit log).
+      TRUSTED_PROXIES: "${TRUSTED_PROXIES}"
       RETENTION_DAYS: "90"
       # Allow uptime probes to reach internal services only when explicitly needed.
       # UPTIME_ALLOW_PRIVATE_IPS: "true"
@@ -258,10 +285,11 @@ if [ "$START" = "y" ]; then
 
   CREATED=0
   for i in $(seq 1 20); do
-    if $DC -f "$COMPOSE_FILE" exec -T tindra /tindra users create \
+    # The password goes in on stdin so it never appears in a process list.
+    if printf '%s\n' "$FIRST_PASSWORD" | $DC -f "$COMPOSE_FILE" exec -T tindra /tindra users create \
         --email "$FIRST_EMAIL" \
         --name "$FIRST_NAME" \
-        --password "$FIRST_PASSWORD" >/dev/null 2>&1; then
+        --password-stdin >/dev/null 2>&1; then
       CREATED=1
       break
     fi
@@ -275,7 +303,7 @@ if [ "$START" = "y" ]; then
     printf "   Open ${CYAN}%s${RESET} and log in.\n" "$PUBLIC_URL"
   else
     warn "Tindra took too long to start. Create your account once it's up:"
-    printf "   ${CYAN}%s -f %s exec tindra /tindra users create --email '%s' --name '%s' --password 'yourpassword'${RESET}\n" \
+    printf "   ${CYAN}%s -f %s exec tindra /tindra users create --email '%s' --name '%s'${RESET}\n" \
       "$DC" "$COMPOSE_FILE" "$FIRST_EMAIL" "$FIRST_NAME"
   fi
 
@@ -291,9 +319,10 @@ else
   printf "\n"
   printf "   ${BOLD}Ready.${RESET}  Start and create your account:\n"
   printf "\n"
-  printf "   ${CYAN}$DC -f %s up -d${RESET}\n" "$COMPOSE_FILE"
-  printf "   ${CYAN}$DC -f %s exec tindra /tindra users create --email '%s' --name '%s' --password 'yourpassword'${RESET}\n" \
+  printf "   ${CYAN}%s -f %s up -d${RESET}\n" "$DC" "$COMPOSE_FILE"
+  printf "   ${CYAN}%s -f %s exec tindra /tindra users create --email '%s' --name '%s'${RESET}\n" \
     "$DC" "$COMPOSE_FILE" "$FIRST_EMAIL" "$FIRST_NAME"
+  printf "   ${DIM}It asks for the password without showing it.${RESET}\n"
 fi
 
 printf "\n"

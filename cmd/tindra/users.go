@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/storage"
@@ -24,10 +27,15 @@ func usersCmd(cfg config) *cobra.Command {
 
 func usersCreateCmd(cfg config) *cobra.Command {
 	var email, name, password string
+	var passwordStdin bool
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new user",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			password, err := newUserPassword(cmd, password, passwordStdin)
+			if err != nil {
+				return err
+			}
 			ctx := context.Background()
 			pool, err := storage.Connect(ctx, cfg.databaseURL)
 			if err != nil {
@@ -55,10 +63,54 @@ func usersCreateCmd(cfg config) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&email, "email", "", "User email address")
 	cmd.Flags().StringVar(&name, "name", "", "Display name")
-	cmd.Flags().StringVar(&password, "password", "", "User password (min 12 characters)")
+	cmd.Flags().StringVar(&password, "password", "", "User password (min 12 characters); visible in shell history and process lists, prefer --password-stdin")
+	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "Read the password from the first line of standard input")
 	_ = cmd.MarkFlagRequired("email")
-	_ = cmd.MarkFlagRequired("password")
 	return cmd
+}
+
+// newUserPassword returns the password for users create. A --password value
+// shows up in shell history and process lists, so scripts pipe it in with
+// --password-stdin, and at a terminal the command prompts without echoing.
+func newUserPassword(cmd *cobra.Command, flagValue string, fromStdin bool) (string, error) {
+	switch {
+	case flagValue != "" && fromStdin:
+		return "", errors.New("use either --password or --password-stdin, not both")
+	case flagValue != "":
+		return flagValue, nil
+	case fromStdin:
+		line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+		if err != nil && line == "" {
+			return "", fmt.Errorf("read password from stdin: %w", err)
+		}
+		return strings.TrimRight(line, "\r\n"), nil
+	}
+
+	// Without either flag, prompt only when a person is at the keyboard.
+	// cmd.InOrStdin() is an io.Reader; the type assertion checks whether it is
+	// really a file (the terminal) rather than a pipe set up by a script or test.
+	in, ok := cmd.InOrStdin().(*os.File)
+	if !ok || !term.IsTerminal(int(in.Fd())) {
+		return "", errors.New("a password is required: pass --password-stdin and pipe it in")
+	}
+	prompt := func(label string) (string, error) {
+		fmt.Fprint(cmd.ErrOrStderr(), label)
+		b, err := term.ReadPassword(int(in.Fd()))
+		fmt.Fprintln(cmd.ErrOrStderr())
+		return string(b), err
+	}
+	first, err := prompt("Password: ")
+	if err != nil {
+		return "", err
+	}
+	again, err := prompt("Confirm password: ")
+	if err != nil {
+		return "", err
+	}
+	if first != again {
+		return "", errors.New("passwords do not match")
+	}
+	return first, nil
 }
 
 func usersSendPasswordResetCmd(cfg config) *cobra.Command {

@@ -98,6 +98,7 @@ func main() {
 		projectsCmd(cfg),
 		usersCmd(cfg),
 		sendDigestCmd(cfg),
+		healthcheckCmd(cfg),
 	)
 
 	if err := root.Execute(); err != nil {
