@@ -16,7 +16,7 @@ test('tracked text files contain no em dashes', () => {
       continue // deleted in the working tree
     }
     text.split('\n').forEach((line, i) => {
-      if (line.includes('—')) offenders.push(`${file}:${i + 1}`)
+      if (line.includes('\u2014')) offenders.push(`${file}:${i + 1}`)
     })
   }
   expect(offenders).toEqual([])
