@@ -376,6 +376,41 @@ type AlertPayload struct {
 	Logs           []*storage.Log           `json:"logs,omitempty"`
 }
 
+// detailInt reads a numeric detail. Retried firings unmarshal the payload from
+// JSON, which turns ints into float64, so a plain .(int) would read them as 0.
+func detailInt(d map[string]any, key string) (int, bool) {
+	switch v := d[key].(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		n, err := v.Int64()
+		return int(n), err == nil
+	}
+	return 0, false
+}
+
+// detailStrings reads a string-list detail, accepting the []any shape it has
+// after a JSON round trip.
+func detailStrings(d map[string]any, key string) []string {
+	switch v := d[key].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // firstProjectID returns the first project ID for scoped rules, or "" for global.
 func firstProjectID(rule *storage.AlertRule) string {
 	if len(rule.ProjectIDs) > 0 {
@@ -679,11 +714,11 @@ func (e *Evaluator) deliver(ctx context.Context, rule *storage.AlertRule, payloa
 func itemCountFromPayload(payload AlertPayload) *int {
 	var total int
 	found := false
-	for k, v := range payload.Details {
+	for k := range payload.Details {
 		switch k {
 		case "new_issue_count", "regressed_count", "event_count", "log_count",
 			"missed_count", "error_count", "resolved_count", "down_count", "recovered_count":
-			if n, ok := v.(int); ok {
+			if n, ok := detailInt(payload.Details, k); ok {
 				total += n
 				found = true
 			}
@@ -1380,7 +1415,7 @@ func buildAlertSubject(p AlertPayload) string {
 	}
 	switch p.Trigger {
 	case "new_issue":
-		count, _ := p.Details["new_issue_count"].(int)
+		count, _ := detailInt(p.Details, "new_issue_count")
 		if count == 1 {
 			if title := singleIssueTitle(p); title != "" {
 				return "[Tindra] " + prefix + "New issue: " + title
@@ -1389,7 +1424,7 @@ func buildAlertSubject(p AlertPayload) string {
 		}
 		return fmt.Sprintf("[Tindra] %s%d new issues", prefix, count)
 	case "regressed":
-		count, _ := p.Details["regressed_count"].(int)
+		count, _ := detailInt(p.Details, "regressed_count")
 		if count == 1 {
 			if title := singleIssueTitle(p); title != "" {
 				return "[Tindra] " + prefix + "Regression: " + title
@@ -1398,8 +1433,8 @@ func buildAlertSubject(p AlertPayload) string {
 		}
 		return fmt.Sprintf("[Tindra] %s%d regressions", prefix, count)
 	case "new_or_regressed":
-		n, _ := p.Details["new_issue_count"].(int)
-		r, _ := p.Details["regressed_count"].(int)
+		n, _ := detailInt(p.Details, "new_issue_count")
+		r, _ := detailInt(p.Details, "regressed_count")
 		total := n + r
 		if total == 1 {
 			if title := singleIssueTitle(p); title != "" {
@@ -1409,27 +1444,27 @@ func buildAlertSubject(p AlertPayload) string {
 		}
 		return fmt.Sprintf("[Tindra] %s%d issues", prefix, total)
 	case "event_count":
-		count, _ := p.Details["event_count"].(int)
-		window, _ := p.Details["window_mins"].(int)
+		count, _ := detailInt(p.Details, "event_count")
+		window, _ := detailInt(p.Details, "window_mins")
 		return fmt.Sprintf("[Tindra] %s%d events in %dmin", prefix, count, window)
 	case "log_count":
-		count, _ := p.Details["log_count"].(int)
-		window, _ := p.Details["window_mins"].(int)
+		count, _ := detailInt(p.Details, "log_count")
+		window, _ := detailInt(p.Details, "window_mins")
 		return fmt.Sprintf("[Tindra] %s%d logs in %dmin", prefix, count, window)
 	case "cron_missed":
-		count, _ := p.Details["missed_count"].(int)
+		count, _ := detailInt(p.Details, "missed_count")
 		if count == 1 {
 			return "[Tindra] " + prefix + "1 cron monitor missed"
 		}
 		return fmt.Sprintf("[Tindra] %s%d cron monitors missed", prefix, count)
 	case "cron_error":
-		count, _ := p.Details["error_count"].(int)
+		count, _ := detailInt(p.Details, "error_count")
 		if count == 1 {
 			return "[Tindra] " + prefix + "1 cron check-in error"
 		}
 		return fmt.Sprintf("[Tindra] %s%d cron check-in errors", prefix, count)
 	case "uptime_down":
-		count, _ := p.Details["down_count"].(int)
+		count, _ := detailInt(p.Details, "down_count")
 		if count == 1 {
 			if len(p.UptimeMonitors) > 0 {
 				return "[Tindra] " + prefix + p.UptimeMonitors[0].Name + " is down"
@@ -1438,7 +1473,7 @@ func buildAlertSubject(p AlertPayload) string {
 		}
 		return fmt.Sprintf("[Tindra] %s%d uptime monitors down", prefix, count)
 	case "uptime_recovered":
-		count, _ := p.Details["recovered_count"].(int)
+		count, _ := detailInt(p.Details, "recovered_count")
 		if count == 1 {
 			if len(p.UptimeMonitors) > 0 {
 				return "[Tindra] " + prefix + p.UptimeMonitors[0].Name + " recovered"
@@ -1447,7 +1482,7 @@ func buildAlertSubject(p AlertPayload) string {
 		}
 		return fmt.Sprintf("[Tindra] %s%d uptime monitors recovered", prefix, count)
 	case "issue_auto_resolved":
-		count, _ := p.Details["resolved_count"].(int)
+		count, _ := detailInt(p.Details, "resolved_count")
 		if count == 1 {
 			return "[Tindra] " + prefix + "1 performance issue auto-resolved"
 		}

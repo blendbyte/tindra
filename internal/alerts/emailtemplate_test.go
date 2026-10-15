@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -870,5 +871,61 @@ func TestRenderAlertEmail_cronError(t *testing.T) {
 	}
 	if !strings.Contains(html, "daily-report") {
 		t.Error("HTML should contain monitor name")
+	}
+}
+
+// roundTrip mimics the retry path, which stores the payload as JSON and
+// unmarshals it again before redelivery.
+func roundTrip(t *testing.T, p AlertPayload) AlertPayload {
+	t.Helper()
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out AlertPayload
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return out
+}
+
+func TestRetriedPayload_keepsCounts(t *testing.T) {
+	ts := time.Date(2026, 10, 15, 18, 27, 0, 0, time.UTC)
+	p := roundTrip(t, AlertPayload{
+		RuleName: "Issues",
+		Trigger:  "new_or_regressed",
+		FiredAt:  ts,
+		Details:  map[string]any{"new_issue_count": 1, "regressed_count": 0},
+		Issues:   []*storage.Issue{makeTestIssue("iss-r1", "TypeError: boom", "error", "production", ts)},
+	})
+	if got := alertTriggerLine(p); got != "1 new issue was created since the last alert." {
+		t.Errorf("trigger line = %q", got)
+	}
+	if got := buildAlertSubject(p); got != "[Tindra] Issue: TypeError: boom" {
+		t.Errorf("subject = %q", got)
+	}
+	if got := itemCountFromPayload(p); got == nil || *got != 1 {
+		t.Errorf("item count = %v", got)
+	}
+	html, _, err := RenderAlertEmail(p, "")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, "more new") {
+		t.Error("retried payload should not report extra issues")
+	}
+}
+
+func TestRetriedPayload_logsViewURLKeepsProjects(t *testing.T) {
+	p := roundTrip(t, AlertPayload{
+		Trigger: "log_count",
+		Details: map[string]any{"log_count": 3, "project_ids": []string{"p1", "p2"}},
+	})
+	got := logsViewURL("https://tindra.example.com", p)
+	if !strings.Contains(got, "project_id=p1") || !strings.Contains(got, "project_id=p2") {
+		t.Errorf("logs URL lost project ids: %q", got)
+	}
+	if got := alertTriggerLine(p); !strings.Contains(got, "3 logs") {
+		t.Errorf("trigger line = %q", got)
 	}
 }

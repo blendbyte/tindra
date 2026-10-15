@@ -363,20 +363,20 @@ func alertTriggerLine(p AlertPayload) string {
 	}
 	switch p.Trigger {
 	case "new_issue":
-		count, _ := p.Details["new_issue_count"].(int)
+		count, _ := detailInt(p.Details, "new_issue_count")
 		if count == 1 {
 			return "1 new issue was created since the last alert."
 		}
 		return fmt.Sprintf("%d new issues were created since the last alert.", count)
 	case "regressed":
-		count, _ := p.Details["regressed_count"].(int)
+		count, _ := detailInt(p.Details, "regressed_count")
 		if count == 1 {
 			return "1 previously resolved issue regressed since the last alert."
 		}
 		return fmt.Sprintf("%d previously resolved issues regressed since the last alert.", count)
 	case "new_or_regressed":
-		n, _ := p.Details["new_issue_count"].(int)
-		r, _ := p.Details["regressed_count"].(int)
+		n, _ := detailInt(p.Details, "new_issue_count")
+		r, _ := detailInt(p.Details, "regressed_count")
 		switch {
 		case n > 0 && r > 0:
 			return fmt.Sprintf("%d new issue(s) and %d regression(s) since the last alert.", n, r)
@@ -392,45 +392,45 @@ func alertTriggerLine(p AlertPayload) string {
 			return fmt.Sprintf("%d previously resolved issues regressed since the last alert.", r)
 		}
 	case "event_count":
-		count, _ := p.Details["event_count"].(int)
-		threshold, _ := p.Details["threshold"].(int)
-		windowMins, _ := p.Details["window_mins"].(int)
+		count, _ := detailInt(p.Details, "event_count")
+		threshold, _ := detailInt(p.Details, "threshold")
+		windowMins, _ := detailInt(p.Details, "window_mins")
 		return fmt.Sprintf("%d events in the last %d minutes (threshold: %d).", count, windowMins, threshold)
 	case "log_count":
-		count, _ := p.Details["log_count"].(int)
-		threshold, _ := p.Details["threshold"].(int)
-		windowMins, _ := p.Details["window_mins"].(int)
+		count, _ := detailInt(p.Details, "log_count")
+		threshold, _ := detailInt(p.Details, "threshold")
+		windowMins, _ := detailInt(p.Details, "window_mins")
 		query := logCountQueryLabel(p)
 		if query != "" {
 			return fmt.Sprintf("%d logs matching %s in the last %d minutes (threshold: %d).", count, query, windowMins, threshold)
 		}
 		return fmt.Sprintf("%d logs in the last %d minutes (threshold: %d).", count, windowMins, threshold)
 	case "cron_missed":
-		count, _ := p.Details["missed_count"].(int)
+		count, _ := detailInt(p.Details, "missed_count")
 		if count == 1 {
 			return "1 cron monitor missed its expected check-in."
 		}
 		return fmt.Sprintf("%d cron monitors missed their expected check-in.", count)
 	case "cron_error":
-		count, _ := p.Details["error_count"].(int)
+		count, _ := detailInt(p.Details, "error_count")
 		if count == 1 {
 			return "1 cron monitor reported an error."
 		}
 		return fmt.Sprintf("%d cron monitors reported errors.", count)
 	case "uptime_down":
-		count, _ := p.Details["down_count"].(int)
+		count, _ := detailInt(p.Details, "down_count")
 		if count == 1 {
 			return "1 uptime monitor is down."
 		}
 		return fmt.Sprintf("%d uptime monitors are down.", count)
 	case "uptime_recovered":
-		count, _ := p.Details["recovered_count"].(int)
+		count, _ := detailInt(p.Details, "recovered_count")
 		if count == 1 {
 			return "1 uptime monitor has recovered."
 		}
 		return fmt.Sprintf("%d uptime monitors have recovered.", count)
 	case "issue_auto_resolved":
-		count, _ := p.Details["resolved_count"].(int)
+		count, _ := detailInt(p.Details, "resolved_count")
 		if count == 1 {
 			return "1 issue was automatically resolved."
 		}
@@ -583,12 +583,9 @@ func logsViewURL(base string, p AlertPayload) string {
 	if v, ok := p.Details["filter_search"].(string); ok && v != "" {
 		q.Set("search", v)
 	}
-	switch ids := p.Details["project_ids"].(type) {
-	case []string:
-		for _, id := range ids {
-			if id != "" {
-				q.Add("project_id", id)
-			}
+	for _, id := range detailStrings(p.Details, "project_ids") {
+		if id != "" {
+			q.Add("project_id", id)
 		}
 	}
 	if p.ProjectID != "" && q.Get("project_id") == "" {
@@ -678,35 +675,35 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	moreCount := 0
 	switch payload.Trigger {
 	case "new_issue":
-		if n, ok := payload.Details["new_issue_count"].(int); ok {
+		if n, ok := detailInt(payload.Details, "new_issue_count"); ok {
 			moreCount = n - len(issueCards)
 		}
 	case "regressed":
-		if r, ok := payload.Details["regressed_count"].(int); ok {
+		if r, ok := detailInt(payload.Details, "regressed_count"); ok {
 			moreCount = r - len(issueCards)
 		}
 	case "new_or_regressed":
-		n, _ := payload.Details["new_issue_count"].(int)
-		r, _ := payload.Details["regressed_count"].(int)
+		n, _ := detailInt(payload.Details, "new_issue_count")
+		r, _ := detailInt(payload.Details, "regressed_count")
 		moreCount = (n + r) - len(issueCards)
 	case "cron_missed":
-		if n, ok := payload.Details["missed_count"].(int); ok {
+		if n, ok := detailInt(payload.Details, "missed_count"); ok {
 			moreCount = n - len(monitorCards)
 		}
 	case "cron_error":
-		if n, ok := payload.Details["error_count"].(int); ok {
+		if n, ok := detailInt(payload.Details, "error_count"); ok {
 			moreCount = n - len(monitorCards)
 		}
 	case "uptime_down":
-		if n, ok := payload.Details["down_count"].(int); ok {
+		if n, ok := detailInt(payload.Details, "down_count"); ok {
 			moreCount = n - len(uptimeCards)
 		}
 	case "uptime_recovered":
-		if n, ok := payload.Details["recovered_count"].(int); ok {
+		if n, ok := detailInt(payload.Details, "recovered_count"); ok {
 			moreCount = n - len(uptimeCards)
 		}
 	case "log_count":
-		if n, ok := payload.Details["log_count"].(int); ok {
+		if n, ok := detailInt(payload.Details, "log_count"); ok {
 			moreCount = n - len(logCards)
 		}
 	}
