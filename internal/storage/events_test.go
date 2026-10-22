@@ -3,6 +3,8 @@ package storage_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -97,6 +99,60 @@ func TestGetAlertEventData_withEvent(t *testing.T) {
 	}
 	if data.OccurredAt == nil {
 		t.Error("expected non-nil OccurredAt")
+	}
+}
+
+// Object messages and malformed frames must not cost the alert its message,
+// request or the frames that do decode.
+func TestGetAlertEventData_tolerantPayload(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+
+	for i, tc := range []struct {
+		name, payload, message string
+		frames                 []string
+	}{
+		{
+			name: "object message and malformed frames",
+			payload: `{
+				"message": {"formatted": "User 42 not found", "message": "User %s not found"},
+				"request": {"url": "https://example.com/u", "method": "GET"},
+				"exception": {"values": [{"stacktrace": {"frames": [
+					"junk",
+					{"function": "load", "filename": "users.go", "lineno": "7", "in_app": true},
+					{"function": "find", "filename": "users.go", "lineno": 12, "in_app": "true"},
+					{"function": "handle", "filename": "http.go", "lineno": 30, "in_app": true}
+				]}}]}
+			}`,
+			message: "User 42 not found",
+			frames:  []string{"handle  http.go:30", "find  users.go:12", "load  users.go"},
+		},
+		{
+			name:    "logentry and bare exception list",
+			payload: `{"logentry": {"message": "timeout after %ss"}, "request": "GET /", "exception": [{"stacktrace": {"frames": [{"function": "run", "module": "jobs"}]}}]}`,
+			message: "timeout after %ss",
+			frames:  []string{"run  jobs"},
+		},
+	} {
+		fp := fmt.Sprintf("fp-tolerant-%d", i)
+		issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, fp, "Error", "error", "error", "", "", time.Now())
+		if err != nil {
+			t.Fatalf("upsert issue: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO events (project_id, timestamp, received_at, payload, fingerprint, issue_id)
+			VALUES ($1, NOW(), NOW(), $2, $3, $4)
+		`, project.ID, json.RawMessage(tc.payload), fp, issue.ID); err != nil {
+			t.Fatalf("insert event: %v", err)
+		}
+
+		data := storage.GetAlertEventData(ctx, testPool, issue.ID, 3)
+		if data.Message != tc.message {
+			t.Errorf("%s: message = %q, want %q", tc.name, data.Message, tc.message)
+		}
+		if !slices.Equal(data.TopFrames, tc.frames) {
+			t.Errorf("%s: frames = %q, want %q", tc.name, data.TopFrames, tc.frames)
+		}
 	}
 }
 

@@ -46,12 +46,43 @@ type eventPayload struct {
 }
 
 type exceptionValue struct {
-	Type       looseString `json:"type"`
-	Value      looseString `json:"value"`
-	Stacktrace *struct {
-		Frames []stackFrame `json:"frames"`
-	} `json:"stacktrace"`
-	Mechanism json.RawMessage `json:"mechanism"`
+	Type       looseString     `json:"type"`
+	Value      looseString     `json:"value"`
+	Stacktrace *stacktrace     `json:"stacktrace"`
+	Mechanism  json.RawMessage `json:"mechanism"`
+}
+
+// stacktrace keeps the frames that decode and drops the rest, so one malformed
+// frame (or a stacktrace that is not an object) cannot hide the exception.
+type stacktrace struct {
+	Frames []stackFrame
+}
+
+func (s *stacktrace) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Frames json.RawMessage `json:"frames"`
+	}
+	if json.Unmarshal(b, &raw) == nil {
+		s.Frames = decodeEach[stackFrame](raw.Frames)
+	}
+	return nil
+}
+
+// decodeEach decodes a JSON list item by item, skipping items that do not fit
+// T; nil when raw is not a list.
+func decodeEach[T any](raw json.RawMessage) []T {
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return nil
+	}
+	out := make([]T, 0, len(items))
+	for _, item := range items {
+		var v T
+		if json.Unmarshal(item, &v) == nil {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // decodeEvent decodes raw once; ok is false only for malformed JSON.
@@ -70,9 +101,27 @@ func (p eventPayload) fingerprintParts() []looseString {
 }
 
 type stackFrame struct {
-	Function looseString `json:"function"`
-	Module   looseString `json:"module"`
-	InApp    *bool       `json:"in_app"`
+	Function looseString  `json:"function"`
+	Module   looseString  `json:"module"`
+	InApp    optionalBool `json:"in_app"`
+}
+
+// optionalBool tells "true", "false" and unknown apart. It also accepts the
+// strings "true" and "false"; anything else counts as unknown.
+type optionalBool struct {
+	set, value bool
+}
+
+func (o *optionalBool) UnmarshalJSON(b []byte) error {
+	switch string(b) {
+	case `true`, `"true"`:
+		*o = optionalBool{set: true, value: true}
+	case `false`, `"false"`:
+		*o = optionalBool{set: true}
+	default:
+		*o = optionalBool{}
+	}
+	return nil
 }
 
 // looseString decodes any JSON scalar as text, so one oddly typed field (a
@@ -139,16 +188,14 @@ func (p eventPayload) exceptions() []exceptionValue {
 		return nil
 	}
 	var wrapped struct {
-		Values []exceptionValue `json:"values"`
+		Values json.RawMessage `json:"values"`
 	}
-	if json.Unmarshal(p.Exception, &wrapped) == nil && len(wrapped.Values) > 0 {
-		return wrapped.Values
+	if json.Unmarshal(p.Exception, &wrapped) == nil {
+		if values := decodeEach[exceptionValue](wrapped.Values); len(values) > 0 {
+			return values
+		}
 	}
-	var list []exceptionValue
-	if json.Unmarshal(p.Exception, &list) == nil {
-		return list
-	}
-	return nil
+	return decodeEach[exceptionValue](p.Exception)
 }
 
 func (p eventPayload) message() messageField {
@@ -249,10 +296,10 @@ func frameKeys(e exceptionValue) []string {
 		}
 		return keys
 	}
-	if keys := pick(func(f stackFrame) bool { return f.InApp != nil && *f.InApp }); len(keys) > 0 {
+	if keys := pick(func(f stackFrame) bool { return f.InApp.value }); len(keys) > 0 {
 		return keys
 	}
-	return pick(func(f stackFrame) bool { return f.InApp == nil })
+	return pick(func(f stackFrame) bool { return !f.InApp.set })
 }
 
 func titleFrom(p eventPayload, ok bool) string {

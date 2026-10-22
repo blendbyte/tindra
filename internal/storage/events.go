@@ -38,41 +38,24 @@ func GetAlertEventData(ctx context.Context, pool *pgxpool.Pool, issueID string, 
 		return AlertEventData{}
 	}
 
-	var p struct {
-		Message string `json:"message"`
-		Request struct {
-			URL    string `json:"url"`
-			Method string `json:"method"`
-		} `json:"request"`
-		Exception struct {
-			Values []struct {
-				Stacktrace struct {
-					Frames []struct {
-						Function string `json:"function"`
-						Filename string `json:"filename"`
-						Module   string `json:"module"`
-						Lineno   int    `json:"lineno"`
-						InApp    bool   `json:"in_app"`
-					} `json:"frames"`
-				} `json:"stacktrace"`
-			} `json:"values"`
-		} `json:"exception"`
-	}
-
+	// Decode loosely: SDKs send object messages and the odd malformed frame,
+	// and neither should cost the alert its message, request or frames.
+	var p map[string]any
 	out := AlertEventData{OccurredAt: &ev.ReceivedAt}
-
 	if err := json.Unmarshal(ev.Payload, &p); err != nil {
 		return out
 	}
 
-	out.Message = p.Message
-	out.RequestURL = p.Request.URL
-	out.RequestMethod = p.Request.Method
-
-	if len(p.Exception.Values) == 0 {
-		return out
+	out.Message = alertMessage(p["message"])
+	if out.Message == "" {
+		out.Message = alertMessage(p["logentry"])
 	}
-	frames := p.Exception.Values[0].Stacktrace.Frames
+	if req, ok := p["request"].(map[string]any); ok {
+		out.RequestURL, _ = req["url"].(string)
+		out.RequestMethod, _ = req["method"].(string)
+	}
+
+	frames := alertFrames(p["exception"])
 
 	format := func(fn, filename, module string, lineno int) string {
 		loc := filename
@@ -92,10 +75,14 @@ func GetAlertEventData(ctx context.Context, pool *pgxpool.Pool, issueID string, 
 		var res []string
 		for i := len(frames) - 1; i >= 0 && len(res) < frameLimit; i-- {
 			f := frames[i]
-			if inAppOnly && !f.InApp {
+			if inAppOnly && f["in_app"] != true && f["in_app"] != "true" {
 				continue
 			}
-			res = append(res, format(f.Function, f.Filename, f.Module, f.Lineno))
+			fn, _ := f["function"].(string)
+			filename, _ := f["filename"].(string)
+			module, _ := f["module"].(string)
+			lineno, _ := f["lineno"].(float64)
+			res = append(res, format(fn, filename, module, int(lineno)))
 		}
 		return res
 	}
@@ -106,6 +93,45 @@ func GetAlertEventData(ctx context.Context, pool *pgxpool.Pool, issueID string, 
 		out.TopFrames = collect(false)
 	}
 	return out
+}
+
+// alertMessage reads a plain string message or the formatted text of an
+// object message ({"formatted": ..., "message": template}).
+func alertMessage(v any) string {
+	switch m := v.(type) {
+	case string:
+		return m
+	case map[string]any:
+		if s, _ := m["formatted"].(string); s != "" {
+			return s
+		}
+		s, _ := m["message"].(string)
+		return s
+	}
+	return ""
+}
+
+// alertFrames returns the frames of the first exception, from either the
+// {"values": [...]} or the bare-list form. Frames that are not objects are
+// dropped.
+func alertFrames(exception any) []map[string]any {
+	values, _ := exception.([]any)
+	if wrapped, ok := exception.(map[string]any); ok {
+		values, _ = wrapped["values"].([]any)
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	first, _ := values[0].(map[string]any)
+	stacktrace, _ := first["stacktrace"].(map[string]any)
+	raw, _ := stacktrace["frames"].([]any)
+	frames := make([]map[string]any, 0, len(raw))
+	for _, f := range raw {
+		if frame, ok := f.(map[string]any); ok {
+			frames = append(frames, frame)
+		}
+	}
+	return frames
 }
 
 // GetLatestEventForIssue returns the most recently received event for an issue.

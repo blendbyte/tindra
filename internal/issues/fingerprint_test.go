@@ -360,3 +360,57 @@ func TestCompute_oddNestedFieldsDoNotAffectFingerprint(t *testing.T) {
 		t.Error("odd nested fields changed the fingerprint")
 	}
 }
+
+// One malformed frame or stacktrace must not hide the exception from grouping:
+// the event keeps its type and its frame-based key instead of falling back to
+// the message or an unlabeled key.
+func TestCompute_malformedFramesKeepException(t *testing.T) {
+	clean := frameEvent("python", "Order 123 not found", appFrames)
+	for name, frames := range map[string]string{
+		"string frame":     appFrames + `,"not-a-frame"`,
+		"numeric frame":    appFrames + `,42`,
+		"array frame":      appFrames + `,[1,2]`,
+		"string lineno":    strings.ReplaceAll(appFrames, `"lineno":20`, `"lineno":"20"`),
+		"object function":  appFrames + `,{"module":"vendor.x","function":{"name":"f"},"in_app":false}`,
+		"string in_app no": strings.ReplaceAll(appFrames, `"in_app":false`, `"in_app":"false"`),
+	} {
+		if fingerprintOf(frameEvent("python", "Order 123 not found", frames)) != fingerprintOf(clean) {
+			t.Errorf("%s changed the fingerprint", name)
+		}
+	}
+
+	stringInApp := frameEvent("python", "Order 123 not found", strings.ReplaceAll(appFrames, `"in_app":true`, `"in_app":"true"`))
+	if fingerprintOf(stringInApp) != fingerprintOf(clean) {
+		t.Error(`"in_app":"true" must count as in-app`)
+	}
+}
+
+func TestCompute_malformedStacktraceFallsBackToTypeAndValue(t *testing.T) {
+	v1 := json.RawMessage(`{"exception":{"values":[{"type":"NotFound","value":"x"}]}}`)
+	for name, st := range map[string]string{
+		"string stacktrace": `"oops"`,
+		"array stacktrace":  `[1,2]`,
+		"object frames":     `{"frames":{"0":{"function":"f"}}}`,
+		"string frames":     `{"frames":"none"}`,
+	} {
+		raw := json.RawMessage(`{"platform":"python","exception":{"values":[{"type":"NotFound","value":"x","stacktrace":` + st + `}]}}`)
+		if fingerprintOf(raw) != fingerprintOf(v1) {
+			t.Errorf("%s: want the type and value key", name)
+		}
+		if got := issues.Title(raw); got != "NotFound: x" {
+			t.Errorf("%s: title = %q", name, got)
+		}
+	}
+}
+
+func TestCompute_malformedExceptionEntrySkipped(t *testing.T) {
+	// A non-object entry is dropped; the innermost real exception still counts.
+	raw := json.RawMessage(`{"exception":{"values":[{"type":"Outer","value":"a"},"junk",{"type":"Inner","value":"b"}]}}`)
+	if got := issues.Title(raw); got != "Inner: b" {
+		t.Errorf("title = %q, want Inner: b", got)
+	}
+	list := json.RawMessage(`{"exception":[{"type":"Inner","value":"b"},7]}`)
+	if got := issues.Title(list); got != "Inner: b" {
+		t.Errorf("bare list title = %q, want Inner: b", got)
+	}
+}
