@@ -169,6 +169,9 @@ func (ro *router) confirmEmailChange(w http.ResponseWriter, r *http.Request, use
 	return true
 }
 
+// lastUserManagerMessage is shown as is in the Users settings.
+const lastUserManagerMessage = "At least one user must keep the Users permission."
+
 // handleUpdateUserPermissions replaces the named permission set for a user.
 // Requires manage_users permission (enforced by router middleware).
 func (ro *router) handleUpdateUserPermissions(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +182,10 @@ func (ro *router) handleUpdateUserPermissions(w http.ResponseWriter, r *http.Req
 		return
 	}
 	u, err := storage.UpdateUserPermissions(r.Context(), ro.pool, userID, perms)
+	if errors.Is(err, storage.ErrLastUserManager) {
+		http.Error(w, lastUserManagerMessage, http.StatusConflict)
+		return
+	}
 	if err != nil {
 		slog.Error("update user permissions", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -207,6 +214,10 @@ func (ro *router) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found, err := storage.DeleteUser(r.Context(), ro.pool, userID)
+	if errors.Is(err, storage.ErrLastUserManager) {
+		http.Error(w, lastUserManagerMessage, http.StatusConflict)
+		return
+	}
 	if err != nil {
 		slog.Error("delete user", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

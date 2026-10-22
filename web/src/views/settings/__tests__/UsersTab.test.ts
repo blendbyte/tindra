@@ -18,11 +18,15 @@ vi.mock('@/composables/useToast', () => ({
   useToast: vi.fn(() => ({ show: showToast })),
 }))
 
-vi.mock('@/api/client', () => ({ apiFetch: vi.fn() }))
+vi.mock('@/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/client')>()),
+  apiFetch: vi.fn(),
+}))
 vi.mock('@/stores/auth', () => ({ useAuthStore: vi.fn() }))
 vi.mock('@/utils/formatters', () => ({ formatRel: vi.fn(() => '2m ago') }))
 
 import UsersTab from '../UsersTab.vue'
+import { ApiError } from '@/api/client'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { adminUser, isEnabled, mockQueries, queryOptions, recordMutations, stubs, type RecordedMutation } from './harness'
 
@@ -291,6 +295,26 @@ describe('UsersTab', () => {
       fail('savePermissions', new Error('Permission denied'))
       await wrapper.findAll('input.perm-check')[0].trigger('change')
       expect(showToast).toHaveBeenCalledWith('Permissions not saved. Try again.')
+    })
+
+    it('savePermissions shows the server reason when the last user manager would be removed', async () => {
+      const wrapper = mountTab()
+      fail('savePermissions', new ApiError(409, 'At least one user must keep the Users permission.\n'))
+      await wrapper.findAll('input.perm-check')[1].trigger('change')
+      expect(showToast).toHaveBeenCalledWith('At least one user must keep the Users permission.', 'error')
+    })
+
+    it('keeps the checkbox on the saved value when a change is refused', async () => {
+      const wrapper = mountTab()
+      fail('savePermissions', new ApiError(409, 'At least one user must keep the Users permission.'))
+      const box = wrapper.findAll('input.perm-check')[1]
+      expect((box.element as HTMLInputElement).checked).toBe(true)
+      await box.setValue(false)
+      expect(mutations[M.savePermissions].mutate).toHaveBeenCalledWith({
+        userID: 'user-1',
+        perms: { ...adminUser.permissions, manage_users: false },
+      })
+      expect((box.element as HTMLInputElement).checked).toBe(true)
     })
 
     it('adminSetPassword onError sets setPwError', async () => {

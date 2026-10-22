@@ -33,6 +33,7 @@ func identityFixture(t *testing.T) (*storage.User, *storage.Session) {
 }
 func TestSessionIdentityCurrentPermissionsAndSingleQuery(t *testing.T) {
 	u, s := identityFixture(t)
+	addUserManager(t)
 	ctx := context.Background()
 	trace := &identityQueryCount{}
 	cfg := testPool.Config()

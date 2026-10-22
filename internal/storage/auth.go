@@ -258,17 +258,61 @@ func CountUsers(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	return n, nil
 }
 
+// ErrLastUserManager is returned when a change would leave no user with the
+// manage_users permission, so nobody could manage users from the app again.
+var ErrLastUserManager = errors.New("at least one user must keep the manage users permission")
+
+// guardLastUserManager locks the users who hold manage_users and returns
+// ErrLastUserManager when id is the only one. Locking makes concurrent
+// demotions of the last two managers wait for each other instead of both
+// passing the check.
+func guardLastUserManager(ctx context.Context, tx pgx.Tx, id string) error {
+	rows, err := tx.Query(ctx, `SELECT id FROM users WHERE perm_manage_users FOR UPDATE`)
+	if err != nil {
+		return fmt.Errorf("lock user managers: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("lock user managers: %w", err)
+	}
+	if len(ids) == 1 && ids[0] == id {
+		return ErrLastUserManager
+	}
+	return nil
+}
+
 func DeleteUser(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error) {
-	tag, err := pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := guardLastUserManager(ctx, tx, id); err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
 }
 
 func UpdateUserPermissions(ctx context.Context, pool *pgxpool.Pool, id string, perms UserPermissions) (*User, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if !perms.ManageUsers {
+		if err := guardLastUserManager(ctx, tx, id); err != nil {
+			return nil, err
+		}
+	}
 	var u User
-	err := pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE users
 		SET perm_manage_projects = $2,
 		    perm_manage_users    = $3,
@@ -287,6 +331,9 @@ func UpdateUserPermissions(ctx context.Context, pool *pgxpool.Pool, id string, p
 	}
 	if err != nil {
 		return nil, fmt.Errorf("update permissions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
 	}
 	u.HasPassword = u.PasswordHash != ""
 	return &u, nil

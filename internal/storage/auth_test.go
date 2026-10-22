@@ -301,6 +301,7 @@ func TestUpdateUserPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	addUserManager(t)
 
 	updated, err := storage.UpdateUserPermissions(context.Background(), testPool, u.ID, storage.UserPermissions{
 		ManageProjects: true,
@@ -402,6 +403,7 @@ func TestDeleteUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	addUserManager(t)
 
 	deleted, err := storage.DeleteUser(context.Background(), testPool, u.ID)
 	if err != nil {
@@ -841,4 +843,81 @@ func TestListDigestDueUsers_dueEachISOWeek(t *testing.T) {
 	if due() {
 		t.Error("a digest sent this week must block another one")
 	}
+}
+
+// addUserManager creates a second user with manage_users, so tests can demote
+// or delete their user without tripping the last-manager guard.
+func addUserManager(t *testing.T) *storage.User {
+	t.Helper()
+	ctx := context.Background()
+	k, err := storage.CreateUser(ctx, testPool, "keeper@example.com", "password12345")
+	require.NoError(t, err)
+	k, err = storage.UpdateUserPermissions(ctx, testPool, k.ID, storage.UserPermissions{ManageUsers: true})
+	require.NoError(t, err)
+	return k
+}
+
+func TestLastUserManagerCannotBeDemotedOrDeleted(t *testing.T) {
+	truncateUsers(t)
+	ctx := context.Background()
+	u, err := storage.CreateUser(ctx, testPool, "only-admin@example.com", "password12345")
+	require.NoError(t, err)
+	require.True(t, u.Permissions.ManageUsers)
+
+	_, err = storage.UpdateUserPermissions(ctx, testPool, u.ID, storage.UserPermissions{ManageProjects: true})
+	require.ErrorIs(t, err, storage.ErrLastUserManager)
+	deleted, err := storage.DeleteUser(ctx, testPool, u.ID)
+	require.ErrorIs(t, err, storage.ErrLastUserManager)
+	require.False(t, deleted)
+
+	got, err := storage.GetUserByID(ctx, testPool, u.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.True(t, got.Permissions.ManageUsers, "refused change must not be applied")
+
+	// Other permissions of the last manager can still change.
+	updated, err := storage.UpdateUserPermissions(ctx, testPool, u.ID, storage.UserPermissions{ManageUsers: true})
+	require.NoError(t, err)
+	require.False(t, updated.Permissions.ManageProjects)
+
+	// With a second manager, the first can be demoted, but then not the second.
+	k := addUserManager(t)
+	_, err = storage.UpdateUserPermissions(ctx, testPool, u.ID, storage.UserPermissions{})
+	require.NoError(t, err)
+	_, err = storage.UpdateUserPermissions(ctx, testPool, k.ID, storage.UserPermissions{})
+	require.ErrorIs(t, err, storage.ErrLastUserManager)
+
+	// Users without manage_users can always be removed.
+	deleted, err = storage.DeleteUser(ctx, testPool, u.ID)
+	require.NoError(t, err)
+	require.True(t, deleted)
+}
+
+func TestLastUserManagerConcurrentDemotions(t *testing.T) {
+	truncateUsers(t)
+	ctx := context.Background()
+	a, err := storage.CreateUser(ctx, testPool, "admin-a@example.com", "password12345")
+	require.NoError(t, err)
+	b := addUserManager(t)
+
+	// Two managers demoting each other at once: exactly one may succeed.
+	errs := make(chan error, 2)
+	for _, id := range []string{a.ID, b.ID} {
+		go func() {
+			_, err := storage.UpdateUserPermissions(ctx, testPool, id, storage.UserPermissions{})
+			errs <- err
+		}()
+	}
+	var refused int
+	for range 2 {
+		if err := <-errs; err != nil {
+			require.ErrorIs(t, err, storage.ErrLastUserManager)
+			refused++
+		}
+	}
+	require.Equal(t, 1, refused)
+
+	var managers int
+	require.NoError(t, testPool.QueryRow(ctx, `SELECT count(*) FROM users WHERE perm_manage_users`).Scan(&managers))
+	require.Equal(t, 1, managers)
 }

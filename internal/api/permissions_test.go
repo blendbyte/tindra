@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blendbyte/tindra/internal/api"
@@ -78,6 +79,41 @@ func TestUpdateUserPermissions_success(t *testing.T) {
 	}
 	if got.Permissions.ManageIssues {
 		t.Error("manage_issues should be false")
+	}
+}
+
+func TestUpdateUserPermissions_lastUserManager(t *testing.T) {
+	// testUser is the only user with manage_users; removing it would leave
+	// nobody able to manage users from the app.
+	var managers int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM users WHERE perm_manage_users`).Scan(&managers); err != nil {
+		t.Fatalf("count managers: %v", err)
+	}
+	if managers != 1 {
+		t.Fatalf("precondition: want testUser as the only user manager, found %d", managers)
+	}
+
+	body := `{"manage_projects":true,"manage_users":false,"manage_alerts":true,"manage_issues":true}`
+	req := httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/users/%s/permissions", testUser.ID),
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(authCookie())
+	rec := httptest.NewRecorder()
+	permHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "At least one user must keep the Users permission") {
+		t.Errorf("unexpected body: %q", rec.Body.String())
+	}
+	got, err := storage.GetUserByID(context.Background(), testPool, testUser.ID)
+	if err != nil || got == nil {
+		t.Fatalf("get testUser: %v", err)
+	}
+	if !got.Permissions.ManageUsers {
+		t.Error("testUser lost manage_users despite the 409")
 	}
 }
 

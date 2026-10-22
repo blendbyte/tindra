@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { useToast } from '@/composables/useToast'
 import { useClipboard } from '@/composables/useClipboard'
-import { apiFetch } from '@/api/client'
+import { ApiError, apiFetch } from '@/api/client'
 import type { Invite, User, UserPermissions } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { useFormatDate, usePermissions, useRowMenu, useServerSettings, useUsers } from './shared'
@@ -45,10 +45,17 @@ const { mutate: savePermissions } = useMutation({
     )
     showToast('Permissions saved')
   },
-  onError: () => showToast('Permissions not saved. Try again.'),
+  onError: (e) => {
+    // 409: the change would leave nobody able to manage users.
+    if (e instanceof ApiError && e.status === 409) showToast(e.message.trim(), 'error')
+    else showToast('Permissions not saved. Try again.')
+  },
 })
 
-function togglePerm(user: User, perm: keyof UserPermissions) {
+function togglePerm(user: User, perm: keyof UserPermissions, e?: Event) {
+  // Keep the box on the saved value; a successful save re-renders it, and a
+  // refused one must not leave it showing a change that never happened.
+  if (e?.target instanceof HTMLInputElement) e.target.checked = user.permissions[perm]
   const updated: UserPermissions = { ...user.permissions, [perm]: !user.permissions[perm] }
   savePermissions({ userID: user.id, perms: updated })
 }
@@ -374,16 +381,16 @@ function copyToClipboard(text: string, label: string) {
             <span v-if="u.mfa_enabled" class="team-badge team-badge--mfa" title="Two-factor authentication enabled">2FA</span>
           </td>
           <td class="perm-col">
-            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_projects" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_projects')" />
+            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_projects" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_projects', $event)" />
           </td>
           <td class="perm-col">
-            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_users" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_users')" />
+            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_users" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_users', $event)" />
           </td>
           <td class="perm-col">
-            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_alerts" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_alerts')" />
+            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_alerts" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_alerts', $event)" />
           </td>
           <td class="perm-col">
-            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_issues" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_issues')" />
+            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_issues" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_issues', $event)" />
           </td>
           <td class="muted" style="font-size: 11px; white-space: nowrap">joined {{ formatDate(u.created_at) }}</td>
           <td class="actions" style="position: relative; overflow: visible">
