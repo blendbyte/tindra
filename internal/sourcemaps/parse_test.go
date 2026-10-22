@@ -253,3 +253,85 @@ func TestResolve_noSourcesContent(t *testing.T) {
 		t.Errorf("ContextLine should be empty without sourcesContent, got %q", got.ContextLine)
 	}
 }
+
+// --- Index maps (sections) ---
+
+// Section 0 covers line 1 up to column 10, section 1 the rest of line 1 and
+// line 2, section 2 everything from line 3.
+const indexMap = `{"version":3,"sections":[
+	{"offset":{"line":0,"column":0},"map":{"version":3,"sources":["a.ts"],"sourcesContent":["alpha"],"mappings":"AAAA"}},
+	{"offset":{"line":0,"column":10},"map":{"version":3,"sources":["b.ts"],"sourcesContent":["b1\nb2"],"mappings":"AACA;AADA"}},
+	{"offset":{"line":2,"column":0},"map":{"version":3,"sources":["c.ts"],"mappings":"AAAA"}}
+]}`
+
+func TestParseContext_indexMapResolvesThroughSections(t *testing.T) {
+	sm, err := ParseContext(t.Context(), []byte(indexMap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		line, col int
+		source    string
+		origLine  int
+		context   string
+	}{
+		{1, 0, "a.ts", 1, "alpha"},
+		{1, 9, "a.ts", 1, "alpha"},
+		{1, 10, "b.ts", 2, "b2"}, // column offset applies on the section's first line
+		{1, 15, "b.ts", 2, "b2"},
+		{2, 0, "b.ts", 1, "b1"}, // and not on later lines
+		{3, 4, "c.ts", 1, ""},
+		{9, 0, "c.ts", 0, ""}, // past the last section's mappings
+	}
+	for _, tc := range cases {
+		got, ok := sm.Resolve(tc.line, tc.col)
+		if tc.origLine == 0 {
+			if ok {
+				t.Errorf("Resolve(%d, %d) = %+v, want no match", tc.line, tc.col, got)
+			}
+			continue
+		}
+		if !ok {
+			t.Errorf("Resolve(%d, %d): no match", tc.line, tc.col)
+			continue
+		}
+		if got.Source != tc.source || got.Line != tc.origLine || got.ContextLine != tc.context {
+			t.Errorf("Resolve(%d, %d) = %+v, want %s:%d %q", tc.line, tc.col, got, tc.source, tc.origLine, tc.context)
+		}
+	}
+	sections := 0
+	for _, sec := range sm.Sections {
+		sections += sec.Map.cacheSize()
+	}
+	if sm.cacheSize() <= sections {
+		t.Errorf("cacheSize %d does not count the sections (%d)", sm.cacheSize(), sections)
+	}
+}
+
+func TestParseContext_indexMapBeforeFirstSection(t *testing.T) {
+	sm, err := ParseContext(t.Context(), []byte(`{"version":3,"sections":[{"offset":{"line":1,"column":0},"map":{"version":3,"sources":["a.ts"],"mappings":"AAAA"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := sm.Resolve(1, 0); ok {
+		t.Errorf("line before the first section resolved to %+v", got)
+	}
+	if got, ok := sm.Resolve(2, 0); !ok || got.Source != "a.ts" {
+		t.Errorf("Resolve(2, 0) = %+v, %v", got, ok)
+	}
+}
+
+func TestParseContext_rejectsInvalidIndexMaps(t *testing.T) {
+	for name, raw := range map[string]string{
+		"url section":  `{"version":3,"sections":[{"offset":{"line":0,"column":0},"url":"other.map"}]}`,
+		"nested":       `{"version":3,"sections":[{"offset":{"line":0,"column":0},"map":{"version":3,"sections":[{"offset":{"line":0,"column":0},"map":{"version":3,"mappings":""}}]}}]}`,
+		"out of order": `{"version":3,"sections":[{"offset":{"line":2,"column":0},"map":{"version":3,"mappings":""}},{"offset":{"line":1,"column":0},"map":{"version":3,"mappings":""}}]}`,
+		"bad version":  `{"version":3,"sections":[{"offset":{"line":0,"column":0},"map":{"version":2,"mappings":""}}]}`,
+		"bad mappings": `{"version":3,"sections":[{"offset":{"line":0,"column":0},"map":{"version":3,"mappings":"!"}}]}`,
+		"negative":     `{"version":3,"sections":[{"offset":{"line":-1,"column":0},"map":{"version":3,"mappings":""}}]}`,
+	} {
+		if _, err := ParseContext(t.Context(), []byte(raw)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}

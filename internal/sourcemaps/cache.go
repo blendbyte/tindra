@@ -95,6 +95,10 @@ func (sm *SourceMap) cacheSize() int {
 	for _, line := range sm.lines {
 		size += cap(line) * int(unsafe.Sizeof(segment{}))
 	}
+	size += cap(sm.Sections) * int(unsafe.Sizeof(section{}))
+	for _, sec := range sm.Sections {
+		size += sec.Map.cacheSize()
+	}
 	return size
 }
 

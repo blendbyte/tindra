@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -15,7 +16,20 @@ type SourceMap struct {
 	Names          []string `json:"names"`
 	Mappings       string   `json:"mappings"`
 
+	// Sections is set for an index map: a list of regular maps, each covering
+	// the generated code from its offset on. Turbopack and some Workers
+	// toolchains emit these.
+	Sections []section `json:"sections"`
+
 	lines [][]segment
+}
+
+type section struct {
+	Offset struct {
+		Line   int `json:"line"`
+		Column int `json:"column"`
+	} `json:"offset"`
+	Map *SourceMap `json:"map"`
 }
 
 type segment struct {
@@ -46,15 +60,53 @@ func ParseContext(ctx context.Context, data []byte) (*SourceMap, error) {
 	if sm.Version != 3 {
 		return nil, fmt.Errorf("unsupported source map version %d (only v3 supported)", sm.Version)
 	}
+	if len(sm.Sections) > 0 {
+		if err := sm.parseSections(ctx); err != nil {
+			return nil, fmt.Errorf("sections: %w", err)
+		}
+		return &sm, nil
+	}
 	if err := sm.parseMappings(ctx); err != nil {
 		return nil, fmt.Errorf("mappings: %w", err)
 	}
 	return &sm, nil
 }
 
+// parseSections checks an index map against the spec (embedded v3 maps, no
+// nesting, offsets in order) and parses each section's mappings.
+func (sm *SourceMap) parseSections(ctx context.Context) error {
+	for i, sec := range sm.Sections {
+		if sec.Map == nil {
+			return fmt.Errorf("section %d: only embedded maps are supported", i)
+		}
+		if sec.Map.Version != 3 {
+			return fmt.Errorf("section %d: unsupported source map version %d", i, sec.Map.Version)
+		}
+		if len(sec.Map.Sections) > 0 {
+			return fmt.Errorf("section %d: nested sections are not allowed", i)
+		}
+		if sec.Offset.Line < 0 || sec.Offset.Column < 0 {
+			return fmt.Errorf("section %d: negative offset", i)
+		}
+		if i > 0 {
+			prev := sm.Sections[i-1].Offset
+			if sec.Offset.Line < prev.Line || sec.Offset.Line == prev.Line && sec.Offset.Column < prev.Column {
+				return fmt.Errorf("section %d: offsets out of order", i)
+			}
+		}
+		if err := sec.Map.parseMappings(ctx); err != nil {
+			return fmt.Errorf("section %d mappings: %w", i, err)
+		}
+	}
+	return nil
+}
+
 // Resolve maps a generated (line, col) to its original source position.
 // line is 1-indexed; col is 0-indexed. Returns (nil, false) when unmappable.
 func (sm *SourceMap) Resolve(line, col int) (*ResolvedFrame, bool) {
+	if len(sm.Sections) > 0 {
+		return sm.resolveSection(line, col)
+	}
 	lineIdx := line - 1
 	if lineIdx < 0 || lineIdx >= len(sm.lines) {
 		return nil, false
@@ -103,6 +155,25 @@ func (sm *SourceMap) Resolve(line, col int) (*ResolvedFrame, bool) {
 		Col:         seg.origCol,
 		ContextLine: ctxLine,
 	}, true
+}
+
+// resolveSection resolves through the last section starting at or before the
+// position. Offsets shift the section's lines, and its columns on its first
+// line only.
+func (sm *SourceMap) resolveSection(line, col int) (*ResolvedFrame, bool) {
+	lineIdx := line - 1
+	i := sort.Search(len(sm.Sections), func(i int) bool {
+		o := sm.Sections[i].Offset
+		return o.Line > lineIdx || o.Line == lineIdx && o.Column > col
+	}) - 1
+	if i < 0 {
+		return nil, false
+	}
+	sec := sm.Sections[i]
+	if lineIdx == sec.Offset.Line {
+		col -= sec.Offset.Column
+	}
+	return sec.Map.Resolve(lineIdx-sec.Offset.Line+1, col)
 }
 
 func (sm *SourceMap) parseMappings(ctx context.Context) error {

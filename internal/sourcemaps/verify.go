@@ -69,9 +69,17 @@ func (s *Store) VerifyEvent(ctx context.Context, projectID string, payload json.
 			}
 			f := FrameVerification{URL: url, NormalizedURL: NormalizeURL(url), Line: frame.Lineno, Column: frame.Colno, Status: "missing_release"}
 			if event.Release != "" {
-				sm, err := storage.GetSourcemap(ctx, s.pool, projectID, event.Release, f.NormalizedURL)
-				if err != nil {
-					return nil, err
+				// Same lookup order as resolveFrame: abs_path, then filename.
+				var sm *storage.Sourcemap
+				for _, normURL := range frameURLs(frame.AbsPath, frame.Filename) {
+					var err error
+					if sm, err = storage.GetSourcemap(ctx, s.pool, projectID, event.Release, normURL); err != nil {
+						return nil, err
+					}
+					if sm != nil {
+						f.NormalizedURL = normURL
+						break
+					}
 				}
 				f.Status = "no_matching_map"
 				if sm != nil {

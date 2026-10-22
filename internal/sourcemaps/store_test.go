@@ -56,7 +56,11 @@ func TestNormalizeURL_absolute(t *testing.T) {
 		{"http://cdn.example.com/app.js", "~/app.js"},
 		{"~/dist/main.js", "~/dist/main.js"},
 		{"/dist/main.js", "~/dist/main.js"},
-		{"dist/main.js", "~dist/main.js"}, // no leading slash → no slash added
+		{"dist/main.js", "~/dist/main.js"},
+		{"app:///dist/main.js", "~/dist/main.js"}, // Sentry RewriteFrames default
+		{"file:///srv/app/main.js", "~/srv/app/main.js"},
+		{"~dist/main.js", "~/dist/main.js"},        // stored before 0035
+		{"~app:///dist/main.js", "~/dist/main.js"}, // stored before 0035
 	}
 	for _, tc := range cases {
 		got := sourcemaps.NormalizeURL(tc.in)

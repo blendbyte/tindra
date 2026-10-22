@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -77,22 +78,40 @@ func NewStore(dataDir string, pool *pgxpool.Pool) *Store {
 	}
 }
 
-var absURLRe = regexp.MustCompile(`^https?://[^/]+`)
+var schemeRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*`)
 
 // NormalizeURL converts any form of JS URL to the ~/path convention used for storage.
 //
 //	https://example.com/dist/main.js → ~/dist/main.js
+//	app:///dist/main.js              → ~/dist/main.js
 //	/dist/main.js                    → ~/dist/main.js
+//	dist/main.js                     → ~/dist/main.js
 //	~/dist/main.js                   → ~/dist/main.js  (unchanged)
+//
+// Migration 0035 applies the same rules to stored URLs; keep them in step.
 func NormalizeURL(u string) string {
-	if strings.HasPrefix(u, "~/") {
-		return u
+	u = strings.TrimPrefix(u, "~")
+	u = schemeRe.ReplaceAllString(u, "")
+	if !strings.HasPrefix(u, "/") {
+		u = "/" + u
 	}
-	u = absURLRe.ReplaceAllString(u, "~")
-	if !strings.HasPrefix(u, "~") {
-		u = "~" + u
+	return "~" + u
+}
+
+// frameURLs returns the normalized URLs to look a frame's source map up by:
+// abs_path first, then filename. Runtimes such as Cloudflare Workers report a
+// path in abs_path that does not match the uploaded name while filename does.
+func frameURLs(absPath, filename string) []string {
+	var out []string
+	for _, u := range []string{absPath, filename} {
+		if u == "" {
+			continue
+		}
+		if n := NormalizeURL(u); !slices.Contains(out, n) {
+			out = append(out, n)
+		}
 	}
-	return u
+	return out
 }
 
 // Upload stores a sourcemap on disk and records its metadata in Postgres.
@@ -236,11 +255,11 @@ enrichFrames:
 }
 
 func (s *Store) resolveFrame(ctx context.Context, projectID, release string, frame map[string]any, cache map[string]*SourceMap) {
-	url := ""
-	if v, _ := frame["abs_path"].(string); v != "" {
-		url = v
-	} else if v, _ := frame["filename"].(string); v != "" {
-		url = v
+	absPath, _ := frame["abs_path"].(string)
+	filename, _ := frame["filename"].(string)
+	url := absPath
+	if url == "" {
+		url = filename
 	}
 	if url == "" {
 		return
@@ -252,15 +271,19 @@ func (s *Store) resolveFrame(ctx context.Context, projectID, release string, fra
 		return
 	}
 
-	// Try uploaded source map first (requires a known release).
+	// Try uploaded source maps first (requires a known release). The first
+	// candidate URL with a map decides; a map that cannot place this position
+	// does not fall through to a map uploaded under the other name.
 	if release != "" {
-		normURL := NormalizeURL(url)
-		sm, ok := cache[normURL]
-		if !ok {
-			sm = s.loadSourceMap(ctx, projectID, release, normURL)
-			cache[normURL] = sm // cache nil too to avoid repeated DB misses
-		}
-		if sm != nil {
+		for _, normURL := range frameURLs(absPath, filename) {
+			sm, ok := cache[normURL]
+			if !ok {
+				sm = s.loadSourceMap(ctx, projectID, release, normURL)
+				cache[normURL] = sm // cache nil too to avoid repeated DB misses
+			}
+			if sm == nil {
+				continue
+			}
 			resolved, found := sm.Resolve(int(lineno), mapColumn(int(colno)))
 			if found {
 				frame["orig_filename"] = resolved.Source
@@ -271,6 +294,7 @@ func (s *Store) resolveFrame(ctx context.Context, projectID, release string, fra
 					return
 				}
 			}
+			break
 		}
 	}
 
