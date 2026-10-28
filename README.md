@@ -91,6 +91,17 @@ bun run dev
 
 Open `http://localhost:5173`. Two-factor enrollment is required by default. Use `make db-stop` to stop the development database.
 
+## Running the binary with systemd
+
+Put the configuration in `/etc/tindra/tindra.env`, owned by `root:tindra` with mode `0640`. Tindra reads that file itself when its working directory has no `.env`, so the service and the commands you run by hand use the same settings:
+
+```bash
+sudo -u tindra tindra migrate
+sudo -u tindra tindra users create --email you@example.com
+```
+
+Let Tindra read the file instead of adding `EnvironmentFile=` to the unit. systemd treats quotes and `$` differently, so a value such as a database password could differ between the service and the CLI. With `ExecReload=/bin/kill -HUP $MAINPID` in the unit, `systemctl reload tindra` re-reads the file and applies new project, event and user limits; other settings need a restart. To read a different file, set `TINDRA_ENV_FILE`; that file must exist.
+
 ## License
 
 [Elastic License 2.0](LICENSE)

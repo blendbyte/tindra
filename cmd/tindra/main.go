@@ -73,8 +73,12 @@ type config struct {
 }
 
 func main() {
-	// Load .env if present - no-op in production where env vars are set externally.
-	env := loadDotenv(".env")
+	// Apply ./.env or /etc/tindra/tindra.env if present, beneath the real environment.
+	env, err := loadDotenv(envFilePath(systemEnvFile))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 
 	version.App = Version
 	api.AppVersion = Version
@@ -371,6 +375,9 @@ func serveCmd(cfg config, env *dotenv) *cobra.Command {
 				{Name: "auto-resolve", Singleton: true, Run: autoResolveJob(pool, evaluator)},
 			})
 
+			if env != nil && env.found {
+				startupLog.Info("configuration file loaded", "path", env.path)
+			}
 			startupLog.Info("starting tindra",
 				"version", Version,
 				"commit", Commit,
@@ -424,7 +431,7 @@ func serveCmd(cfg config, env *dotenv) *cobra.Command {
 					case <-sighup:
 						if env != nil {
 							if err := env.reload(); err != nil {
-								slog.Warn("reload .env", "err", err)
+								slog.Warn("reload configuration file", "err", err)
 							}
 						}
 						newCfg := loadConfig()
