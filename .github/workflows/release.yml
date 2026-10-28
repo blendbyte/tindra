@@ -124,6 +124,18 @@ jobs:
         with:
           pattern: binary-*
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: web-dist
+          path: web-dist/
+      # The built web UI the binaries embed, for packagers who build from source
+      # without Bun. Files sit at the archive root, so it extracts straight into
+      # internal/ui/dist, and fixed metadata keeps its checksum reproducible.
+      - name: Package web UI
+        run: |
+          tar --sort=name --mtime="@$(git log -1 --format=%ct)" \
+            --owner=0 --group=0 --numeric-owner \
+            -C web-dist -cf - . | gzip -9n > "tindra-web-${GITHUB_REF_NAME#v}.tar.gz"
       - name: Generate release notes
         uses: orhun/git-cliff-action@3d96a18cc4ec17e9dc69ddcc424ccafaf1f78ce2 # v4
         with:

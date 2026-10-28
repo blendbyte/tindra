@@ -150,6 +150,31 @@ test('release binaries consume the frontend artifact from mandatory verification
   expect(release.jobs.binaries['continue-on-error']).toBeUndefined()
 })
 
+test('the release publishes the verified web UI as a checksummed archive', () => {
+  const release = workflow('release')
+  const producer = verify.jobs.frontend.steps.find((step: any) =>
+    step.uses?.startsWith('actions/upload-artifact@') && step.with?.name === 'web-dist',
+  )
+  const steps = release.jobs.release.steps
+  const download = steps.findIndex((step: any) =>
+    step.uses?.startsWith('actions/download-artifact@') && step.with?.name === producer.with.name,
+  )
+  const pack = steps.findIndex((step: any) => step.run?.includes('tindra-web-'))
+  const checksums = steps.findIndex((step: any) => step.run === 'sha256sum tindra-* > SHA256SUMS')
+  expect(download).toBeGreaterThan(-1)
+  expect(pack).toBeGreaterThan(download)
+  // The archive is named tindra-* so the checksums, provenance and upload cover it.
+  expect(checksums).toBeGreaterThan(pack)
+  const command = steps[pack].run
+  expect(command).toContain(`-C ${steps[download].with.path.replace(/\/$/, '')} `)
+  expect(command).toContain('"tindra-web-${GITHUB_REF_NAME#v}.tar.gz"')
+  for (const flag of ['--sort=name', '--mtime=', '--owner=0', '--group=0', '--numeric-owner', 'gzip -9n']) {
+    expect(command).toContain(flag)
+  }
+  expect(steps[pack].if).toBeUndefined()
+  expect(steps[pack]['continue-on-error']).toBeUndefined()
+})
+
 test('verification has read-only permissions and dev publishing only runs on main pushes', () => {
   const ci = workflow('ci')
   const release = workflow('release')
