@@ -47,6 +47,47 @@ const { data: environments, isError: environmentError } = useQuery({
 const envOptions = computed(() => ['All', ...[...new Set([...(environments.value ?? []), ...(state.environment === 'All' ? [] : [state.environment])])].sort()])
 const ranges = computed(() => route.path === '/issues' ? [...CORE_RANGES, 'All'] : [...CORE_RANGES])
 const { fetching, failed, updatedAt, age, online, interval, automatic, refresh } = useViewFreshness()
+const ageLabel = computed(() => age.value < 60 ? `${age.value}s` : age.value < 3600 ? `${Math.floor(age.value / 60)}m` : `${Math.floor(age.value / 3600)}h`)
+// The live switch says in words whether the page keeps itself current.
+const liveLabel = computed(() => {
+  if (!online.value) return 'Offline'
+  if (state.paused) return 'Paused'
+  return automatic.value ? 'Live' : 'Updated'
+})
+const canPause = computed(() => !state.absolute && (telemetry.value || automatic.value || state.paused))
+// On phones every filter folds behind one button; its label keeps the scope visible.
+const filtersOpen = ref(false)
+const filterSummary = computed(() => [
+  state.absolute ? 'Custom' : state.range,
+  state.environment === 'All' ? 'All envs' : state.environment,
+].join(' · '))
+
+// The issue list's header sticks below this bar, so it needs the bar's real
+// height, which grows when filters wrap.
+const root = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
+// An open panel on a phone would pin a third of the screen, so a scroll gesture
+// outside it closes it. Gestures, not scroll events: the browser also scrolls
+// when the keyboard opens or a shorter list clamps the page, and those must not.
+function closeOnScroll(event: Event) {
+  if (!filtersOpen.value || root.value?.contains(event.target as Node)) return
+  filtersOpen.value = false
+}
+onMounted(() => {
+  window.addEventListener('wheel', closeOnScroll, { passive: true })
+  window.addEventListener('touchmove', closeOnScroll, { passive: true })
+  if (typeof ResizeObserver === 'undefined' || !root.value) return
+  resizeObserver = new ResizeObserver(([entry]) => {
+    document.documentElement.style.setProperty('--investigation-bar-h', `${Math.round(entry.borderBoxSize?.[0]?.blockSize ?? entry.target.getBoundingClientRect().height)}px`)
+  })
+  resizeObserver.observe(root.value)
+})
+onUnmounted(() => {
+  window.removeEventListener('wheel', closeOnScroll)
+  window.removeEventListener('touchmove', closeOnScroll)
+  resizeObserver?.disconnect()
+  document.documentElement.style.removeProperty('--investigation-bar-h')
+})
 const scopeNote = computed(() => {
   if (route.path.startsWith('/monitors')) return 'Current monitor status, latest checks, and labeled uptime windows. Time and environment filters do not apply.'
   if (route.path.startsWith('/releases')) return 'All deployments. Release metrics cover the release; time and environment filters do not apply.'
@@ -56,12 +97,29 @@ const scopeNote = computed(() => {
 </script>
 
 <template>
-  <section class="investigation-bar" aria-label="Investigation filters and freshness">
-    <div v-if="telemetry" class="investigation-bar__filters">
-      <FilterChip label="Time range" icon="clock" :value="state.absolute ? 'Custom' : state.range" :options="ranges" @change="state.setRange($event)" />
-      <FilterChip label="Environment" icon="globe" :value="state.environment" :options="envOptions" @change="state.environment = $event" />
+  <section ref="root" class="investigation-bar" :class="{ 'investigation-bar--filters-open': filtersOpen }" aria-label="Investigation filters and freshness">
+    <button
+      v-if="telemetry"
+      class="investigation-bar__toggle"
+      :aria-expanded="filtersOpen"
+      aria-controls="investigation-scope"
+      @click="filtersOpen = !filtersOpen"
+    >
+      <Icon name="filter" :size="13" />
+      <span>Filters</span>
+      <span v-if="state.pageFilterCount" class="investigation-bar__count">{{ state.pageFilterCount }}<span class="sr-only"> active</span></span>
+      <span class="investigation-bar__summary">{{ filterSummary }}</span>
+      <Icon name="chevron-down" :size="11" />
+    </button>
+    <div id="investigation-scope" class="investigation-bar__scope">
+      <div v-if="telemetry" class="investigation-bar__filters">
+        <FilterChip label="Time range" icon="clock" :value="state.absolute ? 'Custom' : state.range" :options="ranges" @change="state.setRange($event)" />
+        <FilterChip label="Environment" icon="globe" :value="state.environment" :options="envOptions" @change="state.environment = $event" />
+      </div>
+      <UserFilter v-if="telemetry" compact class="investigation-bar__user" />
+      <!-- Pages with their own filters (the issue list) teleport them here, so one bar holds every filter. -->
+      <div id="page-filters" class="investigation-bar__page" />
     </div>
-    <UserFilter v-if="telemetry" compact class="investigation-bar__user" />
     <div class="investigation-bar__actions">
       <details ref="details" class="investigation-bar__details">
         <summary v-tooltip="'Data freshness and scope'" class="investigation-bar__icon" :class="{ 'investigation-bar__warning': !online || failed.length || environmentError || (projects.metadataReady && projects.invalidIds.length) }" aria-label="Data freshness and scope">
@@ -81,13 +139,24 @@ const scopeNote = computed(() => {
           <p v-if="projects.metadataReady && projects.invalidIds.length">Some selected projects are unavailable. Choose projects in the navigation bar.</p>
         </div>
       </details>
-      <button v-tooltip="fetching ? 'Refreshing…' : state.browsingHistory ? 'Refresh latest' : 'Refresh now'" class="investigation-bar__icon investigation-bar__refresh" :disabled="fetching || !online" :aria-label="fetching ? 'Refreshing…' : state.browsingHistory ? 'Refresh latest' : 'Refresh now'" @click="refresh">
+      <button v-tooltip="fetching ? 'Refreshing…' : state.browsingHistory ? 'Refresh latest' : 'Refresh now'" class="investigation-bar__icon" :disabled="fetching || !online" :aria-label="fetching ? 'Refreshing…' : state.browsingHistory ? 'Refresh latest' : 'Refresh now'" @click="refresh">
         <Icon name="refresh-cw" :size="12" :class="{ 'investigation-bar__spin': fetching }" />
-        <span v-if="updatedAt" class="investigation-bar__age" aria-hidden="true">{{ age < 60 ? `${age}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h` }}</span>
       </button>
-      <button v-if="!state.absolute && (telemetry || automatic || state.paused)" v-tooltip="state.paused ? 'Resume auto-refresh' : 'Pause auto-refresh'" class="investigation-bar__icon" :aria-label="state.paused ? 'Resume' : 'Pause'" :aria-pressed="state.paused" @click="state.paused = !state.paused">
-        <Icon :name="state.paused ? 'play' : 'pause'" :size="14" />
+      <button
+        v-if="canPause"
+        v-tooltip="state.paused ? 'Resume auto-refresh' : 'Pause auto-refresh'"
+        class="investigation-bar__live"
+        :class="liveLabel === 'Live' ? 'investigation-bar__live--on' : 'investigation-bar__live--off'"
+        :aria-label="`${liveLabel}, ${state.paused ? 'resume' : 'pause'} auto-refresh`"
+        @click="state.paused = !state.paused"
+      >
+        <span class="investigation-bar__live-dot" aria-hidden="true" />
+        <span>{{ liveLabel }}</span>
+        <span v-if="updatedAt" class="investigation-bar__age" aria-hidden="true">· {{ ageLabel }}</span>
       </button>
+      <span v-else-if="updatedAt" class="investigation-bar__live investigation-bar__live--static">
+        {{ liveLabel }} <span class="investigation-bar__age">· {{ ageLabel }}</span>
+      </span>
     </div>
   </section>
 </template>
@@ -115,19 +184,55 @@ const scopeNote = computed(() => {
 @keyframes investigation-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .investigation-bar__spin { animation: none; } }
 @media (max-width: 640px) {
-  .investigation-bar { padding: 0 16px; gap: 4px; }
+  .investigation-bar { padding: 4px 16px; gap: 4px; }
   .investigation-bar__filters { flex: 1; gap: 4px; }
   .investigation-bar__user:has(.user-chip) { order: 3; flex-basis: 100%; padding-bottom: 4px; }
   .investigation-bar__filters :deep(.filterchip) { min-height: 36px; gap: 4px; padding: 0 6px; }
   .investigation-bar__icon { width: 36px; height: 36px; }
 
 }
-.investigation-bar__refresh { width: auto; min-width: 48px; padding: 0 6px; gap: 4px; line-height: 1; }
-.investigation-bar__refresh :deep(svg) { display: block; flex-shrink: 0; }
-.investigation-bar__age { font-size: var(--text-sm); font-variant-numeric: tabular-nums; display: block; line-height: 1; text-box: trim-both cap alphabetic; }
+.investigation-bar__scope { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; min-width: 0; }
+.investigation-bar__page { display: contents; }
+.investigation-bar__toggle { display: none; }
+
+/* Live switch: a labelled state instead of a bare pause icon. */
+.investigation-bar__live { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 14px; background: transparent; color: var(--text-2); font-size: var(--text-xs); font-weight: 500; white-space: nowrap; cursor: pointer; }
+.investigation-bar__live:hover { color: var(--text-1); border-color: var(--border); }
+.investigation-bar__live:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.investigation-bar__live--static { cursor: default; border-color: transparent; }
+.investigation-bar__live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.investigation-bar__live--on .investigation-bar__live-dot { background: var(--success); box-shadow: 0 0 0 3px oklch(from var(--success) l c h / 0.18); }
+.investigation-bar__live--on { color: var(--text-1); }
+.investigation-bar__age { display: inline-block; min-width: 4.5ch; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text-3); font-weight: 400; }
+.investigation-bar__count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 500; }
 .investigation-bar__user { min-width: 0; }
 .investigation-bar__user :deep(.filterchip) { padding: 0 7px; }
 @media (max-width: 640px) {
   .investigation-bar__user :deep(.filterchip) { height: 36px; }
+}
+/* Phones: one Filters button carries the scope; the chips open below it.
+   Declared last so it overrides the desktop defaults above. */
+@media (max-width: 640px) {
+  .investigation-bar__toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-1); font-size: var(--text-sm); }
+  .investigation-bar__summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: var(--text-xs); }
+  .investigation-bar__toggle > svg { flex-shrink: 0; }
+  .investigation-bar__toggle > svg:last-child { margin-left: auto; transition: transform 120ms; }
+  .investigation-bar--filters-open .investigation-bar__toggle > svg:last-child { transform: rotate(180deg); }
+  /* The scope's children join the bar's own row so an active user filter can
+     stay visible while every other filter waits behind the toggle. */
+  .investigation-bar__scope { display: contents; }
+  .investigation-bar:not(.investigation-bar--filters-open) .investigation-bar__filters,
+  .investigation-bar:not(.investigation-bar--filters-open) .investigation-bar__page > *,
+  .investigation-bar:not(.investigation-bar--filters-open) .investigation-bar__user:not(:has(.user-chip)) { display: none; }
+  /* Open panel: a zero-height break ends the toggle row, then scope chips and
+     the user filter share one row and page filters follow. */
+  .investigation-bar--filters-open::after { content: ''; order: 2; flex-basis: 100%; height: 0; }
+  .investigation-bar--filters-open .investigation-bar__filters { order: 3; padding-top: 6px; }
+  .investigation-bar--filters-open .investigation-bar__user { order: 3; padding-top: 6px; }
+  /* One control size in the open panel, page filters included. */
+  .investigation-bar--filters-open :deep(.filterchip) { height: 36px; min-height: 36px; }
+  .investigation-bar--filters-open :deep(.filterbar__search) { height: 36px; }
+  .investigation-bar--filters-open .investigation-bar__page > * { order: 4; flex-basis: 100%; padding-bottom: 8px; }
+  .investigation-bar__live { height: 36px; }
 }
 </style>

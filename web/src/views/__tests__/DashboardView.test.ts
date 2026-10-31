@@ -68,6 +68,7 @@ const stubs = {
 // query key rather than call order. An unknown key fails loudly.
 function queryName(options: any): string {
   const [head, sub] = toValue(options.queryKey) as unknown[]
+  if (head === 'issues' && sub === 'attention') return 'issues/attention'
   return head === 'projects' ? `projects/${String(sub)}` : String(head)
 }
 
@@ -92,6 +93,7 @@ function setupQueries({
   projectSetup = projects.map(p => ({ id: p.id, setup_complete: true })) as { id: string; setup_complete: boolean }[] | null,
   projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
   projStatsFetching = false,
+  attention = { regressed: [], regressed_total: 0, new: [], new_total: 0 } as unknown,
 } = {}) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects } as any)
   const results: Record<string, unknown> = {
@@ -102,8 +104,9 @@ function setupQueries({
     'dash-tx-counts': { data: ref(txCounts) },
     'releases': { data: ref(releases), isFetching: ref(false) },
     'alert-rules': { data: ref(alertRules), isLoading: ref(alertsLoading) },
-    'uptime-monitors': { data: ref(uptimeMonitors) },
-    'monitors': { data: ref(cronMonitors) },
+    'issues/attention': { data: ref(attention), isFetching: ref(false), isError: ref(false), fetchStatus: ref('idle'), dataUpdatedAt: ref(0), refetch: vi.fn() },
+    'uptime-monitors': { data: ref(uptimeMonitors), isFetching: ref(false), isError: ref(false), refetch: vi.fn() },
+    'monitors': { data: ref(cronMonitors), isFetching: ref(false), isError: ref(false), refetch: vi.fn() },
     'projects/stats': { data: ref(projectIssueCounts), isFetching: ref(projStatsFetching) },
   }
   vi.mocked(useQuery).mockImplementation(((options: any) => {
@@ -160,33 +163,15 @@ describe('DashboardView', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/transactions/counts?hours=168', { signal: expect.any(AbortSignal) })
     wrapper.unmount()
   })
-  describe('KPI strip', () => {
-    it('renders all five KPI labels', () => {
-      const wrapper = makeWrapper()
-      const text = wrapper.text()
-      expect(text).toContain('Open Issues')
-      expect(text).toContain('Error Rate')
-      expect(text).toContain('P95 Latency')
-      expect(text).toContain('Apdex')
-      expect(text).toContain('Transactions / 24h')
-    })
-
-    it('shows muted dashes when transaction data is not yet available', () => {
-      const wrapper = makeWrapper()
-      // error rate, p95, apdex, and tx count all depend on tx queries which return undefined
-      expect(wrapper.findAll('.db-kpi__value--muted')).toHaveLength(4)
-    })
-  })
-
   describe('section headings', () => {
-    it('renders all five section titles', () => {
+    it('renders every section title', () => {
       const wrapper = makeWrapper()
       const text = wrapper.text()
+      expect(text).toContain('Vitals · 24h')
       expect(text).toContain('Transaction density')
-      expect(text).toContain('Hottest Issues')
-      expect(text).toContain('Slowest Transactions')
-      expect(text).toContain('Recent Alerts')
-      expect(text).toContain('Release Health')
+      expect(text).toContain('Slowest transactions')
+      expect(text).toContain('Recent alerts')
+      expect(text).toContain('Release health')
     })
   })
 
@@ -203,14 +188,9 @@ describe('DashboardView', () => {
   })
 
   describe('empty states', () => {
-    it('shows the no-fired-alerts state when alert rules have no last_fired_at', () => {
-      const wrapper = makeWrapper()
+    it('shows the no-fired-alerts state when enabled rules have not fired', () => {
+      const wrapper = makeWrapper({ alertRules: [{ id: 'a1', name: 'Rule 1', enabled: true, last_fired_at: null, channel: 'email' }] })
       expect(wrapper.text()).toContain('No alerts fired recently')
-    })
-
-    it('shows the no-open-issues state when the issues query returns no data', () => {
-      const wrapper = makeWrapper()
-      expect(wrapper.text()).toContain('No open issues')
     })
 
     it('shows the no-releases state when the releases query returns no data', () => {
@@ -311,26 +291,13 @@ describe('DashboardView', () => {
       expect(wrapper.text()).toContain('High Error Rate')
     })
 
-    it('shows KPI issue count when issues are present', () => {
-      const issues = {
-        issues: [
-          { id: 'i1', title: 'A', level: 'error', status: 'open', event_count: 5, sparkline: [], project_id: 'p1', user_count: 1, last_seen: '2024-01-01T00:00:00Z', first_seen: '2024-01-01T00:00:00Z', kind: 'error' },
-          { id: 'i2', title: 'B', level: 'warning', status: 'open', event_count: 2, sparkline: [], project_id: 'p1', user_count: 1, last_seen: '2024-01-01T00:00:00Z', first_seen: '2024-01-01T00:00:00Z', kind: 'error' },
-        ],
-        total: 2,
-        has_more: false,
-      }
-      const wrapper = makeWrapper({ issues })
-      // The open count KPI should show '2' not '–'
-      const muted = wrapper.findAll('.db-kpi__value--muted')
-      expect(muted.length).toBe(4) // error rate, p95, apdex, tx count are still muted; issues count is not
-    })
   })
 
   describe('active alert rules count', () => {
-    it('shows 0 rules active when no alert rules', () => {
+    it('says nothing will notify anyone when there are no alert rules', () => {
       const wrapper = makeWrapper({ alertRules: [] })
-      expect(wrapper.text()).toContain('0 rules active')
+      expect(wrapper.text()).toContain('No alert rules yet. Nothing will notify you.')
+      expect(wrapper.text()).not.toContain('No alerts fired recently')
     })
 
     it('shows correct count of enabled rules', () => {
@@ -339,7 +306,7 @@ describe('DashboardView', () => {
         { id: 'a2', name: 'Rule 2', enabled: false, last_fired_at: null, channel: 'slack' },
       ]
       const wrapper = makeWrapper({ alertRules })
-      expect(wrapper.text()).toContain('1 rule active')
+      expect(wrapper.text()).toContain('1 of 2 rules on, 1 paused.')
     })
   })
 
@@ -347,24 +314,6 @@ describe('DashboardView', () => {
     it('shows alert skeleton rows when alerts are loading', () => {
       const wrapper = makeWrapper({ alertsLoading: true })
       expect(wrapper.find('.db-alert-row .skel').exists()).toBe(true)
-    })
-  })
-
-  describe('KPI edge cases', () => {
-    it('shows muted error rate when all tx summaries have zero sample count', () => {
-      const txSummaries = [{ transaction: '/api', op: 'http.server', sample_count: 0, tpm: 0, p50: 0, p95: 0, failure_rate: 0, time_spent_ms: 0, project_id: 'p1' }]
-      const wrapper = makeWrapper({ txSummaries })
-      const muted = wrapper.findAll('.db-kpi__value--muted')
-      expect(muted.length).toBeGreaterThan(0)
-    })
-
-    it('shows error rate value in red when > 5%', () => {
-      const txSummaries = [{
-        transaction: '/api', op: 'http.server', sample_count: 100, tpm: 5,
-        p50: 100, p95: 500, failure_rate: 8, time_spent_ms: 5000, project_id: 'p1',
-      }]
-      const wrapper = makeWrapper({ txSummaries })
-      expect(wrapper.text()).toContain('8.0%')
     })
   })
 
@@ -398,7 +347,14 @@ describe('DashboardView', () => {
     it('shows new pill when release has new issues', () => {
       const releases = { releases: [makeRelease({ new_issues: 3 })], total: 1, has_more: false }
       const wrapper = makeWrapper({ releases })
-      expect(wrapper.find('.rel-pill--bad').text()).toContain('new')
+      expect(wrapper.find('.rel-pill--new').text()).toContain('new')
+    })
+
+    it('marks a release with regressions in amber, not red', () => {
+      const releases = { releases: [makeRelease({ regressed_issues: 2, new_issues: 1 })], total: 1, has_more: false }
+      const wrapper = makeWrapper({ releases })
+      expect(wrapper.find('.rel-pill--regressed').text()).toContain('2 regressed')
+      expect(wrapper.find('.rel-pill--new').exists()).toBe(false)
     })
 
     it('navigates to release detail when release row is clicked', async () => {
@@ -406,76 +362,6 @@ describe('DashboardView', () => {
       const wrapper = makeWrapper({ releases })
       await wrapper.find('.db-release-row').trigger('click')
       expect(pushMock).toHaveBeenCalledWith('/releases/r1')
-    })
-  })
-
-  describe('issue row interactions', () => {
-    it('navigates to issue when issue row is clicked', async () => {
-      const issues = {
-        issues: [{
-          id: 'i1',
-          title: 'TypeError: broken',
-          level: 'error',
-          status: 'open',
-          event_count: 42,
-          sparkline: [],
-          project_id: 'p1',
-          user_count: 1,
-          last_seen: '2024-01-01T00:00:00Z',
-          first_seen: '2024-01-01T00:00:00Z',
-          kind: 'error',
-        }],
-        total: 1,
-        has_more: false,
-      }
-      const wrapper = makeWrapper({ issues })
-      await wrapper.find('.db-issue-row').trigger('click')
-      expect(pushMock).toHaveBeenCalledWith('/issues/i1')
-    })
-
-    it('shows sparkline for issue with sparkline data', () => {
-      const issues = {
-        issues: [{
-          id: 'i1',
-          title: 'TypeError: broken',
-          level: 'warning',
-          status: 'open',
-          event_count: 5000,
-          sparkline: [1, 2, 3, 4, 5],
-          project_id: 'p1',
-          user_count: 1,
-          last_seen: '2024-01-01T00:00:00Z',
-          first_seen: '2024-01-01T00:00:00Z',
-          kind: 'error',
-        }],
-        total: 1,
-        has_more: false,
-      }
-      const wrapper = makeWrapper({ issues })
-      // fmt(5000) returns '5.0k'; sparkline renders with levelColor
-      expect(wrapper.text()).toContain('5.0k')
-    })
-
-    it('shows fmt with millions for very large event counts', () => {
-      const issues = {
-        issues: [{
-          id: 'i1',
-          title: 'Mega issue',
-          level: 'fatal',
-          status: 'open',
-          event_count: 1_500_000,
-          sparkline: [1],
-          project_id: 'p1',
-          user_count: 1,
-          last_seen: '2024-01-01T00:00:00Z',
-          first_seen: '2024-01-01T00:00:00Z',
-          kind: 'error',
-        }],
-        total: 1,
-        has_more: false,
-      }
-      const wrapper = makeWrapper({ issues })
-      expect(wrapper.text()).toContain('1.5M')
     })
   })
 
@@ -496,14 +382,36 @@ describe('DashboardView', () => {
     })
   })
 
+  describe('briefing', () => {
+    it('says all clear when nothing is failing, new or regressed', () => {
+      const wrapper = makeWrapper()
+      expect(wrapper.find('.brief__verdict').text()).toBe('All clear.')
+    })
+
+    it('puts a failing monitor in the verdict and the broken group', () => {
+      const wrapper = makeWrapper({
+        uptimeMonitors: [{ id: 'u1', project_id: 'p1', name: 'API', status: 'active', state: 'down', went_down_at: new Date(Date.now() - 5 * 60_000).toISOString(), last_ok_at: null, last_status_code: 502, last_error: null, consecutive_failures: 3, recent_checks: [] }],
+      })
+      expect(wrapper.find('.brief__verdict').text().replace(/\u00a0/g, ' ')).toBe('1 thing is broken. No new or regressed issues.')
+      expect(wrapper.find('#brief-broken').text()).toContain('Broken now')
+      expect(wrapper.find('.brief-row').text()).toContain('API is down')
+    })
+
+    it('records this visit so the next one can show what changed', () => {
+      makeWrapper()
+      expect(JSON.parse(localStorage.getItem('tindra:dashboard:last-visit')!).seen).toBeGreaterThan(0)
+    })
+  })
+
   describe('widget layout', () => {
-    it('places each widget in its column in the original order', () => {
-      const wrapper = makeWrapper({ uptimeMonitors: [{ id: 'u1', name: 'API', status: 'active', state: 'up' }] })
+    it('leads with the briefing and keeps health and performance context beside and below it', () => {
+      const wrapper = makeWrapper({
+        projects: [{ id: 'p1', name: 'A', slug: 'a' }, { id: 'p2', name: 'B', slug: 'b' }],
+      })
       const titles = (column: string) => wrapper.findAll(`${column} .db-sec__title`).map(t => t.text())
-      expect(titles('.db-main')).toEqual(['Transaction density · Last 7 days', 'Monitors', 'Hottest Issues', 'Slowest Transactions'])
-      expect(titles('.db-aside')).toEqual(['Recent Alerts', 'Release Health'])
-      const page = wrapper.find('.page').element.children
-      expect([...page].map(el => el.className)).toEqual(['db-kpis', 'db-body'])
+      expect(wrapper.find('.db-main > .brief').exists()).toBe(true)
+      expect(titles('.db-tail')).toEqual(['Slowest transactions', 'Transaction density · last 7 days'])
+      expect(titles('.db-aside')).toEqual(['Vitals · 24h', 'Release health', 'Projects', 'Recent alerts'])
     })
 
     it('fetches widget data only once the dashboard itself is shown', () => {
@@ -512,238 +420,6 @@ describe('DashboardView', () => {
       expect(queryOptions('issues')).toBeDefined()
       expect(queryOptions('alert-rules')).toBeUndefined()
       expect(queryOptions('dash-tx-counts')).toBeUndefined()
-    })
-  })
-
-  describe('project overview widget', () => {
-    const RouterLinkCapture = { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' }
-    const stubsWithCapture = { ...stubs, RouterLink: RouterLinkCapture }
-
-    const twoProjects = [
-      { id: 'p1', name: 'Frontend', slug: 'frontend', event_count: 1 },
-      { id: 'p2', name: 'Backend', slug: 'backend', event_count: 1 },
-    ]
-
-    it('is hidden when there is only one project', () => {
-      const wrapper = makeWrapper({ projects: [{ id: 'p1', name: 'App', slug: 'app' }] })
-      expect(wrapper.find('.db-projects').exists()).toBe(false)
-    })
-
-    it('is hidden when there are no projects', () => {
-      const wrapper = makeWrapper({ projects: [] })
-      expect(wrapper.find('.db-projects').exists()).toBe(false)
-    })
-
-    it('shows when there are 2 or more projects', () => {
-      const wrapper = makeWrapper({ projects: twoProjects })
-      expect(wrapper.find('.db-projects').exists()).toBe(true)
-    })
-
-    it('renders a row for each project name', () => {
-      const wrapper = makeWrapper({ projects: twoProjects })
-      expect(wrapper.text()).toContain('Frontend')
-      expect(wrapper.text()).toContain('Backend')
-    })
-
-    it('shows the Project Overview heading', () => {
-      const wrapper = makeWrapper({ projects: twoProjects })
-      expect(wrapper.text()).toContain('Project Overview')
-    })
-
-    it('shows open issue counts from projectIssueCounts', () => {
-      const wrapper = makeWrapper({
-        projects: twoProjects,
-        projectIssueCounts: [
-          { project_id: 'p1', open_issues: 7 },
-          { project_id: 'p2', open_issues: 0 },
-        ],
-      })
-      expect(wrapper.text()).toContain('7')
-    })
-
-    it('open issues value links to issues route with project_id', () => {
-      setupQueries({
-        projects: twoProjects,
-        projectIssueCounts: [
-          { project_id: 'p1', open_issues: 3 },
-          { project_id: 'p2', open_issues: 0 },
-        ],
-      })
-      const wrapper = mount(DashboardView, { global: { stubs: stubsWithCapture } })
-      const links = wrapper.findAllComponents(RouterLinkCapture)
-      const issueLinks = links.filter(l => l.props('to')?.name === 'issues')
-      expect(issueLinks.length).toBeGreaterThan(0)
-      const projectIds = issueLinks.map(l => l.props('to').query.project_id)
-      expect(projectIds).toContain('p1')
-      expect(projectIds).toContain('p2')
-    })
-
-    it('req/24h value links to transactions route with project_id', () => {
-      setupQueries({
-        projects: twoProjects,
-        txSummaries: [
-          { transaction: '/api/a', op: 'http.server', project_id: 'p1', sample_count: 50, tpm: 2, p50: 100, p95: 300, failure_rate: 0, time_spent_ms: 5000 },
-          { transaction: '/api/b', op: 'http.server', project_id: 'p2', sample_count: 20, tpm: 1, p50: 80, p95: 200, failure_rate: 1, time_spent_ms: 2000 },
-        ],
-      })
-      const wrapper = mount(DashboardView, { global: { stubs: stubsWithCapture } })
-      const links = wrapper.findAllComponents(RouterLinkCapture)
-      const txLinks = links.filter(l => l.props('to')?.name === 'transactions')
-      const projectIds = txLinks.map(l => l.props('to').query.project_id)
-      expect(projectIds).toContain('p1')
-      expect(projectIds).toContain('p2')
-    })
-
-    it('derives weighted-average p50 from txSummaries per project', () => {
-      const wrapper = makeWrapper({
-        projects: twoProjects,
-        txSummaries: [
-          // p1: two routes, weighted p50 = (100*10 + 200*10) / 20 = 150ms
-          { transaction: '/a', op: 'http.server', project_id: 'p1', sample_count: 10, tpm: 1, p50: 100, p95: 300, failure_rate: 0, time_spent_ms: 1000 },
-          { transaction: '/b', op: 'http.server', project_id: 'p1', sample_count: 10, tpm: 1, p50: 200, p95: 400, failure_rate: 0, time_spent_ms: 2000 },
-        ],
-      })
-      // formatDuration mock returns `${n}ms`, so weighted 150 → '150ms'
-      expect(wrapper.text()).toContain('150ms')
-    })
-
-    it('shows dash for req/24h when project has no tx data', () => {
-      const wrapper = makeWrapper({
-        projects: twoProjects,
-        txSummaries: [
-          { transaction: '/a', op: 'http.server', project_id: 'p1', sample_count: 10, tpm: 1, p50: 100, p95: 300, failure_rate: 0, time_spent_ms: 1000 },
-          // p2 has no tx data
-        ],
-      })
-      // p2 row should show '–' for req/24h, p50, error rate
-      const rows = wrapper.findAll('.db-proj-row')
-      const p2Row = rows.find(r => r.text().includes('Backend'))
-      expect(p2Row?.text()).toContain('–')
-    })
-
-    describe('sort', () => {
-      it('sorts by open issues descending by default', () => {
-        const wrapper = makeWrapper({
-          projects: twoProjects,
-          projectIssueCounts: [
-            { project_id: 'p1', open_issues: 3 },
-            { project_id: 'p2', open_issues: 10 },
-          ],
-        })
-        const rows = wrapper.findAll('.db-proj-row')
-        // p2 has 10 issues and p1 has 3, so descending puts p2 (Backend) first
-        expect(rows[0].text()).toContain('Backend')
-        expect(rows[1].text()).toContain('Frontend')
-      })
-
-      it('marks the open issues column header as active by default', () => {
-        const wrapper = makeWrapper({ projects: twoProjects })
-        const sortBtns = wrapper.findAll('.col-sort')
-        expect(sortBtns[0].classes()).not.toContain('col-sort--active') // Project
-        expect(sortBtns[1].classes()).toContain('col-sort--active')     // Open Issues
-      })
-
-      it('clicking another column sorts by that column ascending for name', async () => {
-        const wrapper = makeWrapper({ projects: twoProjects })
-        const sortBtns = wrapper.findAll('.col-sort')
-        await sortBtns[0].trigger('click') // Project name, defaults to asc
-        const rows = wrapper.findAll('.db-proj-row')
-        // alphabetical ascending: Backend before Frontend
-        expect(rows[0].text()).toContain('Backend')
-        expect(rows[1].text()).toContain('Frontend')
-      })
-
-      it('clicking active column reverses sort direction', async () => {
-        const wrapper = makeWrapper({
-          projects: twoProjects,
-          projectIssueCounts: [
-            { project_id: 'p1', open_issues: 3 },
-            { project_id: 'p2', open_issues: 10 },
-          ],
-        })
-        const openIssuesBtn = wrapper.findAll('.col-sort')[1]
-        // default is open issues desc (p2 first), clicking flips to asc (p1 first)
-        await openIssuesBtn.trigger('click')
-        const rows = wrapper.findAll('.db-proj-row')
-        expect(rows[0].text()).toContain('Frontend')
-        expect(rows[1].text()).toContain('Backend')
-      })
-
-      it('persists sort column and direction to localStorage', async () => {
-        const wrapper = makeWrapper({ projects: twoProjects })
-        const sortBtns = wrapper.findAll('.col-sort')
-        await sortBtns[2].trigger('click') // Req / 24h
-        expect(localStorage.getItem('tindra:dash:proj-sort')).toBe('reqPerDay')
-        expect(localStorage.getItem('tindra:dash:proj-sort-dir')).toBe('desc')
-      })
-
-      it('reads sort column from localStorage on mount', () => {
-        localStorage.setItem('tindra:dash:proj-sort', 'openIssues')
-        localStorage.setItem('tindra:dash:proj-sort-dir', 'asc')
-        const wrapper = makeWrapper({
-          projects: twoProjects,
-          projectIssueCounts: [
-            { project_id: 'p1', open_issues: 10 },
-            { project_id: 'p2', open_issues: 3 },
-          ],
-        })
-        const sortBtns = wrapper.findAll('.col-sort')
-        // Open Issues button (index 1) should be active
-        expect(sortBtns[1].classes()).toContain('col-sort--active')
-        const rows = wrapper.findAll('.db-proj-row')
-        // asc by open issues: p2=3 first, p1=10 second
-        expect(rows[0].text()).toContain('Backend')
-        expect(rows[1].text()).toContain('Frontend')
-      })
-    })
-
-    describe('expand/collapse', () => {
-      const sixProjects = [
-        { id: 'p1', name: 'Alpha', slug: 'alpha', event_count: 1 },
-        { id: 'p2', name: 'Beta', slug: 'beta', event_count: 1 },
-        { id: 'p3', name: 'Gamma', slug: 'gamma', event_count: 1 },
-        { id: 'p4', name: 'Delta', slug: 'delta', event_count: 1 },
-        { id: 'p5', name: 'Epsilon', slug: 'epsilon', event_count: 1 },
-        { id: 'p6', name: 'Zeta', slug: 'zeta', event_count: 1 },
-      ]
-
-      it('shows at most 5 rows when there are more than 5 projects', () => {
-        const wrapper = makeWrapper({ projects: sixProjects })
-        const rows = wrapper.findAll('.db-proj-row')
-        expect(rows).toHaveLength(5)
-      })
-
-      it('shows expand button when there are more than 5 projects', () => {
-        const wrapper = makeWrapper({ projects: sixProjects })
-        expect(wrapper.find('.db-proj-expand').exists()).toBe(true)
-        expect(wrapper.find('.db-proj-expand').text()).toContain('more')
-      })
-
-      it('does not show expand button when there are 5 or fewer projects', () => {
-        const wrapper = makeWrapper({ projects: sixProjects.slice(0, 5) })
-        expect(wrapper.find('.db-proj-expand').exists()).toBe(false)
-      })
-
-      it('shows all rows after clicking expand', async () => {
-        const wrapper = makeWrapper({ projects: sixProjects })
-        await wrapper.find('.db-proj-expand').trigger('click')
-        const rows = wrapper.findAll('.db-proj-row')
-        expect(rows).toHaveLength(6)
-      })
-
-      it('collapse button shows "Show less" when expanded', async () => {
-        const wrapper = makeWrapper({ projects: sixProjects })
-        await wrapper.find('.db-proj-expand').trigger('click')
-        expect(wrapper.find('.db-proj-expand').text()).toContain('less')
-      })
-
-      it('collapses back to 5 rows after clicking again', async () => {
-        const wrapper = makeWrapper({ projects: sixProjects })
-        await wrapper.find('.db-proj-expand').trigger('click')
-        await wrapper.find('.db-proj-expand').trigger('click')
-        const rows = wrapper.findAll('.db-proj-row')
-        expect(rows).toHaveLength(5)
-      })
     })
   })
 
@@ -756,7 +432,7 @@ describe('DashboardView', () => {
         releases: { releases: [], total: 0, has_more: false },
       })
       expect(wrapper.text()).toContain('No projects yet')
-      expect(wrapper.find('.db-kpis').exists()).toBe(false)
+      expect(wrapper.find('.brief').exists()).toBe(false)
     })
 
     it('navigates to create project when button is clicked', async () => {
@@ -773,13 +449,13 @@ describe('DashboardView', () => {
     it('opens setup only when durable status says no data has arrived', () => {
       const wrapper = makeWrapper({ projectSetup: [{ id: 'p1', setup_complete: false }] })
       expect(wrapper.findComponent(ProjectSetup).exists()).toBe(true)
-      expect(wrapper.find('.db-kpis').exists()).toBe(false)
+      expect(wrapper.find('.brief').exists()).toBe(false)
     })
 
     it('does not show onboarding while setup status is unavailable', () => {
       const wrapper = makeWrapper({ projectSetup: null })
       expect(wrapper.findComponent(ProjectSetup).exists()).toBe(false)
-      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+      expect(wrapper.find('.brief').exists()).toBe(true)
     })
 
     it('keeps the dashboard for a connected project with zero monthly events', () => {
@@ -787,7 +463,7 @@ describe('DashboardView', () => {
         projects: [{ id: 'p1', name: 'Quiet', slug: 'quiet', public_key: 'key1', event_count: 0 }],
         projectSetup: [{ id: 'p1', setup_complete: true }],
       })
-      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+      expect(wrapper.find('.brief').exists()).toBe(true)
       expect(wrapper.findComponent(ProjectSetup).exists()).toBe(false)
     })
 
@@ -797,7 +473,7 @@ describe('DashboardView', () => {
       expect(setup.props('project').id).toBe('p1')
       setup.vm.$emit('continue')
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.db-kpis').exists()).toBe(true)
+      expect(wrapper.find('.brief').exists()).toBe(true)
     })
 
     it('uses a selected project even when another project is connected', () => {
@@ -823,134 +499,6 @@ describe('DashboardView', () => {
       expect(apiFetch).toHaveBeenCalledWith('/api/setup-status', { signal: expect.any(AbortSignal) })
       wrapper.unmount()
     })
-  })
-})
-
-describe('DashboardView: monitor summary widget', () => {
-  beforeEach(() => { vi.clearAllMocks() })
-
-  const uptime = (overrides = {}) => ({
-    id: 'u1', project_id: 'p1', name: 'API Service', url: 'https://api.example.com',
-    method: 'GET', interval_secs: 60, timeout_secs: 10, expected_codes: '200-299',
-    body_contains: null, status: 'active', state: 'down', consecutive_failures: 3,
-    last_checked_at: null, last_ok_at: null, next_check_at: null,
-    last_status_code: 503, last_response_ms: 250, last_error: null,
-    went_down_at: new Date(Date.now() - 300_000).toISOString(),
-    recovered_at: null, created_at: '', recent_checks: [],
-    ...overrides,
-  })
-
-  const cron = (overrides = {}) => ({
-    id: 'c1', project_id: 'p1', name: 'Daily ETL', schedule: '0 2 * * *',
-    grace_period_secs: 300, status: 'active', is_running: false,
-    last_ok_at: null, next_expected_at: new Date(Date.now() - 3_600_000).toISOString(),
-    last_checkin_status: null, last_checkin_at: null, created_at: '',
-    state: 'missed', recent_checkins: [],
-    ...overrides,
-  })
-
-  it('hides the widget when there are no monitors', () => {
-    const wrapper = makeWrapper({ uptimeMonitors: [], cronMonitors: [] })
-    expect(wrapper.find('.db-monitors').exists()).toBe(false)
-  })
-
-  it('shows "All monitors paused" when all monitors are paused', () => {
-    const wrapper = makeWrapper({
-      uptimeMonitors: [uptime({ status: 'paused', state: 'down' })],
-      cronMonitors: [cron({ status: 'paused', state: 'missed' })],
-    })
-    expect(wrapper.find('.db-monitors').exists()).toBe(true)
-    expect(wrapper.text()).toContain('All 2 monitors paused')
-    expect(wrapper.find('.db-empty').exists()).toBe(true)
-  })
-
-  it('shows "All monitors healthy" when all monitors are up/ok', () => {
-    const wrapper = makeWrapper({
-      uptimeMonitors: [uptime({ state: 'up' })],
-      cronMonitors: [cron({ state: 'ok' })],
-    })
-    expect(wrapper.find('.db-monitors').exists()).toBe(true)
-    expect(wrapper.text()).toContain('All 2 monitors healthy')
-    expect(wrapper.find('.db-empty').exists()).toBe(true)
-  })
-
-  it('shows problem monitors when uptime monitor is down', () => {
-    const wrapper = makeWrapper({ uptimeMonitors: [uptime()], cronMonitors: [] })
-    expect(wrapper.find('.db-monitors').exists()).toBe(true)
-    expect(wrapper.text()).toContain('API Service')
-    expect(wrapper.text()).not.toContain('All')
-  })
-
-  it('shows problem monitors when cron monitor is missed', () => {
-    const wrapper = makeWrapper({ uptimeMonitors: [], cronMonitors: [cron()] })
-    expect(wrapper.find('.db-monitors').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Daily ETL')
-  })
-
-  it('shows cron error state', () => {
-    const wrapper = makeWrapper({ uptimeMonitors: [], cronMonitors: [cron({ state: 'error' })] })
-    expect(wrapper.find('.db-monitors').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Daily ETL')
-  })
-
-  it('does not show paused monitors as problem rows', () => {
-    const wrapper = makeWrapper({
-      uptimeMonitors: [uptime({ status: 'paused' })],
-      cronMonitors: [cron({ status: 'paused' })],
-    })
-    expect(wrapper.find('.db-mon-row').exists()).toBe(false)
-    expect(wrapper.find('.db-monitors').exists()).toBe(true)
-    expect(wrapper.find('.db-empty').exists()).toBe(true)
-    expect(wrapper.text()).toContain('paused')
-  })
-
-  it('shows correct singular count when one monitor is healthy', () => {
-    const wrapper = makeWrapper({
-      uptimeMonitors: [uptime({ state: 'up' })],
-      cronMonitors: [],
-    })
-    expect(wrapper.text()).toContain('All 1 monitor healthy')
-  })
-
-  it('shows overflow button when more than 5 problem monitors', () => {
-    const monitors = Array.from({ length: 6 }, (_, i) =>
-      uptime({ id: `u${i}`, name: `Monitor ${i}` }),
-    )
-    const wrapper = makeWrapper({ uptimeMonitors: monitors, cronMonitors: [] })
-    expect(wrapper.text()).toContain('+1 more')
-    expect(wrapper.find('.db-mon-overflow').element.tagName).toBe('BUTTON')
-  })
-
-  it('expands to show all monitors when overflow button is clicked', async () => {
-    const monitors = Array.from({ length: 6 }, (_, i) =>
-      uptime({ id: `u${i}`, name: `Monitor ${i}` }),
-    )
-    const wrapper = makeWrapper({ uptimeMonitors: monitors, cronMonitors: [] })
-    expect(wrapper.findAll('.db-mon-row')).toHaveLength(5)
-    await wrapper.find('.db-mon-overflow').trigger('click')
-    expect(wrapper.findAll('.db-mon-row')).toHaveLength(6)
-    expect(wrapper.find('.db-mon-overflow').text()).toContain('less')
-  })
-
-  it('collapses back to 5 when overflow button is clicked again', async () => {
-    const monitors = Array.from({ length: 6 }, (_, i) =>
-      uptime({ id: `u${i}`, name: `Monitor ${i}` }),
-    )
-    const wrapper = makeWrapper({ uptimeMonitors: monitors, cronMonitors: [] })
-    await wrapper.find('.db-mon-overflow').trigger('click')
-    await wrapper.find('.db-mon-overflow').trigger('click')
-    expect(wrapper.findAll('.db-mon-row')).toHaveLength(5)
-    expect(wrapper.find('.db-mon-overflow').text()).toContain('+1 more')
-  })
-
-  it('renders type badges for both uptime and cron monitors', () => {
-    const wrapper = makeWrapper({
-      uptimeMonitors: [uptime()],
-      cronMonitors: [cron()],
-    })
-    const text = wrapper.text()
-    expect(text).toContain('uptime')
-    expect(text).toContain('cron')
   })
 })
 

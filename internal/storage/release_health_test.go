@@ -49,8 +49,14 @@ func TestReleaseHealthMatchesPageWithoutTransactions(t *testing.T) {
 			require.Equal(t, f.NewIssues, r.NewIssues)
 			require.Equal(t, f.RegressedIssues, r.RegressedIssues)
 			if r.Version == "v0" {
-				require.Equal(t, 1, r.NewIssues)
+				// The issue first appeared in v0 and regressed: it counts once, as
+				// regressed, the way GetReleaseIssues groups it.
+				require.Equal(t, 0, r.NewIssues)
 				require.Equal(t, 1, r.RegressedIssues)
+				grouped, err := storage.GetReleaseIssues(ctx, testPool, r.ID)
+				require.NoError(t, err)
+				require.Len(t, grouped, 1)
+				require.Equal(t, "regressed", grouped[0].Category)
 			}
 		}
 	}

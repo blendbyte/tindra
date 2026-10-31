@@ -299,10 +299,19 @@ describe('CronMonitorsView', () => {
       expect(wrapper.find('.monrow__state').text()).toBe('Missed')
     })
 
-    it('shows "Running" label for monitors in in_progress state', () => {
+    it('shows "Running" in plain text for monitors in in_progress state', () => {
       setupMocks([makeMonitor('m1', 'Backup', 'in_progress')])
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
       expect(wrapper.find('.monrow__state').text()).toBe('Running')
+      expect(wrapper.find('.monrow__state').attributes('style')).toContain('var(--text-2)')
+    })
+
+    it('never calls a monitor that has not checked in OK', () => {
+      setupMocks([{ ...makeMonitor('m1', 'Weekly report'), last_checkin_at: null }])
+      const wrapper = mount(CronMonitorsView, { global: { stubs } })
+      expect(wrapper.find('.monrow__state').text()).toBe('Not checked yet')
+      expect(wrapper.find('.monrow__state').attributes('style')).toContain('var(--text-3)')
+      expect(wrapper.find('.mon-verdict').text()).toContain('1 not checked yet')
     })
 
     it('shows "Error" label for monitors in error state', () => {

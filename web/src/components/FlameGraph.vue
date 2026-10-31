@@ -403,8 +403,6 @@ watch(() => props.graph, resetZoom)
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   white-space: nowrap;
   flex-shrink: 0;
 }

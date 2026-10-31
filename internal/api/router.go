@@ -255,6 +255,7 @@ func NewRouter(cfg Config) *Handle {
 		r.Get("/api/app-users", ro.handleListAppUsers)
 		r.Get("/api/issues", ro.handleListAllIssues)
 		r.Get("/api/issues/overview", ro.handleDashboardIssues)
+		r.Get("/api/issues/attention", ro.handleAttentionIssues)
 		r.Get("/api/issues/export", ro.handleExportIssues)
 		r.Get("/api/issues/{issueID}", ro.handleGetIssueGlobal)
 		r.Get("/api/issues/{issueID}/events/histogram", ro.handleGetIssueHistogram)

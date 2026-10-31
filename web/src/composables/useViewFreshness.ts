@@ -10,6 +10,12 @@ export function isTelemetryQuery(query: Query) {
   return /^(issues|transactions|transaction-|user-traces|user-pageloads|logs|trace-logs|span-|web-vitals-|releases|release-issues|release-transactions|monitors|uptime-|checkins|dash-tx)/.test(key) && query.queryKey[1] !== 'metadata'
 }
 
+// A telemetry query the current page uses. Queries only the app shell observes
+// (the navigation's counts) refresh on their own and never make a page stale.
+export function isPageQuery(query: Query) {
+  return isTelemetryQuery(query) && query.observers.some(o => !(o.options.meta as { shell?: boolean } | undefined)?.shell)
+}
+
 export function useViewFreshness() {
   const client = useQueryClient()
   const route = useRoute()
@@ -22,7 +28,7 @@ export function useViewFreshness() {
   const unsubscribe = client.getQueryCache().subscribe(() => { revision.value++ })
   const queries = computed(() => {
     void revision.value
-    return client.getQueryCache().findAll({ type: 'active', predicate: isTelemetryQuery })
+    return client.getQueryCache().findAll({ type: 'active', predicate: isPageQuery })
   })
   const fetching = computed(() => refreshing.value || queries.value.some(q => q.state.fetchStatus === 'fetching'))
   const failed = computed(() => queries.value.filter(q => q.state.status === 'error'))
@@ -44,7 +50,7 @@ export function useViewFreshness() {
     }
     state.refresh()
     await nextTick()
-    try { await client.refetchQueries({ type: 'active', predicate: isTelemetryQuery }) }
+    try { await client.refetchQueries({ type: 'active', predicate: isPageQuery }) }
     finally { refreshing.value = false }
   }
   function tick() {

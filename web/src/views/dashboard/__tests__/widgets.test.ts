@@ -33,17 +33,17 @@ import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import { useInvestigationStore } from '@/stores/investigation'
-import KpiStripWidget from '../KpiStripWidget.vue'
-import HotIssuesWidget from '../HotIssuesWidget.vue'
+import VitalsWidget from '../VitalsWidget.vue'
+import BriefingWidget from '../BriefingWidget.vue'
+import ProjectsWidget from '../ProjectsWidget.vue'
 import SlowTransactionsWidget from '../SlowTransactionsWidget.vue'
 import ReleasesWidget from '../ReleasesWidget.vue'
 import AlertsWidget from '../AlertsWidget.vue'
-import MonitorsWidget from '../MonitorsWidget.vue'
-import ProjectOverviewWidget from '../ProjectOverviewWidget.vue'
 import TransactionDensityWidget from '../TransactionDensityWidget.vue'
 import type { DashboardIssue, DashboardRelease } from '../shared'
+import type { AttentionIssue, AttentionIssuesPage } from '../briefing'
 
-const RouterLink = { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' }
+const RouterLink = { name: 'RouterLink', props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' }
 const stubs = {
   RouterLink,
   Icon: { template: '<span />' },
@@ -83,57 +83,221 @@ beforeEach(() => {
   pushMock.mockReset()
 })
 
-describe('KpiStripWidget', () => {
-  it('shows a skeleton in every card while loading', () => {
-    const wrapper = mount(KpiStripWidget, { props: { loading: true, openCount: 0 } })
-    expect(wrapper.findAll('.db-kpi .skel')).toHaveLength(5)
-    expect(wrapper.find('.db-kpi__value').exists()).toBe(false)
+describe('VitalsWidget', () => {
+  it('shows a skeleton in every cell while loading', () => {
+    const wrapper = mount(VitalsWidget, { props: { loading: true }, global: { stubs } })
+    expect(wrapper.findAll('.vitals__value .skel')).toHaveLength(4)
   })
 
-  it('weights error rate, p95 and apdex by sample count', () => {
-    const wrapper = mount(KpiStripWidget, {
+  it('weights error rate, p95 and apdex by sample count and colours bad values', () => {
+    const wrapper = mount(VitalsWidget, {
       props: {
         loading: false,
-        openCount: 1500,
         txSummaries: [
           tx({ sample_count: 10, failure_rate: 2, p95: 100, apdex: 1 }),
           tx({ sample_count: 30, failure_rate: 6, p95: 500, apdex: 0.6 }),
         ],
       },
+      global: { stubs },
     })
-    const values = wrapper.findAll('.db-kpi__value').map(v => v.text())
     // error (2*10 + 6*30) / 40 = 5.0, p95 (1000 + 15000) / 40 = 400, apdex (10 + 18) / 40 = 0.70
-    expect(values).toEqual(['1.5k', '5.0%', '400ms', '0.70', '40'])
-    expect(wrapper.find('.leveldot--fatal').exists()).toBe(true)
+    const value = (key: string) => wrapper.find(`[data-vital="${key}"] .vitals__value`)
+    expect(value('error-rate').text()).toBe('5.0%')
+    expect(value('p95').text()).toBe('400ms')
+    expect(value('transactions').text()).toBe('40')
+    expect(value('apdex').text()).toBe('0.70')
+    expect(value('error-rate').find('.vitals__value--warning').exists()).toBe(true)
+    expect(value('apdex').find('.vitals__value--warning').exists()).toBe(true)
+    expect(value('p95').find('span').classes()).toEqual([])
   })
 
   it('counts zero transactions for an empty summary list but leaves averages muted', () => {
-    const wrapper = mount(KpiStripWidget, { props: { loading: false, openCount: 0, txSummaries: [] } })
-    expect(wrapper.findAll('.db-kpi__value--muted')).toHaveLength(3)
-    expect(wrapper.findAll('.db-kpi__value').at(-1)?.text()).toBe('0')
-    expect(wrapper.find('.leveldot--ok').exists()).toBe(true)
+    const wrapper = mount(VitalsWidget, { props: { loading: false, txSummaries: [] }, global: { stubs } })
+    expect(wrapper.findAll('.vitals__value--muted')).toHaveLength(3)
+    expect(wrapper.find('[data-vital="transactions"] .vitals__value').text()).toBe('0')
   })
 })
 
-describe('HotIssuesWidget', () => {
-  it('shows the five busiest issues, busiest first', () => {
-    const issues = [issue('a', 1), issue('b', 6), issue('c', 3), issue('d', 5), issue('e', 2), issue('f', 4)]
-    const wrapper = mount(HotIssuesWidget, { props: { loading: false, issues }, global: { stubs } })
-    expect(wrapper.findAll('.db-issue-row__title').map(t => t.text())).toEqual(['Issue b', 'Issue d', 'Issue f', 'Issue c', 'Issue e'])
+describe('BriefingWidget', () => {
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString()
+  const attentionIssue = (id: string, overrides: Partial<AttentionIssue> = {}): AttentionIssue => ({
+    id, project_id: 'p1', title: `TypeError: broken ${id}`, level: 'error', status: 'open',
+    event_count: 3, user_count: 0, first_seen: minutesAgo(30), last_seen: minutesAgo(1),
+    regressed_at: null, first_release: '1.5.0', assignee: null, sparkline: [0, 1, 2],
+    ...overrides,
+  })
+  const page = (overrides: Partial<AttentionIssuesPage> = {}): AttentionIssuesPage => ({
+    regressed: [], regressed_total: 0, new: [], new_total: 0, ...overrides,
+  })
+  const uptimeMonitor = (overrides = {}) => ({
+    id: 'u1', project_id: 'p1', name: 'Gateway', status: 'active', state: 'down', went_down_at: minutesAgo(65),
+    last_ok_at: null, last_status_code: 503, last_error: null, consecutive_failures: 4,
+    recent_checks: [{ status: 'up', checked_at: minutesAgo(70) }, { status: 'down', checked_at: minutesAgo(60) }],
+    ...overrides,
   })
 
-  it('shows skeleton rows while loading', () => {
-    const wrapper = mount(HotIssuesWidget, { props: { loading: true, issues: [issue('a', 1)] }, global: { stubs } })
-    expect(wrapper.findAll('.db-issue-row .skel')).toHaveLength(15)
-    expect(wrapper.text()).not.toContain('Issue a')
+  function mountBriefing({
+    attention = page() as AttentionIssuesPage | undefined,
+    attentionError = false,
+    attentionMissing = false,
+    monitorsError = false,
+    uptime = [] as unknown[],
+    cron = [] as unknown[],
+    lastVisit = null as number | null,
+    busiest = [] as DashboardIssue[],
+    openCount = 0,
+  } = {}) {
+    mockQueries({
+      'issues': {
+        data: ref(attentionMissing ? undefined : attention), isFetching: ref(false), isError: ref(attentionError),
+        fetchStatus: ref('idle'), dataUpdatedAt: ref(0), refetch: vi.fn(),
+      },
+      'uptime-monitors': { data: ref(monitorsError ? undefined : uptime), isFetching: ref(false), isError: ref(monitorsError), refetch: vi.fn() },
+      'monitors': { data: ref(cron), isFetching: ref(false), isError: ref(false), refetch: vi.fn() },
+    })
+    return mount(BriefingWidget, { props: { loading: false, openCount, busiest, lastVisit }, global: { stubs } })
+  }
+
+  it('says all clear when nothing is failing, new or regressed', () => {
+    const wrapper = mountBriefing({ openCount: 12, uptime: [uptimeMonitor({ state: 'up', went_down_at: null })] })
+    expect(wrapper.find('.brief__verdict').text()).toBe('All clear.')
+    expect(wrapper.find('.brief__lede').text()).toContain('in the last 24h')
+    expect(wrapper.find('.brief__calm').text()).toContain('12 open issues, 1 monitor healthy.')
+    expect(wrapper.findAll('.brief-row')).toHaveLength(0)
   })
 
-  it('opens an issue from the keyboard', async () => {
-    const wrapper = mount(HotIssuesWidget, { props: { loading: false, issues: [issue('a', 1)] }, global: { stubs } })
-    const row = wrapper.find('.db-issue-row')
-    expect(row.attributes('role')).toBe('link')
-    await row.trigger('keydown', { key: 'Enter' })
-    expect(pushMock).toHaveBeenCalledWith('/issues/a')
+  it('leads with broken monitors and then lists regressed before new issues', () => {
+    const wrapper = mountBriefing({
+      uptime: [uptimeMonitor()],
+      cron: [{ id: 'c1', project_id: 'p1', name: 'Digest', status: 'active', state: 'error', last_ok_at: minutesAgo(600), last_checkin_at: minutesAgo(5), next_expected_at: null, recent_checkins: [{ status: 'error', received_at: minutesAgo(5) }] }],
+      attention: page({
+        regressed: [attentionIssue('r1', { status: 'regressed', regressed_at: minutesAgo(10), assignee: 'Ada', user_count: 2 })],
+        regressed_total: 1,
+        new: [attentionIssue('n1')],
+        new_total: 4,
+      }),
+    })
+    expect(wrapper.find('.brief__verdict').text().replace(/\u00a0/g, ' ')).toBe('2 things are broken. 5 issues are new or regressed.')
+    const rows = wrapper.findAll('.brief-row')
+    expect(rows.map(r => r.find('.brief-chip').text())).toEqual(['Uptime', 'Cron', 'Regressed', 'New'])
+    expect(rows[0].text()).toContain('Gateway is down')
+    expect(rows[0].text()).toContain('HTTP 503 · 4 failed checks in a row')
+    expect(rows[0].find('.brief-row__age').text()).toBe('1h 5m')
+    expect(rows[1].text()).toContain('Digest failed its last run')
+    expect(rows[2].find('.brief-row__type').text()).toBe('TypeError')
+    expect(rows[2].text()).toContain('first seen in 1.5.0 · 2 users · Ada')
+    expect(rows[3].text()).toContain('3 events')
+    // Each link opens the issue list filtered to exactly the hidden group.
+    const more = wrapper.findAll('.brief__more')
+    expect(more.map(m => m.text())).toEqual(['3 more new'])
+    expect(more[0].attributes('data-to')).toContain('status=New')
+    expect(rows[2].attributes('data-to')).toContain('/issues/r1')
+  })
+
+  it('marks rows and summarises what changed since the last visit', () => {
+    const wrapper = mountBriefing({
+      lastVisit: Date.now() - 20 * 60_000,
+      uptime: [uptimeMonitor({ went_down_at: minutesAgo(10) })],
+      attention: page({
+        new: [attentionIssue('old', { first_seen: minutesAgo(40) }), attentionIssue('fresh', { first_seen: minutesAgo(5) })],
+        new_total: 9,
+        unseen_new: 6,
+        unseen_regressed: 0,
+      }),
+    })
+    expect(wrapper.find('.brief__lede').text()).toBe('Since you last looked 2m ago: 1 monitor started failing and 6 new issues appeared.')
+    const unseen = wrapper.findAll('.brief-row--unseen').map(r => r.find('.brief-row__title').text())
+    expect(unseen).toHaveLength(2)
+    expect(unseen[0]).toContain('Gateway is down')
+    expect(unseen[1]).toContain('broken fresh')
+  })
+
+  it('never claims all clear when issues failed to load', () => {
+    const wrapper = mountBriefing({ attentionMissing: true, attentionError: true })
+    expect(wrapper.find('.brief__verdict').text()).toBe('No monitors are failing.')
+    expect(wrapper.text()).toContain("We couldn't load new and regressed issues.")
+  })
+
+  it('never claims all clear when monitors failed to load', () => {
+    const wrapper = mountBriefing({ monitorsError: true })
+    expect(wrapper.find('.brief__verdict').text()).toBe('No new or regressed issues.')
+    expect(wrapper.text()).toContain("We couldn't load monitors.")
+  })
+
+  it('never says nothing is new since the last visit when monitors failed to load', () => {
+    const wrapper = mountBriefing({ monitorsError: true, lastVisit: Date.now() - 20 * 60_000 })
+    expect(wrapper.find('.brief__lede').exists()).toBe(false)
+    const withIssues = mountBriefing({
+      monitorsError: true,
+      lastVisit: Date.now() - 20 * 60_000,
+      attention: page({ new: [attentionIssue('n')], new_total: 1, unseen_new: 1 }),
+    })
+    expect(withIssues.find('.brief__lede').text()).toContain('1 new issue appeared')
+  })
+
+  it('lists the busiest open issues that are not already shown', () => {
+    const wrapper = mountBriefing({
+      attention: page({ new: [attentionIssue('a')], new_total: 1 }),
+      busiest: [issue('a', 9), issue('b', 3), issue('c', 7)],
+    })
+    const quiet = wrapper.findAll('.brief-row--quiet')
+    expect(quiet.map(r => r.find('.brief-row__age').text())).toEqual(['7', '3'])
+  })
+
+  it('sends the last visit and window with the attention request', async () => {
+    const visit = Date.UTC(2026, 9, 31, 8)
+    mountBriefing({ lastVisit: visit })
+    const options = vi.mocked(useQuery).mock.calls.map(c => c[0] as any).find(o => toValue(o.queryKey)[1] === 'attention')
+    expect(toValue(options.queryKey)).toContain(visit)
+    vi.mocked(apiFetch).mockResolvedValueOnce(page())
+    await options.queryFn({ signal: new AbortController().signal })
+    const url = String(vi.mocked(apiFetch).mock.calls[0][0])
+    expect(url).toContain('/api/issues/attention?')
+    expect(url).toContain(`last_visit=${encodeURIComponent(new Date(visit).toISOString())}`)
+  })
+})
+
+describe('ProjectsWidget', () => {
+  it('renders nothing and keeps its query disabled with fewer than two projects', () => {
+    vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'Solo' }] } as any)
+    mockQueries({
+      'projects/stats': { data: ref(undefined), isFetching: ref(false) },
+      'uptime-monitors': { data: ref([]), isError: ref(false) },
+      'monitors': { data: ref([]), isError: ref(false) },
+    })
+    const wrapper = mount(ProjectsWidget, { global: { stubs } })
+    expect(wrapper.find('.proj').exists()).toBe(false)
+    const options = vi.mocked(useQuery).mock.calls.map(c => c[0] as any).find(o => toValue(o.queryKey)[0] === 'projects')
+    expect(toValue(options.enabled)).toBe(false)
+  })
+
+  it('lists selected projects with failing monitors first', () => {
+    vi.mocked(useProjectsStore).mockReturnValue({
+      selectedIds: [],
+      projects: [{ id: 'p1', name: 'Frontend' }, { id: 'p2', name: 'Backend' }, { id: 'p3', name: 'Admin' }],
+    } as any)
+    mockQueries({
+      'projects/stats': { data: ref([{ project_id: 'p1', open_issues: 9 }, { project_id: 'p3', open_issues: 2 }]), isFetching: ref(false) },
+      'uptime-monitors': { data: ref([{ id: 'u', project_id: 'p2', name: 'API', status: 'active', state: 'down', went_down_at: null, last_ok_at: null, recent_checks: [] }]), isError: ref(false) },
+      'monitors': { data: ref([]), isError: ref(false) },
+    })
+    const rows = mount(ProjectsWidget, { global: { stubs } }).findAll('.proj__row')
+    expect(rows.map(r => r.find('.proj__name').text())).toEqual(['Backend', 'Frontend', 'Admin'])
+    expect(rows[0].text()).toContain('1 monitor failing · 0 open')
+    expect(rows[0].find('.proj__dot--bad').exists()).toBe(true)
+    expect(rows[1].text()).toContain('9 open')
+  })
+
+  it('shows health as unknown rather than healthy when monitors failed to load', () => {
+    vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'A' }, { id: 'p2', name: 'B' }] } as any)
+    mockQueries({
+      'projects/stats': { data: ref([]), isFetching: ref(false) },
+      'uptime-monitors': { data: ref(undefined), isError: ref(true) },
+      'monitors': { data: ref([]), isError: ref(false) },
+    })
+    const wrapper = mount(ProjectsWidget, { global: { stubs } })
+    expect(wrapper.findAll('.proj__dot--unknown')).toHaveLength(2)
+    expect(wrapper.find('.proj__dot--ok').exists()).toBe(false)
   })
 })
 
@@ -146,13 +310,18 @@ describe('SlowTransactionsWidget', () => {
     expect(to.query).toMatchObject({ name: '/t600', op: 'http.server' })
   })
 
-  it('flags slow and failing rows', () => {
+  it('flags slow rows in amber and keeps red for high failure rates', () => {
     const wrapper = mount(SlowTransactionsWidget, {
-      props: { loading: false, txSummaries: [tx({ p50: 600, p95: 2500, failure_rate: 3 })] },
+      props: { loading: false, txSummaries: [tx({ transaction: '/a', p50: 600, p95: 2500, failure_rate: 3 }), tx({ transaction: '/b', p95: 1500, failure_rate: 12 })] },
       global: { stubs },
     })
-    expect(wrapper.find('.db-tx-row__val--bad').text()).toBe('2500ms')
-    expect(wrapper.find('.db-tx-row__pct--warn').text()).toBe('3.0%')
+    const rows = wrapper.findAll('.db-tx-row')
+    expect(rows[0].find('.db-tx-row__val--warn').text()).toBe('2500ms')
+    expect(wrapper.find('.db-tx-row__val--bad').exists()).toBe(false)
+    expect(rows[0].find('.db-tx-row__pct--warn').text()).toBe('3.0%')
+    expect(rows[0].find('.db-tx-row__pct--bad').exists()).toBe(false)
+    expect(rows[1].find('.db-tx-row__val--warn').exists()).toBe(false)
+    expect(rows[1].find('.db-tx-row__pct--bad').text()).toBe('12.0%')
     expect(wrapper.find('.db-tx-row__bar-fill').attributes('style')).toContain('width: 30%')
   })
 })
@@ -191,7 +360,17 @@ describe('AlertsWidget', () => {
     })
     const wrapper = mount(AlertsWidget, { global: { stubs } })
     expect(wrapper.findAll('.db-alert-row__name').map(n => n.text())).toEqual(['Rule 06', 'Rule 05', 'Rule 04', 'Rule 03', 'Rule 02'])
-    expect(wrapper.find('.db-sec__foot').text()).toBe('6 rules active')
+    expect(wrapper.find('.db-sec__foot').text()).toBe('6 of 7 rules on, 1 paused.')
+  })
+
+  it('says nothing will notify anyone instead of a calm empty state when every rule is paused', () => {
+    mockQueries({
+      'me': { data: ref({ permissions: { manage_alerts: false } }) },
+      'alert-rules': { data: ref([rule('a', null, false), rule('b', null, false)]), isLoading: ref(false) },
+    })
+    const wrapper = mount(AlertsWidget, { global: { stubs } })
+    expect(wrapper.find('.db-empty').exists()).toBe(false)
+    expect(wrapper.find('.db-silent').text()).toBe('All 2 rules are paused. Nothing will notify you.')
   })
 
   it('caches the unwrapped rule list', async () => {
@@ -205,65 +384,6 @@ describe('AlertsWidget', () => {
     await expect(options.queryFn({ signal: new AbortController().signal })).resolves.toEqual([rule('a', null)])
     vi.mocked(apiFetch).mockResolvedValueOnce(null)
     await expect(options.queryFn({ signal: new AbortController().signal })).resolves.toEqual([])
-  })
-})
-
-describe('MonitorsWidget', () => {
-  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString()
-
-  it('shows how long each problem monitor has been failing', () => {
-    mockQueries({
-      'uptime-monitors': { data: ref([
-        { id: 'u1', name: 'API', status: 'active', state: 'down', went_down_at: minutesAgo(5), last_ok_at: null, last_status_code: null, last_error: 'timeout' },
-      ]) },
-      'monitors': { data: ref([
-        { id: 'c1', name: 'ETL', status: 'active', state: 'missed', next_expected_at: minutesAgo(90), last_checkin_at: null },
-        { id: 'c2', name: 'Backup', status: 'active', state: 'error', next_expected_at: null, last_checkin_at: minutesAgo(3 * 24 * 60) },
-      ]) },
-    })
-    const wrapper = mount(MonitorsWidget, { global: { stubs } })
-    const rows = wrapper.findAll('.db-mon-row')
-    expect(rows.map(r => r.find('.db-mon-row__since').text())).toEqual(['5m', '1h 30m', '3d'])
-    expect(rows[0].text()).toContain('timeout')
-    expect(rows[1].text()).toContain('missed')
-    expect(rows[2].text()).toContain('error')
-  })
-
-  it('scopes both monitor queries to the selected projects', () => {
-    vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: ['p2', 'p1'], projects: [] } as any)
-    mockQueries({ 'uptime-monitors': { data: ref([]) }, 'monitors': { data: ref([]) } })
-    mount(MonitorsWidget, { global: { stubs } })
-    const keys = vi.mocked(useQuery).mock.calls.map(c => toValue((c[0] as any).queryKey))
-    expect(keys).toEqual([['uptime-monitors', 'project_id=p1&project_id=p2'], ['monitors', 'project_id=p1&project_id=p2']])
-  })
-})
-
-describe('ProjectOverviewWidget', () => {
-  it('renders nothing and keeps its query disabled with fewer than two projects', () => {
-    vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects: [{ id: 'p1', name: 'Solo' }] } as any)
-    mockQueries({ 'projects/stats': { data: ref(undefined), isFetching: ref(false) } })
-    const wrapper = mount(ProjectOverviewWidget, { global: { stubs } })
-    expect(wrapper.find('.db-projects').exists()).toBe(false)
-    const options = vi.mocked(useQuery).mock.calls[0][0] as any
-    expect(toValue(options.enabled)).toBe(false)
-  })
-
-  it('only lists selected projects and shows skeletons until counts arrive', () => {
-    vi.mocked(useProjectsStore).mockReturnValue({
-      selectedIds: ['p2'],
-      projects: [{ id: 'p1', name: 'Frontend' }, { id: 'p2', name: 'Backend' }],
-    } as any)
-    mockQueries({ 'projects/stats': { data: ref(undefined), isFetching: ref(true) } })
-    const loading = mount(ProjectOverviewWidget, { global: { stubs } })
-    expect(loading.findAll('.db-proj-row .skel')).toHaveLength(10)
-
-    mockQueries({ 'projects/stats': { data: ref([{ project_id: 'p2', open_issues: 4 }]), isFetching: ref(false) } })
-    const loaded = mount(ProjectOverviewWidget, { props: { txSummaries: [tx({ project_id: 'p2', failure_rate: 3 })] }, global: { stubs } })
-    const rows = loaded.findAll('.db-proj-row')
-    expect(rows).toHaveLength(1)
-    expect(rows[0].text()).toContain('Backend')
-    expect(rows[0].find('.db-proj-row__val--bad').text()).toBe('4')
-    expect(rows[0].text()).toContain('3.0%')
   })
 })
 

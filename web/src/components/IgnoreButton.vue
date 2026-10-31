@@ -156,8 +156,6 @@ onUnmounted(() => document.removeEventListener('mousedown', onMouseDown))
   padding: 6px 12px 2px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--text-3);
 }
 

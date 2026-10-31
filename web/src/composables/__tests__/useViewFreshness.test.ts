@@ -15,18 +15,19 @@ async function setup() {
   const client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false}}})
   const router=createRouter({history:createMemoryHistory(),routes:[{path:'/logs',component:{template:'<div />'}}]})
   await router.push('/logs')
-  const table=vi.fn(async()=>[]), chart=vi.fn(async()=>[]), metadata=vi.fn(async()=>[])
+  const table=vi.fn(async()=>[]), chart=vi.fn(async()=>[]), metadata=vi.fn(async()=>[]), shell=vi.fn(async()=>[])
   let freshness!: ReturnType<typeof useViewFreshness>
   const wrapper=mount(defineComponent({setup(){
     useQuery({queryKey:['logs','table'],queryFn:table})
     useQuery({queryKey:['transaction-timeseries','chart'],queryFn:chart})
     useQuery({queryKey:['projects','metadata'],queryFn:metadata})
+    useQuery({queryKey:['issues','attention'],queryFn:shell,meta:{shell:true}})
     freshness=useViewFreshness()
     return ()=>h('div')
   }}),{global:{plugins:[pinia,router,[VueQueryPlugin,{queryClient:client}]]}})
   await flushPromises()
   cleanup=()=>{wrapper.unmount();client.clear()}
-  return {state,freshness,table,chart,metadata,client,router}
+  return {state,freshness,table,chart,metadata,shell,client,router}
 }
 describe('view freshness',()=>{
  it('refreshes every active panel on cadence, excluding metadata',async()=>{
@@ -71,6 +72,17 @@ describe('view freshness',()=>{
    expect(table).toHaveBeenCalledTimes(2)
  })
 
+})
+
+it('leaves queries only the app shell observes out of the page refresh and its freshness', async () => {
+  const { client, freshness, shell, table } = await setup()
+  shell.mockRejectedValueOnce(new Error('offline'))
+  await client.refetchQueries({ queryKey: ['issues', 'attention'] })
+  expect(client.getQueryState(['issues', 'attention'])?.status).toBe('error')
+  expect(freshness.failed.value).toHaveLength(0)
+  await vi.advanceTimersByTimeAsync(5000); await flushPromises()
+  expect(table).toHaveBeenCalledTimes(2)
+  expect(shell).toHaveBeenCalledTimes(2)
 })
 
 it('discards older infinite pages before a coordinated refresh', async () => {

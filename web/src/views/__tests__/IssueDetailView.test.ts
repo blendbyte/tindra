@@ -157,6 +157,33 @@ beforeEach(() => {
 })
 
 describe('IssueDetailView', () => {
+  describe('triage layout', () => {
+    it('names the project instead of showing its ID', () => {
+      setupQueries()
+      const impl = vi.mocked(useQuery).getMockImplementation()!
+      vi.mocked(useQuery).mockImplementation(((options: { queryKey: unknown }) => {
+        const key = toValue(options.queryKey) as unknown[]
+        if (key[0] === 'projects') return { data: ref([{ id: 'proj-1', name: 'Checkout API' }]) }
+        return impl(options as never)
+      }) as any)
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-hero__project').text()).toBe('Checkout API')
+    })
+
+    it('falls back to the project ID until projects load', () => {
+      setupQueries()
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-hero__project').text()).toBe('proj-1')
+    })
+
+    it('puts activity above tags in the sidebar', () => {
+      setupQueries()
+      const wrapper = mount(IssueDetailView, { global: { stubs: { ...stubs, IssueUserCard: true, IssueActivity: true, IssueTags: true } } })
+      const order = [...wrapper.find('.detail-sidebar').element.children].map(el => el.tagName.toLowerCase())
+      expect(order).toEqual(['issue-user-card-stub', 'issue-activity-stub', 'issue-tags-stub'])
+    })
+  })
+
   describe('loading skeleton', () => {
     it('renders loading skeleton when issue data is not yet available', () => {
       setupQueries(undefined)
@@ -539,7 +566,7 @@ describe('IssueDetailView', () => {
       localStorage.removeItem('tindra:issue:collapsed')
       setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      const head = wrapper.findAll('.section__head').find(h => h.text().includes('HTTP Request'))!
+      const head = wrapper.findAll('.section__head').find(h => h.text().includes('HTTP request'))!
       expect(head.attributes('role')).toBe('button')
       expect(head.attributes('tabindex')).toBe('0')
       expect(head.attributes('aria-expanded')).toBe('true')
@@ -645,7 +672,7 @@ describe('IssueDetailView', () => {
       expect(wrapper.find('.trace-preview').exists()).toBe(true)
     })
 
-    it('shows View Full Trace link pointing to the transaction', () => {
+    it('shows View full trace link pointing to the transaction', () => {
       const linkedTx = {
         id: 'tx-abc',
         project_id: 'proj-1',
@@ -661,7 +688,7 @@ describe('IssueDetailView', () => {
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       const link = wrapper.find('.section__link')
       expect(link.exists()).toBe(true)
-      expect(link.text()).toContain('View Full Trace')
+      expect(link.text()).toContain('View full trace')
     })
 
     it('does not render trace preview when no linked transaction', () => {

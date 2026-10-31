@@ -250,10 +250,10 @@ describe('UptimeMonitorsView', () => {
       expect(wrapper.find('.monrow__state').text()).toBe('Down')
     })
 
-    it('shows "Unknown" for unknown state', async () => {
+    it('says a monitor without a result has not been checked yet', async () => {
       setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage', 'unknown')])
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      expect(wrapper.find('.monrow__state').text()).toBe('Unknown')
+      expect(wrapper.find('.monrow__state').text()).toBe('Not checked yet')
     })
   })
 
@@ -700,5 +700,17 @@ describe('UptimeMonitorsView load errors', () => {
     expect(wrapper.text()).not.toContain('No checks yet.')
     await wrapper.findAll('.mon-ci-empty .btn').at(0)!.trigger('click')
     expect(refetch).toHaveBeenCalled()
+  })
+})
+
+describe('UptimeMonitorsView triage order', () => {
+  it('states how many monitors are down and lists them first with their outage length', () => {
+    const down = { ...makeUptimeMonitor('u2', 'Gateway', 'down'), went_down_at: new Date(Date.now() - 65 * 60_000).toISOString() }
+    setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage', 'up'), down, { ...makeUptimeMonitor('u3', 'Old', 'up'), status: 'paused' }])
+    const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
+    expect(wrapper.find('.mon-verdict').text().replace(/\s+/g, ' ')).toBe('1 monitor is down. 1 up, 1 paused.')
+    const names = wrapper.findAll('.monrow:not(.monrow--header) .monrow__name').map(n => n.text())
+    expect(names).toEqual(['Gateway', 'Homepage', 'Old'])
+    expect(wrapper.find('.monrow--failing .monrow__since').text()).toBe('for 1h 5m')
   })
 })

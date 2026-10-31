@@ -9,6 +9,7 @@ import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import Icon from './Icon.vue'
+import { badgeCount, useAttentionCounts } from '@/composables/useBriefingData'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
 
@@ -16,6 +17,8 @@ const route = useRoute()
 const router = useRouter()
 const ui = useUiStore()
 const projects = useProjectsStore()
+// Live counts, so a failing monitor or a regression is visible from every page.
+const attention = useAttentionCounts()
 
 // Mobile menu
 const menuOpen = ref(false)
@@ -120,6 +123,9 @@ async function logout() {
       >
         <Icon name="alert-circle" :size="15" />
         <span class="nav__link-text">Issues</span>
+        <span v-if="attention.issues.value" class="nav__badge" :class="attention.regressed.value ? 'nav__badge--warning' : 'nav__badge--accent'">
+          {{ badgeCount(attention.issues.value) }}<span class="sr-only"> new or regressed</span>
+        </span>
       </RouterLink>
       <div class="nav__dropdown-wrap">
         <RouterLink
@@ -183,6 +189,9 @@ async function logout() {
         >
           <Icon name="clock" :size="15" />
           <span class="nav__link-text">Monitors</span>
+          <span v-if="attention.monitors.value" class="nav__badge nav__badge--danger">
+            {{ badgeCount(attention.monitors.value) }}<span class="sr-only"> failing</span>
+          </span>
           <Icon name="chevron-down" :size="10" class="nav__link-caret" />
         </RouterLink>
         <div class="nav__dropdown">
@@ -211,8 +220,9 @@ async function logout() {
     <div class="nav__spacer" />
 
     <div class="nav__right">
-      <button ref="menuButton" class="nav__hamburger" :aria-expanded="menuOpen" aria-controls="mobile-navigation" aria-label="Toggle navigation" @click="menuOpen = !menuOpen; filterOpen = false">
+      <button ref="menuButton" class="nav__hamburger" :aria-expanded="menuOpen" aria-controls="mobile-navigation" :aria-label="attention.monitors.value ? `Toggle navigation, ${attention.monitors.value} ${attention.monitors.value === 1 ? 'monitor' : 'monitors'} failing` : 'Toggle navigation'" @click="menuOpen = !menuOpen; filterOpen = false">
         <Icon :name="menuOpen ? 'x' : 'menu'" :size="18" />
+        <span v-if="attention.monitors.value && !menuOpen" class="nav__hamburger-dot" aria-hidden="true" />
       </button>
       <!-- Project filter -->
       <div ref="filterEl" class="nav__projects">
@@ -344,6 +354,9 @@ async function logout() {
       </RouterLink>
       <RouterLink :to="{ path: '/issues', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/issues') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="alert-circle" :size="15" />Issues
+        <span v-if="attention.issues.value" class="nav__badge" :class="attention.regressed.value ? 'nav__badge--warning' : 'nav__badge--accent'">
+          {{ badgeCount(attention.issues.value) }}<span class="sr-only"> new or regressed</span>
+        </span>
       </RouterLink>
       <RouterLink :to="{ path: '/performance', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/performance') || route.path.startsWith('/transactions') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="activity" :size="15" />Performance
@@ -356,6 +369,9 @@ async function logout() {
       </RouterLink>
       <RouterLink :to="{ path: '/monitors', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/monitors') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="clock" :size="15" />Monitors
+        <span v-if="attention.monitors.value" class="nav__badge nav__badge--danger">
+          {{ badgeCount(attention.monitors.value) }}<span class="sr-only"> failing</span>
+        </span>
       </RouterLink>
       <RouterLink :to="{ path: '/releases', query: investigationQuery(investigation) }" class="nav__mobile-link" :aria-current="route.path.startsWith('/releases') ? 'page' : undefined" @click="menuOpen = false">
         <Icon name="package" :size="15" />Releases

@@ -69,6 +69,9 @@ const search = ref(qp('q', ''))
 const serverSearch = useDebounced(search, 300)
 const selectedIdx = ref(-1)
 const searchInput = ref<HTMLInputElement | null>(null)
+// True when the shared investigation bar offers a slot for this page's filters.
+// The bar renders before the page, so the slot is usually there at setup.
+const sharedFilterBar = ref(typeof document !== 'undefined' && !!document.getElementById('page-filters'))
 const assigneeOpen = ref(false)
 const assigneeEl = ref<HTMLElement | null>(null)
 
@@ -94,7 +97,21 @@ const assigneeChipLabel = computed(() => {
   return u ? (u.name || u.email) : 'Unknown'
 })
 
-type Cursor = { cursor_time: string; cursor_id: string } | null
+// Priority is the default (The Urgency Order Rule): regressed issues, then
+// issues new in the window, then the rest, each most recently seen first.
+type SortCol = 'priority' | 'last_seen' | 'first_seen' | 'event_count' | 'title'
+const VALID_SORT_COLS: SortCol[] = ['priority', 'last_seen', 'first_seen', 'event_count', 'title']
+const rawSort = qp('sort', 'priority', 'sort')
+const sortCol = ref<SortCol>(VALID_SORT_COLS.includes(rawSort as SortCol) ? rawSort as SortCol : 'priority')
+const sortDir = ref<'asc' | 'desc'>(qp('dir', 'desc', 'dir') === 'asc' ? 'asc' : 'desc')
+
+type Cursor = { cursor_time: string; cursor_id: string; cursor_rank?: number } | null
+
+// The next page's cursor; a priority list also continues from a rank.
+function cursorFrom(data: IssueListPage): Cursor {
+  if (!data.has_more || !data.next_cursor_time || !data.next_cursor_id) return null
+  return { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id, cursor_rank: data.next_cursor_rank }
+}
 
 const nextCursor = ref<Cursor>(null)
 const isFetchingMore = ref(false)
@@ -123,9 +140,13 @@ function buildIssueParams(cursor: Cursor) {
   if (tagValue.value) params.set('tag_value', tagValue.value)
   if (lensIdentity.value) params.set('user', lensIdentity.value)
   for (const id of [...effectiveProjectIds.value].sort()) params.append('project_id', id)
+  // Priority needs the whole list ordered on the server; the other columns
+  // sort the rows already loaded.
+  if (sortCol.value === 'priority') params.set('sort', 'priority')
   if (cursor) {
     params.set('cursor_time', cursor.cursor_time)
     params.set('cursor_id', cursor.cursor_id)
+    if (cursor.cursor_rank !== undefined) params.set('cursor_rank', String(cursor.cursor_rank))
   }
   return params.toString()
 }
@@ -159,9 +180,7 @@ const { data: firstPage, isFetching, isError, fetchStatus, dataUpdatedAt, refetc
 watch([issueQueryParams, firstPage, () => investigation.scopeKey, () => investigation.anchor], ([, data]) => {
   resetPagination()
   if (!data || Array.isArray(data)) return
-  nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
-    ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
-    : null
+  nextCursor.value = cursorFrom(data)
 }, { immediate: true })
 
 // allIssues handles both IssueListPage (new) and Issue[] (old server format).
@@ -193,9 +212,7 @@ async function loadMore() {
     if (controller.signal.aborted || generation !== paginationGeneration || scope !== buildIssueParams(null)) return
     if (!data) throw new Error('Missing issues response')
     extraIssues.value = [...extraIssues.value, ...(data.issues ?? [])]
-    nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
-      ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
-      : null
+    nextCursor.value = cursorFrom(data)
   } catch {
     if (!controller.signal.aborted && generation === paginationGeneration && scope === buildIssueParams(null)) loadMoreError.value = true
   } finally {
@@ -213,6 +230,22 @@ const users = computed(() => usersData.value ?? [])
 
 function projectName(projectId: string) {
   return (projects.projects as { id: string; name: string }[])?.find((p) => p.id === projectId)?.name ?? projectId
+}
+
+// Open is the normal state, so it carries no chip. Regressed, resolved and
+// ignored always show; an open issue first seen inside the window is New.
+function rowState(iss: Issue | undefined): 'regressed' | 'new' | 'resolved' | 'ignored' | null {
+  if (!iss) return null
+  if (iss.status !== 'open') return iss.status
+  const from = investigation.bounds?.from
+  return from && Date.parse(iss.first_seen) >= Date.parse(from) ? 'new' : null
+}
+
+// Sparklines carry state, not level: amber for regressed, violet for new,
+// neutral for everything else (The Earned Red Rule).
+function sparkColor(iss: Issue | undefined): string {
+  const state = rowState(iss)
+  return state === 'regressed' ? 'var(--warning)' : state === 'new' ? 'var(--accent)' : 'var(--text-3)'
 }
 
 function assigneeInitial(iss: Issue) {
@@ -234,24 +267,33 @@ const filtered = computed(() => {
 })
 
 // ── Sorting ───────────────────────────────────────────────────────────────────
-type SortCol = 'last_seen' | 'first_seen' | 'event_count' | 'title'
-const VALID_SORT_COLS: SortCol[] = ['last_seen', 'first_seen', 'event_count', 'title']
-const rawSort = qp('sort', 'last_seen', 'sort')
-const sortCol = ref<SortCol>(VALID_SORT_COLS.includes(rawSort as SortCol) ? rawSort as SortCol : 'last_seen')
-const sortDir = ref<'asc' | 'desc'>(qp('dir', 'desc', 'dir') === 'asc' ? 'asc' : 'desc')
 
-function toggleSort(col: SortCol) {
-  if (sortCol.value === col) {
-    sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
-  } else {
+// A column sorts in its natural direction, then reversed, then gives the list
+// back to priority.
+function toggleSort(col: Exclude<SortCol, 'priority'>) {
+  const natural = col === 'title' ? 'asc' : 'desc'
+  if (sortCol.value !== col) {
     sortCol.value = col
-    sortDir.value = col === 'title' ? 'asc' : 'desc'
+    sortDir.value = natural
+  } else if (sortDir.value === natural) {
+    sortDir.value = natural === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortCol.value = 'priority'
+    sortDir.value = 'desc'
   }
+}
+
+function priorityRank(iss: Issue): number {
+  const state = rowState(iss)
+  return state === 'regressed' ? 0 : state === 'new' ? 1 : 2
 }
 
 const sorted = computed(() => {
   const list = [...filtered.value]
   list.sort((a, b) => {
+    if (sortCol.value === 'priority') {
+      return priorityRank(a) - priorityRank(b) || Date.parse(b.last_seen) - Date.parse(a.last_seen)
+    }
     let cmp = 0
     switch (sortCol.value) {
       case 'last_seen':   cmp = new Date(a.last_seen).getTime()  - new Date(b.last_seen).getTime();  break
@@ -445,6 +487,7 @@ function onMouseDownGlobal(e: MouseEvent) {
 }
 
 onMounted(() => {
+  sharedFilterBar.value = !!document.getElementById('page-filters')
   document.addEventListener('keydown', onKey)
   document.addEventListener('mousedown', onMouseDownGlobal)
 })
@@ -476,6 +519,13 @@ const isFiltered = computed(
     tagKey.value !== '' ||
     !!lensIdentity.value,
 )
+
+// Report this page's own active filters to the shared bar's Filters toggle.
+const pageFilterCount = computed(() =>
+  [!!search.value, statusFilter.value !== 'Open', levelFilter.value !== 'All', assigneeFilter.value !== 'All', tagKey.value !== '']
+    .filter(Boolean).length)
+watch(pageFilterCount, n => { investigation.pageFilterCount = n }, { immediate: true })
+onUnmounted(() => { investigation.pageFilterCount = 0 })
 
 // True when only a client-side search/project filter is narrowing the results.
 const isClientFiltered = computed(() => !!(search.value || projects.selectedIds.length > 0))
@@ -509,7 +559,7 @@ watch(
     if (tagValue.value) query.tag_value = tagValue.value
     if (lensIdentity.value) query.user = lensIdentity.value
     if (serverSearch.value) query.q = serverSearch.value
-    if (sortCol.value !== 'last_seen' || sortDir.value !== 'desc') {
+    if (sortCol.value !== 'priority') {
       query.sort = sortCol.value
       query.dir = sortDir.value
     }
@@ -522,20 +572,22 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
   lsSet('status', statusFilter.value !== 'Open' ? statusFilter.value : null)
   lsSet('level', levelFilter.value !== 'All' ? levelFilter.value : null)
   lsSet('assignee', assigneeFilter.value !== 'All' ? assigneeFilter.value : null)
-  lsSet('sort', sortCol.value !== 'last_seen' ? sortCol.value : null)
+  lsSet('sort', sortCol.value !== 'priority' ? sortCol.value : null)
   lsSet('dir', sortDir.value !== 'desc' ? sortDir.value : null)
 })
 </script>
 
 <template>
   <div class="page">
-    <p v-if="investigation.range === 'All'" class="filterbar">All retained events, with counts and sparklines filtered by the selected environment.</p>
-    <!-- Filter bar -->
-    <div class="filterbar">
+    <p v-if="investigation.range === 'All'" class="range-note">All retained events, with counts and sparklines filtered by the selected environment.</p>
+    <!-- Filter bar: moves into the shared investigation bar when it is on the
+         page, so the list adds no second row of filters. -->
+    <Teleport :defer="sharedFilterBar" to="#page-filters" :disabled="!sharedFilterBar">
+    <div class="filterbar" :class="{ 'filterbar--shared': sharedFilterBar }">
       <FilterChip
         label="Status"
         :value="statusFilter"
-        :options="['Open', 'Resolved', 'Ignored', 'Regressed', 'All']"
+        :options="['Open', 'Regressed', 'New', 'Resolved', 'Ignored', 'All']"
         @change="statusFilter = $event"
       />
       <FilterChip
@@ -611,6 +663,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         </div>
       </div>
       <button
+        v-if="!sharedFilterBar"
         class="filterbar__refresh"
         :class="{ 'filterbar__refresh--fetching': isFetching }"
         :title="isFetching ? 'Refreshing…' : 'Refresh now (auto every 30s)'"
@@ -630,6 +683,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         <span class="nav__kbd">/</span>
       </div>
     </div>
+    </Teleport>
 
     <QueryFeedback resource="issues" :failed="!!isError" :has-data="firstPage !== undefined"
       :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="investigation.refresh(); refetch()" />
@@ -655,19 +709,23 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           @change="toggleAll"
         />
         <span />
-        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'title' }" @click="toggleSort('title')">
-          Issue <span v-if="sortCol === 'title'" class="col-sort__icon">{{ sortDir === 'desc' ? '↓' : '↑' }}</span>
-        </button>
-        <span>Env</span>
+        <span class="col-head">
+          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'title' }" @click="toggleSort('title')">
+            Issue <span v-if="sortCol === 'title'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span>
+          </button>
+          <span v-if="sortCol === 'priority'" class="col-sort__hint">Regressed and new first</span>
+        </span>
         <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'event_count' }" style="justify-content: flex-end" @click="toggleSort('event_count')">
-          <span v-if="sortCol === 'event_count'" class="col-sort__icon">{{ sortDir === 'desc' ? '↓' : '↑' }}</span> Events
+          <span v-if="sortCol === 'event_count'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> Events
         </button>
         <span style="text-align: right">Users</span>
+        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'first_seen' }" style="justify-content: flex-end" @click="toggleSort('first_seen')">
+          <span v-if="sortCol === 'first_seen'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> First seen
+        </button>
         <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'last_seen' }" style="justify-content: flex-end" @click="toggleSort('last_seen')">
-          <span v-if="sortCol === 'last_seen'" class="col-sort__icon">{{ sortDir === 'desc' ? '↓' : '↑' }}</span> Last seen
+          <span v-if="sortCol === 'last_seen'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> Last seen
         </button>
         <span>Owner</span>
-        <span>Status</span>
         <span />
       </div>
 
@@ -717,30 +775,35 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
                 <span class="issue__title-msg">{{ sorted[vRow.index]?.title.split(':').slice(1).join(':').trim() }}</span>
               </div>
               <div class="issue__sub">
+                <span v-if="rowState(sorted[vRow.index])" class="statechip" :class="`statechip--${rowState(sorted[vRow.index])}`">{{ rowState(sorted[vRow.index]) }}</span>
                 <span v-if="sorted[vRow.index]?.kind === 'n1_query'" class="kindbadge">N+1</span>
                 <span class="projtag" :title="projectName(sorted[vRow.index]?.project_id)">{{ projectName(sorted[vRow.index]?.project_id) }}</span>
+                <span
+                  v-if="sorted[vRow.index]?.environment"
+                  class="envbadge"
+                  :title="sorted[vRow.index]?.environment ?? ''"
+                  :class="sorted[vRow.index]?.environment === 'production' ? 'envbadge--prod' : sorted[vRow.index]?.environment === 'staging' ? 'envbadge--staging' : ''"
+                >{{ sorted[vRow.index]?.environment }}</span>
               </div>
             </div>
           </a>
-          <span
-            class="envbadge"
-            :title="sorted[vRow.index]?.environment ?? '-'"
-            :class="sorted[vRow.index]?.environment === 'production' ? 'envbadge--prod' : sorted[vRow.index]?.environment === 'staging' ? 'envbadge--staging' : ''"
-          >{{ sorted[vRow.index]?.environment ?? '-' }}</span>
           <div class="events-cell">
             <span v-if="sorted[vRow.index]?.kind !== 'n1_query'" class="events-cell__spark" :style="{ color: levelColor(sorted[vRow.index]?.level) }">
-              <Sparkline :data="sorted[vRow.index]?.sparkline ?? []" :width="36" :height="14" />
+              <Sparkline :data="sorted[vRow.index]?.sparkline ?? []" :width="36" :height="14" :color="sparkColor(sorted[vRow.index])" />
             </span>
             <span class="events-cell__num" :title="sorted[vRow.index]?.event_count.toLocaleString()">{{ sorted[vRow.index]?.event_count.toLocaleString() }}</span>
           </div>
-          <span class="users-cell"><Icon name="user" :size="11" class="users-cell__icon" />{{ (sorted[vRow.index]?.user_count ?? 0).toLocaleString() }}</span>
+          <span class="users-cell" :class="{ 'users-cell--none': !sorted[vRow.index]?.user_count }">
+            <template v-if="sorted[vRow.index]?.user_count"><Icon name="user" :size="11" class="users-cell__icon" />{{ sorted[vRow.index]?.user_count.toLocaleString() }}</template>
+            <template v-else>–</template>
+          </span>
+          <span class="time-cell time-cell--quiet">{{ formatRel(sorted[vRow.index]?.first_seen) }}</span>
           <span class="time-cell">{{ formatRel(sorted[vRow.index]?.last_seen) }}</span>
           <span class="owner-cell">
             <span v-if="assigneeInitial(sorted[vRow.index])" class="owner-avatar" :title="sorted[vRow.index]?.assignee_email ?? ''">
               {{ assigneeInitial(sorted[vRow.index]) }}
             </span>
           </span>
-          <span class="statuspill" :class="`statuspill--${sorted[vRow.index]?.status}`">{{ sorted[vRow.index]?.status }}</span>
           <span class="row-chevron"><Icon name="chevron-right" :size="12" /></span>
         </div>
       </div>

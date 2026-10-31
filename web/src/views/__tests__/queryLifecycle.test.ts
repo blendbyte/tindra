@@ -28,8 +28,8 @@ import SpanSamplesPanel from '@/components/SpanSamplesPanel.vue'
 import QuotaBanner from '@/components/QuotaBanner.vue'
 
 // Dashboard widgets own most dashboard queries, so render them for real.
-const dashboardWidgets = Object.fromEntries(['KpiStripWidget', 'ProjectOverviewWidget', 'TransactionDensityWidget', 'MonitorsWidget',
-  'HotIssuesWidget', 'SlowTransactionsWidget', 'AlertsWidget', 'ReleasesWidget'].map(name => [name, false]))
+const dashboardWidgets = Object.fromEntries(['BriefingWidget', 'VitalsWidget', 'ProjectsWidget', 'TransactionDensityWidget',
+  'SlowTransactionsWidget', 'AlertsWidget', 'ReleasesWidget'].map(name => [name, false]))
 
 // Keep Vue Query and apiFetch real: requests must reach fetch with a signal,
 // and removing their last observer must cancel the actual network operation.
@@ -143,7 +143,8 @@ describe('view request lifecycle', () => {
     await open(DashboardView, '/', [], {}, dashboardWidgets)
     await expectCancelled(['/api/me', '/api/setup-status', '/api/issues/overview?',
       '/api/transactions/summaries?hours=24', '/api/transactions/counts?hours=168',
-      '/api/releases/health?', '/api/alert-rules', '/api/uptime-monitors?', '/api/monitors?', '/api/projects/stats'])
+      '/api/releases/health?', '/api/alert-rules', '/api/uptime-monitors?', '/api/monitors?', '/api/projects/stats',
+      '/api/issues/attention?hours=24'])
   })
 
   it('cancels release details and related issue and transaction reads', async () => {

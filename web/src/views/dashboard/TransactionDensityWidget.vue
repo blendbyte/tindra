@@ -73,16 +73,16 @@ function cellColor(v: number): string {
   if (r < 0.12) return 'oklch(from var(--accent) l c h / 0.20)'
   if (r < 0.30) return 'oklch(from var(--accent) l c h / 0.40)'
   if (r < 0.55) return 'oklch(from var(--accent) l c h / 0.65)'
-  if (r < 0.75) return 'var(--accent)'
-  if (r < 0.90) return 'var(--warning)'
-  return 'var(--danger)'
+  // Volume is not a problem, so the scale stays violet (The Earned Red Rule).
+  if (r < 0.85) return 'var(--accent)'
+  return 'var(--accent-hi)'
 }
 </script>
 
 <template>
   <div class="db-sec">
     <div class="db-sec__head">
-      <span class="db-sec__title">Transaction density · Last 7 days</span>
+      <h2 class="db-sec__title">Transaction density · last 7 days</h2>
       <span class="db-sec__hint">each cell = 1 hour</span>
     </div>
     <div class="db-heatmap">
@@ -106,8 +106,7 @@ function cellColor(v: number): string {
         <div class="db-heatmap__cell db-heatmap__cell--legend" style="background: oklch(from var(--accent) l c h / 0.40)" />
         <div class="db-heatmap__cell db-heatmap__cell--legend" style="background: oklch(from var(--accent) l c h / 0.65)" />
         <div class="db-heatmap__cell db-heatmap__cell--legend" style="background: var(--accent)" />
-        <div class="db-heatmap__cell db-heatmap__cell--legend" style="background: var(--warning)" />
-        <div class="db-heatmap__cell db-heatmap__cell--legend" style="background: var(--danger)" />
+        <div class="db-heatmap__cell db-heatmap__cell--legend" style="background: var(--accent-hi)" />
         <span class="db-heatmap__leg-lbl">high</span>
       </div>
     </div>

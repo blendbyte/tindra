@@ -14,6 +14,9 @@ import cronstrue from 'cronstrue'
 import { useConfig } from '@/composables/useConfig'
 import MonitorsSubnav from './MonitorsSubnav.vue'
 import { useCanManage, useMonitorProjects, useMonitorQueryParams } from './shared'
+import { cronFailing, cronFailingSince, cronUnchecked, monitorVerdict, PASS_TICK, rankCron } from './urgency'
+import { formatSpan } from '@/views/dashboard/briefing'
+import { useNow } from '@/composables/useNow'
 
 function humanSchedule(expr: string): string {
   try {
@@ -25,6 +28,8 @@ function humanSchedule(expr: string): string {
 
 const qc = useQueryClient()
 const { formatRel } = useFormatters()
+// Keeps outage lengths and relative times counting between refreshes.
+const now = useNow()
 const { show: showToast } = useToast()
 const { confirm } = useConfirm()
 const { copy } = useClipboard()
@@ -43,7 +48,11 @@ const { data: monitorsData, isLoading, isError: monitorsError, refetch: refetchM
   queryKey: computed(() => ['monitors', queryParams.value]),
   queryFn: ({ signal }) => apiFetch<CronMonitor[]>(`/api/monitors?${queryParams.value}`, { signal }),
 })
-const monitors = computed(() => monitorsData.value ?? [])
+// Failing monitors first, longest failure first; paused last.
+const monitors = computed(() => rankCron(monitorsData.value ?? []))
+const verdict = computed(() => monitorVerdict(
+  monitors.value.map(m => ({ failing: cronFailing(m), paused: m.status === 'paused', unknown: cronUnchecked(m) })),
+  { one: 'monitor', many: 'monitors' }, { one: 'is failing', many: 'are failing' }, 'healthy'))
 
 const { data: checkinsData, isLoading: checkinsLoading, isError: checkinsError, refetch: refetchCheckins } = useQuery({
   queryKey: computed(() => ['checkins', selectedMonitorId.value]),
@@ -59,19 +68,22 @@ function selectMonitor(id: string) {
   selectedMonitorId.value = selectedMonitorId.value === id ? null : id
 }
 
-function stateColor(state: string): string {
-  if (state === 'ok') return 'var(--success)'
-  if (state === 'missed') return 'var(--danger)'
-  if (state === 'error') return 'var(--danger)'
-  if (state === 'in_progress') return 'var(--warning)'
+// Row state: failures in red, a monitor that never reported in neutral
+// ("Not checked yet"), a running job in plain text; only OK is green.
+function stateColor(m: CronMonitor): string {
+  if (m.status === 'paused' || cronUnchecked(m)) return 'var(--text-3)'
+  if (m.state === 'ok') return 'var(--success)'
+  if (m.state === 'missed' || m.state === 'error') return 'var(--danger)'
+  if (m.state === 'in_progress') return 'var(--text-2)'
   return 'var(--text-3)'
 }
 
-function stateLabel(state: string): string {
-  if (state === 'ok') return 'OK'
-  if (state === 'missed') return 'Missed'
-  if (state === 'error') return 'Error'
-  if (state === 'in_progress') return 'Running'
+function stateLabel(m: CronMonitor): string {
+  if (cronUnchecked(m)) return 'Not checked yet'
+  if (m.state === 'ok') return 'OK'
+  if (m.state === 'missed') return 'Missed'
+  if (m.state === 'error') return 'Error'
+  if (m.state === 'in_progress') return 'Running'
   return 'Unknown'
 }
 
@@ -80,6 +92,10 @@ function checkinStateColor(status: string): string {
   if (status === 'error') return 'var(--danger)'
   if (status === 'in_progress') return 'var(--warning)'
   return 'var(--text-3)'
+}
+
+function tickColor(status: string): string {
+  return status === 'ok' ? PASS_TICK : checkinStateColor(status)
 }
 
 // Ping URLs are used by jobs outside the browser, so build them from the
@@ -272,6 +288,9 @@ function cancelCreate() {
 
     <!-- Full-width list -->
     <template v-else>
+      <p class="mon-verdict" role="status">
+        <span v-if="verdict.failing" class="mon-verdict__failing">{{ verdict.failing }}</span>{{ verdict.failing && verdict.rest ? ' ' : '' }}{{ verdict.rest }}
+      </p>
       <div class="monrow monrow--header">
         <span />
         <span>Monitor</span>
@@ -284,15 +303,16 @@ function cancelCreate() {
       <template v-for="m in monitors" :key="m.id">
         <div
           class="monrow"
-          :class="{ 'monrow--active': selectedMonitorId === m.id, 'monrow--paused': m.status === 'paused' }"
+          :class="{ 'monrow--active': selectedMonitorId === m.id, 'monrow--paused': m.status === 'paused', 'monrow--failing': cronFailing(m) }"
           v-clickable
           @click="selectMonitor(m.id)"
         >
-          <span class="mon-dot" :style="{ background: m.status === 'paused' ? 'var(--text-3)' : stateColor(m.state) }" :title="stateLabel(m.state)" />
+          <span class="mon-dot" :style="{ background: stateColor(m) }" :title="stateLabel(m)" />
           <div class="monrow__main">
             <div class="monrow__name" :title="m.name">{{ m.name }}</div>
             <div class="monrow__sub">
-              <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : stateColor(m.state) }" class="monrow__state">{{ stateLabel(m.state) }}</span>
+              <span :style="{ color: stateColor(m) }" class="monrow__state">{{ stateLabel(m) }}</span>
+              <span v-if="cronFailingSince(m)" class="monrow__since">for {{ formatSpan(cronFailingSince(m), now) }}</span>
               <template v-if="m.status === 'paused'">
                 <span class="monrow__sep">·</span>
                 <span class="mon-paused-badge">Paused</span>
@@ -313,7 +333,7 @@ function cancelCreate() {
               v-for="dot in m.recent_checkins"
               :key="dot.received_at"
               class="mon-tl-dot"
-              :style="{ background: checkinStateColor(dot.status) }"
+              :style="{ background: tickColor(dot.status) }"
               :title="`${dot.status} · ${formatRel(dot.received_at)}`"
             />
           </div>

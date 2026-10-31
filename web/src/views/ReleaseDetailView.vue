@@ -9,6 +9,7 @@ import { useFormatters } from '@/composables/useFormatters'
 import type { Release, ReleaseIssue, ReleaseTxSummary } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { useProjectsStore } from '@/stores/projects'
+import { plural } from '@/utils/plural'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,8 +40,12 @@ const projectName = computed(() => {
   return (id: string) => map.get(id) ?? ''
 })
 
+// A release that brought back or introduced issues opens on them, since the
+// verdict above names them; a clean one opens on its transactions.
 type Tab = 'transactions' | 'issues'
-const activeTab = ref<Tab>('transactions')
+const chosenTab = ref<Tab | null>(null)
+const activeTab = computed<Tab>(() => chosenTab.value
+  ?? ((release.value?.new_issues ?? 0) + (release.value?.regressed_issues ?? 0) > 0 ? 'issues' : 'transactions'))
 
 const newIssues = computed(() => issues.value?.filter(i => i.category === 'new') ?? [])
 const regressedIssues = computed(() => issues.value?.filter(i => i.category === 'regressed') ?? [])
@@ -127,6 +132,15 @@ function levelClass(level: string) {
           <span v-if="projectName(release.project_id)" class="tag">{{ projectName(release.project_id) }}</span>
           <span class="tag"><Icon name="clock" :size="11" /> {{ formatRel(release.deployed_at) }}</span>
         </div>
+        <!-- Verdict: what this deploy changed, regressions first. -->
+        <h1 class="rel-verdict">
+          <span class="rel-verdict__version mono">{{ release.version }}</span>
+          <template v-if="release.regressed_issues > 0">
+            <span class="rel-verdict__regressed"> brought back {{ plural(release.regressed_issues, 'issue', 'issues') }}</span><template v-if="release.new_issues > 0"> and introduced {{ release.new_issues }} new {{ release.new_issues === 1 ? 'one' : 'ones' }}</template>.
+          </template>
+          <template v-else-if="release.new_issues > 0"> introduced {{ plural(release.new_issues, 'new issue', 'new issues') }}.</template>
+          <template v-else> is clean: no new or regressed issues.</template>
+        </h1>
         <div class="stat-row" style="margin-top: 20px">
           <div class="stat">
             <div class="stat__label">Transactions</div>
@@ -142,19 +156,19 @@ function levelClass(level: string) {
           </div>
           <div class="stat">
             <div class="stat__label">Error rate</div>
-            <div class="stat__value" :style="{ color: release.tx_error_rate > 0 ? 'var(--danger)' : undefined }">
+            <div class="stat__value" :style="{ color: release.tx_error_rate > 5 ? 'var(--danger)' : release.tx_error_rate > 2 ? 'var(--warning)' : undefined }">
               {{ release.tx_count > 0 ? (release.tx_error_rate > 0 ? release.tx_error_rate.toFixed(1) + '%' : '–') : '–' }}
             </div>
           </div>
           <div class="stat">
             <div class="stat__label">New issues</div>
-            <div class="stat__value" :style="{ color: release.new_issues > 0 ? 'var(--danger)' : undefined }">
+            <div class="stat__value" :style="{ color: release.new_issues > 0 ? 'var(--accent)' : undefined }">
               {{ release.new_issues > 0 ? release.new_issues : '–' }}
             </div>
           </div>
           <div class="stat">
             <div class="stat__label">Regressions</div>
-            <div class="stat__value" :style="{ color: release.regressed_issues > 0 ? 'var(--warning, oklch(0.78 0.15 75))' : undefined }">
+            <div class="stat__value" :style="{ color: release.regressed_issues > 0 ? 'var(--warning)' : undefined }">
               {{ release.regressed_issues > 0 ? release.regressed_issues : '–' }}
             </div>
           </div>
@@ -167,7 +181,7 @@ function levelClass(level: string) {
           <button
             class="optab"
             :class="{ 'optab--active': activeTab === 'transactions' }"
-            @click="activeTab = 'transactions'"
+            @click="chosenTab = 'transactions'"
           >
             Transactions
             <span v-if="transactions?.length" class="optab__count">{{ transactions.length }}</span>
@@ -175,7 +189,7 @@ function levelClass(level: string) {
           <button
             class="optab"
             :class="{ 'optab--active': activeTab === 'issues' }"
-            @click="activeTab = 'issues'"
+            @click="chosenTab = 'issues'"
           >
             Issues
             <span v-if="issues?.length" class="optab__count">{{ issues.length }}</span>
@@ -223,15 +237,15 @@ function levelClass(level: string) {
             No issues recorded for this release.
           </div>
           <template v-else-if="issues">
-            <!-- New issues -->
-            <div v-if="newIssues.length > 0" class="rel-issue-group">
+            <!-- Regressions -->
+            <div v-if="regressedIssues.length > 0" class="rel-issue-group">
               <div class="rel-issue-group__head">
-                <span class="rel-category-badge rel-category-badge--new">New</span>
-                <span class="rel-issue-group__count">{{ newIssues.length }}</span>
+                <span class="rel-category-badge rel-category-badge--regressed">Regressed</span>
+                <span class="rel-issue-group__count">{{ regressedIssues.length }}</span>
               </div>
               <div class="rel-issue-list">
                 <div
-                  v-for="issue in newIssues"
+                  v-for="issue in regressedIssues"
                   :key="issue.id"
                   class="rel-issue-row"
                   v-clickable
@@ -246,15 +260,15 @@ function levelClass(level: string) {
               </div>
             </div>
 
-            <!-- Regressions -->
-            <div v-if="regressedIssues.length > 0" class="rel-issue-group">
+            <!-- New issues -->
+            <div v-if="newIssues.length > 0" class="rel-issue-group">
               <div class="rel-issue-group__head">
-                <span class="rel-category-badge rel-category-badge--regressed">Regressed</span>
-                <span class="rel-issue-group__count">{{ regressedIssues.length }}</span>
+                <span class="rel-category-badge rel-category-badge--new">New</span>
+                <span class="rel-issue-group__count">{{ newIssues.length }}</span>
               </div>
               <div class="rel-issue-list">
                 <div
-                  v-for="issue in regressedIssues"
+                  v-for="issue in newIssues"
                   :key="issue.id"
                   class="rel-issue-row"
                   v-clickable
@@ -297,3 +311,17 @@ function levelClass(level: string) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.rel-verdict {
+  margin: 16px 0 0;
+  font-size: clamp(1.375rem, 1.1rem + 0.8vw, 1.75rem);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  text-wrap: balance;
+}
+.rel-verdict__version { color: var(--accent); font-weight: 500; }
+.rel-verdict__regressed { color: var(--warning); }
+</style>

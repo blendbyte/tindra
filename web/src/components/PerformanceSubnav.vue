@@ -3,12 +3,13 @@ import { useInvestigationStore } from '@/stores/investigation'
 import { investigationQuery } from '@/router/investigation'
 const investigation = useInvestigationStore()
 import { useRoute } from 'vue-router'
+import { vActiveInView } from '@/directives/activeInView'
 const route = useRoute()
 </script>
 
 <template>
   <div class="perf-subnav">
-    <nav class="perf-subnav__tabs" aria-label="Performance views">
+    <nav v-active-in-view="'.perf-subnav__link--active'" class="perf-subnav__tabs" aria-label="Performance views">
     <RouterLink
       :to="{ path: '/performance/transactions', query: investigationQuery(investigation) }"
       class="perf-subnav__link"

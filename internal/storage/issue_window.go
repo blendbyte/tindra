@@ -37,7 +37,7 @@ func windowIssueCTE(filter IssueFilter, bounds TimeRange) (string, []any) {
  SELECT issue_id, timestamp, environment, user_identity AS identity
  FROM events WHERE ` + where + `), scoped AS (
  SELECT issue_id, count(*) AS window_count, count(DISTINCT identity) AS window_users,
- min(timestamp) AS window_first, max(timestamp) AS window_last,
+ max(timestamp) AS window_last,
  CASE WHEN count(DISTINCT environment)=1 THEN max(environment) END AS window_environment
  FROM matching GROUP BY issue_id
  ), histogram AS (
@@ -62,16 +62,26 @@ func countWindowIssues(ctx context.Context, pool issueWindowQuerier, filter Issu
 func listWindowIssues(ctx context.Context, pool issueWindowQuerier, filter IssueFilter, bounds TimeRange) ([]*Issue, error) {
 	cte, args := windowIssueCTE(filter, bounds)
 	// Histograms contain 24 equal-duration buckets for precisely the same interval.
+	// First seen stays the issue's own, so the list can tell new issues apart;
+	// last seen, counts and users describe the window.
 	q := `SELECT i.id,i.project_id,i.fingerprint,i.title,i.level,i.kind,
- s.window_first,s.window_last,s.window_count,i.status,i.assignee_id,s.window_environment,
+ i.first_seen,s.window_last,s.window_count,i.status,i.assignee_id,s.window_environment,
  i.ignore_until,i.ignore_count_limit,i.ignore_count,s.window_users,
  ARRAY(SELECT COALESCE((h.buckets->>bucket::text)::int,0) FROM generate_series(0,23) bucket ORDER BY bucket)
  FROM issues i JOIN scoped s ON s.issue_id=i.id JOIN histograms h ON h.issue_id=i.id WHERE TRUE`
 	q, args = windowIssueFilters(q, args, filter)
-	if filter.CursorTime != nil && filter.CursorID != nil {
-		args = append(args, *filter.CursorTime, *filter.CursorID)
-		q += fmt.Sprintf(" AND (s.window_last,i.id) < ($%d,$%d::uuid)", len(args)-1, len(args))
+	order := "s.window_last DESC,i.id DESC"
+	rank := ""
+	if filter.Priority {
+		// $1 is the window start; an all-time list has no "new".
+		newSince := "$1::timestamptz"
+		if bounds.AllTime {
+			newSince = ""
+		}
+		rank = prioritySQL(newSince)
+		order = rank + "," + order
 	}
+	q, args = pageAfter(q, args, filter, rank, "s.window_last")
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 50
@@ -80,7 +90,7 @@ func listWindowIssues(ctx context.Context, pool issueWindowQuerier, filter Issue
 		limit = 10000
 	}
 	args = append(args, limit)
-	q += fmt.Sprintf(" ORDER BY s.window_last DESC,i.id DESC LIMIT $%d", len(args))
+	q += fmt.Sprintf(" ORDER BY %s LIMIT $%d", order, len(args))
 	rows, err := pool.Query(ctx, cte+q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {
 		return nil, err

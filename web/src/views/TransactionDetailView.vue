@@ -212,30 +212,33 @@ function spanDataEntries(span: Span): [string, string][] {
   }
 }
 
+// Span series colours are derived from the accent and info tokens: hue-rotated
+// to stay distinct from each other, and kept away from the state hues (green,
+// amber, red) because ops are categories, not problems.
 function opColor(op: string) {
   const base = op.split('.')[0]
   switch (base) {
-    case 'db':         return 'var(--success)'
-    case 'http':       return 'var(--info)'
-    case 'task':       return 'var(--warning)'
-    case 'template':   return 'var(--accent)'
-    case 'cache':      return 'oklch(0.65 0.10 220)'
+    case 'db':         return 'var(--accent)'
+    case 'http':
+    case 'grpc':
+    case 'rpc':
+    case 'graphql':    return 'var(--info)'
+    case 'cache':
+    case 'resource':   return 'oklch(from var(--info) l c calc(h - 40))'
+    case 'task':
+    case 'queue':
+    case 'file':       return 'oklch(from var(--accent) l c calc(h + 50))'
+    case 'template':
     case 'pageload':
     case 'navigation':
-    case 'browser':    return 'oklch(0.62 0.14 290)'
-    case 'ui':         return 'oklch(0.62 0.14 340)'
-    case 'resource':   return 'oklch(0.60 0.12 195)'
-    case 'grpc':
-    case 'rpc':        return 'oklch(0.58 0.13 255)'
-    case 'graphql':    return 'oklch(0.58 0.18 345)'
-    case 'queue':      return 'oklch(0.65 0.13 48)'
-    case 'file':       return 'oklch(0.60 0.08 65)'
-    default:           return 'oklch(0.55 0.04 250)'
+    case 'browser':
+    case 'ui':         return 'color-mix(in oklch, var(--accent) 45%, var(--text-1))'
+    default:           return 'var(--text-3)'
   }
 }
 
-// Amber used consistently for all critical path markers.
-const CRITICAL_COLOR = 'oklch(0.76 0.16 60)'
+// The critical path is emphasis, not a problem, so it uses the foreground colour.
+const CRITICAL_COLOR = 'var(--text-1)'
 
 // Set of span_ids that have at least one child span in this transaction.
 const spanHasChildren = computed((): Set<string> => {
@@ -949,7 +952,7 @@ function traceErrorOffset(e: TraceError): string {
                     <span v-if="row.span.parent_span_id" class="span-detail__v span-detail__mono span-detail__v--muted">{{ row.span.parent_span_id }}</span>
                     <span class="span-detail__k">Op</span>
                     <span class="span-detail__v">
-                      <span class="span-detail__op-pill" :style="{ background: opColor(row.span.op) + '22', color: opColor(row.span.op) }">{{ row.span.op }}</span>
+                      <span class="span-detail__op-pill" :style="{ background: `color-mix(in oklch, ${opColor(row.span.op)} 14%, transparent)`, color: opColor(row.span.op) }">{{ row.span.op }}</span>
                     </span>
                     <span v-if="row.span.description" class="span-detail__k">Description</span>
                     <span v-if="row.span.description" class="span-detail__v span-detail__v--wrap">{{ row.span.description }}</span>

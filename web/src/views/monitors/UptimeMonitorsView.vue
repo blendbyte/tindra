@@ -9,9 +9,14 @@ import Icon from '@/components/Icon.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import MonitorsSubnav from './MonitorsSubnav.vue'
 import { useCanManage, useMonitorProjects, useMonitorQueryParams } from './shared'
+import { monitorVerdict, PASS_TICK, rankUptime, uptimeFailing, uptimeSince } from './urgency'
+import { formatSpan } from '@/views/dashboard/briefing'
+import { useNow } from '@/composables/useNow'
 
 const qc = useQueryClient()
 const { formatRel } = useFormatters()
+// Keeps outage lengths and relative times counting between refreshes.
+const now = useNow()
 const { confirm } = useConfirm()
 
 const canManage = useCanManage()
@@ -28,7 +33,11 @@ const { data: uptimeData, isLoading: uptimeLoading, isError: uptimeError, refetc
   queryKey: computed(() => ['uptime-monitors', queryParams.value]),
   queryFn: ({ signal }) => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${queryParams.value}`, { signal }),
 })
-const uptimeMonitors = computed(() => uptimeData.value ?? [])
+// Down monitors first, longest outage first; paused last.
+const uptimeMonitors = computed(() => rankUptime(uptimeData.value ?? []))
+const verdict = computed(() => monitorVerdict(
+  uptimeMonitors.value.map(m => ({ failing: uptimeFailing(m), paused: m.status === 'paused', unknown: m.state === 'unknown' })),
+  { one: 'monitor', many: 'monitors' }, { one: 'is down', many: 'are down' }, 'up'))
 
 const { data: uptimeChecksData, isLoading: uptimeChecksLoading, isError: uptimeChecksError, refetch: refetchUptimeChecks } = useQuery({
   queryKey: computed(() => ['uptime-checks', selectedUptimeId.value]),
@@ -63,13 +72,17 @@ function uptimeStateColor(state: string): string {
 function uptimeStateLabel(state: string): string {
   if (state === 'up') return 'Up'
   if (state === 'down') return 'Down'
-  return 'Unknown'
+  return 'Not checked yet'
 }
 
 function uptimeCheckColor(status: string): string {
   if (status === 'up') return 'var(--success)'
   if (status === 'down') return 'var(--danger)'
   return 'var(--text-3)'
+}
+
+function tickColor(status: string): string {
+  return status === 'up' ? PASS_TICK : uptimeCheckColor(status)
 }
 
 function fmtUptime(pct: number): string {
@@ -311,6 +324,9 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
 
     <!-- List -->
     <template v-else>
+      <p class="mon-verdict" role="status">
+        <span v-if="verdict.failing" class="mon-verdict__failing">{{ verdict.failing }}</span>{{ verdict.failing && verdict.rest ? ' ' : '' }}{{ verdict.rest }}
+      </p>
       <div class="monrow uprow monrow--header">
         <span />
         <span>Monitor</span>
@@ -323,7 +339,7 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
       <template v-for="m in uptimeMonitors" :key="m.id">
         <div
           class="monrow uprow"
-          :class="{ 'monrow--active': selectedUptimeId === m.id, 'monrow--paused': m.status === 'paused' }"
+          :class="{ 'monrow--active': selectedUptimeId === m.id, 'monrow--paused': m.status === 'paused', 'monrow--failing': uptimeFailing(m) }"
           v-clickable
           @click="selectUptime(m.id)"
         >
@@ -332,6 +348,7 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
             <div class="monrow__name" :title="m.name">{{ m.name }}</div>
             <div class="monrow__sub">
               <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : uptimeStateColor(m.state) }" class="monrow__state">{{ uptimeStateLabel(m.state) }}</span>
+              <span v-if="uptimeSince(m)" class="monrow__since">for {{ formatSpan(uptimeSince(m), now) }}</span>
               <template v-if="m.status === 'paused'">
                 <span class="monrow__sep">·</span>
                 <span class="mon-paused-badge">Paused</span>
@@ -352,7 +369,7 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
               v-for="dot in m.recent_checks"
               :key="dot.checked_at"
               class="mon-tl-dot"
-              :style="{ background: uptimeCheckColor(dot.status) }"
+              :style="{ background: tickColor(dot.status) }"
               :title="`${dot.status} · ${formatRel(dot.checked_at)}`"
             />
           </div>
@@ -540,8 +557,6 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
 .up-stat__label {
   font-size: 10px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--text-3);
 }
 

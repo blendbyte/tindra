@@ -165,6 +165,9 @@ function formatCount(n: number) {
             <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'version' }" @click="toggleSort('version')">
               Version <em class="col-sort__icon">{{ sortIcon('version') }}</em>
             </button>
+            <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'new_issues' }" @click="toggleSort('new_issues')">
+              Issues <em class="col-sort__icon">{{ sortIcon('new_issues') }}</em>
+            </button>
             <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_count' }" @click="toggleSort('tx_count')">
               Txns <em class="col-sort__icon">{{ sortIcon('tx_count') }}</em>
             </button>
@@ -173,9 +176,6 @@ function formatCount(n: number) {
             </button>
             <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'tx_error_rate' }" @click="toggleSort('tx_error_rate')">
               Errors <em class="col-sort__icon">{{ sortIcon('tx_error_rate') }}</em>
-            </button>
-            <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'new_issues' }" @click="toggleSort('new_issues')">
-              Issues <em class="col-sort__icon">{{ sortIcon('new_issues') }}</em>
             </button>
             <button class="col-sort relrow__num" :class="{ 'col-sort--active': sortCol === 'deployed_at' }" @click="toggleSort('deployed_at')">
               Deployed <em class="col-sort__icon">{{ sortIcon('deployed_at') }}</em>
@@ -191,10 +191,10 @@ function formatCount(n: number) {
                   <span class="skel" style="width:120px;height:10px;display:block" />
                 </div>
               </div>
+              <span class="skel" style="width:56px;height:20px;display:block;border-radius:10px" />
               <span class="skel relrow__num" style="width:36px;height:10px;display:block;margin-left:auto" />
               <span class="skel relrow__num" style="width:44px;height:10px;display:block;margin-left:auto" />
               <span class="skel relrow__num" style="width:28px;height:10px;display:block;margin-left:auto" />
-              <span class="skel" style="width:56px;height:20px;display:block;border-radius:10px" />
               <span class="skel relrow__num" style="width:52px;height:10px;display:block;margin-left:auto" />
             </div>
           </template>
@@ -218,24 +218,28 @@ function formatCount(n: number) {
               </div>
             </div>
 
+            <div class="rel-issues-cell">
+              <span v-if="r.regressed_issues > 0" class="rel-issues-pill rel-issues-pill--regressed">
+                {{ r.regressed_issues }} regressed
+              </span>
+              <span v-if="r.new_issues > 0" class="rel-issues-pill rel-issues-pill--active">
+                {{ r.new_issues }} new
+              </span>
+              <span v-if="!r.new_issues && !r.regressed_issues" class="rel-issues-pill rel-issues-pill--clean">
+                Clean
+              </span>
+            </div>
+
             <span class="relrow__num mono">{{ formatCount(r.tx_count) }}</span>
 
             <span class="relrow__num mono" :class="{ muted: r.tx_count === 0 }">
               {{ r.tx_p50 === 0 ? '–' : formatDuration(r.tx_p50) }}
             </span>
 
-            <span class="relrow__num mono" :class="r.tx_error_rate > 0 ? 'tx-failure' : 'muted'">
+            <span class="relrow__num mono" :class="r.tx_error_rate > 5 ? 'tx-failure' : r.tx_error_rate > 2 ? 'tx-warn' : r.tx_error_rate > 0 ? '' : 'muted'">
               {{ r.tx_count > 0 ? (r.tx_error_rate > 0 ? r.tx_error_rate.toFixed(1) + '%' : '–') : '–' }}
             </span>
 
-            <div class="rel-issues-cell">
-              <span v-if="r.new_issues > 0" class="rel-issues-pill rel-issues-pill--active">
-                {{ r.new_issues }} new
-              </span>
-              <span v-else class="rel-issues-pill rel-issues-pill--clean">
-                Clean
-              </span>
-            </div>
 
             <div class="rel-deployed relrow__num">
               <Icon name="clock" :size="11" style="color: var(--text-3); flex: 0 0 auto" />

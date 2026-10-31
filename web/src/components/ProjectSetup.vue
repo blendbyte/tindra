@@ -335,7 +335,7 @@ async function upload() {
 .setup__eyebrow { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: var(--text-xs); }
 .setup__eyebrow span { color: var(--border); }
 .setup h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 8px 0 4px; }
-.setup h3 { font-size: var(--text-xs); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; margin: 0; }
+.setup h3 { font-size: var(--text-sm); font-weight: 600; margin: 0; }
 .setup p { margin: 0 0 12px; }
 .setup__header p:last-child { margin-bottom: 0; color: var(--text-2); }
 .setup__header .btn { flex-shrink: 0; }

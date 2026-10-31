@@ -41,6 +41,8 @@ test('keeps investigation context through navigation, reload, and profile sample
   await page.reload();await expect(bar).toContainText('eu-west')
   for (const width of [320, 1280]) {
     await page.setViewportSize({ width, height: 844 })
+    // On phones every filter sits behind the one Filters toggle.
+    if (width <= 640) await bar.getByRole('button', { name: /^Filters/ }).click()
     for (const name of [/Time range:/, /Environment:/, /^Filter by user$/]) {
       const trigger = bar.getByRole('button', { name })
       await trigger.click()
@@ -72,6 +74,9 @@ test('keeps investigation context through navigation, reload, and profile sample
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(bar.getByRole('button', { name: /Time range:/ })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  // Closed, the Filters panel leaves a single compact row on phones.
+  const filtersToggle = bar.getByRole('button', { name: /^Filters/ })
+  if (await filtersToggle.getAttribute('aria-expanded') === 'true') await filtersToggle.click()
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 })
     await expect(bar.getByText(/Updated .* ago/)).not.toBeVisible()
@@ -86,12 +91,13 @@ test('keeps investigation context through navigation, reload, and profile sample
     await page.keyboard.press('Escape')
     await expect(bar.locator('.investigation-bar__popover')).not.toBeVisible()
   }
-  const refresh = bar.getByRole('button', { name: 'Refresh now', exact: true })
-  const iconBox = await refresh.locator('svg').boundingBox()
-  const ageBox = await refresh.locator('.investigation-bar__age').boundingBox()
-  // Center the trimmed text box, without a manual pixel offset.
-  expect(Math.abs((iconBox!.y + iconBox!.height / 2) - (ageBox!.y + ageBox!.height / 2))).toBeLessThanOrEqual(0.5)
-  await refresh.screenshot({ path: testInfo.outputPath('refresh-alignment.png') })
+  // The live switch names its state and age; its dot sits on the text's center line.
+  const live = bar.getByRole('button', { name: 'Live, pause auto-refresh', exact: true })
+  await expect(live).toContainText('Live')
+  const dotBox = await live.locator('.investigation-bar__live-dot').boundingBox()
+  const ageBox = await live.locator('.investigation-bar__age').boundingBox()
+  expect(Math.abs((dotBox!.y + dotBox!.height / 2) - (ageBox!.y + ageBox!.height / 2))).toBeLessThanOrEqual(1.5)
+  await live.screenshot({ path: testInfo.outputPath('live-alignment.png') })
   await page.screenshot({ path: testInfo.outputPath('toolbar-mobile.png') })
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto(`/transactions/profile?name=checkout&project_id=${projectId}&environment=eu-west&range=7d`)
@@ -100,7 +106,7 @@ test('keeps investigation context through navigation, reload, and profile sample
   const chart=requests.filter(u=>u.pathname==='/api/transactions/timeseries'&&u.searchParams.has('name')).at(-1)!
   expect(samples.searchParams.get('from')).toBe(chart.searchParams.get('from'))
   expect(samples.searchParams.get('to')).toBe(chart.searchParams.get('to'))
-  await bar.getByRole('button',{name:'Pause',exact:true}).click()
+  await bar.getByRole('button',{name:'Live, pause auto-refresh',exact:true}).click()
   await bar.getByLabel('Data freshness and scope', { exact: true }).click()
   await expect(bar.getByText('Auto-refresh paused', { exact: true })).toBeVisible()
   await page.goto('/performance/transactions?range=24h')
@@ -110,7 +116,7 @@ test('keeps investigation context through navigation, reload, and profile sample
   await page.locator('.nav__links').getByRole('link', { name: 'Dashboard', exact: true }).click()
   await expect(page).toHaveURL(/dashboard.*range=90d/)
   await expect(page.getByText('This view supports time ranges', { exact: false })).toHaveCount(0)
-  await expect(page.locator('.db-kpis')).toBeVisible()
+  await expect(page.locator('.brief')).toBeVisible()
   await expect.poll(() => requests.filter(u => u.pathname === '/api/transactions/summaries').at(-1)?.searchParams.get('hours')).toBe('2160')
   const dashboard = requests.filter(u => u.pathname === '/api/transactions/summaries').at(-1)!
   expect(Date.parse(dashboard.searchParams.get('to')!) - Date.parse(dashboard.searchParams.get('from')!)).toBe(90 * 86400000)
@@ -126,9 +132,13 @@ test('keeps investigation context through navigation, reload, and profile sample
     await page.setViewportSize({ width, height: 844 })
     await expect(bar.getByRole('button', { name: 'Clear user filter' })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    // Other filters fold behind the toggle; open it to compare insets.
+    const toggle = bar.getByRole('button', { name: /^Filters/ })
+    await toggle.click()
     const globalInset = await bar.locator('.filterchip').first().boundingBox()
     const localInset = await page.locator('.filterbar .filterchip').first().boundingBox()
     expect(globalInset!.x).toBe(localInset!.x)
+    await toggle.click()
   }
   await bar.getByRole('button', { name: 'Clear user filter' }).click()
   await expect.poll(() => requests.filter(u => u.pathname === '/api/logs').at(-1)?.searchParams.has('user')).toBe(false)

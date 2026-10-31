@@ -74,6 +74,7 @@ func TestInvestigationIssuesUseMatchingEvents(t *testing.T) {
 	require.EqualValues(t, 1, issues[0].UserCount)
 	require.Equal(t, "preview", *issues[0].Environment)
 	require.True(t, from.Add(time.Hour).Equal(issues[0].LastSeen))
+	require.True(t, to.Add(time.Hour).Equal(issues[0].FirstSeen), "first seen is the issue's own, not the window's first event")
 	total := 0
 	for _, n := range issues[0].Sparkline {
 		total += n
@@ -86,6 +87,17 @@ func TestInvestigationIssuesUseMatchingEvents(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, next)
 	filter.CursorTime, filter.CursorID = nil, nil
+	newFilter := filter
+	newFilter.Status = "new"
+	newFilter.NewSince = &from
+	fresh, err := storage.ListAllIssues(ctx, testPool, newFilter)
+	require.NoError(t, err)
+	require.Len(t, fresh, 1, "an open issue first seen after the window start is new")
+	later := to.Add(2 * time.Hour)
+	newFilter.NewSince = &later
+	fresh, err = storage.ListAllIssues(ctx, testPool, newFilter)
+	require.NoError(t, err)
+	require.Empty(t, fresh)
 	allCtx := storage.WithTimeRange(context.Background(), storage.TimeRange{To: to.Add(2 * time.Hour), AllTime: true})
 	all, err := storage.ListAllIssues(allCtx, testPool, filter)
 	require.NoError(t, err)
@@ -176,4 +188,51 @@ func TestSpanInvestigationUserFilter(t *testing.T) {
 	samples, err := storage.GetSpanSamples(context.Background(), testPool, "db.query", "SELECT user", []string{p.ID}, 24, "", "", "nobody")
 	require.NoError(t, err)
 	require.Empty(t, samples)
+}
+
+func TestPriorityListsRegressedThenNewThenTheRest(t *testing.T) {
+	p := setupProjectForTxns(t)
+	to := time.Now().UTC().Truncate(time.Second)
+	from := to.Add(-24 * time.Hour)
+	ctx := storage.WithTimeRange(context.Background(), storage.TimeRange{From: from, To: to})
+	old := to.Add(-72 * time.Hour)
+	issue := func(title string, firstSeen, lastEvent time.Time, status string) {
+		iss, _, _, err := storage.UpsertIssue(ctx, testPool, p.ID, title, title, "error", "error", "production", "", firstSeen)
+		require.NoError(t, err)
+		_, err = testPool.Exec(ctx, `UPDATE issues SET status=$2 WHERE id=$1`, iss.ID, status)
+		require.NoError(t, err)
+		_, err = testPool.Exec(ctx, `INSERT INTO events(project_id,issue_id,timestamp,payload) VALUES($1,$2,$3,'{}')`, p.ID, iss.ID, lastEvent)
+		require.NoError(t, err)
+	}
+	issue("busy-old", old, to.Add(-time.Minute), "open")
+	issue("new", to.Add(-2*time.Hour), to.Add(-30*time.Minute), "open")
+	issue("quiet-old", old, to.Add(-5*time.Hour), "open")
+	issue("regressed", old, to.Add(-10*time.Hour), "regressed")
+	issue("new-latest", to.Add(-3*time.Hour), to.Add(-20*time.Minute), "open")
+	issue("resolved-new", to.Add(-time.Hour), to.Add(-2*time.Minute), "resolved")
+
+	// Page two at a time, continuing from each page's last issue the way the
+	// API's cursor does.
+	filter := storage.IssueFilter{ProjectIDs: []string{p.ID}, Priority: true, Limit: 2}
+	var titles []string
+	for range 4 {
+		page, err := storage.ListAllIssues(ctx, testPool, filter)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		for _, iss := range page {
+			titles = append(titles, iss.Title)
+		}
+		last := page[len(page)-1]
+		rank := storage.PriorityRank(last.Status, last.FirstSeen, &from)
+		filter.CursorTime, filter.CursorID, filter.CursorRank = &last.LastSeen, &last.ID, &rank
+	}
+	require.Equal(t, []string{"regressed", "new-latest", "new", "busy-old", "resolved-new", "quiet-old"}, titles,
+		"regressed first, then open issues first seen in the window, then the rest by last seen")
+
+	// Without a window only regressions lead.
+	all, err := storage.ListAllIssues(context.Background(), testPool, storage.IssueFilter{ProjectIDs: []string{p.ID}, Priority: true})
+	require.NoError(t, err)
+	require.Equal(t, "regressed", all[0].Title)
 }

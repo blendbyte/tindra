@@ -6,6 +6,7 @@ import { useFormatters } from '@/composables/useFormatters'
 import { useMe } from '@/composables/useMe'
 import type { AlertRule } from '@/api/types'
 import Icon from '@/components/Icon.vue'
+import { alertVerdict } from '@/views/settings/alertState'
 
 const { formatRel } = useFormatters()
 
@@ -28,14 +29,15 @@ const firedAlerts = computed(() =>
     .slice(0, 5),
 )
 
-const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enabled).length)
+// Nothing fired is only good news while some rule could fire.
+const verdict = computed(() => alertVerdict(alertRules.value ?? []))
 </script>
 
 <template>
   <div class="db-sec">
     <div class="db-sec__head">
-      <span class="db-sec__title">Recent Alerts</span>
-      <RouterLink v-if="canManageAlerts" to="/alerts" class="db-sec__link">configure →</RouterLink>
+      <h2 class="db-sec__title">Recent alerts</h2>
+      <RouterLink v-if="canManageAlerts" to="/alerts" class="db-sec__link">configure <Icon name="arrow-right" :size="11" /></RouterLink>
     </div>
     <template v-if="alertsLoading">
       <div v-for="i in 3" :key="i" class="db-alert-row">
@@ -46,6 +48,10 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
         </div>
       </div>
     </template>
+    <div v-else-if="firedAlerts.length === 0 && verdict.silent" class="db-silent">
+      <Icon name="alert-triangle" :size="14" />
+      <span>{{ verdict.text }}</span>
+    </div>
     <div v-else-if="firedAlerts.length === 0" class="db-empty">
       <Icon name="check-circle" :size="18" style="color: var(--success)" />
       <div>No alerts fired recently</div>
@@ -57,7 +63,7 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
         class="db-alert-row"
       >
         <div class="db-alert-row__icon">
-          <Icon name="zap" :size="11" style="color: var(--warning)" />
+          <Icon name="zap" :size="11" style="color: var(--text-3)" />
         </div>
         <div class="db-alert-row__body">
           <div class="db-alert-row__name">{{ a.name }}</div>
@@ -65,8 +71,8 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
         </div>
       </div>
     </template>
-    <div class="db-sec__foot">
-      {{ enabledAlerts }} rule{{ enabledAlerts === 1 ? '' : 's' }} active
+    <div v-if="!alertsLoading && (firedAlerts.length || !verdict.silent)" class="db-sec__foot" :class="{ 'db-sec__foot--warning': verdict.silent }">
+      {{ verdict.text }}
     </div>
   </div>
 </template>
@@ -75,6 +81,18 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
 
 <style scoped>
 /* ── Alerts ─────────────────────────────────────────────────────────────────── */
+
+/* Every rule paused or none set up: said plainly, in the warning colour. */
+.db-silent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  font-size: var(--text-sm);
+  color: var(--warning);
+}
+.db-silent :deep(svg) { flex-shrink: 0; margin-top: 2px; }
+.db-sec__foot--warning { color: var(--warning); }
 
 .db-alert-row {
   padding: 9px 16px;
@@ -90,8 +108,7 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
   width: 20px;
   height: 20px;
   border-radius: 4px;
-  background: oklch(from var(--warning) l c h / 0.12);
-  border: 1px solid oklch(from var(--warning) l c h / 0.22);
+  background: var(--surface-2);
   display: flex;
   align-items: center;
   justify-content: center;

@@ -2,6 +2,7 @@
 import { ref, computed, watch, watchEffect } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import Icon from '@/components/Icon.vue'
+import { vActiveInView } from '@/directives/activeInView'
 import { useUiStore } from '@/stores/ui'
 import OverviewTab from './settings/OverviewTab.vue'
 import TokensTab from './settings/TokensTab.vue'
@@ -101,7 +102,7 @@ function selectTab(t: Tab) {
         </div>
       </div>
 
-      <div v-if="!props.alertsPage" class="settings__nav">
+      <div v-if="!props.alertsPage" v-active-in-view="'[aria-current=page]'" class="settings__nav">
         <button
           v-for="t in visibleTabs"
           :key="t"

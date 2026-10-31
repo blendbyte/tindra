@@ -133,6 +133,15 @@ describe('ReleasesView', () => {
       expect(wrapper.find('.rel-issues-pill--active').text()).toContain('new')
     })
 
+    it('shows regressions in amber beside new issues, and Clean only when neither', () => {
+      const release = { ...makeRelease('r1', 'v1.0.0'), new_issues: 2, regressed_issues: 1 }
+      setupMocks([release])
+      const wrapper = mount(ReleasesView, { global: { stubs } })
+      expect(wrapper.find('.rel-issues-pill--regressed').text()).toBe('1 regressed')
+      expect(wrapper.find('.rel-issues-pill--active').text()).toBe('2 new')
+      expect(wrapper.find('.rel-issues-pill--clean').exists()).toBe(false)
+    })
+
     it('navigates to release detail on row click', async () => {
       setupMocks([makeRelease('r1', 'v1.0.0')])
       const wrapper = mount(ReleasesView, { global: { stubs } })
@@ -208,11 +217,14 @@ describe('ReleasesView', () => {
   })
 
   describe('error rate styling', () => {
-    it('applies tx-failure class to error rate when > 0', () => {
-      const release = { ...makeRelease('r1', 'v1.0.0'), tx_error_rate: 2.5 }
-      setupMocks([release])
-      const wrapper = mount(ReleasesView, { global: { stubs } })
-      expect(wrapper.find('.tx-failure').exists()).toBe(true)
+    it('colours the error rate only once it is out of range: amber above 2%, red above 5%', () => {
+      for (const [rate, cls] of [[1.5, null], [2.5, 'tx-warn'], [6, 'tx-failure']] as const) {
+        setupMocks([{ ...makeRelease('r1', 'v1.0.0'), tx_error_rate: rate }])
+        const wrapper = mount(ReleasesView, { global: { stubs } })
+        expect(wrapper.find('.tx-failure').exists()).toBe(cls === 'tx-failure')
+        expect(wrapper.find('.tx-warn').exists()).toBe(cls === 'tx-warn')
+        wrapper.unmount()
+      }
     })
 
     it('does not apply tx-failure class when error rate is 0', () => {

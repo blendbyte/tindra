@@ -8,6 +8,7 @@ import { apiFetch } from '@/api/client'
 import { useFormatters } from '@/composables/useFormatters'
 import { useTimezone } from '@/composables/useTimezone'
 import { useIssueNavStore } from '@/stores/issueNav'
+import { useProjectsStore } from '@/stores/projects'
 import type { Issue, Event as TindraEvent, User, EventSummary, HistogramBucket } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
@@ -35,6 +36,7 @@ const router = useRouter()
 const { show: showToast } = useToast()
 const qc = useQueryClient()
 const navStore = useIssueNavStore()
+const projectsStore = useProjectsStore()
 const { formatRel } = useFormatters()
 const tz = useTimezone()
 
@@ -58,6 +60,10 @@ const { data: issue, isError: issueError, refetch: refetchIssue } = useQuery({
   queryKey: computed(() => ['issues', issueId.value]),
   queryFn: ({ signal }) => apiFetch<Issue>(`/api/issues/${issueId.value}`, { signal }),
 })
+
+// The hero names the project, falling back to its ID until projects load.
+const projectName = computed(() =>
+  projectsStore.projects?.find(p => p.id === issue.value?.project_id)?.name ?? issue.value?.project_id ?? '')
 
 watchEffect(() => {
   if (issue.value?.title) document.title = `${issue.value.title} - Tindra`
@@ -360,7 +366,7 @@ onUnmounted(() => {
           </template>
           <span v-if="isUnhandled" class="detail-hero__unhandled">Unhandled</span>
           <span class="detail-hero__sep">·</span>
-          <span class="detail-hero__project">{{ issue.project_id }}</span>
+          <span class="detail-hero__project">{{ projectName }}</span>
           <template v-if="issue.environment">
             <span class="detail-hero__sep">·</span>
             <span class="detail-hero__env" :class="issue.environment === 'production' ? 'detail-hero__env--prod' : ''">{{ issue.environment }}</span>
@@ -438,7 +444,7 @@ onUnmounted(() => {
       <div class="section">
         <div class="section__head" style="cursor: default">
           <h2 class="section__title">Event instances</h2>
-          <span class="section__count">{{ issue.event_count.toLocaleString() }} occurrences</span>
+          <span class="section__count">{{ issue.event_count.toLocaleString() }} {{ issue.event_count === 1 ? 'occurrence' : 'occurrences' }}</span>
           <div v-if="issue.event_count > 1" class="section__actions">
             <button class="btn btn--ghost" style="font-size: var(--text-xs)" @click="toggleEventList">
               {{ showEventList ? 'Hide list' : 'Show all' }}
@@ -526,8 +532,9 @@ onUnmounted(() => {
       <div class="detail-sidebar">
 
       <IssueUserCard :issue="issue" :event="currentEvent" />
-      <IssueTags :issue-id="issueId" />
+      <!-- Activity first: assignment and comments are what triage acts on. -->
       <IssueActivity :issue-id="issueId" :me="me" :users="users" />
+      <IssueTags :issue-id="issueId" />
 
       </div><!-- /detail-sidebar -->
     </div>

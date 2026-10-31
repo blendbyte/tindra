@@ -38,9 +38,10 @@ describe('investigation bar', () => {
     chips[1]!.vm.$emit('change', 'preview')
     expect(state.range).toBe('7d')
     expect(state.environment).toBe('preview')
-    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Pause')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Live, pause auto-refresh')!.trigger('click')
     expect(state.paused).toBe(true)
-    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Resume')!.trigger('click')
+    expect(wrapper.find('.investigation-bar__live').text()).toContain('Paused')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Paused, resume auto-refresh')!.trigger('click')
     expect(state.paused).toBe(false)
     await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Refresh now')!.trigger('click')
     expect(mocks.freshness.refresh).toHaveBeenCalledOnce()
@@ -118,16 +119,42 @@ it('keeps dashboard explanations behind the info control and dismisses them with
 })
 
 
-it('shows compact elapsed time inside the refresh control', async () => {
+it('labels the live switch with its state and compact elapsed time', async () => {
   const wrapper = setup()
-  const button = wrapper.find('[aria-label="Refresh now"]')
-  expect(button.text()).toBe('')
+  const live = wrapper.find('.investigation-bar__live')
+  expect(wrapper.find('[aria-label="Refresh now"]').text()).toBe('')
   mocks.freshness.updatedAt.value = 100
   for (const [seconds, label] of [[13, '13s'], [125, '2m'], [7200, '2h']] as const) {
     mocks.freshness.age.value = seconds
     await flushPromises()
-    expect(button.text()).toBe(label)
+    expect(live.find('.investigation-bar__age').text()).toBe(`· ${label}`)
   }
-  await button.trigger('click')
+  await wrapper.find('[aria-label="Refresh now"]').trigger('click')
   expect(mocks.freshness.refresh).toHaveBeenCalledOnce()
+})
+
+it('offers one slot for page filters and folds every filter behind one toggle', async () => {
+  const wrapper = setup()
+  expect(wrapper.find('#page-filters').exists()).toBe(true)
+  const toggle = wrapper.find('.investigation-bar__toggle')
+  expect(toggle.attributes('aria-expanded')).toBe('false')
+  expect(toggle.find('.investigation-bar__summary').text()).toBe('24h · All envs')
+  expect(toggle.find('.investigation-bar__count').exists()).toBe(false)
+  useInvestigationStore().pageFilterCount = 2
+  await flushPromises()
+  expect(toggle.find('.investigation-bar__count').text()).toBe('2 active')
+  await toggle.trigger('click')
+  expect(toggle.attributes('aria-expanded')).toBe('true')
+  expect(wrapper.find('.investigation-bar').classes()).toContain('investigation-bar--filters-open')
+  // Browser-driven scrolls (keyboard opening, clamped page) keep it open...
+  window.dispatchEvent(new Event('scroll'))
+  await flushPromises()
+  expect(toggle.attributes('aria-expanded')).toBe('true')
+  // ...a gesture inside the panel too, but one outside closes it.
+  wrapper.find('#investigation-scope').element.dispatchEvent(new Event('touchmove', { bubbles: true }))
+  await flushPromises()
+  expect(toggle.attributes('aria-expanded')).toBe('true')
+  window.dispatchEvent(new Event('wheel'))
+  await flushPromises()
+  expect(toggle.attributes('aria-expanded')).toBe('false')
 })

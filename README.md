@@ -33,7 +33,7 @@
 
 Tindra runs as one Go binary with one Postgres database and uses Sentry SDKs with a Tindra DSN.
 
-- **Dashboard** with KPI strip, transaction density heatmap, hottest issues, release health, and recent alerts
+- **Dashboard** that leads with what needs attention: failing monitors, then new and regressed issues, with what changed since your last visit marked. Vitals, release health, projects, recent alerts, slowest transactions and a transaction density heatmap sit alongside
 - **Error tracking** with grouping, stack traces, breadcrumbs, tags, assignees, merge and resolve
 - **Log search** with severity, environment, text, and user filters, plus volume alerts created directly from a query
 - **Performance monitoring** with transaction list, span waterfall, and p50/p75/p95/p99 percentiles
