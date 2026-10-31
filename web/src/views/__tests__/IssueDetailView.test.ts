@@ -157,6 +157,33 @@ beforeEach(() => {
 })
 
 describe('IssueDetailView', () => {
+  describe('triage layout', () => {
+    it('names the project instead of showing its ID', () => {
+      setupQueries()
+      const impl = vi.mocked(useQuery).getMockImplementation()!
+      vi.mocked(useQuery).mockImplementation(((options: { queryKey: unknown }) => {
+        const key = toValue(options.queryKey) as unknown[]
+        if (key[0] === 'projects') return { data: ref([{ id: 'proj-1', name: 'Checkout API' }]) }
+        return impl(options as never)
+      }) as any)
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-hero__project').text()).toBe('Checkout API')
+    })
+
+    it('falls back to the project ID until projects load', () => {
+      setupQueries()
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-hero__project').text()).toBe('proj-1')
+    })
+
+    it('puts activity above tags in the sidebar', () => {
+      setupQueries()
+      const wrapper = mount(IssueDetailView, { global: { stubs: { ...stubs, IssueUserCard: true, IssueActivity: true, IssueTags: true } } })
+      const order = [...wrapper.find('.detail-sidebar').element.children].map(el => el.tagName.toLowerCase())
+      expect(order).toEqual(['issue-user-card-stub', 'issue-activity-stub', 'issue-tags-stub'])
+    })
+  })
+
   describe('loading skeleton', () => {
     it('renders loading skeleton when issue data is not yet available', () => {
       setupQueries(undefined)

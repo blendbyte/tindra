@@ -23,6 +23,8 @@ defineProps<{ name: string; size?: number }>()
     <path v-else-if="name === 'chevrons-right'" d="M3 4l4 4-4 4M7 4l4 4-4 4" />
     <path v-else-if="name === 'arrow-left'" d="M13 8H3M3 8l4-4M3 8l4 4" />
     <path v-else-if="name === 'arrow-right'" d="M3 8h10M13 8l-4-4M13 8l-4 4" />
+    <path v-else-if="name === 'arrow-up'" d="M8 13V3M8 3L4 7M8 3l4 4" />
+    <path v-else-if="name === 'arrow-down'" d="M8 3v10M8 13l-4-4M8 13l4-4" />
     <template v-else-if="name === 'search'">
       <circle cx="7" cy="7" r="4.5" />
       <path d="M13.5 13.5l-3-3" />

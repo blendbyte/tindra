@@ -310,9 +310,9 @@ describe('IssueListView', () => {
       const wrapper = mount(IssueListView, { global: { stubs } })
       const eventsBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Events'))!
       await eventsBtn.trigger('click')
-      const firstIcon = eventsBtn.find('.col-sort__icon').text()
+      const firstIcon = eventsBtn.find('.col-sort__icon').attributes('data-dir')
       await eventsBtn.trigger('click')
-      const secondIcon = eventsBtn.find('.col-sort__icon').text()
+      const secondIcon = eventsBtn.find('.col-sort__icon').attributes('data-dir')
       expect(firstIcon).not.toBe(secondIcon)
     })
 
@@ -824,7 +824,49 @@ describe('virtual row rendering', () => {
   it('shows staging envbadge for staging environment', () => {
     setupWithVirtualRow({ ...virtualIssue, environment: 'staging' })
     const wrapper = mount(IssueListView, { global: { stubs } })
-    expect(wrapper.find('.envbadge--staging').exists()).toBe(true)
+    expect(wrapper.find('.issue__sub .envbadge--staging').exists()).toBe(true)
+  })
+
+  it('omits the environment when the issue has none', () => {
+    setupWithVirtualRow({ ...virtualIssue, environment: null as unknown as string })
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.find('[role="row"] .envbadge').exists()).toBe(false)
+  })
+
+  it('marks regressed, resolved and ignored issues with a state chip', () => {
+    for (const status of ['regressed', 'resolved', 'ignored']) {
+      setupWithVirtualRow({ ...virtualIssue, status })
+      const wrapper = mount(IssueListView, { global: { stubs } })
+      expect(wrapper.find(`[role="row"] .statechip--${status}`).text()).toBe(status)
+      wrapper.unmount()
+    }
+  })
+
+  it('marks an open issue first seen inside the window as new, and an older one not at all', () => {
+    setupWithVirtualRow({ ...virtualIssue, first_seen: new Date(Date.now() - 3_600_000).toISOString() })
+    const fresh = mount(IssueListView, { global: { stubs } })
+    expect(fresh.find('[role="row"] .statechip--new').text()).toBe('new')
+    fresh.unmount()
+
+    setupWithVirtualRow({ ...virtualIssue, first_seen: '2024-01-01T00:00:00Z' })
+    const old = mount(IssueListView, { global: { stubs } })
+    expect(old.find('[role="row"] .statechip').exists()).toBe(false)
+  })
+
+  it('shows first and last seen, and a dash instead of zero users', () => {
+    setupWithVirtualRow({ ...virtualIssue, user_count: 0 })
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.findAll('[role="row"] .time-cell')).toHaveLength(2)
+    expect(wrapper.find('[role="row"] .users-cell').text()).toBe('–')
+    expect(wrapper.find('[role="row"] .users-cell--none').exists()).toBe(true)
+  })
+
+  it('sorts by first seen from its column header', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    const header = wrapper.findAll('.col-sort').find(b => b.text().includes('First seen'))!
+    await header.trigger('click')
+    expect(header.classes()).toContain('col-sort--active')
   })
 })
 
@@ -1598,7 +1640,7 @@ describe('sort comparator with multiple issues', () => {
     const titleBtn = wrapper.findAll('.col-sort').find(b => b.text().includes('Issue'))!
     await titleBtn.trigger('click') // col=title, dir=asc (title default)
     await titleBtn.trigger('click') // same col, toggles to desc
-    expect(titleBtn.find('.col-sort__icon').text()).toBe('↓')
+    expect(titleBtn.find('.col-sort__icon').attributes('data-dir')).toBe('desc')
   })
 })
 

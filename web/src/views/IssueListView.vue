@@ -215,6 +215,15 @@ function projectName(projectId: string) {
   return (projects.projects as { id: string; name: string }[])?.find((p) => p.id === projectId)?.name ?? projectId
 }
 
+// Open is the normal state, so it carries no chip. Regressed, resolved and
+// ignored always show; an open issue first seen inside the window is New.
+function rowState(iss: Issue | undefined): 'regressed' | 'new' | 'resolved' | 'ignored' | null {
+  if (!iss) return null
+  if (iss.status !== 'open') return iss.status
+  const from = investigation.bounds?.from
+  return from && Date.parse(iss.first_seen) >= Date.parse(from) ? 'new' : null
+}
+
 function assigneeInitial(iss: Issue) {
   if (!iss.assignee_id) return null
   const u = (users.value as User[]).find((u) => u.id === iss.assignee_id)
@@ -656,18 +665,19 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         />
         <span />
         <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'title' }" @click="toggleSort('title')">
-          Issue <span v-if="sortCol === 'title'" class="col-sort__icon">{{ sortDir === 'desc' ? '↓' : '↑' }}</span>
+          Issue <span v-if="sortCol === 'title'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span>
         </button>
-        <span>Env</span>
         <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'event_count' }" style="justify-content: flex-end" @click="toggleSort('event_count')">
-          <span v-if="sortCol === 'event_count'" class="col-sort__icon">{{ sortDir === 'desc' ? '↓' : '↑' }}</span> Events
+          <span v-if="sortCol === 'event_count'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> Events
         </button>
         <span style="text-align: right">Users</span>
+        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'first_seen' }" style="justify-content: flex-end" @click="toggleSort('first_seen')">
+          <span v-if="sortCol === 'first_seen'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> First seen
+        </button>
         <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'last_seen' }" style="justify-content: flex-end" @click="toggleSort('last_seen')">
-          <span v-if="sortCol === 'last_seen'" class="col-sort__icon">{{ sortDir === 'desc' ? '↓' : '↑' }}</span> Last seen
+          <span v-if="sortCol === 'last_seen'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> Last seen
         </button>
         <span>Owner</span>
-        <span>Status</span>
         <span />
       </div>
 
@@ -717,30 +727,35 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
                 <span class="issue__title-msg">{{ sorted[vRow.index]?.title.split(':').slice(1).join(':').trim() }}</span>
               </div>
               <div class="issue__sub">
+                <span v-if="rowState(sorted[vRow.index])" class="statechip" :class="`statechip--${rowState(sorted[vRow.index])}`">{{ rowState(sorted[vRow.index]) }}</span>
                 <span v-if="sorted[vRow.index]?.kind === 'n1_query'" class="kindbadge">N+1</span>
                 <span class="projtag" :title="projectName(sorted[vRow.index]?.project_id)">{{ projectName(sorted[vRow.index]?.project_id) }}</span>
+                <span
+                  v-if="sorted[vRow.index]?.environment"
+                  class="envbadge"
+                  :title="sorted[vRow.index]?.environment ?? ''"
+                  :class="sorted[vRow.index]?.environment === 'production' ? 'envbadge--prod' : sorted[vRow.index]?.environment === 'staging' ? 'envbadge--staging' : ''"
+                >{{ sorted[vRow.index]?.environment }}</span>
               </div>
             </div>
           </a>
-          <span
-            class="envbadge"
-            :title="sorted[vRow.index]?.environment ?? '-'"
-            :class="sorted[vRow.index]?.environment === 'production' ? 'envbadge--prod' : sorted[vRow.index]?.environment === 'staging' ? 'envbadge--staging' : ''"
-          >{{ sorted[vRow.index]?.environment ?? '-' }}</span>
           <div class="events-cell">
             <span v-if="sorted[vRow.index]?.kind !== 'n1_query'" class="events-cell__spark" :style="{ color: levelColor(sorted[vRow.index]?.level) }">
               <Sparkline :data="sorted[vRow.index]?.sparkline ?? []" :width="36" :height="14" />
             </span>
             <span class="events-cell__num" :title="sorted[vRow.index]?.event_count.toLocaleString()">{{ sorted[vRow.index]?.event_count.toLocaleString() }}</span>
           </div>
-          <span class="users-cell"><Icon name="user" :size="11" class="users-cell__icon" />{{ (sorted[vRow.index]?.user_count ?? 0).toLocaleString() }}</span>
+          <span class="users-cell" :class="{ 'users-cell--none': !sorted[vRow.index]?.user_count }">
+            <template v-if="sorted[vRow.index]?.user_count"><Icon name="user" :size="11" class="users-cell__icon" />{{ sorted[vRow.index]?.user_count.toLocaleString() }}</template>
+            <template v-else>–</template>
+          </span>
+          <span class="time-cell time-cell--quiet">{{ formatRel(sorted[vRow.index]?.first_seen) }}</span>
           <span class="time-cell">{{ formatRel(sorted[vRow.index]?.last_seen) }}</span>
           <span class="owner-cell">
             <span v-if="assigneeInitial(sorted[vRow.index])" class="owner-avatar" :title="sorted[vRow.index]?.assignee_email ?? ''">
               {{ assigneeInitial(sorted[vRow.index]) }}
             </span>
           </span>
-          <span class="statuspill" :class="`statuspill--${sorted[vRow.index]?.status}`">{{ sorted[vRow.index]?.status }}</span>
           <span class="row-chevron"><Icon name="chevron-right" :size="12" /></span>
         </div>
       </div>

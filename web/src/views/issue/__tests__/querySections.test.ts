@@ -97,6 +97,17 @@ describe('IssueTags', () => {
     expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: { tag_key: 'browser', tag_value: 'Chrome' } })
   })
 
+  it('marks a value every event shares so the sidebar can drop its bar', () => {
+    setupQueries({ data: ref([
+      ...tags,
+      { key: 'level', total: 3, values: [{ value: 'error', count: 3, pct: 100 }] },
+    ]) })
+    const wrapper = mount(IssueTags, { props: { issueId: 'iss-1' }, global: { stubs } })
+    const rows = wrapper.findAll('.tag-val')
+    expect(rows[0].classes()).not.toContain('tag-val--only')
+    expect(rows[1].classes()).toContain('tag-val--only')
+  })
+
   it('renders nothing without tags', () => {
     setupQueries({ data: ref([]) })
     expect(mount(IssueTags, { props: { issueId: 'iss-1' }, global: { stubs } }).find('.section').exists()).toBe(false)

@@ -33,6 +33,7 @@ const { data: issueTags } = useQuery({
           v-for="tv in tag.values"
           :key="tv.value"
           class="tag-val"
+          :class="{ 'tag-val--only': tag.values.length === 1 && tv.pct === 100 }"
         >
           <a
             class="tag-val__label"
