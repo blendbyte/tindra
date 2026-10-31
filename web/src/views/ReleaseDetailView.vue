@@ -152,7 +152,7 @@ function levelClass(level: string) {
           </div>
           <div class="stat">
             <div class="stat__label">Error rate</div>
-            <div class="stat__value" :style="{ color: release.tx_error_rate > 0 ? 'var(--danger)' : undefined }">
+            <div class="stat__value" :style="{ color: release.tx_error_rate > 5 ? 'var(--danger)' : release.tx_error_rate > 2 ? 'var(--warning)' : undefined }">
               {{ release.tx_count > 0 ? (release.tx_error_rate > 0 ? release.tx_error_rate.toFixed(1) + '%' : '–') : '–' }}
             </div>
           </div>

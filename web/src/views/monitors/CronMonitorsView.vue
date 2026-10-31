@@ -48,7 +48,7 @@ const { data: monitorsData, isLoading, isError: monitorsError, refetch: refetchM
 // Failing monitors first, longest failure first; paused last.
 const monitors = computed(() => rankCron(monitorsData.value ?? []))
 const verdict = computed(() => monitorVerdict(
-  monitors.value.map(m => ({ failing: cronFailing(m), paused: m.status === 'paused', unknown: m.state === 'unknown' })),
+  monitors.value.map(m => ({ failing: cronFailing(m), paused: m.status === 'paused', unknown: m.state === 'unknown' || !m.last_checkin_at })),
   { one: 'monitor', many: 'monitors' }, { one: 'is failing', many: 'are failing' }, 'healthy'))
 
 const { data: checkinsData, isLoading: checkinsLoading, isError: checkinsError, refetch: refetchCheckins } = useQuery({

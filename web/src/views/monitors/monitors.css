@@ -21,8 +21,7 @@
 .monrow--active { background: var(--accent-soft); }
 .monrow--active:hover { background: var(--accent-soft); }
 
-.monrow--paused { opacity: 0.65; }
-.monrow--paused:hover { opacity: 1; }
+.monrow--paused .monrow__name { color: var(--text-2); }
 
 .mon-paused-badge {
   font-size: 11px;
@@ -338,7 +337,13 @@ select.mon-field__input { cursor: pointer; }
 /* Failing rows lead and read heavier (The Urgency Order Rule). */
 .monrow--failing .monrow__name { font-weight: 600; color: var(--text-1); }
 .monrow__since {
+  white-space: nowrap;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--danger);
+}
+
+/* Phones: the outage length matters more than the project tag. */
+@media (max-width: 640px) {
+  .monrow__sub .projtag { display: none; }
 }

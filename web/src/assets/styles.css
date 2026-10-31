@@ -1344,7 +1344,7 @@ a { color: inherit; text-decoration: none; }
   margin-right: 6px;
 }
 .envbadge--prod::before { background: var(--accent); }
-.envbadge--staging::before { background: var(--warning); }
+.envbadge--staging::before { background: var(--text-2); }
 
 .events-cell {
   font-family: var(--mono);
@@ -2586,7 +2586,6 @@ a { color: inherit; text-decoration: none; }
 .statkpi__label {
   font-size: var(--text-xs);
   color: var(--text-3);
-  letter-spacing: 0.1em;
   font-weight: 500;
 }
 
@@ -2699,7 +2698,6 @@ a { color: inherit; text-decoration: none; }
   justify-content: center;
   flex-shrink: 0;
   min-width: 36px;
-  max-width: 80px;
   height: 20px;
   padding: 0 8px;
   border-radius: 10px;
@@ -2707,7 +2705,7 @@ a { color: inherit; text-decoration: none; }
   font-weight: 600;
   letter-spacing: 0.01em;
   text-transform: uppercase;
-  overflow: hidden;
+  white-space: nowrap;
   /* neutral fallback for unknown op types */
   color: var(--text-2);
   background: var(--surface-2);
@@ -2715,11 +2713,6 @@ a { color: inherit; text-decoration: none; }
 /* Op tags are categories, so they stay neutral: no state colours and no
    second accent (The Earned Red and One Violet rules). */
 .optag[class*="optag--"] { color: var(--text-2); background: var(--surface-2); }
-.optag--pageload,
-.optag--navigation,
-.optag--graphql,
-.optag--template,
-.optag--resource   { font-size: 8px; }
 
 /* Op filter tabs */
 .optabs {
@@ -2760,14 +2753,8 @@ a { color: inherit; text-decoration: none; }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.optab__dot--http       { background: var(--info); }
-.optab__dot--db         { background: var(--success); }
-.optab__dot--task       { background: var(--warning); }
-.optab__dot--queue      { background: var(--warning); }
-.optab__dot--pageload   { background: var(--accent); }
-.optab__dot--navigation { background: var(--accent); }
-.optab__dot--grpc       { background: var(--text-3); }
-.optab__dot--console    { background: var(--text-3); }
+/* Op filters are categories: one neutral dot, no state hues. */
+.optab__dot[class*="optab__dot--"] { background: var(--text-3); }
 
 .optab__count {
   color: var(--text-3);
@@ -2815,6 +2802,7 @@ a { color: inherit; text-decoration: none; }
 .tx-delta--worse { color: var(--danger); }
 .tx-delta--better { color: var(--success); }
 .tx-failure { color: var(--danger); }
+.tx-warn { color: var(--warning); }
 .tx-apdex--good { color: var(--success); }
 .tx-apdex--fair { color: var(--warning); }
 .tx-apdex--poor { color: var(--danger); }
@@ -3482,8 +3470,6 @@ a { color: inherit; text-decoration: none; }
   flex-shrink: 0;
   font-size: 9px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   padding: 1px 6px;
   border-radius: 3px;
   background: oklch(0.62 0.14 290 / 0.15);
@@ -5046,7 +5032,7 @@ a { color: inherit; text-decoration: none; }
 
 .rel-version__label {
   font-weight: 500;
-  color: var(--text-1);
+  color: var(--accent);
   font-size: var(--text-sm);
   white-space: nowrap;
   overflow: hidden;
@@ -5910,11 +5896,9 @@ a { color: inherit; text-decoration: none; }
   border-radius: 9px;
   font-size: 10px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 .rolebadge--owner { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-line); }
-.rolebadge--admin { background: oklch(from var(--info) l c h / 0.14); color: var(--info); border: 1px solid oklch(from var(--info) l c h / 0.30); }
+.rolebadge--admin { background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border); }
 .rolebadge--member { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
 .rolebadge--viewer { background: transparent; color: var(--text-3); border: 1px solid var(--border-soft); }
 
@@ -5944,7 +5928,7 @@ a { color: inherit; text-decoration: none; }
   border-bottom: 1px solid var(--border-soft);
 }
 .rule:first-of-type { border-top: 1px solid var(--border); }
-.rule--paused { opacity: 0.6; }
+.rule--paused .rule__name { color: var(--text-2); }
 
 .rule__head {
   display: flex;
@@ -6235,15 +6219,14 @@ a { color: inherit; text-decoration: none; }
   border-radius: 9px;
   font-size: 10px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   border: 1px solid var(--border-soft);
   color: var(--text-3);
 }
 .audit-row__kind--auth { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
-.audit-row__kind--issue { color: var(--danger); background: oklch(from var(--danger) l c h / 0.10); border-color: oklch(from var(--danger) l c h / 0.25); }
-.audit-row__kind--token { color: var(--warning); background: oklch(from var(--warning) l c h / 0.10); border-color: oklch(from var(--warning) l c h / 0.25); }
-.audit-row__kind--project { color: var(--info); background: oklch(from var(--info) l c h / 0.10); border-color: oklch(from var(--info) l c h / 0.25); }
+/* Audit kinds are categories: neutral, so red and amber stay reserved for problems. */
+.audit-row__kind--issue,
+.audit-row__kind--token,
+.audit-row__kind--project { color: var(--text-2); background: var(--surface-2); border-color: var(--border-soft); }
 
 .audit-row__actor { display: flex; align-items: center; gap: 8px; color: var(--text-1); }
 .audit-row__action { color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -6584,8 +6567,11 @@ select.field__input {
     min-width: 0;
   }
 
-  /* Waterfall: stack to single column */
-  .waterfall-grid { grid-template-columns: 1fr; }
+  /* Waterfall: keep span names and bars on one row and let the pair scroll
+     sideways. The column split is an inline style, so this must override it. */
+  .waterfall-grid { grid-template-columns: 190px 0 minmax(420px, 1fr) !important; overflow-x: auto; }
+  .waterfall-divider { display: none; }
+  .waterfall-left { min-width: 0; }
 
   /* Multi-column detail grids → single column */
   .tags-dist { grid-template-columns: 1fr; }
@@ -7140,6 +7126,7 @@ select.field__input {
   overflow: hidden;
 }
 .pass-bar__fill {
+  display: block;
   height: 100%;
   border-radius: 2px;
   transition: width 0.3s ease;
@@ -7337,4 +7324,16 @@ select.field__input {
   .filterbar--shared .filterbar__spacer { display: none; }
   .filterbar--shared .filterbar__search { flex: 1 1 150px; order: 10; }
   .filterbar--shared .export-menu { order: 11; }
+}
+
+/* Phones: a narrower version column keeps the issues column, which follows it,
+   on screen; the metrics scroll in after. */
+@media (max-width: 640px) {
+  .release-list { grid-template-columns: minmax(130px, 1fr) repeat(5, max-content); }
+}
+
+/* Phones: wide settings tables scroll inside their own border instead of
+   clipping columns. */
+@media (max-width: 640px) {
+  .token-table { display: block; overflow-x: auto; white-space: nowrap; }
 }

@@ -461,7 +461,7 @@ const { data: logPreview } = useQuery({
       <div class="rule__main">
         <div class="rule__name">
           {{ rule.name }}
-          <span v-if="!rule.enabled" class="rule__paused-tag">paused</span>
+          <span v-if="!rule.enabled" class="rule__paused-tag">Paused</span>
         </div>
         <div class="rule__cond">
           {{ triggerLabel(rule) }} · {{ rule.channel }} · {{ ruleProjectNames(rule) }}
