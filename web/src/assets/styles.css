@@ -1701,6 +1701,19 @@ a { color: inherit; text-decoration: none; }
 }
 .detail-hero__more:hover { color: var(--text-1); border-color: var(--text-3); }
 
+/* Issue verdict: one sentence under the title. The state leads in its
+   colour (amber regressed, violet new); the owner follows in plain text. */
+.issue-verdict {
+  margin: 10px 0 0;
+  font-size: var(--text-base);
+  color: var(--text-2);
+  line-height: 1.5;
+  max-width: 72ch;
+}
+.issue-verdict__lead { font-weight: 600; color: var(--text-1); }
+.issue-verdict__lead--regressed { color: var(--warning); }
+.issue-verdict__lead--new { color: var(--accent); }
+
 .issue-meta {
   display: flex;
   align-items: center;

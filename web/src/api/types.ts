@@ -137,6 +137,8 @@ export interface Issue {
   environment: string | null
   release: string | null
   release_id: string | null
+  first_release?: string | null
+  regressed_at?: string | null
   assignee_id: string | null
   assignee_email: string | null
   sparkline?: number[]
