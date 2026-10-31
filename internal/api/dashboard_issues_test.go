@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -160,4 +161,46 @@ func TestAttentionIssuesSplitsRegressedAndNew(t *testing.T) {
 	}
 	require.Equal(t, []string{"regressed", "regressed", "regressed"}, []string{list.Issues[0].Status, list.Issues[1].Status, list.Issues[2].Status}, statuses)
 	require.Equal(t, "new-today", list.Issues[3].Title, statuses)
+}
+
+func TestPriorityIssueListPagesWithARankCursor(t *testing.T) {
+	ctx := context.Background()
+	p, err := storage.CreateProject(ctx, testPool, "priority-pages", "Priority pages")
+	require.NoError(t, err)
+	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM projects WHERE id=$1", p.ID) })
+	// One regression and 51 older open issues: the first page ends inside the
+	// open group, so the cursor must carry rank 2.
+	_, err = testPool.Exec(ctx, `INSERT INTO issues(project_id,fingerprint,title,first_seen,last_seen,event_count,status)
+		SELECT $1,'open-'||i,'open-'||i,NOW()-INTERVAL '3 days',NOW()-i*INTERVAL '1 minute',1,'open' FROM generate_series(1,51) i`, p.ID)
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `INSERT INTO issues(project_id,fingerprint,title,first_seen,last_seen,event_count,status,regressed_at)
+		VALUES ($1,'back','back',NOW()-INTERVAL '3 days',NOW()-INTERVAL '2 hours',1,'regressed',NOW()-INTERVAL '2 hours')`, p.ID)
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, `INSERT INTO events(project_id,issue_id,timestamp,payload) SELECT project_id,id,last_seen,'{}'::jsonb FROM issues WHERE project_id=$1`, p.ID)
+	require.NoError(t, err)
+	token := bearerToken(t, p.ID)
+	from := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	to := time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)
+
+	get := func(query string) map[string]any {
+		req := httptest.NewRequest("GET", "/api/issues?sort=priority&project_id="+p.ID+"&from="+from+"&to="+to+query, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		globalHandler().ServeHTTP(rec, req)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		return body
+	}
+	first := get("")
+	issues := first["issues"].([]any)
+	require.Len(t, issues, 50)
+	require.Equal(t, "back", issues[0].(map[string]any)["title"])
+	require.EqualValues(t, 2, first["next_cursor_rank"])
+
+	second := get("&cursor_time=" + url.QueryEscape(first["next_cursor_time"].(string)) + "&cursor_id=" + first["next_cursor_id"].(string) + "&cursor_rank=2")
+	rest := second["issues"].([]any)
+	require.Len(t, rest, 2)
+	require.Equal(t, "open-51", rest[1].(map[string]any)["title"])
+	require.Nil(t, second["next_cursor_rank"])
 }
