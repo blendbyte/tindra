@@ -161,21 +161,19 @@ function finishSetup() {
   <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
   <div v-else class="page">
     <div class="db-body">
-      <!-- Main column: the briefing, then quieter performance context ───────── -->
+      <!-- Main column: the briefing alone, ending on its calm line ────────── -->
       <div class="db-main">
         <BriefingWidget :loading="loading" :open-count="openCount" :busiest="issues" :last-visit="lastVisit" />
-        <div class="db-tail">
-          <SlowTransactionsWidget :loading="loading" :tx-summaries="txSummaries" />
-          <TransactionDensityWidget />
-        </div>
       </div>
 
-      <!-- Aside column ─────────────────────────────────────────────────────── -->
+      <!-- Aside column: health, then performance context ────────────────── -->
       <aside class="db-aside" aria-label="Health summary">
         <VitalsWidget :loading="loading" :tx-summaries="txSummaries" />
         <ReleasesWidget :loading="loading" :releases="releases" />
         <ProjectsWidget />
         <AlertsWidget />
+        <SlowTransactionsWidget :loading="loading" :tx-summaries="txSummaries" />
+        <TransactionDensityWidget />
       </aside>
     </div>
   </div>
@@ -198,10 +196,6 @@ function finishSetup() {
   border-right: 1px solid var(--border-soft);
 }
 
-.db-tail {
-  padding: 8px 16px 40px;
-}
-
 .db-aside {
   min-width: 0;
   padding: 32px 8px 40px;
@@ -214,10 +208,7 @@ function finishSetup() {
 @media (max-width: 768px) {
   .db-body { grid-template-columns: 1fr; }
   .db-main { border-right: none; }
-  .db-tail { padding: 0 0 28px; }
-  /* On phones the health summary follows the briefing, before performance. */
-  .db-main { display: contents; }
-  .db-aside { order: 1; padding: 8px 0 28px; border-top: 1px solid var(--border-soft); }
-  .db-tail { order: 2; border-top: 1px solid var(--border-soft); padding-top: 28px; }
+  /* On phones the health summary follows the briefing. */
+  .db-aside { padding: 8px 0 28px; border-top: 1px solid var(--border-soft); }
 }
 </style>
