@@ -18,12 +18,8 @@ defineProps<{ active: MonitorsTab }>()
       class="mon-subnav__tab"
       :class="{ 'mon-subnav__tab--active': active === 'uptime' }"
     >Uptime monitors</RouterLink>
-  </div>
-
-  <!-- Action bar -->
-  <div class="filterbar">
-    <span class="filterbar__spacer" />
-    <slot />
+    <!-- Page actions share the tab row, so monitors add one bar, not two. -->
+    <div class="mon-subnav__actions"><slot /></div>
   </div>
 </template>
 
@@ -61,11 +57,18 @@ defineProps<{ active: MonitorsTab }>()
   border-bottom-color: var(--accent);
 }
 
-/* Filterbar sits below nav (48px) + subnav (40px) = 88px */
-.mon-subnav ~ .filterbar { top: 88px; }
+.mon-subnav__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+}
+.mon-subnav__actions :deep(.btn) { height: 28px; padding-block: 0; }
 
 @media (max-width: 640px) {
-  .mon-subnav { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+  .mon-subnav { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; padding: 0 12px; }
+  .mon-subnav__actions { position: sticky; right: 0; background: var(--bg); }
   .mon-subnav::-webkit-scrollbar { display: none; }
 }
 </style>

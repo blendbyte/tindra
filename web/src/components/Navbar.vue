@@ -234,6 +234,9 @@ async function logout() {
           :aria-expanded="filterOpen"
           @click="filterOpen = !filterOpen; menuOpen = false"
         >
+          <!-- On the narrowest phones the name gives way to an icon, so the
+               control still reads as the project picker. -->
+          <Icon name="squares" :size="13" class="nav__projects-icon" />
           <span class="nav__projects-label">{{ filterLabel }}</span>
           <span v-if="!allSelected" class="nav__projects-count">
             {{ projects.selectedIds.length }}

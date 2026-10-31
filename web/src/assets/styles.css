@@ -1668,7 +1668,8 @@ a { color: inherit; text-decoration: none; }
 .detail-hero__sep { color: var(--border); }
 .detail-hero__project { color: var(--text-3); overflow-wrap: break-word; word-break: break-all; }
 .detail-hero__env { color: var(--text-3); }
-.detail-hero__env--prod { color: var(--success); }
+/* Environments are categories, not health: production reads stronger, never green. */
+.detail-hero__env--prod { color: var(--text-2); }
 .detail-hero__release { color: var(--text-3); }
 .detail-hero__release--link { text-decoration: none; }
 .detail-hero__release--link:hover { color: var(--text-1); text-decoration: underline; }
@@ -2975,8 +2976,9 @@ a { color: inherit; text-decoration: none; }
   font-weight: 500;
 }
 
+/* Figures use the sans face with tabular digits, like the dashboard's vitals;
+   mono stays for code, routes and identifiers. */
 .txstat__value {
-  font-family: var(--mono);
   font-size: var(--text-lg);
   color: var(--text-1);
   font-variant-numeric: tabular-nums;
@@ -3159,7 +3161,7 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   flex-direction: column;
   gap: 3px;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+  box-shadow: 0 4px 12px oklch(0 0 0 / 0.12);
 }
 
 .chart-tip__time {
@@ -6391,7 +6393,7 @@ select.field__input {
   height: 14px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.15);
   transition: transform 150ms;
 }
 .toggle--on .toggle__knob { transform: translateX(16px); }
@@ -6698,6 +6700,7 @@ select.field__input {
 .nav__links, .nav__right { flex-shrink: 0; }
 .nav__link { white-space: nowrap; }
 .nav__projects-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.nav__projects-icon { display: none; color: var(--text-2); }
 .nav__projects .popover { width: 300px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 64px); overflow-y: auto; }
 .nav__mobile-utility { display: none; }
 
@@ -6719,6 +6722,7 @@ select.field__input {
 
 @media (max-width: 479px) {
   .nav__projects-label { display: none; }
+  .nav__projects-icon { display: inline-block; }
   .nav__projects-trigger { padding-inline: 8px; justify-content: center; }
   .nav__projects-count { margin-left: 0; }
   .alerts-page .rule__head { flex-wrap: wrap; }

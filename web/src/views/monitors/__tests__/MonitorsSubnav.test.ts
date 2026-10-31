@@ -27,18 +27,12 @@ describe('MonitorsSubnav', () => {
     expect(activeTabs[0]!.text()).toBe(label)
   })
 
-  it('renders page actions in the filterbar after the spacer', () => {
+  it('puts page actions in the tab row instead of a second bar', () => {
     const wrapper = mount(MonitorsSubnav, {
       props: { active: 'cron' },
       slots: { default: '<button class="btn btn--primary">New monitor</button>' },
     })
-    const filterbar = wrapper.find('.filterbar')
-    expect(filterbar.find('.filterbar__spacer + .btn--primary').text()).toBe('New monitor')
-  })
-
-  it('places the filterbar right after the tab bar so it sticks below it', () => {
-    const wrapper = mount(MonitorsSubnav, { props: { active: 'uptime' }, attachTo: document.body })
-    expect(document.querySelector('.mon-subnav + .filterbar')).not.toBeNull()
-    wrapper.unmount()
+    expect(wrapper.find('.mon-subnav .mon-subnav__actions .btn--primary').text()).toBe('New monitor')
+    expect(wrapper.find('.filterbar').exists()).toBe(false)
   })
 })

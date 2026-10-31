@@ -107,6 +107,25 @@ beforeEach(() => {
 })
 
 describe('LogsView', () => {
+  it('moves its filters into the shared investigation bar and reports how many are set', async () => {
+    const slot = document.createElement('div')
+    slot.id = 'page-filters'
+    document.body.appendChild(slot)
+    try {
+      routeState.query = { search: 'timeout', level: 'error' }
+      setupMocks([])
+      const wrapper = mount(LogsView, { global: { stubs }, attachTo: document.body })
+      await wrapper.vm.$nextTick()
+      expect(slot.querySelector('.filterbar--shared .filterbar__search input')).not.toBeNull()
+      expect(slot.querySelector('.filterbar__refresh')).toBeNull()
+      expect(useInvestigationStore().pageFilterCount).toBe(2)
+      wrapper.unmount()
+      expect(useInvestigationStore().pageFilterCount).toBe(0)
+    } finally {
+      slot.remove()
+    }
+  })
+
   describe('loading state', () => {
     it('shows loading skeleton when logs are being fetched', () => {
       setupMocks([], true)

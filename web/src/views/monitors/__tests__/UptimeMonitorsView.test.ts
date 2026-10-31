@@ -121,7 +121,7 @@ async function openEditForm(wrapper: ReturnType<typeof mount>) {
 }
 
 async function openUptimeCreateForm(wrapper: ReturnType<typeof mount>) {
-  await wrapper.find('.filterbar .btn--primary').trigger('click')
+  await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
 }
 
 beforeEach(() => {
@@ -271,30 +271,30 @@ describe('UptimeMonitorsView', () => {
   })
 
   describe('create form', () => {
-    it('shows "New monitor" in filterbar when user can manage', async () => {
+    it('shows "New monitor" in the tab row when user can manage', async () => {
       setupUptimeMocks([], true)
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      expect(wrapper.find('.filterbar .btn--primary').exists()).toBe(true)
+      expect(wrapper.find('.mon-subnav__actions .btn--primary').exists()).toBe(true)
     })
 
-    it('hides the filterbar "New monitor" button when user cannot manage', () => {
+    it('hides the "New monitor" button when user cannot manage', () => {
       setupUptimeMocks([], false)
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      expect(wrapper.find('.filterbar .btn--primary').exists()).toBe(false)
+      expect(wrapper.find('.mon-subnav__actions .btn--primary').exists()).toBe(false)
     })
 
     it('toggles the create form when clicking "New monitor"', async () => {
       setupUptimeMocks([], true)
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
       expect(wrapper.find('.mon-createbar').exists()).toBe(false)
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       expect(wrapper.find('.mon-createbar').exists()).toBe(true)
     })
 
     it('hides create form when Cancel is clicked', async () => {
       setupUptimeMocks([], true)
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       await wrapper.find('.mon-createbar__actions .btn--ghost').trigger('click')
       expect(wrapper.find('.mon-createbar').exists()).toBe(false)
     })
@@ -302,7 +302,7 @@ describe('UptimeMonitorsView', () => {
     it('updates URL input in create form', async () => {
       setupUptimeMocks([], true)
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const urlInput = wrapper.find('.mon-createbar input.mono')
       await urlInput.setValue('https://example.com')
       expect((urlInput.element as HTMLInputElement).value).toBe('https://example.com')
@@ -313,7 +313,7 @@ describe('UptimeMonitorsView', () => {
       mockMutations({ 0: { mutate: createMutate } })
       setupUptimeMocks([], true)
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const createBtn = wrapper.find('.mon-createbar__actions .btn--primary')
       expect(createBtn.attributes('disabled')).toBeDefined()
       await createBtn.trigger('click')
@@ -490,7 +490,7 @@ describe('UptimeMonitorsView', () => {
       mockMutationsCallThrough()
       setupUptimeMocks([], true)
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       // Fill name, URL, and project so the Create button is enabled
       const fields = wrapper.findAll('.mon-createbar__fields--uptime input')
       await fields[0].setValue('Homepage') // name
