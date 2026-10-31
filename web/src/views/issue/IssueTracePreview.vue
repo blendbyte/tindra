@@ -59,13 +59,13 @@ const tracePreviewRows = computed(() => {
 </script>
 
 <template>
-  <IssueSection v-if="linkedTransaction" section-key="trace" title="Trace Preview">
+  <IssueSection v-if="linkedTransaction" section-key="trace" title="Trace preview">
     <template #head>
       <a
         class="section__link"
         :href="`/transactions/${linkedTransaction.id}`"
         @click.stop="router.push(`/transactions/${linkedTransaction.id}`)"
-      >View Full Trace <Icon name="external" :size="10" /></a>
+      >View full trace <Icon name="external" :size="10" /></a>
     </template>
     <div class="trace-preview">
       <div

@@ -74,7 +74,7 @@ const stubs = {
   RouterLink: { template: '<a><slot /></a>' },
   Icon: { template: '<span />' },
   FilterChip: { name: 'FilterChip', props: ['label', 'value', 'options'], template: '<div />' },
-  Sparkline: { template: '<span />' },
+  Sparkline: { props: ['color'], template: '<span class="spark-stub" :data-color="color" />' },
   BrandMark: { template: '<span />' },
   IgnoreButton: { template: '<div />' },
   UserFilter: { template: '<div class="user-filter-stub" />' },
@@ -851,6 +851,19 @@ describe('virtual row rendering', () => {
     setupWithVirtualRow({ ...virtualIssue, first_seen: '2024-01-01T00:00:00Z' })
     const old = mount(IssueListView, { global: { stubs } })
     expect(old.find('[role="row"] .statechip').exists()).toBe(false)
+  })
+
+  it('colours sparklines by state, never by level', () => {
+    const colour = (overrides: Record<string, unknown>) => {
+      setupWithVirtualRow({ ...virtualIssue, level: 'error', ...overrides })
+      const wrapper = mount(IssueListView, { global: { stubs } })
+      const value = wrapper.find('[role="row"] .spark-stub').attributes('data-color')
+      wrapper.unmount()
+      return value
+    }
+    expect(colour({ status: 'regressed' })).toBe('var(--warning)')
+    expect(colour({ first_seen: new Date(Date.now() - 3_600_000).toISOString() })).toBe('var(--accent)')
+    expect(colour({ first_seen: '2024-01-01T00:00:00Z' })).toBe('var(--text-3)')
   })
 
   it('shows first and last seen, and a dash instead of zero users', () => {
@@ -1712,6 +1725,14 @@ describe('confirmMerge early return', () => {
       const issuesCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
       const queryKey = issuesCall.queryKey.value
       expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['store-proj-id'])
+    })
+
+    it('asks the server for new issues when the status is New', () => {
+      routeQueryOverride = { status: 'New' }
+      setupMocks({})
+      mount(IssueListView, { global: { stubs } })
+      const issuesCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
+      expect(new URLSearchParams(issuesCall.queryKey.value[1]).get('status')).toBe('new')
     })
 
     it('falls back to store selectedIds when no project_id in URL', () => {

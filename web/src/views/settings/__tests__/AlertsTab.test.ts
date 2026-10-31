@@ -152,6 +152,13 @@ describe('AlertsTab', () => {
   })
 
   describe('with rules data', () => {
+    it('says in the warning colour when every rule is paused', () => {
+      mockQueries({ 'alert-rules': [{ ...makeRule('r1', 'A'), enabled: false }, { ...makeRule('r2', 'B'), enabled: false }] })
+      const sub = mountTab().find('.pane-head__sub')
+      expect(sub.text()).toBe('All 2 rules are paused. Nothing will notify you.')
+      expect(sub.classes()).toContain('pane-head__sub--warning')
+    })
+
     it('renders rule names when alert rules exist', () => {
       mockQueries({ 'alert-rules': [makeRule('r1', 'High Error Rate')] })
       const wrapper = mountTab()

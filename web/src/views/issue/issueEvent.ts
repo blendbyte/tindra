@@ -51,7 +51,7 @@ export function unwrapHeaderVal(v: unknown): string {
 
 const CONTEXT_LABELS: Record<string, string> = {
   runtime: 'Runtime',
-  os: 'Operating System',
+  os: 'Operating system',
   browser: 'Browser',
   device: 'Device',
   app: 'App',
@@ -126,7 +126,7 @@ export function parseUAContexts(ua: string): Record<string, Omit<ContextCard, 'k
   if (osName) {
     const rows: [string, string][] = [['name', osName]]
     if (osVersion) rows.push(['version', osVersion])
-    out.os = { label: 'Operating System', icon: 'activity', rows }
+    out.os = { label: 'Operating system', icon: 'activity', rows }
   }
 
   // Device (Android model from UA)

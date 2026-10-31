@@ -173,17 +173,17 @@
   --border-soft: oklch(0.92 0.010 285);
   --text-1: oklch(0.20 0.022 285);
   --text-2: oklch(0.46 0.028 285);
-  --text-3: oklch(0.60 0.024 285);
+  --text-3: oklch(0.52 0.024 285);
   --accent: oklch(0.52 0.18 285);
   --accent-hi: oklch(0.46 0.20 285);
   --accent-soft: oklch(0.52 0.18 285 / 0.10);
   --accent-line: oklch(0.52 0.18 285 / 0.35);
   --accent-glow: oklch(0.52 0.18 285 / 0.10);
   --danger: oklch(0.54 0.22 25);
-  --warning: oklch(0.62 0.17 60);
+  --warning: oklch(0.56 0.16 60);
   --success: oklch(0.50 0.15 155);
   --info: oklch(0.55 0.16 230);
-  --regressed-tint: oklch(0.62 0.17 60 / 0.05);
+  --regressed-tint: oklch(0.56 0.16 60 / 0.05);
   --surface-raised: oklch(0.995 0.003 285);
   --on-accent: oklch(0.995 0.003 285);
   --hero-glow: radial-gradient(ellipse 70% 50% at 50% 0%, oklch(0.52 0.18 285 / 0.06), transparent 70%);
@@ -5305,6 +5305,7 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-2);
   margin-top: 3px;
 }
+.pane-head__sub--warning { color: var(--warning); font-weight: 500; }
 
 .pane-subhead {
   font-size: var(--text-xs);

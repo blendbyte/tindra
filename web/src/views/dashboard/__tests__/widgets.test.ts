@@ -187,8 +187,10 @@ describe('BriefingWidget', () => {
     expect(rows[2].find('.brief-row__type').text()).toBe('TypeError')
     expect(rows[2].text()).toContain('first seen in 1.5.0 · 2 users · Ada')
     expect(rows[3].text()).toContain('3 events')
-    expect(wrapper.find('.brief__more').text()).toContain('3 more, newest first')
-    expect(wrapper.find('.brief__more').attributes('data-to')).toContain('sort=first_seen')
+    // Each link opens the issue list filtered to exactly the hidden group.
+    const more = wrapper.findAll('.brief__more')
+    expect(more.map(m => m.text())).toEqual(['3 more new'])
+    expect(more[0].attributes('data-to')).toContain('status=New')
     expect(rows[2].attributes('data-to')).toContain('/issues/r1')
   })
 
@@ -220,6 +222,17 @@ describe('BriefingWidget', () => {
     const wrapper = mountBriefing({ monitorsError: true })
     expect(wrapper.find('.brief__verdict').text()).toBe('No new or regressed issues.')
     expect(wrapper.text()).toContain("We couldn't load monitors.")
+  })
+
+  it('never says nothing is new since the last visit when monitors failed to load', () => {
+    const wrapper = mountBriefing({ monitorsError: true, lastVisit: Date.now() - 20 * 60_000 })
+    expect(wrapper.find('.brief__lede').exists()).toBe(false)
+    const withIssues = mountBriefing({
+      monitorsError: true,
+      lastVisit: Date.now() - 20 * 60_000,
+      attention: page({ new: [attentionIssue('n')], new_total: 1, unseen_new: 1 }),
+    })
+    expect(withIssues.find('.brief__lede').text()).toContain('1 new issue appeared')
   })
 
   it('lists the busiest open issues that are not already shown', () => {
@@ -297,13 +310,18 @@ describe('SlowTransactionsWidget', () => {
     expect(to.query).toMatchObject({ name: '/t600', op: 'http.server' })
   })
 
-  it('flags slow and failing rows', () => {
+  it('flags slow rows in amber and keeps red for high failure rates', () => {
     const wrapper = mount(SlowTransactionsWidget, {
-      props: { loading: false, txSummaries: [tx({ p50: 600, p95: 2500, failure_rate: 3 })] },
+      props: { loading: false, txSummaries: [tx({ transaction: '/a', p50: 600, p95: 2500, failure_rate: 3 }), tx({ transaction: '/b', p95: 1500, failure_rate: 12 })] },
       global: { stubs },
     })
-    expect(wrapper.find('.db-tx-row__val--bad').text()).toBe('2500ms')
-    expect(wrapper.find('.db-tx-row__pct--warn').text()).toBe('3.0%')
+    const rows = wrapper.findAll('.db-tx-row')
+    expect(rows[0].find('.db-tx-row__val--warn').text()).toBe('2500ms')
+    expect(wrapper.find('.db-tx-row__val--bad').exists()).toBe(false)
+    expect(rows[0].find('.db-tx-row__pct--warn').text()).toBe('3.0%')
+    expect(rows[0].find('.db-tx-row__pct--bad').exists()).toBe(false)
+    expect(rows[1].find('.db-tx-row__val--warn').exists()).toBe(false)
+    expect(rows[1].find('.db-tx-row__pct--bad').text()).toBe('12.0%')
     expect(wrapper.find('.db-tx-row__bar-fill').attributes('style')).toContain('width: 30%')
   })
 })
@@ -342,7 +360,17 @@ describe('AlertsWidget', () => {
     })
     const wrapper = mount(AlertsWidget, { global: { stubs } })
     expect(wrapper.findAll('.db-alert-row__name').map(n => n.text())).toEqual(['Rule 06', 'Rule 05', 'Rule 04', 'Rule 03', 'Rule 02'])
-    expect(wrapper.find('.db-sec__foot').text()).toBe('6 of 7 rules enabled')
+    expect(wrapper.find('.db-sec__foot').text()).toBe('6 of 7 rules on, 1 paused.')
+  })
+
+  it('says nothing will notify anyone instead of a calm empty state when every rule is paused', () => {
+    mockQueries({
+      'me': { data: ref({ permissions: { manage_alerts: false } }) },
+      'alert-rules': { data: ref([rule('a', null, false), rule('b', null, false)]), isLoading: ref(false) },
+    })
+    const wrapper = mount(AlertsWidget, { global: { stubs } })
+    expect(wrapper.find('.db-empty').exists()).toBe(false)
+    expect(wrapper.find('.db-silent').text()).toBe('All 2 rules are paused. Nothing will notify you.')
   })
 
   it('caches the unwrapped rule list', async () => {

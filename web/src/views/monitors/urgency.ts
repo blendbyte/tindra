@@ -1,5 +1,5 @@
 import type { CronMonitor, UptimeMonitor } from '@/api/types'
-import { cronSince, plural } from '@/views/dashboard/briefing'
+import { plural } from '@/utils/plural'
 
 // Monitor lists lead with what is failing (The Urgency Order Rule): failing
 // first, longest outage first; then active monitors in their original order;
@@ -12,6 +12,28 @@ export function uptimeFailing(m: UptimeMonitor): boolean {
 export function cronFailing(m: CronMonitor): boolean {
   return m.status === 'active' && (m.state === 'missed' || m.state === 'error')
 }
+
+// Onset of a cron failure: the first error of the trailing error streak, or
+// when a missed check-in was due.
+export function cronSince(m: CronMonitor): string | null {
+  if (m.state === 'missed') return m.next_expected_at ?? m.last_checkin_at
+  let since: string | null = null
+  const checkins = m.recent_checkins ?? []
+  for (let i = checkins.length - 1; i >= 0; i--) {
+    if (checkins[i].status !== 'error') break
+    since = checkins[i].received_at
+  }
+  return since ?? m.last_checkin_at
+}
+
+// A monitor that has never reported says so, instead of borrowing a healthy
+// default state.
+export function cronUnchecked(m: CronMonitor): boolean {
+  return !cronFailing(m) && (m.state === 'unknown' || !m.last_checkin_at)
+}
+
+// Passing ticks in a check history recede; failures keep the full colour.
+export const PASS_TICK = 'oklch(from var(--success) l c h / 0.55)'
 
 export function uptimeSince(m: UptimeMonitor): string | null {
   return uptimeFailing(m) ? m.went_down_at ?? m.last_ok_at : null

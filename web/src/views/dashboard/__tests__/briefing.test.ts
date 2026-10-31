@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import type { CronMonitor, UptimeMonitor } from '@/api/types'
 import {
   brokenMonitors, brokenTitle, formatSpan, healthyMonitorCount, isUnseen, joinParts,
-  sinceVisitParts, splitTitle, takeLastVisit, verdict,
+  sinceVisitParts, splitTitle, takeLastVisit, touchVisit, verdict, VISIT_GAP_MS,
 } from '../briefing'
 
 const NOW = Date.parse('2026-10-31T12:00:00Z')
@@ -96,16 +96,39 @@ describe('formatting', () => {
 describe('last visit', () => {
   beforeEach(() => localStorage.clear())
 
-  it('returns null on the first visit and records the current one', () => {
+  const KEY = 'tindra:dashboard:last-visit'
+
+  it('returns null on the first visit and compares later visits with when the previous one ended', () => {
     expect(takeLastVisit(NOW)).toBeNull()
-    expect(takeLastVisit(NOW + 1000)).toBe(NOW)
+    expect(takeLastVisit(NOW + VISIT_GAP_MS + 1)).toBe(NOW)
+  })
+
+  it('keeps the baseline when coming back within the visit gap', () => {
+    localStorage.setItem(KEY, JSON.stringify({ baseline: NOW - 3_600_000, seen: NOW - 5 * 60_000 }))
+    expect(takeLastVisit(NOW)).toBe(NOW - 3_600_000)
+    expect(takeLastVisit(NOW + 60_000)).toBe(NOW - 3_600_000)
+  })
+
+  it('counts the gap from when the dashboard was left', () => {
+    takeLastVisit(NOW)
+    touchVisit(NOW + 20 * 60_000)
+    expect(takeLastVisit(NOW + 45 * 60_000)).toBeNull()
+    touchVisit(NOW + 50 * 60_000)
+    expect(takeLastVisit(NOW + 50 * 60_000 + VISIT_GAP_MS + 1)).toBe(NOW + 50 * 60_000)
+  })
+
+  it('reads the single timestamp older builds stored', () => {
+    localStorage.setItem(KEY, String(NOW - 2 * VISIT_GAP_MS))
+    expect(takeLastVisit(NOW)).toBe(NOW - 2 * VISIT_GAP_MS)
   })
 
   it('ignores stored values that are invalid or in the future', () => {
-    localStorage.setItem('tindra:dashboard:last-visit', 'nonsense')
+    localStorage.setItem(KEY, 'nonsense')
     expect(takeLastVisit(NOW)).toBeNull()
-    localStorage.setItem('tindra:dashboard:last-visit', String(NOW + 60_000))
+    localStorage.setItem(KEY, String(NOW + 60_000))
     expect(takeLastVisit(NOW)).toBeNull()
+    localStorage.setItem(KEY, JSON.stringify({ baseline: 'x', seen: NOW - 2 * VISIT_GAP_MS }))
+    expect(takeLastVisit(NOW)).toBe(NOW - 2 * VISIT_GAP_MS)
   })
 
   it('treats only onsets after the last visit as unseen', () => {

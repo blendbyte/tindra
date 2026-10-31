@@ -227,6 +227,13 @@ function rowState(iss: Issue | undefined): 'regressed' | 'new' | 'resolved' | 'i
   return from && Date.parse(iss.first_seen) >= Date.parse(from) ? 'new' : null
 }
 
+// Sparklines carry state, not level: amber for regressed, violet for new,
+// neutral for everything else (The Earned Red Rule).
+function sparkColor(iss: Issue | undefined): string {
+  const state = rowState(iss)
+  return state === 'regressed' ? 'var(--warning)' : state === 'new' ? 'var(--accent)' : 'var(--text-3)'
+}
+
 function assigneeInitial(iss: Issue) {
   if (!iss.assignee_id) return null
   const u = (users.value as User[]).find((u) => u.id === iss.assignee_id)
@@ -557,7 +564,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
       <FilterChip
         label="Status"
         :value="statusFilter"
-        :options="['Open', 'Resolved', 'Ignored', 'Regressed', 'All']"
+        :options="['Open', 'Regressed', 'New', 'Resolved', 'Ignored', 'All']"
         @change="statusFilter = $event"
       />
       <FilterChip
@@ -756,7 +763,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           </a>
           <div class="events-cell">
             <span v-if="sorted[vRow.index]?.kind !== 'n1_query'" class="events-cell__spark" :style="{ color: levelColor(sorted[vRow.index]?.level) }">
-              <Sparkline :data="sorted[vRow.index]?.sparkline ?? []" :width="36" :height="14" />
+              <Sparkline :data="sorted[vRow.index]?.sparkline ?? []" :width="36" :height="14" :color="sparkColor(sorted[vRow.index])" />
             </span>
             <span class="events-cell__num" :title="sorted[vRow.index]?.event_count.toLocaleString()">{{ sorted[vRow.index]?.event_count.toLocaleString() }}</span>
           </div>

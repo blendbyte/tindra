@@ -55,19 +55,19 @@ const slowTx = computed(() =>
         <span class="db-tx-row__val">{{ formatDuration(tx.p50) }}</span>
         <span
           class="db-tx-row__val"
-          :class="{ 'db-tx-row__val--warn': tx.p95 > 1000, 'db-tx-row__val--bad': tx.p95 > 2000 }"
+          :class="{ 'db-tx-row__val--warn': tx.p95 > 2000 }"
         >{{ formatDuration(tx.p95) }}</span>
         <div class="db-tx-row__bar">
           <div class="db-tx-row__bar-bg">
             <div
               class="db-tx-row__bar-fill"
-              :class="{ 'db-tx-row__bar-fill--warn': tx.failure_rate > 2 }"
+              :class="{ 'db-tx-row__bar-fill--warn': tx.failure_rate > 2, 'db-tx-row__bar-fill--bad': tx.failure_rate > 10 }"
               :style="{ width: `${Math.min(100, tx.failure_rate * 10)}%` }"
             />
           </div>
           <span
             class="db-tx-row__pct"
-            :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 2 }"
+            :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 2, 'db-tx-row__pct--bad': tx.failure_rate > 10 }"
           >{{ tx.failure_rate.toFixed(1) }}%</span>
         </div>
       </RouterLink>
@@ -125,8 +125,9 @@ const slowTx = computed(() =>
   font-variant-numeric: tabular-nums;
 }
 
+/* Slow is degraded, not broken: a long P95 is amber at most, so the slowest
+   list does not read as five failures (The Earned Red Rule). */
 .db-tx-row__val--warn { color: var(--warning); }
-.db-tx-row__val--bad  { color: var(--danger); }
 
 .db-tx-row__bar {
   display: flex;
@@ -149,7 +150,8 @@ const slowTx = computed(() =>
   border-radius: 2px;
 }
 
-.db-tx-row__bar-fill--warn { background: var(--danger); }
+.db-tx-row__bar-fill--warn { background: var(--warning); }
+.db-tx-row__bar-fill--bad { background: var(--danger); }
 
 .db-tx-row__pct {
   font-size: 10px;
@@ -171,5 +173,6 @@ const slowTx = computed(() =>
   .db-tx-row > :nth-child(5) { display: none; } /* error rate bar */
 }
 
-.db-tx-row__pct--warn { color: var(--danger); }
+.db-tx-row__pct--warn { color: var(--warning); }
+.db-tx-row__pct--bad { color: var(--danger); }
 </style>

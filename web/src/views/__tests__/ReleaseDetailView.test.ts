@@ -148,6 +148,20 @@ describe('ReleaseDetailView', () => {
       expect(wrapper.text()).toContain('No transactions recorded for this release')
     })
 
+    it('opens on the issues when the release brought back or introduced some, regressions first', async () => {
+      const issues = [
+        { id: 'n1', title: 'New one', level: 'error', category: 'new', event_count: 3, last_seen: '2024-01-01' },
+        { id: 'r1', title: 'Back again', level: 'error', category: 'regressed', event_count: 2, last_seen: '2024-01-01' },
+      ]
+      setupMocks({ ...baseRelease, new_issues: 1, regressed_issues: 1 }, false, false, issues, [])
+      const wrapper = mount(ReleaseDetailView, { global: { stubs } })
+      expect(wrapper.find('.optab--active').text()).toContain('Issues')
+      expect(wrapper.findAll('.rel-category-badge').map(b => b.text())).toEqual(['Regressed', 'New'])
+      const txTab = wrapper.findAll('.optab').find(t => t.text().includes('Transactions'))!
+      await txTab.trigger('click')
+      expect(wrapper.text()).toContain('No transactions recorded for this release')
+    })
+
     it('switches to issues tab on click', async () => {
       setupMocks()
       const wrapper = mount(ReleaseDetailView, { global: { stubs } })

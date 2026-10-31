@@ -6,19 +6,29 @@ import type { CronMonitor, UptimeMonitor } from '@/api/types'
 import { useProjectScope } from '@/views/dashboard/shared'
 import { brokenMonitors, lastVisitSeen, type AttentionIssuesPage } from '@/views/dashboard/briefing'
 
+// Options for queries the app shell keeps open on every page. The page's
+// freshness polling skips them (see isPageQuery), so they refresh on their own
+// slower cadence instead of with every page refresh.
+export const SHELL_REFRESH_MS = 60_000
+function shellOptions(shell: boolean) {
+  return shell ? { meta: { shell: true }, refetchInterval: SHELL_REFRESH_MS } : {}
+}
+
 // Monitor queries behind the briefing. Widgets that call this share one cache
 // entry per key, so the briefing and the project list never fetch twice.
-export function useMonitorQueries() {
+export function useMonitorQueries({ shell = false } = {}) {
   const { buildQs } = useProjectScope()
 
   const uptime = useQuery({
     queryKey: computed(() => ['uptime-monitors', buildQs()]),
     queryFn: ({ signal }) => apiFetch<UptimeMonitor[]>(`/api/uptime-monitors?${buildQs()}`, { signal }),
+    ...shellOptions(shell),
   })
 
   const cron = useQuery({
     queryKey: computed(() => ['monitors', buildQs()]),
     queryFn: ({ signal }) => apiFetch<CronMonitor[]>(`/api/monitors?${buildQs()}`, { signal }),
+    ...shellOptions(shell),
   })
 
   return { uptime, cron }
@@ -26,7 +36,7 @@ export function useMonitorQueries() {
 
 // Regressed issues and issues first seen in the window. With a last visit,
 // the server also counts how many of each happened after it.
-export function useAttentionQuery(lastVisitSource: MaybeRefOrGetter<number | null>) {
+export function useAttentionQuery(lastVisitSource: MaybeRefOrGetter<number | null>, { shell = false } = {}) {
   const lastVisit = computed(() => toValue(lastVisitSource))
   const investigation = useInvestigationStore()
   const { buildQs } = useProjectScope()
@@ -40,6 +50,7 @@ export function useAttentionQuery(lastVisitSource: MaybeRefOrGetter<number | nul
         ...(investigation.environment === 'All' ? {} : { env: investigation.environment }),
         ...(lastVisit.value === null ? {} : { last_visit: new Date(lastVisit.value).toISOString() }),
       })}`), { signal }),
+    ...shellOptions(shell),
   })
 }
 
@@ -47,8 +58,8 @@ export function useAttentionQuery(lastVisitSource: MaybeRefOrGetter<number | nul
 // that regressed or are new in the window. It asks with the dashboard's last
 // visit, so on the dashboard both read one cache entry.
 export function useAttentionCounts() {
-  const { uptime, cron } = useMonitorQueries()
-  const attention = useAttentionQuery(lastVisitSeen)
+  const { uptime, cron } = useMonitorQueries({ shell: true })
+  const attention = useAttentionQuery(lastVisitSeen, { shell: true })
   const monitors = computed(() => brokenMonitors(uptime.data.value ?? [], cron.data.value ?? []).length)
   const regressed = computed(() => attention.data.value?.regressed_total ?? 0)
   const issues = computed(() => regressed.value + (attention.data.value?.new_total ?? 0))

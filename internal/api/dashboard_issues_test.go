@@ -65,12 +65,16 @@ func TestAttentionIssuesSplitsRegressedAndNew(t *testing.T) {
 	var assignee string
 	require.NoError(t, testPool.QueryRow(ctx, `INSERT INTO users(email,name,password_hash) VALUES ('attention@example.com','Ada','x') RETURNING id`).Scan(&assignee))
 	t.Cleanup(func() { testPool.Exec(ctx, "DELETE FROM users WHERE id=$1", assignee) })
-	insert := func(title, status, firstSeen string, regressedAt any, assigneeID any) {
+	insertSeen := func(title, status, firstSeen, lastSeen string, regressedAt any, assigneeID any) {
 		_, err := testPool.Exec(ctx, `INSERT INTO issues(project_id,fingerprint,title,first_seen,last_seen,event_count,status,regressed_at,assignee_id,first_release)
-			VALUES ($1,$2,$2,NOW()-$3::interval,NOW(),3,$4,$5,$6,'2.0.0')`, p.ID, title, firstSeen, status, regressedAt, assigneeID)
+			VALUES ($1,$2,$2,NOW()-$3::interval,NOW()-$4::interval,3,$5,$6,$7,'2.0.0')`, p.ID, title, firstSeen, lastSeen, status, regressedAt, assigneeID)
 		require.NoError(t, err)
 	}
+	insert := func(title, status, firstSeen string, regressedAt any, assigneeID any) {
+		insertSeen(title, status, firstSeen, "0 seconds", regressedAt, assigneeID)
+	}
 	insert("regressed-old", "regressed", "10 days", time.Now().Add(-2*time.Hour), nil)
+	insertSeen("regressed-quiet", "regressed", "10 days", "3 days", time.Now().Add(-4*24*time.Hour), nil)
 	insert("regressed-recent", "regressed", "10 days", time.Now().Add(-time.Hour), assignee)
 	insert("new-today", "open", "2 hours", nil, nil)
 	insert("new-this-week", "open", "3 days", nil, nil)
@@ -100,7 +104,8 @@ func TestAttentionIssuesSplitsRegressedAndNew(t *testing.T) {
 
 	week := get("project_id=" + p.ID + "&hours=168")
 	require.Equal(t, 2, week.NewTotal)
-	require.Equal(t, 2, week.RegressedTotal, "regressed issues are a state, not windowed")
+	require.Equal(t, 3, week.RegressedTotal, "a regression counts once it was seen in the window")
+	require.Equal(t, "regressed-quiet", week.Regressed[2].Title)
 
 	from := time.Now().Add(-4 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)
 	to := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
@@ -119,4 +124,25 @@ func TestAttentionIssuesSplitsRegressedAndNew(t *testing.T) {
 	require.Zero(t, nobody.RegressedTotal)
 	require.Zero(t, nobody.NewTotal)
 	require.Empty(t, nobody.New)
+
+	// The issue list's New status shows the same issues the briefing calls new.
+	_, err = testPool.Exec(ctx, `INSERT INTO events(project_id,issue_id,timestamp,payload)
+		SELECT project_id,id,NOW()-INTERVAL '1 hour','{}'::jsonb FROM issues WHERE project_id=$1`, p.ID)
+	require.NoError(t, err)
+	dayFrom := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	dayTo := time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)
+	req := httptest.NewRequest("GET", "/api/issues?status=new&project_id="+p.ID+"&from="+dayFrom+"&to="+dayTo, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var list struct {
+		Issues []storage.Issue `json:"issues"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	titles := []string{}
+	for _, issue := range list.Issues {
+		titles = append(titles, issue.Title)
+	}
+	require.Equal(t, []string{"new-today"}, titles)
 }

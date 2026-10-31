@@ -444,7 +444,7 @@ onUnmounted(() => {
       <div class="section">
         <div class="section__head" style="cursor: default">
           <h2 class="section__title">Event instances</h2>
-          <span class="section__count">{{ issue.event_count.toLocaleString() }} occurrences</span>
+          <span class="section__count">{{ issue.event_count.toLocaleString() }} {{ issue.event_count === 1 ? 'occurrence' : 'occurrences' }}</span>
           <div v-if="issue.event_count > 1" class="section__actions">
             <button class="btn btn--ghost" style="font-size: var(--text-xs)" @click="toggleEventList">
               {{ showEventList ? 'Hide list' : 'Show all' }}

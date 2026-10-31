@@ -531,6 +531,17 @@ func (ro *router) handleAttentionIssues(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, result)
 }
 
+// newIssuesSince bounds status=new to issues first seen in the request's
+// investigation window, so the list shows what the dashboard calls new.
+func newIssuesSince(r *http.Request, filter *storage.IssueFilter) {
+	if filter.Status != "new" {
+		return
+	}
+	if bounds, ok := storage.InvestigationRange(r.Context()); ok && !bounds.AllTime {
+		filter.NewSince = &bounds.From
+	}
+}
+
 // handleListAllIssues returns a paginated issue list across all projects.
 // Response: { issues, total, has_more, next_cursor_time?, next_cursor_id? }
 func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
@@ -547,6 +558,7 @@ func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
 		UserIdentity: r.URL.Query().Get("user"),
 		Limit:        pageSize,
 	}
+	newIssuesSince(r, &filter)
 	if since := r.URL.Query().Get("since"); since != "" {
 		var d time.Duration
 		switch since {
@@ -633,6 +645,7 @@ func (ro *router) handleExportIssues(w http.ResponseWriter, r *http.Request) {
 		UserIdentity: r.URL.Query().Get("user"),
 		Limit:        maxRows,
 	}
+	newIssuesSince(r, &filter)
 	if since := r.URL.Query().Get("since"); since != "" {
 		var d time.Duration
 		switch since {

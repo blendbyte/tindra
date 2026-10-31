@@ -1,5 +1,7 @@
 import { ref } from 'vue'
 import type { CronMonitor, UptimeMonitor } from '@/api/types'
+import { plural } from '@/utils/plural'
+import { cronFailing, cronSince, cronUnchecked, uptimeFailing, uptimeSince } from '@/views/monitors/urgency'
 
 // The dashboard briefing ranks what needs attention: monitors that are broken
 // right now, then issues that regressed or first appeared in the window.
@@ -35,19 +37,6 @@ export type BrokenMonitor =
   | { kind: 'uptime'; monitor: UptimeMonitor; since: string | null; history: CheckState[] }
   | { kind: 'cron'; monitor: CronMonitor; since: string | null; history: CheckState[] }
 
-// Onset of a cron failure: the first error of the trailing error streak, or
-// when a missed check-in was due.
-export function cronSince(m: CronMonitor): string | null {
-  if (m.state === 'missed') return m.next_expected_at ?? m.last_checkin_at
-  let since: string | null = null
-  const checkins = m.recent_checkins ?? []
-  for (let i = checkins.length - 1; i >= 0; i--) {
-    if (checkins[i].status !== 'error') break
-    since = checkins[i].received_at
-  }
-  return since ?? m.last_checkin_at
-}
-
 // Active monitors that are failing now: uptime first, then cron, longest
 // outage first within each kind. Paused monitors never count as broken.
 // Inputs that are not lists (an error body, a stale cache entry) count as empty.
@@ -57,16 +46,16 @@ export function brokenMonitors(uptimeInput: UptimeMonitor[] = [], cronInput: Cro
   const byOnset = (a: { since: string | null }, b: { since: string | null }) =>
     (a.since ? Date.parse(a.since) : Infinity) - (b.since ? Date.parse(b.since) : Infinity)
   const down: BrokenMonitor[] = uptime
-    .filter(m => m.status === 'active' && m.state === 'down')
+    .filter(uptimeFailing)
     .map(m => ({
       kind: 'uptime' as const,
       monitor: m,
-      since: m.went_down_at ?? m.last_ok_at,
+      since: uptimeSince(m),
       history: (m.recent_checks ?? []).map(c => (c.status === 'up' ? 'ok' : 'bad') as CheckState),
     }))
     .sort(byOnset)
   const failing: BrokenMonitor[] = cron
-    .filter(m => m.status === 'active' && (m.state === 'missed' || m.state === 'error'))
+    .filter(cronFailing)
     .map(m => ({
       kind: 'cron' as const,
       monitor: m,
@@ -81,7 +70,7 @@ export function healthyMonitorCount(uptimeInput: UptimeMonitor[] = [], cronInput
   const uptime = Array.isArray(uptimeInput) ? uptimeInput : []
   const cron = Array.isArray(cronInput) ? cronInput : []
   return uptime.filter(m => m.status === 'active' && m.state === 'up').length +
-    cron.filter(m => m.status === 'active' && (m.state === 'ok' || m.state === 'in_progress')).length
+    cron.filter(m => m.status === 'active' && (m.state === 'ok' || m.state === 'in_progress') && !cronUnchecked(m)).length
 }
 
 export function brokenTitle(b: BrokenMonitor): string {
@@ -109,10 +98,6 @@ export function splitTitle(title: string): { type: string; message: string } {
   const i = title.indexOf(':')
   if (i <= 0 || i > 80 || /\s/.test(title.slice(0, i))) return { type: '', message: title }
   return { type: title.slice(0, i), message: title.slice(i + 1).trim() }
-}
-
-export function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`
 }
 
 // Like plural, but keeps the count on the same line as its noun.
@@ -151,26 +136,57 @@ export function joinParts(parts: string[]): string {
 }
 
 const LAST_VISIT_KEY = 'tindra:dashboard:last-visit'
+// Returning to the dashboard within this gap continues the same visit, so
+// opening an issue and coming back keeps the marks of what was unseen.
+export const VISIT_GAP_MS = 30 * 60_000
 
-function storedLastVisit(now: number): number | null {
+// A visit compares against `baseline`, when the previous visit ended. `seen`
+// is when the dashboard was last open.
+interface Visit { baseline: number | null; seen: number }
+
+function readVisit(now: number): Visit | null {
+  const valid = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0 && n < now
   try {
     const raw = localStorage.getItem(LAST_VISIT_KEY)
-    const parsed = raw === null ? NaN : Number(raw)
-    return Number.isFinite(parsed) && parsed > 0 && parsed < now ? parsed : null
+    if (raw === null) return null
+    // Older builds stored only the time of the last visit.
+    const parsed: unknown = JSON.parse(raw)
+    if (valid(parsed)) return { baseline: parsed, seen: parsed }
+    const visit = parsed as Partial<Visit> | null
+    if (!visit || !valid(visit.seen)) return null
+    return { baseline: valid(visit.baseline) ? visit.baseline : null, seen: visit.seen }
   } catch { return null }
+}
+
+function writeVisit(visit: Visit) {
+  try {
+    localStorage.setItem(LAST_VISIT_KEY, JSON.stringify(visit))
+  } catch { /* storage unavailable */ }
+}
+
+// The baseline a visit starting now would use, without recording anything.
+function baselineAt(now: number): number | null {
+  const stored = readVisit(now)
+  if (!stored) return null
+  return now - stored.seen < VISIT_GAP_MS ? stored.baseline : stored.seen
 }
 
 // The last visit the open dashboard compares against. The navigation reads it
 // too, so both ask the server the same question and share one cached answer.
-export const lastVisitSeen = ref<number | null>(storedLastVisit(Date.now()))
+export const lastVisitSeen = ref<number | null>(baselineAt(Date.now()))
 
-// Reads when the dashboard was last opened in this browser and records now.
-// Returns null on the first visit or when storage is unavailable.
+// Starts or continues a dashboard visit and returns its baseline: when the
+// previous visit ended, or null on the first visit or without storage.
 export function takeLastVisit(now = Date.now()): number | null {
-  const previous = storedLastVisit(now)
-  try {
-    localStorage.setItem(LAST_VISIT_KEY, String(now))
-  } catch { /* storage unavailable */ }
-  lastVisitSeen.value = previous
-  return previous
+  const baseline = baselineAt(now)
+  writeVisit({ baseline, seen: now })
+  lastVisitSeen.value = baseline
+  return baseline
+}
+
+// Records that the dashboard was still open now, so the gap to the next
+// visit counts from when it was left.
+export function touchVisit(now = Date.now()) {
+  const stored = readVisit(now + 1)
+  writeVisit({ baseline: stored?.baseline ?? null, seen: now })
 }

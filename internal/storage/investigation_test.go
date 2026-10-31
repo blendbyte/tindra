@@ -74,6 +74,7 @@ func TestInvestigationIssuesUseMatchingEvents(t *testing.T) {
 	require.EqualValues(t, 1, issues[0].UserCount)
 	require.Equal(t, "preview", *issues[0].Environment)
 	require.True(t, from.Add(time.Hour).Equal(issues[0].LastSeen))
+	require.True(t, to.Add(time.Hour).Equal(issues[0].FirstSeen), "first seen is the issue's own, not the window's first event")
 	total := 0
 	for _, n := range issues[0].Sparkline {
 		total += n
@@ -86,6 +87,17 @@ func TestInvestigationIssuesUseMatchingEvents(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, next)
 	filter.CursorTime, filter.CursorID = nil, nil
+	newFilter := filter
+	newFilter.Status = "new"
+	newFilter.NewSince = &from
+	fresh, err := storage.ListAllIssues(ctx, testPool, newFilter)
+	require.NoError(t, err)
+	require.Len(t, fresh, 1, "an open issue first seen after the window start is new")
+	later := to.Add(2 * time.Hour)
+	newFilter.NewSince = &later
+	fresh, err = storage.ListAllIssues(ctx, testPool, newFilter)
+	require.NoError(t, err)
+	require.Empty(t, fresh)
 	allCtx := storage.WithTimeRange(context.Background(), storage.TimeRange{To: to.Add(2 * time.Hour), AllTime: true})
 	all, err := storage.ListAllIssues(allCtx, testPool, filter)
 	require.NoError(t, err)

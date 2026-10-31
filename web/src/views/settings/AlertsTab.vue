@@ -9,6 +9,7 @@ import { apiFetch } from '@/api/client'
 import type { AlertRule, AlertFiring, AlertTrigger, AlertChannel } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { usePermissions, useProjectByID, useProjects } from './shared'
+import { alertVerdict } from './alertState'
 
 const { show: showToast } = useToast()
 const { formatRel } = useFormatters()
@@ -62,6 +63,7 @@ const { data: alertRulesData } = useQuery({
 })
 
 const alertRules = computed(() => alertRulesData.value ?? [])
+const verdict = computed(() => alertVerdict(alertRules.value))
 
 function firingTriggerLabel(trigger: string): string {
   const labels: Record<string, string> = {
@@ -336,7 +338,7 @@ const { data: logPreview } = useQuery({
   <div class="pane-head">
     <div>
       <div class="pane-head__title">Alert rules</div>
-      <div class="pane-head__sub">{{ alertRules.length }} {{ alertRules.length === 1 ? 'rule' : 'rules' }}</div>
+      <div class="pane-head__sub" :class="{ 'pane-head__sub--warning': verdict.silent }">{{ verdict.text }}</div>
     </div>
     <button v-if="canManageAlerts" class="btn btn--primary" @click="openNewRule()">
       <Icon name="plus" :size="12" />

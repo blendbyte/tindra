@@ -9,11 +9,14 @@ import Icon from '@/components/Icon.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import MonitorsSubnav from './MonitorsSubnav.vue'
 import { useCanManage, useMonitorProjects, useMonitorQueryParams } from './shared'
-import { monitorVerdict, rankUptime, uptimeFailing, uptimeSince } from './urgency'
+import { monitorVerdict, PASS_TICK, rankUptime, uptimeFailing, uptimeSince } from './urgency'
 import { formatSpan } from '@/views/dashboard/briefing'
+import { useNow } from '@/composables/useNow'
 
 const qc = useQueryClient()
 const { formatRel } = useFormatters()
+// Keeps outage lengths and relative times counting between refreshes.
+const now = useNow()
 const { confirm } = useConfirm()
 
 const canManage = useCanManage()
@@ -69,13 +72,17 @@ function uptimeStateColor(state: string): string {
 function uptimeStateLabel(state: string): string {
   if (state === 'up') return 'Up'
   if (state === 'down') return 'Down'
-  return 'Unknown'
+  return 'Not checked yet'
 }
 
 function uptimeCheckColor(status: string): string {
   if (status === 'up') return 'var(--success)'
   if (status === 'down') return 'var(--danger)'
   return 'var(--text-3)'
+}
+
+function tickColor(status: string): string {
+  return status === 'up' ? PASS_TICK : uptimeCheckColor(status)
 }
 
 function fmtUptime(pct: number): string {
@@ -341,7 +348,7 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
             <div class="monrow__name" :title="m.name">{{ m.name }}</div>
             <div class="monrow__sub">
               <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : uptimeStateColor(m.state) }" class="monrow__state">{{ uptimeStateLabel(m.state) }}</span>
-              <span v-if="uptimeSince(m)" class="monrow__since">for {{ formatSpan(uptimeSince(m)) }}</span>
+              <span v-if="uptimeSince(m)" class="monrow__since">for {{ formatSpan(uptimeSince(m), now) }}</span>
               <template v-if="m.status === 'paused'">
                 <span class="monrow__sep">·</span>
                 <span class="mon-paused-badge">Paused</span>
@@ -362,7 +369,7 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
               v-for="dot in m.recent_checks"
               :key="dot.checked_at"
               class="mon-tl-dot"
-              :style="{ background: uptimeCheckColor(dot.status) }"
+              :style="{ background: tickColor(dot.status) }"
               :title="`${dot.status} · ${formatRel(dot.checked_at)}`"
             />
           </div>

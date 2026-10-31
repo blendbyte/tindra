@@ -566,7 +566,7 @@ describe('IssueDetailView', () => {
       localStorage.removeItem('tindra:issue:collapsed')
       setupQueries(baseIssue, [{}, {}, { data: ref(eventWithRequest) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      const head = wrapper.findAll('.section__head').find(h => h.text().includes('HTTP Request'))!
+      const head = wrapper.findAll('.section__head').find(h => h.text().includes('HTTP request'))!
       expect(head.attributes('role')).toBe('button')
       expect(head.attributes('tabindex')).toBe('0')
       expect(head.attributes('aria-expanded')).toBe('true')
@@ -672,7 +672,7 @@ describe('IssueDetailView', () => {
       expect(wrapper.find('.trace-preview').exists()).toBe(true)
     })
 
-    it('shows View Full Trace link pointing to the transaction', () => {
+    it('shows View full trace link pointing to the transaction', () => {
       const linkedTx = {
         id: 'tx-abc',
         project_id: 'proj-1',
@@ -688,7 +688,7 @@ describe('IssueDetailView', () => {
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       const link = wrapper.find('.section__link')
       expect(link.exists()).toBe(true)
-      expect(link.text()).toContain('View Full Trace')
+      expect(link.text()).toContain('View full trace')
     })
 
     it('does not render trace preview when no linked transaction', () => {

@@ -250,10 +250,10 @@ describe('UptimeMonitorsView', () => {
       expect(wrapper.find('.monrow__state').text()).toBe('Down')
     })
 
-    it('shows "Unknown" for unknown state', async () => {
+    it('says a monitor without a result has not been checked yet', async () => {
       setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage', 'unknown')])
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
-      expect(wrapper.find('.monrow__state').text()).toBe('Unknown')
+      expect(wrapper.find('.monrow__state').text()).toBe('Not checked yet')
     })
   })
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useProjectsStore } from '@/stores/projects'
@@ -14,7 +14,7 @@ import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import ProjectSetup from '@/components/ProjectSetup.vue'
 import { useProjectScope } from './dashboard/shared'
-import { takeLastVisit } from './dashboard/briefing'
+import { takeLastVisit, touchVisit } from './dashboard/briefing'
 import BriefingWidget from './dashboard/BriefingWidget.vue'
 import VitalsWidget from './dashboard/VitalsWidget.vue'
 import ProjectsWidget from './dashboard/ProjectsWidget.vue'
@@ -58,9 +58,16 @@ const { data: releasesPage, isFetching: releasesFetching } = useQuery({
 
 })
 
-// When this browser last opened the dashboard; rows that changed after it are
-// marked. Read once per mount so the marks stay while the page is open.
+// When this browser's previous dashboard visit ended; rows that changed after
+// it are marked. Coming back within the visit gap keeps the same baseline, and
+// leaving or hiding the page records when the visit ended.
 const lastVisit = takeLastVisit()
+function onVisibility() { if (document.visibilityState === 'hidden') touchVisit() }
+document.addEventListener('visibilitychange', onVisibility)
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibility)
+  touchVisit()
+})
 
 const openCount = computed(() => issuesPage.value?.total ?? 0)
 const issues = computed(() => issuesPage.value?.issues ?? [])

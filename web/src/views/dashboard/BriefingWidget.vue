@@ -7,10 +7,12 @@ import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import QueryFeedback from '@/components/QueryFeedback.vue'
 import { fmt, useWindowLabel, type DashboardIssue } from './shared'
+import { plural } from '@/utils/plural'
+import { useNow } from '@/composables/useNow'
 import { useAttentionQuery, useMonitorQueries } from '@/composables/useBriefingData'
 import {
   brokenMonitors, brokenTitle, formatSpan, healthyMonitorCount, isUnseen, joinParts,
-  plural, sinceVisitParts, splitTitle, verdict,
+  sinceVisitParts, splitTitle, verdict,
   type AttentionIssue, type BrokenMonitor,
 } from './briefing'
 
@@ -24,6 +26,8 @@ const props = defineProps<{
 const investigation = useInvestigationStore()
 const projects = useProjectsStore()
 const { formatRel } = useFormatters()
+// Keeps outage lengths and relative times counting between refreshes.
+const now = useNow()
 const windowLabel = useWindowLabel()
 const windowPhrase = computed(() =>
   windowLabel.value === 'selected range' ? 'in the selected range'
@@ -43,7 +47,10 @@ const healthy = computed(() => healthyMonitorCount(uptimeMonitors.value ?? [], c
 const regressed = computed(() => attentionPage.value?.regressed ?? [])
 const fresh = computed(() => attentionPage.value?.new ?? [])
 const changedTotal = computed(() => (attentionPage.value?.regressed_total ?? 0) + (attentionPage.value?.new_total ?? 0))
-const hiddenChanged = computed(() => changedTotal.value - regressed.value.length - fresh.value.length)
+// Rows past the briefing's five per group, each linked to the issue list
+// filtered to exactly that group.
+const hiddenRegressed = computed(() => Math.max(0, (attentionPage.value?.regressed_total ?? 0) - regressed.value.length))
+const hiddenNew = computed(() => Math.max(0, (attentionPage.value?.new_total ?? 0) - fresh.value.length))
 
 const monitorsLoading = computed(() =>
   (uptimeFetching.value && !uptimeMonitors.value) || (cronFetching.value && !cronMonitors.value))
@@ -75,13 +82,16 @@ const busiestRest = computed(() => {
 
 const lede = computed(() => {
   if (props.lastVisit === null || issuesUnknown.value) return ''
+  void now.value
   const ago = formatRel(new Date(props.lastVisit).toISOString())
   const parts = sinceVisitParts({
     monitors: broken.value.filter(b => isUnseen(b.since, props.lastVisit)).length,
     regressed: attentionPage.value?.unseen_regressed ?? 0,
     fresh: attentionPage.value?.unseen_new ?? 0,
   })
-  return parts.length ? `Since you last looked ${ago}: ${joinParts(parts)}.` : `Nothing new since you last looked ${ago}.`
+  if (parts.length) return `Since you last looked ${ago}: ${joinParts(parts)}.`
+  // Without monitor data, "nothing new" would speak for monitors nobody checked.
+  return monitorsUnknown.value ? '' : `Nothing new since you last looked ${ago}.`
 })
 
 const multiProject = computed(() => projects.projects.length > 1)
@@ -180,7 +190,7 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
               <i v-for="(s, i) in historySlots(b.history)" :key="i" :class="`brief-history__tick--${s}`" />
             </span>
             <span class="brief-row__age brief-row__age--danger" :title="b.since ? `Failing since ${new Date(b.since).toLocaleString()}` : undefined">
-              {{ formatSpan(b.since) }}
+              {{ formatSpan(b.since, now) }}
             </span>
           </RouterLink>
         </li>
@@ -226,9 +236,14 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
           </RouterLink>
         </li>
       </ul>
-      <RouterLink v-if="hiddenChanged > 0" :to="investigation.link('/issues?sort=first_seen')" class="brief__more">
-        {{ hiddenChanged }} more, newest first <Icon name="arrow-right" :size="12" />
-      </RouterLink>
+      <div v-if="hiddenRegressed || hiddenNew" class="brief__more-links">
+        <RouterLink v-if="hiddenRegressed" :to="investigation.link('/issues?status=Regressed')" class="brief__more">
+          {{ hiddenRegressed }} more regressed <Icon name="arrow-right" :size="12" />
+        </RouterLink>
+        <RouterLink v-if="hiddenNew" :to="investigation.link('/issues?status=New')" class="brief__more">
+          {{ hiddenNew }} more new <Icon name="arrow-right" :size="12" />
+        </RouterLink>
+      </div>
     </section>
 
     <!-- Busiest ongoing ────────────────────────────────────────────────────── -->
@@ -435,7 +450,7 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   text-decoration: none;
 }
 
-.brief__more { margin-top: 12px; }
+.brief__more-links { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: 12px; }
 .brief__more:hover,
 .brief__calm-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 

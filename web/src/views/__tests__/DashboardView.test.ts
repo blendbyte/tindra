@@ -188,8 +188,8 @@ describe('DashboardView', () => {
   })
 
   describe('empty states', () => {
-    it('shows the no-fired-alerts state when alert rules have no last_fired_at', () => {
-      const wrapper = makeWrapper()
+    it('shows the no-fired-alerts state when enabled rules have not fired', () => {
+      const wrapper = makeWrapper({ alertRules: [{ id: 'a1', name: 'Rule 1', enabled: true, last_fired_at: null, channel: 'email' }] })
       expect(wrapper.text()).toContain('No alerts fired recently')
     })
 
@@ -294,9 +294,10 @@ describe('DashboardView', () => {
   })
 
   describe('active alert rules count', () => {
-    it('shows 0 of 0 rules enabled when no alert rules', () => {
+    it('says nothing will notify anyone when there are no alert rules', () => {
       const wrapper = makeWrapper({ alertRules: [] })
-      expect(wrapper.text()).toContain('0 of 0 rules enabled')
+      expect(wrapper.text()).toContain('No alert rules yet. Nothing will notify you.')
+      expect(wrapper.text()).not.toContain('No alerts fired recently')
     })
 
     it('shows correct count of enabled rules', () => {
@@ -305,7 +306,7 @@ describe('DashboardView', () => {
         { id: 'a2', name: 'Rule 2', enabled: false, last_fired_at: null, channel: 'slack' },
       ]
       const wrapper = makeWrapper({ alertRules })
-      expect(wrapper.text()).toContain('1 of 2 rules enabled')
+      expect(wrapper.text()).toContain('1 of 2 rules on, 1 paused.')
     })
   })
 
@@ -398,7 +399,7 @@ describe('DashboardView', () => {
 
     it('records this visit so the next one can show what changed', () => {
       makeWrapper()
-      expect(Number(localStorage.getItem('tindra:dashboard:last-visit'))).toBeGreaterThan(0)
+      expect(JSON.parse(localStorage.getItem('tindra:dashboard:last-visit')!).seen).toBeGreaterThan(0)
     })
   })
 

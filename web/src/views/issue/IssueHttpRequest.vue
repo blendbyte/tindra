@@ -23,7 +23,7 @@ const reqBodyDisplay = computed(() =>
 </script>
 
 <template>
-  <IssueSection v-if="httpRequest" section-key="request" title="HTTP Request">
+  <IssueSection v-if="httpRequest" section-key="request" title="HTTP request">
     <template #head>
       <span v-if="httpRequest.method" class="section__badge section__badge--method">{{ httpRequest.method }}</span>
     </template>

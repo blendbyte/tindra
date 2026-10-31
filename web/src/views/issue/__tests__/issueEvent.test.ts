@@ -79,7 +79,7 @@ describe('parseUAContexts', () => {
 describe('eventContexts', () => {
   it('skips the trace context and meta keys', () => {
     const cards = eventContexts(event({ contexts: { trace: { trace_id: 't' }, os: { name: 'iOS', type: 'os', raw_description: 'x' } } }))
-    expect(cards).toEqual([{ key: 'os', label: 'Operating System', icon: 'activity', rows: [['name', 'iOS']] }])
+    expect(cards).toEqual([{ key: 'os', label: 'Operating system', icon: 'activity', rows: [['name', 'iOS']] }])
   })
 
   it('labels unknown contexts by their key', () => {
