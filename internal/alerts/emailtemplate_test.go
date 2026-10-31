@@ -544,17 +544,54 @@ func TestRenderAlertEmail_uptimeDown_viewURL(t *testing.T) {
 		RuleName: "uptime alert",
 		Trigger:  "uptime_down",
 		FiredAt:  time.Now(),
-		Details:  map[string]any{"down_count": 1},
+		Details:  map[string]any{"down_count": 2},
+		UptimeMonitors: []*storage.UptimeMonitor{
+			{ProjectID: "11111111-1111-1111-1111-111111111111", Name: "API", URL: "https://api.example.com", State: "down"},
+			{ProjectID: "22222222-2222-2222-2222-222222222222", Name: "Shop", URL: "https://shop.example.com", State: "down"},
+		},
 	}
 	html, text, err := RenderAlertEmail(payload, "https://tindra.example.com")
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !strings.Contains(html, "https://tindra.example.com/monitors") {
-		t.Error("HTML missing monitors view URL")
+	// /monitors alone opens the cron page, so uptime alerts link to the uptime
+	// page, scoped to the monitors' projects.
+	card := `href="https://tindra.example.com/monitors/uptime?project_id=11111111-1111-1111-1111-111111111111"`
+	if !strings.Contains(html, card) {
+		t.Errorf("HTML missing uptime card link %s", card)
 	}
-	if !strings.Contains(text, "https://tindra.example.com/monitors") {
-		t.Error("text missing monitors view URL")
+	view := "View uptime monitors: https://tindra.example.com/monitors/uptime?project_id=11111111-1111-1111-1111-111111111111&project_id=22222222-2222-2222-2222-222222222222"
+	if !strings.Contains(text, view) {
+		t.Errorf("text missing %q in:\n%s", view, text)
+	}
+	if strings.Contains(html, "/monitors\"") || strings.Contains(html, "/monitors/cron") {
+		t.Error("uptime email must not link to the cron monitor page")
+	}
+}
+
+func TestRenderAlertEmail_cron_viewURL(t *testing.T) {
+	payload := AlertPayload{
+		RuleName: "cron alert",
+		Trigger:  "cron_missed",
+		FiredAt:  time.Now(),
+		Monitors: []*storage.CronMonitor{{ProjectID: "11111111-1111-1111-1111-111111111111", Name: "backup", Schedule: "@daily", State: "missed"}},
+	}
+	_, text, err := RenderAlertEmail(payload, "https://tindra.example.com")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	view := "View cron monitors: https://tindra.example.com/monitors/cron?project_id=11111111-1111-1111-1111-111111111111"
+	if !strings.Contains(text, view) {
+		t.Errorf("text missing %q in:\n%s", view, text)
+	}
+}
+
+func TestMonitorsViewURL(t *testing.T) {
+	if got := monitorsViewURL("https://t.example", "uptime", nil); got != "https://t.example/monitors/uptime" {
+		t.Errorf("no projects: %s", got)
+	}
+	if got := monitorsViewURL("https://t.example", "cron", []string{"a", "", "a", "b"}); got != "https://t.example/monitors/cron?project_id=a&project_id=b" {
+		t.Errorf("deduplicated projects: %s", got)
 	}
 }
 
