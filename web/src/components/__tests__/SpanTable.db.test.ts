@@ -112,6 +112,14 @@ describe('SpanTable (db)', () => {
       expect(rows.length).toBe(2)
     })
 
+    it('labels the p95 cell so the phone layout can name it without the header', () => {
+      setupMocks([makeSpan('SELECT * FROM users')])
+      const wrapper = mount(SpanTable, { props: { kind: 'db' }, global: { stubs } })
+      expect(wrapper.find('table').classes()).toContain('perf-table--spans')
+      const cells = wrapper.findAll('.perf-table__row--clickable td')
+      expect(cells[4].attributes('data-label')).toBe('p95')
+    })
+
     it('displays the query description', () => {
       setupMocks([makeSpan('SELECT * FROM users')])
       const wrapper = mount(SpanTable, { props: { kind: 'db' }, global: { stubs } })

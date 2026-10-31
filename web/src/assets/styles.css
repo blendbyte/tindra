@@ -2702,6 +2702,35 @@ a { color: inherit; text-decoration: none; }
 }
 .txrow--header:hover { background: var(--bg); }
 
+/* Phones: a transaction is its name and the number that ranks it (p95, or a
+   trace's duration) on one line, with project and errors or status beneath,
+   instead of a wide table scrolled sideways past those numbers. */
+@media (max-width: 640px) {
+  .tx-list:not(.tx-list--pageload) { display: block; min-width: 0; }
+  .tx-list:not(.tx-list--pageload) > .txrow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-auto-rows: auto;
+    row-gap: 4px;
+    column-gap: 12px;
+    height: auto;
+    padding: 10px 12px;
+  }
+  .tx-list:not(.tx-list--pageload) > .txrow > * { display: none; }
+  .tx-list:not(.tx-list--pageload) > .txrow--header { padding-block: 0; height: 32px; row-gap: 0; }
+
+  /* Summary rows: 1 op, 2 name, 3 project, 7 p95, 9 error rate. */
+  .tx-list:not(.tx-list--trace):not(.tx-list--pageload) > .txrow > :nth-child(2) { display: block; grid-area: 1 / 1; }
+  .tx-list:not(.tx-list--trace):not(.tx-list--pageload) > .txrow > :nth-child(7) { display: flex; grid-area: 1 / 2; justify-content: flex-end; }
+  .tx-list:not(.tx-list--trace):not(.tx-list--pageload) > .txrow:not(.txrow--header) > :nth-child(3) { display: inline-flex; grid-area: 2 / 1; }
+  .tx-list:not(.tx-list--trace):not(.tx-list--pageload) > .txrow:not(.txrow--header) > :nth-child(9) { display: block; grid-area: 2 / 2; text-align: right; }
+
+  /* Trace rows: 1 time, 3 name, 4 project, 5 duration, 6 status. */
+  .tx-list--trace > .txrow > :nth-child(3) { display: block; grid-area: 1 / 1; }
+  .tx-list--trace > .txrow > :nth-child(5) { display: block; grid-area: 1 / 2; text-align: right; }
+  .tx-list--trace > .txrow:not(.txrow--header) > :nth-child(1) { display: block; grid-area: 2 / 1; }
+  .tx-list--trace > .txrow:not(.txrow--header) > :nth-child(6) { display: inline-flex; grid-area: 2 / 2; justify-self: end; }
+}
+
 .optag {
   display: inline-flex;
   align-items: center;
@@ -6911,6 +6940,35 @@ select.field__input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Phones: each span is its statement over two lines, with its p95 beside it
+   and its operation and share of time beneath, instead of a wide table
+   scrolled sideways past every number. */
+@media (max-width: 640px) {
+  .perf-table--spans { display: block; width: 100%; min-width: 0; }
+  .perf-table--spans thead { display: none; }
+  .perf-table--spans tbody { display: block; }
+  .perf-table--spans .perf-table__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 12px;
+    row-gap: 4px;
+    padding: 10px 12px;
+  }
+  .perf-table--spans .perf-table__row > td { display: none; padding: 0; }
+  .perf-table--spans .perf-table__row > td:nth-child(1) { display: block; grid-area: 1 / 1; min-width: 0; max-width: none; }
+  .perf-table--spans .perf-table__row > td:nth-child(1) .mono {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow-wrap: anywhere;
+  }
+  .perf-table--spans .perf-table__row > td:nth-child(5) { display: block; grid-area: 1 / 2; }
+  .perf-table--spans .perf-table__row > td:nth-child(5)::before { content: attr(data-label) ' '; color: var(--text-3); font-family: var(--sans); }
+  .perf-table--spans .perf-table__row > td:nth-child(2) { display: block; grid-area: 2 / 1; }
+  .perf-table--spans .perf-table__row > td:nth-child(6) { display: block; grid-area: 2 / 2; }
 }
 
 .perf-table__num {

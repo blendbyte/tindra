@@ -82,7 +82,7 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
 
     <template v-else-if="!isError">
       <div class="perf-table-wrap">
-        <table class="perf-table">
+        <table class="perf-table perf-table--spans">
           <thead>
             <tr>
               <th><button class="col-sort" :class="{ 'col-sort--active': sortCol === 'description' }" @click="toggleSort('description')">Description <em class="col-sort__icon">{{ sortIcon('description') }}</em></button></th>
@@ -113,7 +113,7 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
               <td><span class="optag" :class="`optag--${row.op.split('.')[0]}`">{{ row.op }}</span></td>
               <td class="perf-table__num">{{ formatRate(row.rate) }}</td>
               <td class="perf-table__num">{{ formatDuration(row.p50) }}</td>
-              <td class="perf-table__num">{{ formatDuration(row.p95) }}</td>
+              <td class="perf-table__num" data-label="p95">{{ formatDuration(row.p95) }}</td>
               <td class="perf-table__num">
                 <div class="perf-timepct">
                   <div class="perf-timepct__bar"><div class="perf-timepct__fill" :style="{ width: `${Math.min(row.time_pct, 100)}%` }" /></div>
