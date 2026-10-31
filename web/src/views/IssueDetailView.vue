@@ -9,6 +9,7 @@ import { useFormatters } from '@/composables/useFormatters'
 import { useTimezone } from '@/composables/useTimezone'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { useProjectsStore } from '@/stores/projects'
+import { useInvestigationStore } from '@/stores/investigation'
 import type { Issue, Event as TindraEvent, User, EventSummary, HistogramBucket } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
@@ -27,6 +28,8 @@ import IssuePackages from './issue/IssuePackages.vue'
 import IssueUserCard from './issue/IssueUserCard.vue'
 import IssueTags from './issue/IssueTags.vue'
 import IssueActivity from './issue/IssueActivity.vue'
+import { issueVerdict } from './issue/issueVerdict'
+import { formatSpan } from './dashboard/briefing'
 
 // Body of PATCH /api/issues/:id: a status change (with optional snooze) or an assignee change.
 type IssueUpdate = { status?: string; ignore_until?: string; ignore_count_limit?: number; assignee_id?: string | null }
@@ -226,6 +229,22 @@ const assigneeUser = computed(() =>
     : null,
 )
 
+// The sentence under the title: the issue's state and since when, then who
+// owns it. "New" uses the same window as the issue list.
+const investigation = useInvestigationStore()
+const verdict = computed(() => {
+  const current = issue.value
+  if (!current) return null
+  const owner = assigneeUser.value ? (assigneeUser.value.name || assigneeUser.value.email) : current.assignee_email ?? null
+  return issueVerdict(current, {
+    newSince: investigation.bounds?.from ?? null,
+    owner,
+    rel: formatRel,
+    span: iso => formatSpan(iso),
+    date: iso => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: tz.value }),
+  })
+})
+
 function toggleEventList() {
   showEventList.value = !showEventList.value
 }
@@ -388,6 +407,10 @@ onUnmounted(() => {
           >{{ titleExpanded ? 'Show less' : '\u2026' }}</button>
         </h1>
 
+        <p v-if="verdict" class="issue-verdict">
+          <span class="issue-verdict__lead" :class="`issue-verdict__lead--${verdict.tone}`">{{ verdict.lead }}</span> {{ verdict.rest }}
+        </p>
+
         <div class="issue-meta">
           <span class="issue-meta__item" :title="new Date(issue.first_seen).toUTCString()">
             <span class="issue-meta__k">First</span> {{ formatRel(issue.first_seen) }}
@@ -422,7 +445,8 @@ onUnmounted(() => {
         </div>
 
         <!-- Frequency histogram -->
-        <div v-if="histogram && histogram.buckets.length > 1" class="hgram-wrap">
+        <!-- A handful of buckets would draw one wide block; the facts above say enough. -->
+        <div v-if="histogram && histogram.buckets.length >= 4" class="hgram-wrap">
           <TimeseriesChart
             :times="histogram.buckets.map(b => b.time)"
             :series="[{ id: 'events', label: 'Events', type: 'bar', values: histogram.buckets.map(b => b.count) }]"

@@ -232,31 +232,31 @@ describe('CronMonitorsView', () => {
   })
 
   describe('create form', () => {
-    it('shows "New monitor" button in filterbar when user can manage', () => {
+    it('shows "New monitor" button in the tab row when user can manage', () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      const filterbar = wrapper.find('.filterbar')
+      const filterbar = wrapper.find('.mon-subnav__actions')
       expect(filterbar.find('.btn--primary').exists()).toBe(true)
     })
 
-    it('hides the filterbar "New monitor" button when user cannot manage', () => {
+    it('hides the "New monitor" button when user cannot manage', () => {
       setupMocks([], false)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      expect(wrapper.find('.filterbar .btn--primary').exists()).toBe(false)
+      expect(wrapper.find('.mon-subnav__actions .btn--primary').exists()).toBe(false)
     })
 
     it('toggles the create form when clicking "New monitor"', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
       expect(wrapper.find('.mon-createbar').exists()).toBe(false)
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       expect(wrapper.find('.mon-createbar').exists()).toBe(true)
     })
 
     it('hides the create form when clicking Cancel', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const cancelBtn = wrapper.find('.mon-createbar__actions .btn--ghost')
       await cancelBtn.trigger('click')
       expect(wrapper.find('.mon-createbar').exists()).toBe(false)
@@ -397,7 +397,7 @@ describe('CronMonitorsView', () => {
     it('cancels create form when Cancel is clicked', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       expect(wrapper.find('.mon-createbar').exists()).toBe(true)
       const cancelBtn = wrapper.find('.mon-createbar__actions .btn--ghost')
       await cancelBtn.trigger('click')
@@ -416,7 +416,7 @@ describe('CronMonitorsView', () => {
     it('updates name input in create form', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const nameInput = wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)')
       await nameInput.setValue('My Monitor')
       expect((nameInput.element as HTMLInputElement).value).toBe('My Monitor')
@@ -425,7 +425,7 @@ describe('CronMonitorsView', () => {
     it('updates schedule input in create form', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const scheduleInput = wrapper.find('#new-monitor-schedule')
       await scheduleInput.setValue('0 0 * * *')
       expect((scheduleInput.element as HTMLInputElement).value).toBe('0 0 * * *')
@@ -434,7 +434,7 @@ describe('CronMonitorsView', () => {
     it('updates project select in create form', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const select = wrapper.find('.mon-createbar select')
       await select.setValue('proj-1')
       expect((select.element as HTMLSelectElement).value).toBe('proj-1')
@@ -443,7 +443,7 @@ describe('CronMonitorsView', () => {
     it('updates grace period input in create form', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const graceInput = wrapper.find('.mon-createbar input[type="number"]')
       await graceInput.setValue('600')
       expect((graceInput.element as HTMLInputElement).value).toBe('600')
@@ -457,7 +457,7 @@ describe('CronMonitorsView', () => {
       }) as any)
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('Nightly backup')
       await wrapper.find('#new-monitor-slug').setValue(' nightly ')
       vi.mocked(apiFetch).mockClear()
@@ -487,7 +487,7 @@ describe('CronMonitorsView', () => {
       mockMutations({ [CREATE]: { mutate: createMutate } })
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('My Monitor')
       await wrapper.find('#new-monitor-schedule').setValue('0 * * * *')
       await wrapper.find('.mon-createbar select').setValue('proj-1')
@@ -681,7 +681,7 @@ describe('CronMonitorsView', () => {
     it('updates grace period input in create form', async () => {
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const graceInput = wrapper.find('.mon-createbar input[type="number"]')
       if (graceInput.exists()) {
         await graceInput.setValue(600)
@@ -694,7 +694,7 @@ describe('CronMonitorsView', () => {
       mockMutations({ [CREATE]: { mutate: createMutate } })
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       const createBtn = wrapper.find('.mon-createbar__actions .btn--primary')
       expect(createBtn.attributes('disabled')).toBeDefined()
       await createBtn.trigger('click')
@@ -756,7 +756,7 @@ describe('CronMonitorsView', () => {
       mockMutationsCallThrough()
       setupMocks([], true)
       const wrapper = mount(CronMonitorsView, { global: { stubs } })
-      await wrapper.find('.filterbar .btn--primary').trigger('click')
+      await wrapper.find('.mon-subnav__actions .btn--primary').trigger('click')
       await wrapper.find('.mon-createbar input:not([type="number"]):not(.mono)').setValue('New Monitor')
       await wrapper.find('#new-monitor-schedule').setValue('0 * * * *')
       await wrapper.find('.mon-createbar select').setValue('proj-1')

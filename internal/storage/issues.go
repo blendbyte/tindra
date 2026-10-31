@@ -41,6 +41,8 @@ type Issue struct {
 	ReleaseID        *string    `json:"release_id"`
 	UserCount        int64      `json:"user_count"`
 	FirstRelease     *string    `json:"first_release"`
+	// RegressedAt is when the issue last came back; only GetIssue loads it.
+	RegressedAt *time.Time `json:"regressed_at,omitempty"`
 }
 
 // IgnoreOptions carries the optional limit when setting status to "ignored".
@@ -689,7 +691,7 @@ func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error
 		       i.assignee_id, i.environment,
 		       i.ignore_until, i.ignore_count_limit, i.ignore_count,
 		       e.release, r.id,
-		       u.cnt
+		       u.cnt, i.first_release, i.regressed_at
 		FROM issues i
 		LEFT JOIN LATERAL (
 		    SELECT release FROM events
@@ -705,7 +707,7 @@ func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error
 		&iss.AssigneeID, &iss.Environment,
 		&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount,
 		&iss.Release, &iss.ReleaseID,
-		&iss.UserCount,
+		&iss.UserCount, &iss.FirstRelease, &iss.RegressedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

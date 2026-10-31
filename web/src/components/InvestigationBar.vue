@@ -177,7 +177,7 @@ const scopeNote = computed(() => {
 .investigation-bar__icon:disabled { opacity: .45; cursor: default; }
 .investigation-bar__icon[aria-pressed="true"], .investigation-bar__warning { color: var(--accent); }
 .investigation-bar__details { position: static; }
-.investigation-bar__popover { position: absolute; right: 0; top: calc(100% + 8px); z-index: 100; width: 280px; max-width: calc(100vw - 24px); padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 4px 16px #0002; color: var(--text-2); line-height: 1.5; overflow-wrap: anywhere; }
+.investigation-bar__popover { position: absolute; right: 0; top: calc(100% + 8px); z-index: 100; width: 280px; max-width: calc(100vw - 24px); padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 4px 16px oklch(0 0 0 / 0.13); color: var(--text-2); line-height: 1.5; overflow-wrap: anywhere; }
 .investigation-bar__popover p { margin: 0; }
 .investigation-bar__popover p + p { margin-top: 8px; }
 .investigation-bar__spin { animation: investigation-spin 1s linear infinite; }

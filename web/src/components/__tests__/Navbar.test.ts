@@ -101,6 +101,13 @@ describe('Navbar', () => {
       expect(wrapper.find('.nav__projects-trigger').text()).toContain('No projects')
     })
 
+    it('keeps a projects icon and an accessible name for phones that hide the label', () => {
+      const wrapper = makeWrapper([makeProject('1', 'Alpha')], [])
+      const trigger = wrapper.find('.nav__projects-trigger')
+      expect(trigger.find('.nav__projects-icon').exists()).toBe(true)
+      expect(trigger.attributes('aria-label')).toBe('Filter projects: All projects')
+    })
+
     it('shows "All projects" when no ids are selected', () => {
       const wrapper = makeWrapper([makeProject('1', 'Alpha')], [])
       expect(wrapper.find('.nav__projects-trigger').text()).toContain('All projects')

@@ -16,6 +16,7 @@ import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
+import { failureClass, perfChanges, perfVerdict } from './performance/changes'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 
 const router = useRouter()
@@ -217,6 +218,13 @@ const compMap = computed(() => {
   return map
 })
 
+// The page leads with what changed against the previous window: what fails
+// more, then what got slower. It waits for the comparison so it never calls a
+// window calm before it has looked.
+const changesReady = computed(() => !userMode.value && compSummaries.value !== undefined && filteredSummaries.value.length > 0)
+const changes = computed(() => perfChanges(filteredSummaries.value, compSummaries.value ?? []))
+const changeVerdict = computed(() => perfVerdict(changes.value, perf.windowHrs))
+
 function getDelta(s: TransactionSummary, metric: 'p50' | 'p95') {
   const prev = compMap.value.get(`${s.transaction}|${s.op}|${s.project_id}`)
   if (!prev || prev[metric] === 0) return null
@@ -388,6 +396,31 @@ function apdexClass(score: number): string {
         </button>
       </div>
 
+      <!-- What changed: failing more, then slower, against the previous window -->
+      <section v-if="changesReady" class="perf-attention" aria-labelledby="perf-verdict">
+        <h2 id="perf-verdict" class="perf-verdict">
+          <span v-if="changeVerdict.failing" class="perf-verdict__failing">{{ changeVerdict.failing }}</span>{{ changeVerdict.failing && changeVerdict.slower ? ' ' : '' }}<span v-if="changeVerdict.slower" class="perf-verdict__slower">{{ changeVerdict.slower }}</span><template v-if="changeVerdict.clear">{{ changeVerdict.clear }}</template>
+        </h2>
+        <ul v-if="changes.length" class="perf-changes">
+          <li v-for="c in changes" :key="`${c.kind}-${c.summary.transaction}-${c.summary.op}-${c.summary.project_id}`">
+            <RouterLink
+              class="perf-change"
+              :to="{ name: 'transaction-profile', query: { ...investigationQuery(investigation), name: c.summary.transaction, op: c.summary.op, project_id: c.summary.project_id } }"
+            >
+              <span class="perf-change__chip" :class="`perf-change__chip--${c.kind}`">{{ c.kind === 'failing' ? 'Failing more' : 'Slower' }}</span>
+              <span class="perf-change__main">
+                <span class="perf-change__name mono">{{ c.summary.transaction }}</span>
+                <span class="perf-change__meta">{{ c.summary.op }} · {{ projectName(c.summary.project_id) }} · {{ c.summary.sample_count.toLocaleString() }} requests</span>
+              </span>
+              <span class="perf-change__delta">
+                <template v-if="c.kind === 'failing'">errors {{ formatFailureRate(c.before) }} <span aria-hidden="true">→</span><span class="sr-only">to</span> <strong>{{ formatFailureRate(c.after) }}</strong></template>
+                <template v-else>p95 {{ formatDuration(c.before) }} <span aria-hidden="true">→</span><span class="sr-only">to</span> <strong>{{ formatDuration(c.after) }}</strong></template>
+              </span>
+            </RouterLink>
+          </li>
+        </ul>
+      </section>
+
       <div v-if="stats" class="txstats">
         <div class="txstat">
           <span class="txstat__label">Requests</span>
@@ -411,7 +444,7 @@ function apdexClass(score: number): string {
         </div>
         <div class="txstat">
           <span class="txstat__label">Error rate</span>
-          <span class="txstat__value" :class="stats.failureRate > 0 ? 'tx-failure' : ''">{{ formatFailureRate(stats.failureRate) }}</span>
+          <span class="txstat__value" :class="failureClass(stats.failureRate)">{{ formatFailureRate(stats.failureRate) }}</span>
         </div>
       </div>
 
@@ -580,7 +613,7 @@ function apdexClass(score: number): string {
                   <span v-if="getDelta(s, 'p95')" class="tx-delta" :class="getDelta(s, 'p95')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p95')!.label }}</span>
                 </span>
                 <span class="tx-num-cell" :class="apdexClass(s.apdex)">{{ s.apdex.toFixed(2) }}</span>
-                <span class="tx-num-cell" :class="s.failure_rate > 0 ? 'tx-failure' : ''">{{ formatFailureRate(s.failure_rate) }}</span>
+                <span class="tx-num-cell" :class="failureClass(s.failure_rate)">{{ formatFailureRate(s.failure_rate) }}</span>
                 <span class="tx-num-cell tx-num-cell--right">{{ formatTimeSpent(s.time_spent_ms) }}</span>
               </RouterLink>
             </template>

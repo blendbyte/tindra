@@ -83,3 +83,20 @@ func TestListIssuesStatusNewWithoutWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, n, "without a lower bound every open issue counts as new")
 }
+
+func TestGetIssueCarriesFirstReleaseAndRegression(t *testing.T) {
+	p := setupProjectForTxns(t)
+	ctx := context.Background()
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, p.ID, "came-back", "Came back", "error", "error", "production", "3.7.0", time.Now().Add(-48*time.Hour))
+	require.NoError(t, err)
+	detail, err := storage.GetIssue(ctx, testPool, issue.ID)
+	require.NoError(t, err)
+	require.Equal(t, "3.7.0", *detail.FirstRelease)
+	require.Nil(t, detail.RegressedAt)
+
+	_, err = testPool.Exec(ctx, `UPDATE issues SET status='regressed', regressed_at=NOW()-INTERVAL '1 hour' WHERE id=$1`, issue.ID)
+	require.NoError(t, err)
+	detail, err = storage.GetIssue(ctx, testPool, issue.ID)
+	require.NoError(t, err)
+	require.WithinDuration(t, time.Now().Add(-time.Hour), *detail.RegressedAt, time.Minute)
+}

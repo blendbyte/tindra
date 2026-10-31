@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { vClickable } from '@/directives/clickable'
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api/client'
@@ -17,6 +17,10 @@ import { useAuthStore } from '@/stores/auth'
 
 const projects = useProjectsStore()
 const investigation = useInvestigationStore()
+// True when the shared investigation bar offers a slot for this page's
+// filters, so the page adds no second row of controls.
+const sharedFilterBar = ref(typeof document !== 'undefined' && !!document.getElementById('page-filters'))
+onMounted(() => { sharedFilterBar.value = !!document.getElementById('page-filters') })
 const appUser = useAppUserStore()
 const auth = useAuthStore()
 const route = useRoute()
@@ -52,6 +56,10 @@ const minLevelMode = ref(!!queryParam(q.min_level))
 const levelFilter = ref(levelFromQuery(queryParam(q.min_level) || queryParam(q.level)))
 const envFilter = computed(() => investigation.environment)
 const searchQuery = ref(queryParam(q.search))
+// Report this page's own active filters to the shared bar's Filters toggle.
+const pageFilterCount = computed(() => [levelFilter.value !== 'All', !!searchQuery.value].filter(Boolean).length)
+watch(pageFilterCount, n => { investigation.pageFilterCount = n }, { immediate: true })
+onUnmounted(() => { investigation.pageFilterCount = 0 })
 
 const canManageAlerts = computed(() => auth.user?.permissions.manage_alerts ?? false)
 const selectedProjectIds = computed(() => projects.selectedIds)
@@ -181,7 +189,8 @@ onUnmounted(() => clearTimeout(debounceTimer))
 
 <template>
   <div class="page">
-    <div class="filterbar">
+    <Teleport :defer="sharedFilterBar" to="#page-filters" :disabled="!sharedFilterBar">
+    <div class="filterbar" :class="{ 'filterbar--shared': sharedFilterBar }">
       <FilterChip
         label="Level"
         :value="levelFilter"
@@ -216,6 +225,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
       </span>
 
       <button
+        v-if="!sharedFilterBar"
         class="filterbar__refresh"
         :class="{ 'filterbar__refresh--fetching': isFetching }"
         title="Refresh"
@@ -225,6 +235,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
         <Icon name="refresh-cw" :size="11" :class="{ 'filterbar__refresh-spin': isFetching }" />
       </button>
     </div>
+    </Teleport>
 
     <QueryFeedback resource="logs" :failed="!!isError" :has-data="data !== undefined"
       :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="investigation.refresh(); refetch()" />

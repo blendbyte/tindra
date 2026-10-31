@@ -168,7 +168,7 @@ describe('DashboardView', () => {
       const wrapper = makeWrapper()
       const text = wrapper.text()
       expect(text).toContain('Vitals · 24h')
-      expect(text).toContain('Transaction density')
+      expect(text).toContain('Traffic · last 7 days')
       expect(text).toContain('Slowest transactions')
       expect(text).toContain('Recent alerts')
       expect(text).toContain('Release health')
@@ -377,7 +377,7 @@ describe('DashboardView', () => {
         txCounts: { buckets: [bucket] },
       })
       const wrapper = mount(DashboardView, { global: { stubs } })
-      expect(wrapper.text()).toContain('Transaction density')
+      expect(wrapper.text()).toContain('Traffic · last 7 days')
       expect(wrapper.find('.db-heatmap__cell[data-tip*="1.2k events"]').exists()).toBe(true)
     })
   })
@@ -404,14 +404,14 @@ describe('DashboardView', () => {
   })
 
   describe('widget layout', () => {
-    it('leads with the briefing and keeps health and performance context beside and below it', () => {
+    it('lets the briefing end the main column and keeps health, then performance, beside it', () => {
       const wrapper = makeWrapper({
         projects: [{ id: 'p1', name: 'A', slug: 'a' }, { id: 'p2', name: 'B', slug: 'b' }],
       })
       const titles = (column: string) => wrapper.findAll(`${column} .db-sec__title`).map(t => t.text())
       expect(wrapper.find('.db-main > .brief').exists()).toBe(true)
-      expect(titles('.db-tail')).toEqual(['Slowest transactions', 'Transaction density · last 7 days'])
-      expect(titles('.db-aside')).toEqual(['Vitals · 24h', 'Release health', 'Projects', 'Recent alerts'])
+      expect(wrapper.findAll('.db-main > *')).toHaveLength(1)
+      expect(titles('.db-aside')).toEqual(['Vitals · 24h', 'Release health', 'Projects', 'Recent alerts', 'Slowest transactions', 'Traffic · last 7 days'])
     })
 
     it('fetches widget data only once the dashboard itself is shown', () => {

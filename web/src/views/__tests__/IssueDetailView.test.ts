@@ -1379,6 +1379,21 @@ describe('IssueDetailView', () => {
       expect(wrapper.text()).toContain('noname')
     })
 
+    it('opens with a sentence saying what state the issue is in and who owns it', () => {
+      setupQueries({ ...baseIssue, status: 'regressed', regressed_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), release: '3.8.0', assignee_id: 'u-9', assignee_email: 'jonas@example.com' })
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const verdict = wrapper.find('.issue-verdict')
+      expect(verdict.find('.issue-verdict__lead--regressed').text()).toMatch(/^Regressed .+ ago in 3.8.0$/)
+      expect(verdict.text()).toContain('after it was resolved. jonas@example.com is on it.')
+    })
+
+    it('says an ongoing issue has nobody assigned', () => {
+      setupQueries()
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.issue-verdict').text()).toContain('Nobody is assigned yet.')
+      expect(wrapper.find('.issue-verdict__lead--quiet').text()).toMatch(/^Ongoing for \d+d$/)
+    })
+
     it('shows Unassigned label in meta when assignee_id is null', () => {
       setupQueries()
       const wrapper = mount(IssueDetailView, { global: { stubs } })
@@ -1730,17 +1745,24 @@ describe('IssueDetailView', () => {
   })
 
   describe('histogram rendering', () => {
-    it('renders histogram chart when histogram data has more than 1 bucket', () => {
+    it('renders the histogram once there are enough buckets to show a shape', () => {
       const histogramData = {
         bucket_size: 'hour' as const,
-        buckets: [
-          { time: '2024-01-01T00:00:00Z', count: 3 },
-          { time: '2024-01-01T01:00:00Z', count: 7 },
-        ],
+        buckets: [3, 7, 2, 5].map((count, i) => ({ time: `2024-01-01T0${i}:00:00Z`, count })),
       }
       setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, { data: ref(histogramData) }])
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.find('.hgram-wrap').exists()).toBe(true)
+    })
+
+    it('leaves out a histogram of two or three buckets, which would draw one wide block', () => {
+      const histogramData = {
+        bucket_size: 'hour' as const,
+        buckets: [{ time: '2024-01-01T00:00:00Z', count: 1 }, { time: '2024-01-01T01:00:00Z', count: 0 }, { time: '2024-01-01T02:00:00Z', count: 0 }],
+      }
+      setupQueries(baseIssue, [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, { data: ref(histogramData) }])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.hgram-wrap').exists()).toBe(false)
     })
 
     it('does not render histogram chart when histogram has only 1 bucket', () => {

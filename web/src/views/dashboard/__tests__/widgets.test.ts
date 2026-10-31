@@ -94,8 +94,8 @@ describe('VitalsWidget', () => {
       props: {
         loading: false,
         txSummaries: [
-          tx({ sample_count: 10, failure_rate: 2, p95: 100, apdex: 1 }),
-          tx({ sample_count: 30, failure_rate: 6, p95: 500, apdex: 0.6 }),
+          tx({ sample_count: 10, failure_rate: 0.02, p95: 100, apdex: 1 }),
+          tx({ sample_count: 30, failure_rate: 0.06, p95: 500, apdex: 0.6 }),
         ],
       },
       global: { stubs },
@@ -312,17 +312,17 @@ describe('SlowTransactionsWidget', () => {
 
   it('flags slow rows in amber and keeps red for high failure rates', () => {
     const wrapper = mount(SlowTransactionsWidget, {
-      props: { loading: false, txSummaries: [tx({ transaction: '/a', p50: 600, p95: 2500, failure_rate: 3 }), tx({ transaction: '/b', p95: 1500, failure_rate: 12 })] },
+      props: { loading: false, txSummaries: [tx({ transaction: '/a', p50: 600, p95: 2500, failure_rate: 0.03 }), tx({ transaction: '/b', p95: 1500, failure_rate: 0.12 })] },
       global: { stubs },
     })
     const rows = wrapper.findAll('.db-tx-row')
     expect(rows[0].find('.db-tx-row__val--warn').text()).toBe('2500ms')
     expect(wrapper.find('.db-tx-row__val--bad').exists()).toBe(false)
-    expect(rows[0].find('.db-tx-row__pct--warn').text()).toBe('3.0%')
+    expect(rows[0].find('.db-tx-row__pct--warn').text()).toBe('3.0% errors')
     expect(rows[0].find('.db-tx-row__pct--bad').exists()).toBe(false)
     expect(rows[1].find('.db-tx-row__val--warn').exists()).toBe(false)
-    expect(rows[1].find('.db-tx-row__pct--bad').text()).toBe('12.0%')
-    expect(wrapper.find('.db-tx-row__bar-fill').attributes('style')).toContain('width: 30%')
+    expect(rows[1].find('.db-tx-row__pct--bad').text()).toBe('12.0% errors')
+    expect(rows[0].find('.db-tx-row__meta').text()).toBe('http · p50 600ms · 3.0% errors')
   })
 })
 

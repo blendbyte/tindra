@@ -26,10 +26,11 @@ const slowTx = computed(() =>
     </div>
     <template v-if="loading">
       <div v-for="i in 5" :key="i" class="db-tx-row">
-        <div class="skel" style="flex: 1; height: 10px" />
+        <div>
+          <div class="skel" style="width: 70%; height: 10px; margin-bottom: 5px" />
+          <div class="skel" style="width: 45%; height: 9px" />
+        </div>
         <div class="skel" style="width: 44px; height: 10px" />
-        <div class="skel" style="width: 44px; height: 10px" />
-        <div class="skel" style="width: 80px; height: 5px; border-radius: 3px" />
       </div>
     </template>
     <div v-else-if="slowTx.length === 0" class="db-empty">
@@ -37,39 +38,27 @@ const slowTx = computed(() =>
       <div>No transaction data in the selected range</div>
     </div>
     <template v-else>
-      <div class="db-tx-head">
-        <span>Op</span>
-        <span>Transaction</span>
-        <span>P50</span>
-        <span>P95</span>
-        <span>Error rate</span>
-      </div>
       <RouterLink
         v-for="tx in slowTx"
         :key="`${tx.transaction}-${tx.op}`"
         :to="{ name: 'transaction-profile', query: { ...investigationQuery(investigation), name: tx.transaction, op: tx.op } }"
         class="db-tx-row"
       >
-        <span class="optag" :class="`optag--${tx.op.split('.')[0]}`">{{ tx.op.split('.')[0] }}</span>
-        <span class="db-tx-row__name">{{ tx.transaction }}</span>
-        <span class="db-tx-row__val">{{ formatDuration(tx.p50) }}</span>
+        <span class="db-tx-row__main">
+          <span class="db-tx-row__name">{{ tx.transaction }}</span>
+          <span class="db-tx-row__meta">
+            {{ tx.op.split('.')[0] }} · p50 {{ formatDuration(tx.p50) }} ·
+            <span
+              class="db-tx-row__pct"
+              :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 0.02, 'db-tx-row__pct--bad': tx.failure_rate > 0.1 }"
+            >{{ (tx.failure_rate * 100).toFixed(1) }}% errors</span>
+          </span>
+        </span>
         <span
           class="db-tx-row__val"
           :class="{ 'db-tx-row__val--warn': tx.p95 > 2000 }"
+          :title="`p95 ${formatDuration(tx.p95)}`"
         >{{ formatDuration(tx.p95) }}</span>
-        <div class="db-tx-row__bar">
-          <div class="db-tx-row__bar-bg">
-            <div
-              class="db-tx-row__bar-fill"
-              :class="{ 'db-tx-row__bar-fill--warn': tx.failure_rate > 2, 'db-tx-row__bar-fill--bad': tx.failure_rate > 10 }"
-              :style="{ width: `${Math.min(100, tx.failure_rate * 10)}%` }"
-            />
-          </div>
-          <span
-            class="db-tx-row__pct"
-            :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 2, 'db-tx-row__pct--bad': tx.failure_rate > 10 }"
-          >{{ tx.failure_rate.toFixed(1) }}%</span>
-        </div>
       </RouterLink>
     </template>
   </div>
@@ -78,49 +67,47 @@ const slowTx = computed(() =>
 <style scoped src="./section.css"></style>
 
 <style scoped>
-/* ── Transactions table ─────────────────────────────────────────────────────── */
-
-.db-tx-head {
-  display: grid;
-  grid-template-columns: 80px 1fr 72px 72px 120px;
-  column-gap: 12px;
-  padding: 7px 16px;
-  font-size: var(--text-xs);
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border);
-}
-.db-tx-head span:nth-child(n+3) { text-align: right; }
+/* ── Transactions list (aside) ──────────────────────────────────────────────── */
+/* A compact list for the aside: the route over a quiet line of facts, with
+   the p95 that ranks it on the right. */
 
 .db-tx-row {
   display: grid;
-  grid-template-columns: 80px 1fr 72px 72px 120px;
+  grid-template-columns: minmax(0, 1fr) auto;
   column-gap: 12px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   align-items: center;
   text-decoration: none;
   color: inherit;
-  cursor: pointer;
 }
 
 .db-tx-row:last-of-type { border-bottom: none; }
 .db-tx-row:hover { background: var(--surface-2); }
 
+.db-tx-row__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
 .db-tx-row__name {
   font-size: var(--text-xs);
-  color: var(--text-2);
+  color: var(--text-1);
   font-family: var(--mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: 12px;
+}
+
+.db-tx-row__meta {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
 .db-tx-row__val {
   font-size: var(--text-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -128,51 +115,6 @@ const slowTx = computed(() =>
 /* Slow is degraded, not broken: a long P95 is amber at most, so the slowest
    list does not read as five failures (The Earned Red Rule). */
 .db-tx-row__val--warn { color: var(--warning); }
-
-.db-tx-row__bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-left: 10px;
-}
-
-.db-tx-row__bar-bg {
-  flex: 1;
-  height: 4px;
-  background: var(--surface-2);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.db-tx-row__bar-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
-}
-
-.db-tx-row__bar-fill--warn { background: var(--warning); }
-.db-tx-row__bar-fill--bad { background: var(--danger); }
-
-.db-tx-row__pct {
-  font-size: 10px;
-  color: var(--text-3);
-  width: 30px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 768px) {
-  /* Transactions table: drop P50 + error-rate bar, keep op + name + P95 */
-  .db-tx-head,
-  .db-tx-row {
-    grid-template-columns: 80px 1fr 72px;
-  }
-  .db-tx-head > :nth-child(3),
-  .db-tx-row > :nth-child(3) { display: none; } /* P50 */
-  .db-tx-head > :nth-child(5),
-  .db-tx-row > :nth-child(5) { display: none; } /* error rate bar */
-}
-
 .db-tx-row__pct--warn { color: var(--warning); }
 .db-tx-row__pct--bad { color: var(--danger); }
 </style>

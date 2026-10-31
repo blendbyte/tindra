@@ -82,8 +82,8 @@ function cellColor(v: number): string {
 <template>
   <div class="db-sec">
     <div class="db-sec__head">
-      <h2 class="db-sec__title">Transaction density · last 7 days</h2>
-      <span class="db-sec__hint">each cell = 1 hour</span>
+      <h2 class="db-sec__title">Traffic · last 7 days</h2>
+      <span class="db-sec__hint">hourly</span>
     </div>
     <div class="db-heatmap">
       <div
@@ -125,7 +125,7 @@ function cellColor(v: number): string {
 .db-heatmap__row {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   margin-bottom: 2px;
 }
 
@@ -142,7 +142,7 @@ function cellColor(v: number): string {
 .db-heatmap__cell {
   position: relative;
   flex: 1;
-  height: 11px;
+  height: 9px;
   border-radius: 2px;
   background: var(--surface-2);
   min-width: 0;
@@ -186,13 +186,4 @@ function cellColor(v: number): string {
   opacity: 0.5;
 }
 
-@media (max-width: 768px) {
-  /* Heatmap: allow horizontal scroll */
-  .db-heatmap {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 4px;
-  }
-  .db-heatmap__row { flex-shrink: 0; }
-}
 </style>

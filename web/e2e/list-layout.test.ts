@@ -72,7 +72,10 @@ async function expectContainedRows(rows: Locator) {
     return cells.flatMap((cell, i) => {
       const bounds = cell.getBoundingClientRect()
       const problems: string[] = []
-      if (i && cells[i - 1]!.getBoundingClientRect().right > bounds.left + 1) {
+      // Cells overlap only when they share a line: phone layouts stack a
+      // row's facts on a second line.
+      const prev = i ? cells[i - 1]!.getBoundingClientRect() : null
+      if (prev && prev.bottom > bounds.top + 1 && prev.top < bounds.bottom - 1 && prev.right > bounds.left + 1) {
         problems.push(`Overlapping cells: ${cell.className}`)
       }
       const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT)
@@ -128,7 +131,14 @@ for (const list of lists) {
       await page.setViewportSize({ width, height: 900 })
       const rows = page.locator(list.row)
       await expectContainedRows(rows)
-      if (list.header) {
+      // On phones transaction lists stack each row on two lines, with the
+      // ranking figure beside the name, instead of a table to scroll sideways.
+      const stacked = width <= 640 && list.path.startsWith('/performance/transactions')
+      if (stacked) {
+        await expect(rows.first().locator(':scope > :visible')).toHaveCount(4)
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      }
+      if (list.header && !stacked) {
         await expect(page.locator(list.header).locator(':scope > :visible')).toHaveCount(list.count!)
         await expect(rows.first().locator(':scope > :visible')).toHaveCount(list.count!)
         const headerBounds = await page.locator(list.header).boundingBox()
@@ -146,7 +156,7 @@ for (const list of lists) {
         expect(Math.max(...projectWidths)).toBeLessThanOrEqual(240)
       }
       if (list.path === '/logs') expect(await page.locator('.log-msg__body').evaluate(el => el.clientWidth)).toBeGreaterThan(100)
-      if (width === 320 && list.header) {
+      if (width === 320 && list.header && !stacked) {
         const scroller = page.getByRole('region').filter({ has: rows.first() })
         await scroller.focus()
         await page.keyboard.press('ArrowRight')

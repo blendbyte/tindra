@@ -329,7 +329,7 @@ function cancelMFASetup() {
           <div v-if="mfaSetupError" id="mfa-replace-error" role="alert" class="profile-error">{{ mfaSetupError }}</div>
         </div>
         <div v-if="!showDisableMFA" style="margin-top: 14px">
-          <button class="btn btn--ghost" style="color: var(--danger, #ef4444)" @click="showDisableMFA = true; mfaDisableError = null">
+          <button class="btn btn--ghost" style="color: var(--danger)" @click="showDisableMFA = true; mfaDisableError = null">
             Disable two-factor auth
           </button>
         </div>
@@ -341,7 +341,7 @@ function cancelMFASetup() {
           </div>
           <div v-if="mfaDisableError" id="mfa-disable-error" role="alert" class="profile-error">{{ mfaDisableError }}</div>
           <div style="display: flex; gap: 8px">
-            <button class="btn btn--primary" :disabled="!mfaDisablePassword || disablingMFA" @click="disableMFA(mfaDisablePassword)" style="background: var(--danger, #ef4444); border-color: var(--danger, #ef4444)">
+            <button class="btn btn--primary" :disabled="!mfaDisablePassword || disablingMFA" @click="disableMFA(mfaDisablePassword)" style="background: var(--danger); border-color: var(--danger)">
               {{ disablingMFA ? 'Disabling…' : 'Disable 2FA' }}
             </button>
             <button class="btn btn--ghost btn--mfa-disable-cancel" @click="showDisableMFA = false; mfaDisablePassword = ''; mfaDisableError = null">Cancel</button>
