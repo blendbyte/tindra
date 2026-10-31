@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -496,7 +497,7 @@ func buildUptimeMonitorCards(monitors []*storage.UptimeMonitor, trigger, base st
 			Expected: m.ExpectedCodes,
 		}
 		if base != "" {
-			card.MonitorURL = base + "/monitors"
+			card.MonitorURL = monitorsViewURL(base, "uptime", []string{m.ProjectID})
 		}
 		if m.LastStatusCode != nil {
 			card.Received = fmt.Sprintf("HTTP %d", *m.LastStatusCode)
@@ -572,6 +573,38 @@ func logCountQueryLabel(p AlertPayload) string {
 	return strings.Join(parts, " · ")
 }
 
+// monitorsViewURL links to the uptime or cron monitor page; /monitors alone
+// opens the cron page. The monitors' projects travel with the link, so they
+// are listed even when the reader has other projects selected in the app.
+func monitorsViewURL(base, kind string, projectIDs []string) string {
+	q := url.Values{}
+	for _, id := range projectIDs {
+		if id != "" && !slices.Contains(q["project_id"], id) {
+			q.Add("project_id", id)
+		}
+	}
+	if len(q) == 0 {
+		return base + "/monitors/" + kind
+	}
+	return base + "/monitors/" + kind + "?" + q.Encode()
+}
+
+func uptimeProjectIDs(monitors []*storage.UptimeMonitor) []string {
+	ids := make([]string, 0, len(monitors))
+	for _, m := range monitors {
+		ids = append(ids, m.ProjectID)
+	}
+	return ids
+}
+
+func cronProjectIDs(monitors []*storage.CronMonitor) []string {
+	ids := make([]string, 0, len(monitors))
+	for _, m := range monitors {
+		ids = append(ids, m.ProjectID)
+	}
+	return ids
+}
+
 func logsViewURL(base string, p AlertPayload) string {
 	q := url.Values{}
 	if v, ok := p.Details["filter_level"].(string); ok && v != "" {
@@ -628,9 +661,12 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	viewLabel := "View issues"
 	if base != "" {
 		switch {
-		case isCron || isUptime:
-			viewURL = base + "/monitors"
-			viewLabel = "View monitors"
+		case isUptime:
+			viewURL = monitorsViewURL(base, "uptime", uptimeProjectIDs(payload.UptimeMonitors))
+			viewLabel = "View uptime monitors"
+		case isCron:
+			viewURL = monitorsViewURL(base, "cron", cronProjectIDs(payload.Monitors))
+			viewLabel = "View cron monitors"
 		case isLogs:
 			viewURL = logsViewURL(base, payload)
 			viewLabel = "View logs"
