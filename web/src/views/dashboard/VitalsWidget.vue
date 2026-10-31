@@ -23,7 +23,8 @@ function weighted(pick: (t: TransactionSummary) => number): number | null {
   return s.reduce((acc, t) => acc + pick(t) * t.sample_count, 0) / total
 }
 
-const errorRate = computed(() => weighted(t => t.failure_rate))
+// failure_rate is a fraction; the widget speaks in percent.
+const errorRate = computed(() => { const r = weighted(t => t.failure_rate); return r === null ? null : r * 100 })
 const p95 = computed(() => weighted(t => t.p95))
 const apdex = computed(() => weighted(t => t.apdex))
 const transactions = computed(() => props.txSummaries?.reduce((total, row) => total + row.sample_count, 0) ?? null)

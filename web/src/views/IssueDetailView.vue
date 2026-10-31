@@ -29,6 +29,7 @@ import IssueUserCard from './issue/IssueUserCard.vue'
 import IssueTags from './issue/IssueTags.vue'
 import IssueActivity from './issue/IssueActivity.vue'
 import { issueVerdict } from './issue/issueVerdict'
+import { formatSpan } from './dashboard/briefing'
 
 // Body of PATCH /api/issues/:id: a status change (with optional snooze) or an assignee change.
 type IssueUpdate = { status?: string; ignore_until?: string; ignore_count_limit?: number; assignee_id?: string | null }
@@ -239,6 +240,7 @@ const verdict = computed(() => {
     newSince: investigation.bounds?.from ?? null,
     owner,
     rel: formatRel,
+    span: iso => formatSpan(iso),
     date: iso => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: tz.value }),
   })
 })

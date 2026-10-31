@@ -50,8 +50,8 @@ const slowTx = computed(() =>
             {{ tx.op.split('.')[0] }} · p50 {{ formatDuration(tx.p50) }} ·
             <span
               class="db-tx-row__pct"
-              :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 2, 'db-tx-row__pct--bad': tx.failure_rate > 10 }"
-            >{{ tx.failure_rate.toFixed(1) }}% errors</span>
+              :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 0.02, 'db-tx-row__pct--bad': tx.failure_rate > 0.1 }"
+            >{{ (tx.failure_rate * 100).toFixed(1) }}% errors</span>
           </span>
         </span>
         <span

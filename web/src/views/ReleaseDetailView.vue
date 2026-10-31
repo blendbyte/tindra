@@ -10,6 +10,7 @@ import type { Release, ReleaseIssue, ReleaseTxSummary } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { useProjectsStore } from '@/stores/projects'
 import { plural } from '@/utils/plural'
+import { failureClass } from '@/views/performance/changes'
 
 const route = useRoute()
 const router = useRouter()
@@ -224,7 +225,7 @@ function levelClass(level: string) {
               <span class="rel-tx-num">{{ tx.sample_count.toLocaleString() }}</span>
               <span class="rel-tx-num mono">{{ formatDuration(tx.p50) }}</span>
               <span class="rel-tx-num mono">{{ formatDuration(tx.p95) }}</span>
-              <span class="rel-tx-num" :class="tx.error_rate > 0 ? 'tx-failure' : 'muted'">
+              <span class="rel-tx-num" :class="tx.error_rate > 0 ? failureClass(tx.error_rate / 100) : 'muted'">
                 {{ tx.error_rate > 0 ? tx.error_rate.toFixed(1) + '%' : '–' }}
               </span>
             </div>

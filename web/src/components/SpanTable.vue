@@ -33,6 +33,7 @@ import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
 import SpanSamplesPanel from '@/components/SpanSamplesPanel.vue'
 import Icon from '@/components/Icon.vue'
+import { failureClass } from '@/views/performance/changes'
 
 // kind is read once: SpanTableView remounts this component when it changes.
 const props = defineProps<{ kind: SpanTableKind }>()
@@ -123,7 +124,7 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
               <td v-if="showMissRate" class="perf-table__num" :class="row.miss_rate != null && row.miss_rate > 30 ? 'tx-failure' : ''">
                 {{ row.miss_rate == null ? '–' : formatPct(row.miss_rate) }}
               </td>
-              <td class="perf-table__num" :class="row.error_rate > 0 ? 'tx-failure' : ''">{{ formatPct(row.error_rate) }}</td>
+              <td class="perf-table__num" :class="failureClass(row.error_rate / 100)">{{ formatPct(row.error_rate) }}</td>
             </tr>
             <tr v-if="!isLoading && filtered.length === 0 && search">
               <td :colspan="showMissRate ? 8 : 7" style="padding: 24px; text-align: center; color: var(--text-3); font-size: var(--text-sm)">No {{ config.noun }} match "{{ search }}"</td>

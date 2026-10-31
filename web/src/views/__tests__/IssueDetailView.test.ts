@@ -1391,7 +1391,7 @@ describe('IssueDetailView', () => {
       setupQueries()
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.find('.issue-verdict').text()).toContain('Nobody is assigned yet.')
-      expect(wrapper.find('.issue-verdict__lead--quiet').text()).toMatch(/^Ongoing since/)
+      expect(wrapper.find('.issue-verdict__lead--quiet').text()).toMatch(/^Ongoing for \d+d$/)
     })
 
     it('shows Unassigned label in meta when assignee_id is null', () => {

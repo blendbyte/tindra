@@ -14,7 +14,8 @@ const base = {
   ignore_count_limit: null,
   ignore_count: 0,
 }
-const opts = { newSince: '2026-10-30T12:00:00Z', owner: null, rel, date }
+const span = (iso: string) => `[${iso.slice(8, 10)}]`
+const opts = { newSince: '2026-10-30T12:00:00Z', owner: null, rel, span, date }
 const sentence = (v: ReturnType<typeof issueVerdict>) => `${v.lead} ${v.rest}`
 
 describe('issueVerdict', () => {
@@ -33,7 +34,7 @@ describe('issueVerdict', () => {
   it('describes older open issues as ongoing', () => {
     const v = issueVerdict(base, { ...opts, owner: 'Aiko Tanaka' })
     expect(v.tone).toBe('quiet')
-    expect(sentence(v)).toBe('Ongoing since <08:00> and last seen <11:40>. Aiko Tanaka is on it.')
+    expect(sentence(v)).toBe('Ongoing for [25] and last seen <11:40>. Aiko Tanaka is on it.')
     expect(issueVerdict(base, { ...opts, newSince: null }).tone).toBe('quiet')
   })
 

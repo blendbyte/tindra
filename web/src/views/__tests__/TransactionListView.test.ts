@@ -139,7 +139,40 @@ beforeEach(() => {
   routeQueryOverride = {}
 })
 
+function setupWithComparison(current: unknown[], previous: unknown[] | undefined) {
+  vi.mocked(useProjectsStore).mockReturnValue({ projects: [{ id: '1', name: 'App', slug: 'app' }], selectedIds: [] } as any)
+  vi.mocked(usePerformanceStore).mockReturnValue(reactive({ windowHrs: '24h', envFilter: 'All' }) as any)
+  vi.mocked(useQuery)
+    .mockReturnValueOnce({ data: ref({ releases: [], total: 0, has_more: false }) } as any)
+    .mockReturnValueOnce({ data: ref(current), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref({ transactions: [] }), isLoading: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref(previous), isError: ref(false), refetch: vi.fn() } as any)
+    .mockReturnValueOnce({ data: ref(undefined), isError: ref(false), refetch: vi.fn() } as any)
+}
+
 describe('TransactionListView', () => {
+  describe('what changed', () => {
+    it('leads with transactions that fail more or got slower than the previous window', () => {
+      const prev = [{ ...makeSummary('/checkout'), sample_count: 40, p95: 400, failure_rate: 0.004 }, { ...makeSummary('/cart'), sample_count: 40, p95: 300, failure_rate: 0 }]
+      const now = [{ ...makeSummary('/checkout'), sample_count: 40, p95: 420, failure_rate: 0.08 }, { ...makeSummary('/cart'), sample_count: 40, p95: 900, failure_rate: 0 }]
+      setupWithComparison(now, prev)
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const section = wrapper.find('.perf-attention')
+      expect(section.find('.perf-verdict__failing').text()).toBe('1\u00a0transaction is failing more than the previous 24h.')
+      expect(section.find('.perf-verdict__slower').text()).toBe('1\u00a0transaction got slower.')
+      expect(section.findAll('.perf-change__chip').map(c => c.text())).toEqual(['Failing more', 'Slower'])
+      expect(section.findAll('.perf-change__delta')[1].text()).toContain('900')
+    })
+
+    it('says so when nothing changed, and waits for the comparison before saying anything', () => {
+      const now = [{ ...makeSummary('/cart'), sample_count: 40, p95: 300 }]
+      setupWithComparison(now, now)
+      expect(mount(TransactionListView, { global: { stubs } }).find('.perf-verdict').text()).toBe('Nothing got slower or started failing more than the previous 24h.')
+      setupWithComparison(now, undefined)
+      expect(mount(TransactionListView, { global: { stubs } }).find('.perf-attention').exists()).toBe(false)
+    })
+  })
+
   describe('empty state', () => {
     it('shows "No projects yet" when there are no projects', () => {
       setupMocks([], false, false, [])

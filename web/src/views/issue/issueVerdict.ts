@@ -14,7 +14,7 @@ type Rel = (iso: string) => string
 
 export function issueVerdict(
   issue: Pick<Issue, 'status' | 'first_seen' | 'last_seen' | 'first_release' | 'regressed_at' | 'release' | 'ignore_until' | 'ignore_count_limit' | 'ignore_count'>,
-  opts: { newSince: string | null; owner: string | null; rel: Rel; date: (iso: string) => string },
+  opts: { newSince: string | null; owner: string | null; rel: Rel; span: Rel; date: (iso: string) => string },
 ): IssueVerdict {
   const owner = opts.owner ? `${opts.owner} is on it.` : 'Nobody is assigned yet.'
   switch (issue.status) {
@@ -39,5 +39,5 @@ export function issueVerdict(
     const release = issue.first_release ? ` in ${issue.first_release}` : ''
     return { lead: `New ${opts.rel(issue.first_seen)}${release}.`, tone: 'new', rest: owner }
   }
-  return { lead: `Ongoing since ${opts.rel(issue.first_seen)}`, tone: 'quiet', rest: `and last seen ${opts.rel(issue.last_seen)}. ${owner}` }
+  return { lead: `Ongoing for ${opts.span(issue.first_seen)}`, tone: 'quiet', rest: `and last seen ${opts.rel(issue.last_seen)}. ${owner}` }
 }
