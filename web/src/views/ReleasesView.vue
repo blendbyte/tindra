@@ -229,10 +229,13 @@ function formatCount(n: number) {
             </span>
 
             <div class="rel-issues-cell">
+              <span v-if="r.regressed_issues > 0" class="rel-issues-pill rel-issues-pill--regressed">
+                {{ r.regressed_issues }} regressed
+              </span>
               <span v-if="r.new_issues > 0" class="rel-issues-pill rel-issues-pill--active">
                 {{ r.new_issues }} new
               </span>
-              <span v-else class="rel-issues-pill rel-issues-pill--clean">
+              <span v-if="!r.new_issues && !r.regressed_issues" class="rel-issues-pill rel-issues-pill--clean">
                 Clean
               </span>
             </div>

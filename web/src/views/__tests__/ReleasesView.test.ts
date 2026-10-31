@@ -133,6 +133,15 @@ describe('ReleasesView', () => {
       expect(wrapper.find('.rel-issues-pill--active').text()).toContain('new')
     })
 
+    it('shows regressions in amber beside new issues, and Clean only when neither', () => {
+      const release = { ...makeRelease('r1', 'v1.0.0'), new_issues: 2, regressed_issues: 1 }
+      setupMocks([release])
+      const wrapper = mount(ReleasesView, { global: { stubs } })
+      expect(wrapper.find('.rel-issues-pill--regressed').text()).toBe('1 regressed')
+      expect(wrapper.find('.rel-issues-pill--active').text()).toBe('2 new')
+      expect(wrapper.find('.rel-issues-pill--clean').exists()).toBe(false)
+    })
+
     it('navigates to release detail on row click', async () => {
       setupMocks([makeRelease('r1', 'v1.0.0')])
       const wrapper = mount(ReleasesView, { global: { stubs } })

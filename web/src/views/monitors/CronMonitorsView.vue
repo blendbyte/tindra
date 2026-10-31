@@ -14,6 +14,8 @@ import cronstrue from 'cronstrue'
 import { useConfig } from '@/composables/useConfig'
 import MonitorsSubnav from './MonitorsSubnav.vue'
 import { useCanManage, useMonitorProjects, useMonitorQueryParams } from './shared'
+import { cronFailing, cronFailingSince, monitorVerdict, rankCron } from './urgency'
+import { formatSpan } from '@/views/dashboard/briefing'
 
 function humanSchedule(expr: string): string {
   try {
@@ -43,7 +45,11 @@ const { data: monitorsData, isLoading, isError: monitorsError, refetch: refetchM
   queryKey: computed(() => ['monitors', queryParams.value]),
   queryFn: ({ signal }) => apiFetch<CronMonitor[]>(`/api/monitors?${queryParams.value}`, { signal }),
 })
-const monitors = computed(() => monitorsData.value ?? [])
+// Failing monitors first, longest failure first; paused last.
+const monitors = computed(() => rankCron(monitorsData.value ?? []))
+const verdict = computed(() => monitorVerdict(
+  monitors.value.map(m => ({ failing: cronFailing(m), paused: m.status === 'paused', unknown: m.state === 'unknown' })),
+  { one: 'monitor', many: 'monitors' }, { one: 'is failing', many: 'are failing' }, 'healthy'))
 
 const { data: checkinsData, isLoading: checkinsLoading, isError: checkinsError, refetch: refetchCheckins } = useQuery({
   queryKey: computed(() => ['checkins', selectedMonitorId.value]),
@@ -272,6 +278,9 @@ function cancelCreate() {
 
     <!-- Full-width list -->
     <template v-else>
+      <p class="mon-verdict" role="status">
+        <span v-if="verdict.failing" class="mon-verdict__failing">{{ verdict.failing }}</span>{{ verdict.failing && verdict.rest ? ' ' : '' }}{{ verdict.rest }}
+      </p>
       <div class="monrow monrow--header">
         <span />
         <span>Monitor</span>
@@ -284,7 +293,7 @@ function cancelCreate() {
       <template v-for="m in monitors" :key="m.id">
         <div
           class="monrow"
-          :class="{ 'monrow--active': selectedMonitorId === m.id, 'monrow--paused': m.status === 'paused' }"
+          :class="{ 'monrow--active': selectedMonitorId === m.id, 'monrow--paused': m.status === 'paused', 'monrow--failing': cronFailing(m) }"
           v-clickable
           @click="selectMonitor(m.id)"
         >
@@ -293,6 +302,7 @@ function cancelCreate() {
             <div class="monrow__name" :title="m.name">{{ m.name }}</div>
             <div class="monrow__sub">
               <span :style="{ color: m.status === 'paused' ? 'var(--text-3)' : stateColor(m.state) }" class="monrow__state">{{ stateLabel(m.state) }}</span>
+              <span v-if="cronFailingSince(m)" class="monrow__since">for {{ formatSpan(cronFailingSince(m)) }}</span>
               <template v-if="m.status === 'paused'">
                 <span class="monrow__sep">·</span>
                 <span class="mon-paused-badge">Paused</span>

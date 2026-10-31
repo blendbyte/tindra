@@ -702,3 +702,15 @@ describe('UptimeMonitorsView load errors', () => {
     expect(refetch).toHaveBeenCalled()
   })
 })
+
+describe('UptimeMonitorsView triage order', () => {
+  it('states how many monitors are down and lists them first with their outage length', () => {
+    const down = { ...makeUptimeMonitor('u2', 'Gateway', 'down'), went_down_at: new Date(Date.now() - 65 * 60_000).toISOString() }
+    setupUptimeMocks([makeUptimeMonitor('u1', 'Homepage', 'up'), down, { ...makeUptimeMonitor('u3', 'Old', 'up'), status: 'paused' }])
+    const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
+    expect(wrapper.find('.mon-verdict').text().replace(/\s+/g, ' ')).toBe('1 monitor is down. 1 up, 1 paused.')
+    const names = wrapper.findAll('.monrow:not(.monrow--header) .monrow__name').map(n => n.text())
+    expect(names).toEqual(['Gateway', 'Homepage', 'Old'])
+    expect(wrapper.find('.monrow--failing .monrow__since').text()).toBe('for 1h 5m')
+  })
+})

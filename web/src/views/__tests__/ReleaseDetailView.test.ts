@@ -104,6 +104,23 @@ describe('ReleaseDetailView', () => {
   })
 
   describe('loaded release', () => {
+    it('states what the release changed, regressions first', () => {
+      setupMocks({ ...baseRelease, regressed_issues: 1, new_issues: 23 })
+      const wrapper = mount(ReleaseDetailView, { global: { stubs } })
+      expect(wrapper.find('.rel-verdict').text().replace(/\s+/g, ' ')).toBe('v1.2.3 brought back 1 issue and introduced 23 new ones.')
+      expect(wrapper.find('.rel-verdict__regressed').exists()).toBe(true)
+    })
+
+    it('names new issues alone and a clean release plainly', () => {
+      setupMocks({ ...baseRelease, new_issues: 1 })
+      const fresh = mount(ReleaseDetailView, { global: { stubs } })
+      expect(fresh.find('.rel-verdict').text().replace(/\s+/g, ' ')).toBe('v1.2.3 introduced 1 new issue.')
+      fresh.unmount()
+      setupMocks()
+      const clean = mount(ReleaseDetailView, { global: { stubs } })
+      expect(clean.find('.rel-verdict').text().replace(/\s+/g, ' ')).toBe('v1.2.3 is clean: no new or regressed issues.')
+    })
+
     it('shows the version in the breadcrumb', () => {
       setupMocks()
       const wrapper = mount(ReleaseDetailView, { global: { stubs } })

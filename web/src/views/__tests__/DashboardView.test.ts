@@ -346,7 +346,14 @@ describe('DashboardView', () => {
     it('shows new pill when release has new issues', () => {
       const releases = { releases: [makeRelease({ new_issues: 3 })], total: 1, has_more: false }
       const wrapper = makeWrapper({ releases })
-      expect(wrapper.find('.rel-pill--bad').text()).toContain('new')
+      expect(wrapper.find('.rel-pill--new').text()).toContain('new')
+    })
+
+    it('marks a release with regressions in amber, not red', () => {
+      const releases = { releases: [makeRelease({ regressed_issues: 2, new_issues: 1 })], total: 1, has_more: false }
+      const wrapper = makeWrapper({ releases })
+      expect(wrapper.find('.rel-pill--regressed').text()).toContain('2 regressed')
+      expect(wrapper.find('.rel-pill--new').exists()).toBe(false)
     })
 
     it('navigates to release detail when release row is clicked', async () => {

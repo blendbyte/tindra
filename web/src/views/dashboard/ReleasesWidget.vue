@@ -71,11 +71,11 @@ function projectName(id: string): string | null {
         <span class="db-release-row__time">{{ formatRel(rel.deployed_at) }}</span>
         <span
           v-if="rel.regressed_issues > 0"
-          class="rel-pill rel-pill--bad"
+          class="rel-pill rel-pill--regressed"
         >{{ rel.regressed_issues }} regressed</span>
         <span
           v-else-if="rel.new_issues > 0"
-          class="rel-pill rel-pill--bad"
+          class="rel-pill rel-pill--new"
         >{{ rel.new_issues }} new</span>
         <span v-else class="rel-pill rel-pill--ok">Clean</span>
       </div>
@@ -108,7 +108,7 @@ function projectName(id: string): string | null {
   flex-shrink: 0;
 }
 
-.db-release-row__dot--bad { background: var(--danger); }
+.db-release-row__dot--bad { background: var(--warning); }
 .db-release-row__dot--ok  { background: var(--success); }
 
 .db-release-row__info {
@@ -150,9 +150,14 @@ function projectName(id: string): string | null {
   flex-shrink: 0;
 }
 
-.rel-pill--bad {
-  background: oklch(from var(--danger) l c h / 0.12);
-  color: var(--danger);
+.rel-pill--regressed {
+  background: oklch(from var(--warning) l c h / 0.15);
+  color: color-mix(in oklch, var(--warning) 65%, var(--text-1));
+}
+
+.rel-pill--new {
+  background: var(--accent-soft);
+  color: color-mix(in oklch, var(--accent) 85%, var(--text-1));
 }
 
 .rel-pill--ok {

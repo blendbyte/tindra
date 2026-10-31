@@ -37,7 +37,7 @@ export type BrokenMonitor =
 
 // Onset of a cron failure: the first error of the trailing error streak, or
 // when a missed check-in was due.
-function cronSince(m: CronMonitor): string | null {
+export function cronSince(m: CronMonitor): string | null {
   if (m.state === 'missed') return m.next_expected_at ?? m.last_checkin_at
   let since: string | null = null
   const checkins = m.recent_checkins ?? []
