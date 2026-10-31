@@ -117,6 +117,7 @@ export interface IssueListPage {
   has_more: boolean
   next_cursor_time?: string
   next_cursor_id?: string
+  next_cursor_rank?: number
 }
 
 export type IssueKind = 'error' | 'n1_query'

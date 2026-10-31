@@ -69,6 +69,46 @@ type IssueFilter struct {
 	SinceRegressed *time.Time // regressed_at > SinceRegressed
 	UserIdentity   string     // issues with at least one event from this app user
 	NewSince       *time.Time // with Status "new": first_seen >= NewSince
+	// Priority lists regressed issues first, then new ones, then the rest,
+	// each most recently seen first. CursorRank continues such a list.
+	Priority   bool
+	CursorRank *int
+}
+
+// PriorityRank places an issue in the triage order of a priority list:
+// regressed (0), new since newSince (1), everything else (2).
+func PriorityRank(status string, firstSeen time.Time, newSince *time.Time) int {
+	switch {
+	case status == "regressed":
+		return 0
+	case status == "open" && newSince != nil && !firstSeen.Before(*newSince):
+		return 1
+	}
+	return 2
+}
+
+// prioritySQL is PriorityRank over the issues alias i. newSinceParam is the
+// placeholder holding the window start, or "" when nothing counts as new.
+func prioritySQL(newSinceParam string) string {
+	if newSinceParam == "" {
+		return "(CASE WHEN i.status = 'regressed' THEN 0 ELSE 2 END)"
+	}
+	return "(CASE WHEN i.status = 'regressed' THEN 0 WHEN i.status = 'open' AND i.first_seen >= " + newSinceParam + " THEN 1 ELSE 2 END)"
+}
+
+// pageAfter continues a list ordered by (rank,) lastSeen DESC, id DESC after
+// the cursor, appending its arguments.
+func pageAfter(q string, args []any, filter IssueFilter, rank, lastSeen string) (string, []any) {
+	if filter.CursorTime == nil || filter.CursorID == nil {
+		return q, args
+	}
+	args = append(args, *filter.CursorTime, *filter.CursorID)
+	after := fmt.Sprintf("(%s,i.id) < ($%d,$%d::uuid)", lastSeen, len(args)-1, len(args))
+	if rank != "" && filter.CursorRank != nil {
+		args = append(args, *filter.CursorRank)
+		after = fmt.Sprintf("(%s > $%d OR (%s = $%d AND %s))", rank, len(args), rank, len(args), after)
+	}
+	return q + " AND " + after, args
 }
 
 // issueUserCountSQL counts the distinct users (id, username or email) behind
@@ -449,16 +489,16 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 	FROM issues i WHERE TRUE`
 	q, args := addCommonFilters(q, []any{}, filter)
 
-	if filter.CursorTime != nil && filter.CursorID != nil {
-		n := len(args) + 1
-		args = append(args, *filter.CursorTime, *filter.CursorID)
-		q += fmt.Sprintf(
-			" AND (i.last_seen < $%d OR (i.last_seen = $%d AND i.id < $%d::uuid))",
-			n, n, n+1,
-		)
+	order := "i.last_seen DESC, i.id DESC"
+	rank := ""
+	if filter.Priority {
+		// Without a window nothing counts as new; regressions still lead.
+		rank = prioritySQL("")
+		order = rank + ", " + order
 	}
+	q, args = pageAfter(q, args, filter, rank, "i.last_seen")
 	args = append(args, limit)
-	q += fmt.Sprintf(" ORDER BY i.last_seen DESC, i.id DESC LIMIT $%d", len(args))
+	q += fmt.Sprintf(" ORDER BY %s LIMIT $%d", order, len(args))
 
 	rows, err := pool.Query(ctx, q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {

@@ -70,10 +70,18 @@ func listWindowIssues(ctx context.Context, pool issueWindowQuerier, filter Issue
  ARRAY(SELECT COALESCE((h.buckets->>bucket::text)::int,0) FROM generate_series(0,23) bucket ORDER BY bucket)
  FROM issues i JOIN scoped s ON s.issue_id=i.id JOIN histograms h ON h.issue_id=i.id WHERE TRUE`
 	q, args = windowIssueFilters(q, args, filter)
-	if filter.CursorTime != nil && filter.CursorID != nil {
-		args = append(args, *filter.CursorTime, *filter.CursorID)
-		q += fmt.Sprintf(" AND (s.window_last,i.id) < ($%d,$%d::uuid)", len(args)-1, len(args))
+	order := "s.window_last DESC,i.id DESC"
+	rank := ""
+	if filter.Priority {
+		// $1 is the window start; an all-time list has no "new".
+		newSince := "$1::timestamptz"
+		if bounds.AllTime {
+			newSince = ""
+		}
+		rank = prioritySQL(newSince)
+		order = rank + "," + order
 	}
+	q, args = pageAfter(q, args, filter, rank, "s.window_last")
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 50
@@ -82,7 +90,7 @@ func listWindowIssues(ctx context.Context, pool issueWindowQuerier, filter Issue
 		limit = 10000
 	}
 	args = append(args, limit)
-	q += fmt.Sprintf(" ORDER BY s.window_last DESC,i.id DESC LIMIT $%d", len(args))
+	q += fmt.Sprintf(" ORDER BY %s LIMIT $%d", order, len(args))
 	rows, err := pool.Query(ctx, cte+q, userQueryArgs(filter.UserIdentity, args)...)
 	if err != nil {
 		return nil, err

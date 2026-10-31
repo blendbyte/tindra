@@ -108,6 +108,13 @@ describe('formatRel', () => {
     expect(formatRel(isoSecondsAgo(29 * 24 * 60 * 60))).toBe('29d ago')
   })
 
+  it('reads future timestamps forward, such as a monitor\'s next check', () => {
+    expect(formatRel(isoSecondsAgo(-30))).toBe('just now')
+    expect(formatRel(isoSecondsAgo(-5 * 60))).toBe('in 5m')
+    expect(formatRel(isoSecondsAgo(-3 * 60 * 60))).toBe('in 3h')
+    expect(formatRel(isoSecondsAgo(-12 * 24 * 60 * 60))).toBe('in 12d')
+  })
+
   it('returns a locale date string for timestamps 30+ days ago', () => {
     const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
     const result = formatRel(old)

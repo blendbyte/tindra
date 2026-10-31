@@ -585,6 +585,11 @@ func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// sort=priority lists regressed issues, then new ones, then the rest.
+	filter.Priority = r.URL.Query().Get("sort") == "priority"
+	if rank, err := strconv.Atoi(r.URL.Query().Get("cursor_rank")); err == nil && filter.Priority {
+		filter.CursorRank = &rank
+	}
 
 	total, err := storage.CountAllIssues(r.Context(), ro.pool, filter)
 	if err != nil {
@@ -615,6 +620,13 @@ func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
 		last := issues[len(issues)-1]
 		resp["next_cursor_time"] = last.LastSeen.UTC().Format(time.RFC3339Nano)
 		resp["next_cursor_id"] = last.ID
+		if filter.Priority {
+			var newSince *time.Time
+			if bounds, ok := storage.InvestigationRange(r.Context()); ok && !bounds.AllTime {
+				newSince = &bounds.From
+			}
+			resp["next_cursor_rank"] = storage.PriorityRank(last.Status, last.FirstSeen, newSince)
+		}
 	}
 
 	writeJSON(w, resp)

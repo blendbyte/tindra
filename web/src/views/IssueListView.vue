@@ -97,7 +97,21 @@ const assigneeChipLabel = computed(() => {
   return u ? (u.name || u.email) : 'Unknown'
 })
 
-type Cursor = { cursor_time: string; cursor_id: string } | null
+// Priority is the default (The Urgency Order Rule): regressed issues, then
+// issues new in the window, then the rest, each most recently seen first.
+type SortCol = 'priority' | 'last_seen' | 'first_seen' | 'event_count' | 'title'
+const VALID_SORT_COLS: SortCol[] = ['priority', 'last_seen', 'first_seen', 'event_count', 'title']
+const rawSort = qp('sort', 'priority', 'sort')
+const sortCol = ref<SortCol>(VALID_SORT_COLS.includes(rawSort as SortCol) ? rawSort as SortCol : 'priority')
+const sortDir = ref<'asc' | 'desc'>(qp('dir', 'desc', 'dir') === 'asc' ? 'asc' : 'desc')
+
+type Cursor = { cursor_time: string; cursor_id: string; cursor_rank?: number } | null
+
+// The next page's cursor; a priority list also continues from a rank.
+function cursorFrom(data: IssueListPage): Cursor {
+  if (!data.has_more || !data.next_cursor_time || !data.next_cursor_id) return null
+  return { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id, cursor_rank: data.next_cursor_rank }
+}
 
 const nextCursor = ref<Cursor>(null)
 const isFetchingMore = ref(false)
@@ -126,9 +140,13 @@ function buildIssueParams(cursor: Cursor) {
   if (tagValue.value) params.set('tag_value', tagValue.value)
   if (lensIdentity.value) params.set('user', lensIdentity.value)
   for (const id of [...effectiveProjectIds.value].sort()) params.append('project_id', id)
+  // Priority needs the whole list ordered on the server; the other columns
+  // sort the rows already loaded.
+  if (sortCol.value === 'priority') params.set('sort', 'priority')
   if (cursor) {
     params.set('cursor_time', cursor.cursor_time)
     params.set('cursor_id', cursor.cursor_id)
+    if (cursor.cursor_rank !== undefined) params.set('cursor_rank', String(cursor.cursor_rank))
   }
   return params.toString()
 }
@@ -162,9 +180,7 @@ const { data: firstPage, isFetching, isError, fetchStatus, dataUpdatedAt, refetc
 watch([issueQueryParams, firstPage, () => investigation.scopeKey, () => investigation.anchor], ([, data]) => {
   resetPagination()
   if (!data || Array.isArray(data)) return
-  nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
-    ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
-    : null
+  nextCursor.value = cursorFrom(data)
 }, { immediate: true })
 
 // allIssues handles both IssueListPage (new) and Issue[] (old server format).
@@ -196,9 +212,7 @@ async function loadMore() {
     if (controller.signal.aborted || generation !== paginationGeneration || scope !== buildIssueParams(null)) return
     if (!data) throw new Error('Missing issues response')
     extraIssues.value = [...extraIssues.value, ...(data.issues ?? [])]
-    nextCursor.value = data.has_more && data.next_cursor_time && data.next_cursor_id
-      ? { cursor_time: data.next_cursor_time, cursor_id: data.next_cursor_id }
-      : null
+    nextCursor.value = cursorFrom(data)
   } catch {
     if (!controller.signal.aborted && generation === paginationGeneration && scope === buildIssueParams(null)) loadMoreError.value = true
   } finally {
@@ -253,24 +267,33 @@ const filtered = computed(() => {
 })
 
 // ── Sorting ───────────────────────────────────────────────────────────────────
-type SortCol = 'last_seen' | 'first_seen' | 'event_count' | 'title'
-const VALID_SORT_COLS: SortCol[] = ['last_seen', 'first_seen', 'event_count', 'title']
-const rawSort = qp('sort', 'last_seen', 'sort')
-const sortCol = ref<SortCol>(VALID_SORT_COLS.includes(rawSort as SortCol) ? rawSort as SortCol : 'last_seen')
-const sortDir = ref<'asc' | 'desc'>(qp('dir', 'desc', 'dir') === 'asc' ? 'asc' : 'desc')
 
-function toggleSort(col: SortCol) {
-  if (sortCol.value === col) {
-    sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
-  } else {
+// A column sorts in its natural direction, then reversed, then gives the list
+// back to priority.
+function toggleSort(col: Exclude<SortCol, 'priority'>) {
+  const natural = col === 'title' ? 'asc' : 'desc'
+  if (sortCol.value !== col) {
     sortCol.value = col
-    sortDir.value = col === 'title' ? 'asc' : 'desc'
+    sortDir.value = natural
+  } else if (sortDir.value === natural) {
+    sortDir.value = natural === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortCol.value = 'priority'
+    sortDir.value = 'desc'
   }
+}
+
+function priorityRank(iss: Issue): number {
+  const state = rowState(iss)
+  return state === 'regressed' ? 0 : state === 'new' ? 1 : 2
 }
 
 const sorted = computed(() => {
   const list = [...filtered.value]
   list.sort((a, b) => {
+    if (sortCol.value === 'priority') {
+      return priorityRank(a) - priorityRank(b) || Date.parse(b.last_seen) - Date.parse(a.last_seen)
+    }
     let cmp = 0
     switch (sortCol.value) {
       case 'last_seen':   cmp = new Date(a.last_seen).getTime()  - new Date(b.last_seen).getTime();  break
@@ -536,7 +559,7 @@ watch(
     if (tagValue.value) query.tag_value = tagValue.value
     if (lensIdentity.value) query.user = lensIdentity.value
     if (serverSearch.value) query.q = serverSearch.value
-    if (sortCol.value !== 'last_seen' || sortDir.value !== 'desc') {
+    if (sortCol.value !== 'priority') {
       query.sort = sortCol.value
       query.dir = sortDir.value
     }
@@ -549,7 +572,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
   lsSet('status', statusFilter.value !== 'Open' ? statusFilter.value : null)
   lsSet('level', levelFilter.value !== 'All' ? levelFilter.value : null)
   lsSet('assignee', assigneeFilter.value !== 'All' ? assigneeFilter.value : null)
-  lsSet('sort', sortCol.value !== 'last_seen' ? sortCol.value : null)
+  lsSet('sort', sortCol.value !== 'priority' ? sortCol.value : null)
   lsSet('dir', sortDir.value !== 'desc' ? sortDir.value : null)
 })
 </script>
@@ -686,9 +709,12 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           @change="toggleAll"
         />
         <span />
-        <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'title' }" @click="toggleSort('title')">
-          Issue <span v-if="sortCol === 'title'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span>
-        </button>
+        <span class="col-head">
+          <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'title' }" @click="toggleSort('title')">
+            Issue <span v-if="sortCol === 'title'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span>
+          </button>
+          <span v-if="sortCol === 'priority'" class="col-sort__hint">Regressed and new first</span>
+        </span>
         <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'event_count' }" style="justify-content: flex-end" @click="toggleSort('event_count')">
           <span v-if="sortCol === 'event_count'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> Events
         </button>

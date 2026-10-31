@@ -1119,6 +1119,15 @@ a { color: inherit; text-decoration: none; }
 .col-sort:hover { color: var(--text-1); }
 .col-sort--active { color: var(--text-2); }
 .col-sort__icon { font-style: normal; display: inline-flex; align-items: center; }
+/* The issue column header also says how the list is ordered by default. */
+.col-head { display: inline-flex; align-items: baseline; gap: 10px; min-width: 0; }
+.col-sort__hint {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .col-label {
   font-size: var(--text-xs);
   color: var(--text-3);

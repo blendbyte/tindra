@@ -145,4 +145,19 @@ func TestAttentionIssuesSplitsRegressedAndNew(t *testing.T) {
 		titles = append(titles, issue.Title)
 	}
 	require.Equal(t, []string{"new-today"}, titles)
+
+	// sort=priority puts regressions first, then what is new in the window.
+	req = httptest.NewRequest("GET", "/api/issues?status=open&sort=priority&project_id="+p.ID+"&from="+dayFrom+"&to="+dayTo, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	list.Issues = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	statuses := []string{}
+	for _, issue := range list.Issues {
+		statuses = append(statuses, issue.Status+":"+issue.Title)
+	}
+	require.Equal(t, []string{"regressed", "regressed", "regressed"}, []string{list.Issues[0].Status, list.Issues[1].Status, list.Issues[2].Status}, statuses)
+	require.Equal(t, "new-today", list.Issues[3].Title, statuses)
 }

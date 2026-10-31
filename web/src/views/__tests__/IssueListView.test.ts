@@ -316,6 +316,27 @@ describe('IssueListView', () => {
       expect(firstIcon).not.toBe(secondIcon)
     })
 
+    it('orders by priority by default and says so in the header', () => {
+      setupWithIssues()
+      const wrapper = mount(IssueListView, { global: { stubs } })
+      expect(wrapper.find('.col-sort__hint').text()).toBe('Regressed and new first')
+      expect(wrapper.findAll('.col-sort--active')).toHaveLength(0)
+    })
+
+    it('cycles a column through both directions and back to priority', async () => {
+      setupWithIssues()
+      const wrapper = mount(IssueListView, { global: { stubs } })
+      const lastSeen = () => wrapper.findAll('.col-sort').find(b => b.text().includes('Last seen'))!
+      await lastSeen().trigger('click')
+      expect(lastSeen().find('.col-sort__icon').attributes('data-dir')).toBe('desc')
+      expect(wrapper.find('.col-sort__hint').exists()).toBe(false)
+      await lastSeen().trigger('click')
+      expect(lastSeen().find('.col-sort__icon').attributes('data-dir')).toBe('asc')
+      await lastSeen().trigger('click')
+      expect(lastSeen().classes()).not.toContain('col-sort--active')
+      expect(wrapper.find('.col-sort__hint').exists()).toBe(true)
+    })
+
     it('clicks Last seen sort column', async () => {
       setupWithIssues()
       const wrapper = mount(IssueListView, { global: { stubs } })
@@ -853,6 +874,15 @@ describe('virtual row rendering', () => {
     expect(old.find('[role="row"] .statechip').exists()).toBe(false)
   })
 
+  it('puts a regression above a busier open issue in the default order', () => {
+    setupWithVirtualRow(
+      { ...virtualIssue, id: 'busy', title: 'Busy: open', last_seen: new Date().toISOString() },
+      [{ ...virtualIssue, id: 'back', title: 'Back: regressed', status: 'regressed', last_seen: '2024-01-01T00:00:00Z' }],
+    )
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.find('[role="row"] .issue__title').text()).toContain('regressed')
+  })
+
   it('colours sparklines by state, never by level', () => {
     const colour = (overrides: Record<string, unknown>) => {
       setupWithVirtualRow({ ...virtualIssue, level: 'error', ...overrides })
@@ -1105,6 +1135,24 @@ describe('load more pagination', () => {
     await wrapper.find('.list-footer__more').trigger('click')
     await flushPromises()
     expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/api/issues'), { signal: expect.any(AbortSignal) })
+  })
+
+  it('continues a priority list from the rank of the last loaded issue', async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ issues: [], total: 5, has_more: false } as any)
+    const dataRef = ref<any>(undefined)
+    vi.mocked(useProjectsStore).mockReturnValue({ projects: [{ id: '1', name: 'App' }], selectedIds: [], toggleProject: vi.fn(), setSelected: vi.fn() } as any)
+    vi.mocked(useQuery)
+      .mockReturnValueOnce({ data: ref(undefined), isFetching: ref(false) } as any)
+      .mockReturnValueOnce({ data: dataRef, isFetching: ref(false), isError: ref(false), refetch: vi.fn() } as any)
+      .mockReturnValueOnce({ data: ref([]), isFetching: ref(false) } as any)
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    dataRef.value = { issues: [virtualIssue], total: 5, has_more: true, next_cursor_time: '2024-01-01T00:00:00Z', next_cursor_id: 'cursor-abc', next_cursor_rank: 1 }
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.list-footer__more').trigger('click')
+    await flushPromises()
+    const params = new URLSearchParams(String(vi.mocked(apiFetch).mock.calls.at(-1)![0]).split('?')[1])
+    expect(params.get('sort')).toBe('priority')
+    expect(params.get('cursor_rank')).toBe('1')
   })
 
   it('shows list-footer counter text when sorted has items', async () => {
@@ -1725,6 +1773,20 @@ describe('confirmMerge early return', () => {
       const issuesCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
       const queryKey = issuesCall.queryKey.value
       expect(new URLSearchParams(queryKey[1]).getAll('project_id')).toEqual(['store-proj-id'])
+    })
+
+    it('asks the server for the priority order by default, and not for a column sort', () => {
+      setupMocks({})
+      mount(IssueListView, { global: { stubs } })
+      const issuesCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
+      expect(new URLSearchParams(issuesCall.queryKey.value[1]).get('sort')).toBe('priority')
+
+      vi.clearAllMocks()
+      routeQueryOverride = { sort: 'event_count', dir: 'desc' }
+      setupMocks({})
+      mount(IssueListView, { global: { stubs } })
+      const columnCall = vi.mocked(useQuery).mock.calls[1][0] as { queryKey: Ref<string[]> }
+      expect(new URLSearchParams(columnCall.queryKey.value[1]).get('sort')).toBeNull()
     })
 
     it('asks the server for new issues when the status is New', () => {
