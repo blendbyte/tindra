@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { useInvestigationStore } from '@/stores/investigation'
 import { useFormatters } from '@/composables/useFormatters'
 import Icon from '@/components/Icon.vue'
+import { useProjectsStore } from '@/stores/projects'
 import type { DashboardRelease } from './shared'
 
 const props = defineProps<{
@@ -17,13 +18,21 @@ const investigation = useInvestigationStore()
 const { formatRel } = useFormatters()
 
 const recentReleases = computed(() => props.releases.slice(0, 5))
+
+// The same version can ship in several projects, so name the project when
+// more than one is in view.
+const projects = useProjectsStore()
+function projectName(id: string): string | null {
+  if (projects.projects.length < 2) return null
+  return projects.projects.find(p => p.id === id)?.name ?? null
+}
 </script>
 
 <template>
   <div class="db-sec">
     <div class="db-sec__head">
-      <span class="db-sec__title">Release Health</span>
-      <RouterLink :to="investigation.link('/releases')" class="db-sec__link">all releases →</RouterLink>
+      <h2 class="db-sec__title">Release health</h2>
+      <RouterLink :to="investigation.link('/releases')" class="db-sec__link">all releases <Icon name="arrow-right" :size="11" /></RouterLink>
     </div>
     <template v-if="loading">
       <div v-for="i in 4" :key="i" class="db-release-row">
@@ -56,9 +65,10 @@ const recentReleases = computed(() => props.releases.slice(0, 5))
           }"
         />
         <div class="db-release-row__info">
-          <div class="db-release-row__version mono">{{ rel.version }}</div>
-          <div class="db-release-row__time">{{ formatRel(rel.deployed_at) }}</div>
+          <span class="db-release-row__version mono">{{ rel.version }}</span>
+          <span v-if="projectName(rel.project_id)" class="db-release-row__project">{{ projectName(rel.project_id) }}</span>
         </div>
+        <span class="db-release-row__time">{{ formatRel(rel.deployed_at) }}</span>
         <span
           v-if="rel.regressed_issues > 0"
           class="rel-pill rel-pill--bad"
@@ -79,8 +89,8 @@ const recentReleases = computed(() => props.releases.slice(0, 5))
 /* ── Releases ───────────────────────────────────────────────────────────────── */
 
 .db-release-row {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-soft);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -101,20 +111,34 @@ const recentReleases = computed(() => props.releases.slice(0, 5))
 .db-release-row__dot--bad { background: var(--danger); }
 .db-release-row__dot--ok  { background: var(--success); }
 
-.db-release-row__info { flex: 1; min-width: 0; }
+.db-release-row__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.db-release-row__project {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .db-release-row__version {
   font-size: var(--text-sm);
   color: var(--accent);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .db-release-row__time {
   font-size: var(--text-xs);
   color: var(--text-3);
-  margin-top: 2px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .rel-pill {

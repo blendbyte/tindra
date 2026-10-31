@@ -1,55 +1,49 @@
 /* Section chrome shared by every dashboard widget. Each widget pulls this file
-   into its own scoped style block, so the rules stay scoped to its markup. */
-
-.db-aside .db-sec__head {
-  background: var(--bg);
-}
+   into its own scoped style block, so the rules stay scoped to its markup.
+   Rows keep 16px of inline padding, so headings use the same inset. */
 
 /* ── Sections ───────────────────────────────────────────────────────────────── */
 
-.db-sec {
-  border-top: 1px solid var(--border);
-}
-
 .db-sec + .db-sec {
-  margin-top: 36px;
+  margin-top: 32px;
 }
 
 .db-sec__head {
-  padding: 9px 16px;
-  background: var(--surface);
+  padding: 0 16px 10px;
   border-bottom: 1px solid var(--border);
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .db-sec__title {
-  font-size: var(--text-xs);
+  margin: 0;
+  font-size: var(--text-sm);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-3);
+  color: var(--text-1);
 }
 
 .db-sec__hint {
   font-size: var(--text-xs);
   color: var(--text-3);
-  opacity: 0.55;
 }
 
 .db-sec__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: var(--text-xs);
   color: var(--accent);
-  opacity: 0.75;
   text-decoration: none;
+  white-space: nowrap;
 }
 
-.db-sec__link:hover { opacity: 1; }
+.db-sec__link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .db-sec__foot {
   padding: 8px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-soft);
   font-size: var(--text-xs);
   color: var(--text-3);
 }
@@ -57,7 +51,7 @@
 /* ── Empty state ────────────────────────────────────────────────────────────── */
 
 .db-empty {
-  padding: 28px 16px;
+  padding: 24px 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -67,7 +61,5 @@
 }
 
 @media (max-width: 768px) {
-  /* Separate major sections with visible gaps so they read as distinct blocks */
-  .db-sec + .db-sec { margin-top: 16px; }
-  .db-sec__head { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .db-sec + .db-sec { margin-top: 28px; }
 }

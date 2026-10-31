@@ -21,8 +21,8 @@ const slowTx = computed(() =>
 <template>
   <div class="db-sec">
     <div class="db-sec__head">
-      <span class="db-sec__title">Slowest Transactions</span>
-      <RouterLink :to="investigation.link('/performance/transactions')" class="db-sec__link">open performance →</RouterLink>
+      <h2 class="db-sec__title">Slowest transactions</h2>
+      <RouterLink :to="investigation.link('/performance/transactions')" class="db-sec__link">open performance <Icon name="arrow-right" :size="11" /></RouterLink>
     </div>
     <template v-if="loading">
       <div v-for="i in 5" :key="i" class="db-tx-row">
@@ -52,10 +52,7 @@ const slowTx = computed(() =>
       >
         <span class="optag" :class="`optag--${tx.op.split('.')[0]}`">{{ tx.op.split('.')[0] }}</span>
         <span class="db-tx-row__name">{{ tx.transaction }}</span>
-        <span
-          class="db-tx-row__val"
-          :class="{ 'db-tx-row__val--warn': tx.p50 > 500 }"
-        >{{ formatDuration(tx.p50) }}</span>
+        <span class="db-tx-row__val">{{ formatDuration(tx.p50) }}</span>
         <span
           class="db-tx-row__val"
           :class="{ 'db-tx-row__val--warn': tx.p95 > 1000, 'db-tx-row__val--bad': tx.p95 > 2000 }"

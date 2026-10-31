@@ -34,8 +34,8 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
 <template>
   <div class="db-sec">
     <div class="db-sec__head">
-      <span class="db-sec__title">Recent Alerts</span>
-      <RouterLink v-if="canManageAlerts" to="/alerts" class="db-sec__link">configure →</RouterLink>
+      <h2 class="db-sec__title">Recent alerts</h2>
+      <RouterLink v-if="canManageAlerts" to="/alerts" class="db-sec__link">configure <Icon name="arrow-right" :size="11" /></RouterLink>
     </div>
     <template v-if="alertsLoading">
       <div v-for="i in 3" :key="i" class="db-alert-row">
@@ -57,7 +57,7 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
         class="db-alert-row"
       >
         <div class="db-alert-row__icon">
-          <Icon name="zap" :size="11" style="color: var(--warning)" />
+          <Icon name="zap" :size="11" style="color: var(--text-3)" />
         </div>
         <div class="db-alert-row__body">
           <div class="db-alert-row__name">{{ a.name }}</div>
@@ -66,7 +66,7 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
       </div>
     </template>
     <div class="db-sec__foot">
-      {{ enabledAlerts }} rule{{ enabledAlerts === 1 ? '' : 's' }} active
+      {{ enabledAlerts }} of {{ alertRules?.length ?? 0 }} rule{{ (alertRules?.length ?? 0) === 1 ? '' : 's' }} enabled
     </div>
   </div>
 </template>
@@ -90,8 +90,7 @@ const enabledAlerts = computed(() => (alertRules.value ?? []).filter(r => r.enab
   width: 20px;
   height: 20px;
   border-radius: 4px;
-  background: oklch(from var(--warning) l c h / 0.12);
-  border: 1px solid oklch(from var(--warning) l c h / 0.22);
+  background: var(--surface-2);
   display: flex;
   align-items: center;
   justify-content: center;

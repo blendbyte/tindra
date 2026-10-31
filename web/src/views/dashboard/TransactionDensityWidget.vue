@@ -82,7 +82,7 @@ function cellColor(v: number): string {
 <template>
   <div class="db-sec">
     <div class="db-sec__head">
-      <span class="db-sec__title">Transaction density · Last 7 days</span>
+      <h2 class="db-sec__title">Transaction density · last 7 days</h2>
       <span class="db-sec__hint">each cell = 1 hour</span>
     </div>
     <div class="db-heatmap">

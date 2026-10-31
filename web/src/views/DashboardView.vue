@@ -14,11 +14,11 @@ import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import ProjectSetup from '@/components/ProjectSetup.vue'
 import { useProjectScope } from './dashboard/shared'
-import KpiStripWidget from './dashboard/KpiStripWidget.vue'
-import ProjectOverviewWidget from './dashboard/ProjectOverviewWidget.vue'
+import { takeLastVisit } from './dashboard/briefing'
+import BriefingWidget from './dashboard/BriefingWidget.vue'
+import VitalsWidget from './dashboard/VitalsWidget.vue'
+import ProjectsWidget from './dashboard/ProjectsWidget.vue'
 import TransactionDensityWidget from './dashboard/TransactionDensityWidget.vue'
-import MonitorsWidget from './dashboard/MonitorsWidget.vue'
-import HotIssuesWidget from './dashboard/HotIssuesWidget.vue'
 import SlowTransactionsWidget from './dashboard/SlowTransactionsWidget.vue'
 import AlertsWidget from './dashboard/AlertsWidget.vue'
 import ReleasesWidget from './dashboard/ReleasesWidget.vue'
@@ -57,6 +57,10 @@ const { data: releasesPage, isFetching: releasesFetching } = useQuery({
   queryFn: ({ signal }) => apiFetch<ReleaseHealthPage>(`/api/releases/health?${buildQs()}`, { signal }),
 
 })
+
+// When this browser last opened the dashboard; rows that changed after it are
+// marked. Read once per mount so the marks stay while the page is open.
+const lastVisit = takeLastVisit()
 
 const openCount = computed(() => issuesPage.value?.total ?? 0)
 const issues = computed(() => issuesPage.value?.issues ?? [])
@@ -149,29 +153,23 @@ function finishSetup() {
 
   <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
   <div v-else class="page">
-
-    <!-- KPI strip ──────────────────────────────────────────────────────────── -->
-    <KpiStripWidget :loading="loading" :open-count="openCount" :tx-summaries="txSummaries" />
-
-    <!-- Project overview (only when 2+ projects) ──────────────────────────── -->
-    <ProjectOverviewWidget :tx-summaries="txSummaries" />
-
-    <!-- Body ───────────────────────────────────────────────────────────────── -->
     <div class="db-body">
-
-      <!-- Main column ──────────────────────────────────────────────────────── -->
+      <!-- Main column: the briefing, then quieter performance context ───────── -->
       <div class="db-main">
-        <TransactionDensityWidget />
-        <MonitorsWidget />
-        <HotIssuesWidget :loading="loading" :issues="issues" />
-        <SlowTransactionsWidget :loading="loading" :tx-summaries="txSummaries" />
+        <BriefingWidget :loading="loading" :open-count="openCount" :busiest="issues" :last-visit="lastVisit" />
+        <div class="db-tail">
+          <SlowTransactionsWidget :loading="loading" :tx-summaries="txSummaries" />
+          <TransactionDensityWidget />
+        </div>
       </div>
 
       <!-- Aside column ─────────────────────────────────────────────────────── -->
-      <div class="db-aside">
-        <AlertsWidget />
+      <aside class="db-aside" aria-label="Health summary">
+        <VitalsWidget :loading="loading" :tx-summaries="txSummaries" />
         <ReleasesWidget :loading="loading" :releases="releases" />
-      </div>
+        <ProjectsWidget />
+        <AlertsWidget />
+      </aside>
     </div>
   </div>
 </template>
@@ -184,30 +182,35 @@ function finishSetup() {
 
 .db-body {
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: minmax(0, 1fr) 360px;
   flex: 1;
 }
 
 .db-main {
-  border-right: 1px solid var(--border);
   min-width: 0;
+  border-right: 1px solid var(--border-soft);
+}
+
+.db-tail {
+  padding: 8px 16px 40px;
 }
 
 .db-aside {
   min-width: 0;
-  background: var(--surface);
+  padding: 32px 8px 40px;
+}
+
+@media (max-width: 1080px) {
+  .db-body { grid-template-columns: minmax(0, 1fr) 300px; }
 }
 
 @media (max-width: 768px) {
-  /* Body: single column, sidebar below main */
-  .db-body {
-    grid-template-columns: 1fr;
-  }
-  .db-main {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .db-body     { margin-top: 16px; }
+  .db-body { grid-template-columns: 1fr; }
+  .db-main { border-right: none; }
+  .db-tail { padding: 0 0 28px; }
+  /* On phones the health summary follows the briefing, before performance. */
+  .db-main { display: contents; }
+  .db-aside { order: 1; padding: 8px 0 28px; border-top: 1px solid var(--border-soft); }
+  .db-tail { order: 2; border-top: 1px solid var(--border-soft); padding-top: 28px; }
 }
 </style>
