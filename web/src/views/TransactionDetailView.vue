@@ -212,8 +212,9 @@ function spanDataEntries(span: Span): [string, string][] {
   }
 }
 
-// Span series colours come from a violet and blue ramp built from theme tokens.
-// They are categories, so they never use the state hues (green, amber, red).
+// Span series colours are derived from the accent and info tokens: hue-rotated
+// to stay distinct from each other, and kept away from the state hues (green,
+// amber, red) because ops are categories, not problems.
 function opColor(op: string) {
   const base = op.split('.')[0]
   switch (base) {
@@ -223,15 +224,15 @@ function opColor(op: string) {
     case 'rpc':
     case 'graphql':    return 'var(--info)'
     case 'cache':
-    case 'resource':   return 'color-mix(in oklch, var(--info) 50%, var(--accent))'
+    case 'resource':   return 'oklch(from var(--info) l c calc(h - 40))'
     case 'task':
     case 'queue':
-    case 'file':       return 'color-mix(in oklch, var(--accent) 45%, var(--text-2))'
+    case 'file':       return 'oklch(from var(--accent) l c calc(h + 50))'
     case 'template':
     case 'pageload':
     case 'navigation':
     case 'browser':
-    case 'ui':         return 'color-mix(in oklch, var(--accent) 55%, var(--text-1))'
+    case 'ui':         return 'color-mix(in oklch, var(--accent) 45%, var(--text-1))'
     default:           return 'var(--text-3)'
   }
 }

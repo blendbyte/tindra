@@ -3496,7 +3496,7 @@ a { color: inherit; text-decoration: none; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.span-row__dur--crit { color: var(--warning); font-weight: 600; }
+.span-row__dur--crit { color: var(--text-1); font-weight: 600; }
 
 .span-row__right {
   display: flex;
@@ -6224,6 +6224,7 @@ a { color: inherit; text-decoration: none; }
 }
 .audit-row__kind--auth { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
 /* Audit kinds are categories: neutral, so red and amber stay reserved for problems. */
+.audit-row__kind--auth,
 .audit-row__kind--issue,
 .audit-row__kind--token,
 .audit-row__kind--project { color: var(--text-2); background: var(--surface-2); border-color: var(--border-soft); }
@@ -6569,7 +6570,7 @@ select.field__input {
 
   /* Waterfall: keep span names and bars on one row and let the pair scroll
      sideways. The column split is an inline style, so this must override it. */
-  .waterfall-grid { grid-template-columns: 190px 0 minmax(420px, 1fr) !important; overflow-x: auto; }
+  .waterfall-grid { grid-template-columns: 230px 0 minmax(420px, 1fr) !important; overflow-x: auto; }
   .waterfall-divider { display: none; }
   .waterfall-left { min-width: 0; }
 
@@ -7336,4 +7337,14 @@ select.field__input {
    clipping columns. */
 @media (max-width: 640px) {
   .token-table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+/* Phones: stat rows wrap into two columns instead of clipping the last stat;
+   release transaction names get the op tag's room; monitor meta drops the
+   separator that led into the hidden project tag. */
+@media (max-width: 640px) {
+  .stat-row { flex-wrap: wrap; row-gap: 14px; }
+  .stat { flex: 1 1 40%; padding: 0 12px; }
+  .stat:nth-child(odd) { border-left: none; padding-left: 0; }
+  .rel-tx-row .optag { display: none; }
 }

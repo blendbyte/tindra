@@ -345,5 +345,6 @@ select.mon-field__input { cursor: pointer; }
 
 /* Phones: the outage length matters more than the project tag. */
 @media (max-width: 640px) {
-  .monrow__sub .projtag { display: none; }
+  .monrow__sub .projtag,
+  .monrow__sub .monrow__sep:has(+ .projtag) { display: none; }
 }
