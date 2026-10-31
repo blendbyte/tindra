@@ -148,9 +148,9 @@ func TestShowcaseDatabaseAndIngestion(t *testing.T) {
 		require.Zero(t, wait)
 	}
 	require.NoError(t, seedWorkflow(ctx, pool, project.ID, ids))
-	require.Zero(t, seedCronMonitors(target, pool))
-	require.Zero(t, seedUptimeMonitors(pool, project.ID))
-	require.Zero(t, seedAlertRules(pool, project.ID))
+	require.Zero(t, seedCronMonitors(target, pool, "Demo: "))
+	require.Zero(t, seedUptimeMonitors(pool, func(string) string { return project.ID }, "Demo: "))
+	require.Zero(t, seedAlertRules(pool, project.ID, "Demo: "))
 	var n int
 	for query, want := range map[string]int{
 		`SELECT count(*) FROM issue_history WHERE event_type='regressed'`:                                          1,
@@ -209,6 +209,39 @@ func TestShowcaseDatabaseAndIngestion(t *testing.T) {
 	}
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM transactions WHERE project_id=$1 AND op IN ('pageload','navigation') AND start_timestamp>NOW()-INTERVAL '24 hours' AND measurements->'lcp' IS NOT NULL`, complete.ID).Scan(&n))
 	require.Positive(t, n)
+	// The showcase builds the whole shop from the server URL alone.
+	showcaseCtx, showcaseCancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer showcaseCancel()
+	command = exec.CommandContext(showcaseCtx, "go", "run", "main.go", "--showcase", "--db", databaseURL, server.URL)
+	output, err = command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	require.Contains(t, string(output), "0 failures")
+	for query, want := range map[string]int{
+		`SELECT count(*) FROM projects WHERE slug IN ('storefront','shop-api','payments','workers')`:           4,
+		`SELECT count(*) FROM users WHERE email LIKE '%.%@example.com' AND password_hash = ''`:                 5,
+		`SELECT count(DISTINCT project_id) FROM uptime_monitors WHERE name NOT LIKE 'Demo:%'`:                  3,
+		`SELECT count(*) FROM cron_monitors c JOIN projects p ON p.id = c.project_id WHERE p.slug = 'workers'`: 7,
+		`SELECT count(*) FROM alert_rules WHERE name NOT LIKE 'Demo:%'`:                                        7,
+	} {
+		require.NoError(t, pool.QueryRow(ctx, query).Scan(&n))
+		require.Equal(t, want, n, query)
+	}
+	require.Eventually(t, func() bool {
+		// Every showcase issue starts at its oldest event, despite concurrent delivery.
+		var late, total int
+		err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE i.first_seen > e.oldest + interval '1 second'), count(*)
+			FROM issues i JOIN projects p ON p.id = i.project_id
+			JOIN (SELECT issue_id, min(timestamp) AS oldest FROM events GROUP BY issue_id) e ON e.issue_id = i.id
+			WHERE p.slug IN ('storefront','shop-api','payments','workers')`).Scan(&late, &total)
+		return err == nil && total > 15 && late == 0
+	}, 15*time.Second, 200*time.Millisecond)
+	var checkout int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT event_count FROM issues i JOIN projects p ON p.id = i.project_id WHERE p.slug = 'shop-api' AND i.title LIKE 'PaymentGatewayTimeout%'`).Scan(&checkout))
+	require.Greater(t, checkout, 20, "the checkout incident has a history")
+	var assignees int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(DISTINCT assignee_id) FROM issues i JOIN projects p ON p.id = i.project_id WHERE p.slug = 'shop-api'`).Scan(&assignees))
+	require.Greater(t, assignees, 1, "the team shares the triage")
+
 	// Context cancellation must stop waiting for unavailable event grouping.
 	stopped, stop := context.WithCancel(ctx)
 	stop()
