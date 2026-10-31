@@ -40,6 +40,11 @@ describe('brokenMonitors', () => {
     expect(b.history).toEqual(['bad', 'ok', 'bad', 'bad'])
   })
 
+  it('treats a response that is not a list as no monitors', () => {
+    expect(brokenMonitors({} as never, null as never)).toEqual([])
+    expect(healthyMonitorCount({} as never, undefined)).toBe(0)
+  })
+
   it('counts healthy monitors and ignores paused ones', () => {
     expect(healthyMonitorCount(
       [uptime({ state: 'up' }), uptime({ state: 'up', status: 'paused' })],

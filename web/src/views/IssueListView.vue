@@ -69,6 +69,9 @@ const search = ref(qp('q', ''))
 const serverSearch = useDebounced(search, 300)
 const selectedIdx = ref(-1)
 const searchInput = ref<HTMLInputElement | null>(null)
+// True when the shared investigation bar offers a slot for this page's filters.
+// The bar renders before the page, so the slot is usually there at setup.
+const sharedFilterBar = ref(typeof document !== 'undefined' && !!document.getElementById('page-filters'))
 const assigneeOpen = ref(false)
 const assigneeEl = ref<HTMLElement | null>(null)
 
@@ -454,6 +457,7 @@ function onMouseDownGlobal(e: MouseEvent) {
 }
 
 onMounted(() => {
+  sharedFilterBar.value = !!document.getElementById('page-filters')
   document.addEventListener('keydown', onKey)
   document.addEventListener('mousedown', onMouseDownGlobal)
 })
@@ -485,6 +489,13 @@ const isFiltered = computed(
     tagKey.value !== '' ||
     !!lensIdentity.value,
 )
+
+// Report this page's own active filters to the shared bar's Filters toggle.
+const pageFilterCount = computed(() =>
+  [!!search.value, statusFilter.value !== 'Open', levelFilter.value !== 'All', assigneeFilter.value !== 'All', tagKey.value !== '']
+    .filter(Boolean).length)
+watch(pageFilterCount, n => { investigation.pageFilterCount = n }, { immediate: true })
+onUnmounted(() => { investigation.pageFilterCount = 0 })
 
 // True when only a client-side search/project filter is narrowing the results.
 const isClientFiltered = computed(() => !!(search.value || projects.selectedIds.length > 0))
@@ -538,9 +549,11 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
 
 <template>
   <div class="page">
-    <p v-if="investigation.range === 'All'" class="filterbar">All retained events, with counts and sparklines filtered by the selected environment.</p>
-    <!-- Filter bar -->
-    <div class="filterbar">
+    <p v-if="investigation.range === 'All'" class="range-note">All retained events, with counts and sparklines filtered by the selected environment.</p>
+    <!-- Filter bar: moves into the shared investigation bar when it is on the
+         page, so the list adds no second row of filters. -->
+    <Teleport :defer="sharedFilterBar" to="#page-filters" :disabled="!sharedFilterBar">
+    <div class="filterbar" :class="{ 'filterbar--shared': sharedFilterBar }">
       <FilterChip
         label="Status"
         :value="statusFilter"
@@ -620,6 +633,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         </div>
       </div>
       <button
+        v-if="!sharedFilterBar"
         class="filterbar__refresh"
         :class="{ 'filterbar__refresh--fetching': isFetching }"
         :title="isFetching ? 'Refreshing…' : 'Refresh now (auto every 30s)'"
@@ -639,6 +653,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         <span class="nav__kbd">/</span>
       </div>
     </div>
+    </Teleport>
 
     <QueryFeedback resource="issues" :failed="!!isError" :has-data="firstPage !== undefined"
       :refreshing="isFetching" :paused="fetchStatus === 'paused'" :updated-at="dataUpdatedAt" @retry="investigation.refresh(); refetch()" />

@@ -861,6 +861,41 @@ describe('virtual row rendering', () => {
     expect(wrapper.find('[role="row"] .users-cell--none').exists()).toBe(true)
   })
 
+  it('moves its filters into the shared investigation bar when that bar is on the page', async () => {
+    const slot = document.createElement('div')
+    slot.id = 'page-filters'
+    document.body.appendChild(slot)
+    try {
+      setupWithVirtualRow()
+      const wrapper = mount(IssueListView, { global: { stubs }, attachTo: document.body })
+      await wrapper.vm.$nextTick()
+      expect(slot.querySelector('.filterbar--shared')).not.toBeNull()
+      expect(slot.querySelector('.filterbar__search input')).not.toBeNull()
+      expect(slot.querySelector('.filterbar__refresh')).toBeNull()
+      wrapper.unmount()
+    } finally {
+      slot.remove()
+    }
+  })
+
+  it('reports its own active filters to the shared bar and clears them on leave', async () => {
+    routeQueryOverride = { status: 'Resolved', level: 'Error' }
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    const investigation = useInvestigationStore()
+    expect(investigation.pageFilterCount).toBe(2)
+    wrapper.unmount()
+    expect(investigation.pageFilterCount).toBe(0)
+    routeQueryOverride = {}
+  })
+
+  it('keeps its own filter row when there is no shared bar', () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.find('.filterbar').classes()).not.toContain('filterbar--shared')
+    expect(wrapper.find('.filterbar__refresh').exists()).toBe(true)
+  })
+
   it('sorts by first seen from its column header', async () => {
     setupWithVirtualRow()
     const wrapper = mount(IssueListView, { global: { stubs } })

@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import type { CronMonitor, UptimeMonitor } from '@/api/types'
 
 // The dashboard briefing ranks what needs attention: monitors that are broken
@@ -39,16 +40,20 @@ export type BrokenMonitor =
 function cronSince(m: CronMonitor): string | null {
   if (m.state === 'missed') return m.next_expected_at ?? m.last_checkin_at
   let since: string | null = null
-  for (let i = m.recent_checkins.length - 1; i >= 0; i--) {
-    if (m.recent_checkins[i].status !== 'error') break
-    since = m.recent_checkins[i].received_at
+  const checkins = m.recent_checkins ?? []
+  for (let i = checkins.length - 1; i >= 0; i--) {
+    if (checkins[i].status !== 'error') break
+    since = checkins[i].received_at
   }
   return since ?? m.last_checkin_at
 }
 
 // Active monitors that are failing now: uptime first, then cron, longest
 // outage first within each kind. Paused monitors never count as broken.
-export function brokenMonitors(uptime: UptimeMonitor[] = [], cron: CronMonitor[] = []): BrokenMonitor[] {
+// Inputs that are not lists (an error body, a stale cache entry) count as empty.
+export function brokenMonitors(uptimeInput: UptimeMonitor[] = [], cronInput: CronMonitor[] = []): BrokenMonitor[] {
+  const uptime = Array.isArray(uptimeInput) ? uptimeInput : []
+  const cron = Array.isArray(cronInput) ? cronInput : []
   const byOnset = (a: { since: string | null }, b: { since: string | null }) =>
     (a.since ? Date.parse(a.since) : Infinity) - (b.since ? Date.parse(b.since) : Infinity)
   const down: BrokenMonitor[] = uptime
@@ -57,7 +62,7 @@ export function brokenMonitors(uptime: UptimeMonitor[] = [], cron: CronMonitor[]
       kind: 'uptime' as const,
       monitor: m,
       since: m.went_down_at ?? m.last_ok_at,
-      history: m.recent_checks.map(c => (c.status === 'up' ? 'ok' : 'bad') as CheckState),
+      history: (m.recent_checks ?? []).map(c => (c.status === 'up' ? 'ok' : 'bad') as CheckState),
     }))
     .sort(byOnset)
   const failing: BrokenMonitor[] = cron
@@ -66,13 +71,15 @@ export function brokenMonitors(uptime: UptimeMonitor[] = [], cron: CronMonitor[]
       kind: 'cron' as const,
       monitor: m,
       since: cronSince(m),
-      history: m.recent_checkins.map(c => (c.status === 'ok' ? 'ok' : c.status === 'error' ? 'bad' : 'pending') as CheckState),
+      history: (m.recent_checkins ?? []).map(c => (c.status === 'ok' ? 'ok' : c.status === 'error' ? 'bad' : 'pending') as CheckState),
     }))
     .sort(byOnset)
   return [...down, ...failing]
 }
 
-export function healthyMonitorCount(uptime: UptimeMonitor[] = [], cron: CronMonitor[] = []): number {
+export function healthyMonitorCount(uptimeInput: UptimeMonitor[] = [], cronInput: CronMonitor[] = []): number {
+  const uptime = Array.isArray(uptimeInput) ? uptimeInput : []
+  const cron = Array.isArray(cronInput) ? cronInput : []
   return uptime.filter(m => m.status === 'active' && m.state === 'up').length +
     cron.filter(m => m.status === 'active' && (m.state === 'ok' || m.state === 'in_progress')).length
 }
@@ -145,15 +152,25 @@ export function joinParts(parts: string[]): string {
 
 const LAST_VISIT_KEY = 'tindra:dashboard:last-visit'
 
-// Reads when the dashboard was last opened in this browser and records now.
-// Returns null on the first visit or when storage is unavailable.
-export function takeLastVisit(now = Date.now()): number | null {
-  let previous: number | null = null
+function storedLastVisit(now: number): number | null {
   try {
     const raw = localStorage.getItem(LAST_VISIT_KEY)
     const parsed = raw === null ? NaN : Number(raw)
-    previous = Number.isFinite(parsed) && parsed > 0 && parsed < now ? parsed : null
+    return Number.isFinite(parsed) && parsed > 0 && parsed < now ? parsed : null
+  } catch { return null }
+}
+
+// The last visit the open dashboard compares against. The navigation reads it
+// too, so both ask the server the same question and share one cached answer.
+export const lastVisitSeen = ref<number | null>(storedLastVisit(Date.now()))
+
+// Reads when the dashboard was last opened in this browser and records now.
+// Returns null on the first visit or when storage is unavailable.
+export function takeLastVisit(now = Date.now()): number | null {
+  const previous = storedLastVisit(now)
+  try {
     localStorage.setItem(LAST_VISIT_KEY, String(now))
   } catch { /* storage unavailable */ }
+  lastVisitSeen.value = previous
   return previous
 }

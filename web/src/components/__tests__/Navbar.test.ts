@@ -34,6 +34,13 @@ vi.mock('@/stores/projects', () => ({
   useProjectsStore: vi.fn(),
 }))
 
+// The navigation counts come from the briefing's queries; tests set them directly.
+const attention = vi.hoisted(() => ({ monitors: { value: 0 }, issues: { value: 0 }, regressed: { value: 0 } }))
+vi.mock('@/composables/useBriefingData', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useBriefingData')>()),
+  useAttentionCounts: vi.fn(() => attention),
+}))
+
 import Navbar from '../Navbar.vue'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
@@ -636,4 +643,38 @@ it.each(['Dashboard', 'Issues', 'Performance', 'Logs', 'Monitors', 'Releases'])(
   await nextTick()
   expect(document.body.querySelector('.nav__mobile-drawer')).toBeNull()
   wrapper.unmount()
+})
+
+
+describe('Navbar attention counts', () => {
+  function mountWith(counts: { monitors: number; issues: number; regressed: number }) {
+    attention.monitors.value = counts.monitors
+    attention.issues.value = counts.issues
+    attention.regressed.value = counts.regressed
+    vi.mocked(useUiStore).mockReturnValue({ resolvedTheme: 'dark', toggleTheme: vi.fn(), openCmd: vi.fn() } as any)
+    vi.mocked(useProjectsStore).mockReturnValue({ projects: [], selectedIds: [], toggleProject: vi.fn(), setSelected: vi.fn() } as any)
+    return mount(Navbar, { global: globalStubsWithAttrs })
+  }
+
+  it('shows no counts when nothing needs attention', () => {
+    const wrapper = mountWith({ monitors: 0, issues: 0, regressed: 0 })
+    expect(wrapper.find('.nav__badge').exists()).toBe(false)
+    expect(wrapper.find('.nav__hamburger-dot').exists()).toBe(false)
+  })
+
+  it('counts failing monitors in red and flags the menu button', () => {
+    const wrapper = mountWith({ monitors: 3, issues: 0, regressed: 0 })
+    const badge = wrapper.find('.nav__badge--danger')
+    expect(badge.text()).toBe('3 failing')
+    expect(wrapper.find('.nav__hamburger-dot').exists()).toBe(true)
+    expect(wrapper.find('.nav__hamburger').attributes('aria-label')).toBe('Toggle navigation, 3 monitors failing')
+  })
+
+  it('counts new and regressed issues, amber when anything regressed', () => {
+    const regressed = mountWith({ monitors: 0, issues: 5, regressed: 1 })
+    expect(regressed.find('.nav__badge--warning').text()).toBe('5 new or regressed')
+    regressed.unmount()
+    const fresh = mountWith({ monitors: 0, issues: 120, regressed: 0 })
+    expect(fresh.find('.nav__badge--accent').text()).toBe('99+ new or regressed')
+  })
 })

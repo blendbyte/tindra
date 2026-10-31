@@ -282,7 +282,9 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
-  overflow-x: hidden;
+  /* clip, not hidden: hidden makes .app a scroll container, which stops the
+     sticky nav, filter bar and list headers from sticking to the window. */
+  overflow-x: clip;
 }
 
 /* ---------- Quota banner ---------- */
@@ -420,6 +422,39 @@ a { color: inherit; text-decoration: none; }
   height: 100%;
   display: flex;
   align-items: center;
+}
+
+/* Navigation counts: red for failing monitors, amber when an issue regressed,
+   violet for new issues only. They mirror the dashboard briefing. */
+.nav__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.nav__badge--danger  { color: color-mix(in oklch, var(--danger) 82%, var(--text-1));  background: oklch(from var(--danger) l c h / 0.15); }
+.nav__badge--warning { color: color-mix(in oklch, var(--warning) 65%, var(--text-1)); background: oklch(from var(--warning) l c h / 0.15); }
+.nav__badge--accent  { color: color-mix(in oklch, var(--accent) 85%, var(--text-1));  background: var(--accent-soft); }
+.nav__mobile-link .nav__badge { margin-left: auto; }
+
+.nav__hamburger { position: relative; }
+.nav__hamburger-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--bg);
 }
 
 .nav__link-caret {
@@ -708,6 +743,36 @@ a { color: inherit; text-decoration: none; }
   position: sticky;
   top: 48px;
   z-index: 20;
+}
+
+/* A scope note above a list; it scrolls with the page so it never covers the sticky bar. */
+.range-note {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* A page filter bar moved into the shared investigation bar: it becomes part
+   of that one row, and the shared bar takes over the sticky position. */
+.filterbar--shared {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  position: static;
+}
+.filterbar--shared .filterbar__search { flex: 0 1 220px; min-width: 150px; }
+.investigation-bar:has(.filterbar--shared) {
+  position: sticky;
+  top: 48px;
+  z-index: 20;
+  background: var(--bg);
 }
 
 .filterchip {
@@ -1040,7 +1105,8 @@ a { color: inherit; text-decoration: none; }
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   position: sticky;
-  top: 92px;
+  /* Below the nav (48px) and the shared bar, whose height it measures. */
+  top: calc(48px + var(--investigation-bar-h, 44px));
   z-index: 5;
 }
 .issuerow--header:hover { background: var(--bg); }
@@ -6503,6 +6569,8 @@ select.field__input {
   .filterbar::-webkit-scrollbar { display: none; }
   .filterbar__spacer { flex: 0 0 4px; min-width: 0; }
   .filterbar__search { min-width: 160px; }
+  /* The shared bar wraps page filters onto further rows instead of scrolling. */
+  .filterbar.filterbar--shared { flex-wrap: wrap; overflow: visible; row-gap: 6px; }
 
   /* Issue list: keep dot + title + last seen + chevron (4 cols)
      Combined with 1023px: also hiding users(5) + owner(8) */
@@ -7312,4 +7380,13 @@ select.field__input {
 .trace-logs--flame {
   margin-top: 28px;
   margin-bottom: 28px;
+}
+
+/* Phones: inside the shared Filters panel the chips take the first row, and
+   search and Export share the next instead of each taking a row. */
+@media (max-width: 640px) {
+  /* Chips fill the first row; search and Export share the next. */
+  .filterbar--shared .filterbar__spacer { display: none; }
+  .filterbar--shared .filterbar__search { flex: 1 1 150px; order: 10; }
+  .filterbar--shared .export-menu { order: 11; }
 }

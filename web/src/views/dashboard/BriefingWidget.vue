@@ -7,7 +7,7 @@ import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import QueryFeedback from '@/components/QueryFeedback.vue'
 import { fmt, useWindowLabel, type DashboardIssue } from './shared'
-import { useAttentionQuery, useMonitorQueries } from './briefingData'
+import { useAttentionQuery, useMonitorQueries } from '@/composables/useBriefingData'
 import {
   brokenMonitors, brokenTitle, formatSpan, healthyMonitorCount, isUnseen, joinParts,
   plural, sinceVisitParts, splitTitle, verdict,

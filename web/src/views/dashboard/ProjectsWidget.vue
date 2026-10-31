@@ -5,7 +5,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import { investigationQuery } from '@/router/investigation'
 import { useInvestigationStore } from '@/stores/investigation'
-import { useMonitorQueries } from './briefingData'
+import { useMonitorQueries } from '@/composables/useBriefingData'
 import { brokenMonitors, plural } from './briefing'
 
 interface ProjectIssueCount {

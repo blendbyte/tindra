@@ -27,6 +27,9 @@ export const useInvestigationStore = defineStore('investigation', () => {
   const routeError = ref('')
   const paused = ref(initial?.paused === true)
   const browsingHistory = ref(false)
+  // Filters a page adds on top of the shared ones (the issue list's status,
+  // level, assignee, tag and search), so the compact Filters toggle can count them.
+  const pageFilterCount = ref(0)
   const anchor = ref(Date.now())
   const bounds = computed(() => {
     if (absolute.value) return absolute.value
@@ -74,5 +77,5 @@ export const useInvestigationStore = defineStore('investigation', () => {
   }
   function refresh() { browsingHistory.value = false; anchor.value = Date.now() }
   function setRange(value: string) { absolute.value = null; range.value = value }
-  return { userIdentity, routeError, projectIds, environment, range, absolute, paused, browsingHistory, anchor, bounds, scopeKey, request, link, refresh, setRange }
+  return { userIdentity, routeError, projectIds, environment, range, absolute, paused, browsingHistory, pageFilterCount, anchor, bounds, scopeKey, request, link, refresh, setRange }
 })
