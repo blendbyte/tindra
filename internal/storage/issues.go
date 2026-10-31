@@ -507,6 +507,113 @@ func ListDashboardIssues(ctx context.Context, pool *pgxpool.Pool, projectIDs []s
 	return result, rows.Err()
 }
 
+// AttentionIssue is an issue the dashboard briefing asks someone to look at:
+// one that came back after being resolved or ignored, or one that first
+// appeared inside the investigation window.
+type AttentionIssue struct {
+	ID           string     `json:"id"`
+	ProjectID    string     `json:"project_id"`
+	Title        string     `json:"title"`
+	Level        string     `json:"level"`
+	Status       string     `json:"status"`
+	EventCount   int64      `json:"event_count"`
+	UserCount    int64      `json:"user_count"`
+	FirstSeen    time.Time  `json:"first_seen"`
+	LastSeen     time.Time  `json:"last_seen"`
+	RegressedAt  *time.Time `json:"regressed_at"`
+	FirstRelease *string    `json:"first_release"`
+	Assignee     *string    `json:"assignee"`
+	Sparkline    []int      `json:"sparkline,omitempty"`
+}
+
+// AttentionIssues groups the briefing's issue rows. Regressed issues are a
+// current state and ignore the window; new issues are those first seen in it
+// that nobody has resolved or ignored yet.
+type AttentionIssues struct {
+	Regressed      []AttentionIssue `json:"regressed"`
+	RegressedTotal int              `json:"regressed_total"`
+	New            []AttentionIssue `json:"new"`
+	NewTotal       int              `json:"new_total"`
+	// Counts of the totals above that happened after the caller's last visit;
+	// only set when a last visit is given.
+	UnseenRegressed *int `json:"unseen_regressed,omitempty"`
+	UnseenNew       *int `json:"unseen_new,omitempty"`
+}
+
+const attentionIssueCols = `id, project_id, title, level, status, event_count, ` + issueUserCountSQL + `,
+	first_seen, last_seen, regressed_at, first_release,
+	(SELECT COALESCE(NULLIF(u.name, ''), u.email) FROM users u WHERE u.id = i.assignee_id)`
+
+// ListAttentionIssues returns up to limit regressed issues, most recently
+// regressed first, and up to limit new issues first seen in [from, to),
+// busiest first. Totals count every match, not only the returned rows. When
+// lastVisit is set, the unseen counts say how many of each happened after it.
+func ListAttentionIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter, from, to time.Time, lastVisit *time.Time, limit int) (AttentionIssues, error) {
+	result := AttentionIssues{Regressed: []AttentionIssue{}, New: []AttentionIssue{}}
+	filter.Status = ""
+
+	regressed, args := addCommonFilters(` FROM issues i WHERE status = 'regressed'`, nil, filter)
+	if err := countAttention(ctx, pool, regressed, "regressed_at", filter.UserIdentity, args, lastVisit, &result.RegressedTotal, &result.UnseenRegressed); err != nil {
+		return result, fmt.Errorf("count regressed issues: %w", err)
+	}
+	args = append(args, limit)
+	rows, err := queryAttentionIssues(ctx, pool, `SELECT `+attentionIssueCols+regressed+
+		fmt.Sprintf(` ORDER BY regressed_at DESC NULLS LAST, last_seen DESC, id DESC LIMIT $%d`, len(args)), userQueryArgs(filter.UserIdentity, args))
+	if err != nil {
+		return result, fmt.Errorf("regressed issues: %w", err)
+	}
+	result.Regressed = rows
+
+	fresh, args := addCommonFilters(` FROM issues i WHERE status = 'open'`, nil, filter)
+	args = append(args, from, to)
+	fresh += fmt.Sprintf(` AND first_seen >= $%d AND first_seen < $%d`, len(args)-1, len(args))
+	if err := countAttention(ctx, pool, fresh, "first_seen", filter.UserIdentity, args, lastVisit, &result.NewTotal, &result.UnseenNew); err != nil {
+		return result, fmt.Errorf("count new issues: %w", err)
+	}
+	args = append(args, limit)
+	rows, err = queryAttentionIssues(ctx, pool, `SELECT `+attentionIssueCols+fresh+
+		fmt.Sprintf(` ORDER BY event_count DESC, first_seen DESC, id DESC LIMIT $%d`, len(args)), userQueryArgs(filter.UserIdentity, args))
+	if err != nil {
+		return result, fmt.Errorf("new issues: %w", err)
+	}
+	result.New = rows
+	return result, nil
+}
+
+// countAttention counts the rows of a FROM/WHERE clause and, with a last
+// visit, how many of them have their onset column after it.
+func countAttention(ctx context.Context, pool *pgxpool.Pool, clause, onset, userIdentity string, args []any, lastVisit *time.Time, total *int, unseen **int) error {
+	if lastVisit == nil {
+		return pool.QueryRow(ctx, `SELECT COUNT(*)`+clause, userQueryArgs(userIdentity, args)...).Scan(total)
+	}
+	countArgs := append(append([]any{}, args...), *lastVisit)
+	var n int
+	q := fmt.Sprintf(`SELECT COUNT(*), COUNT(*) FILTER (WHERE %s > $%d)`, onset, len(countArgs)) + clause
+	if err := pool.QueryRow(ctx, q, userQueryArgs(userIdentity, countArgs)...).Scan(total, &n); err != nil {
+		return err
+	}
+	*unseen = &n
+	return nil
+}
+
+func queryAttentionIssues(ctx context.Context, pool *pgxpool.Pool, q string, args []any) ([]AttentionIssue, error) {
+	rows, err := pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []AttentionIssue{}
+	for rows.Next() {
+		var issue AttentionIssue
+		if err := rows.Scan(&issue.ID, &issue.ProjectID, &issue.Title, &issue.Level, &issue.Status, &issue.EventCount, &issue.UserCount,
+			&issue.FirstSeen, &issue.LastSeen, &issue.RegressedAt, &issue.FirstRelease, &issue.Assignee); err != nil {
+			return nil, err
+		}
+		result = append(result, issue)
+	}
+	return result, rows.Err()
+}
+
 // IssueMetadata contains only the issue-row fields needed by scope checks,
 // history updates and histogram bounds. It is not an enriched API response.
 type IssueMetadata struct {

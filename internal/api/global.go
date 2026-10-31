@@ -488,6 +488,49 @@ func (ro *router) handleDashboardIssues(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, map[string]any{"issues": issues, "total": total})
 }
 
+// handleAttentionIssues feeds the dashboard briefing: regressed issues, and
+// issues first seen in the investigation window (default: the last 24 hours).
+// With last_visit (RFC 3339), it also counts what happened after that visit.
+// Response: { regressed, regressed_total, new, new_total, unseen_regressed?, unseen_new? }
+func (ro *router) handleAttentionIssues(w http.ResponseWriter, r *http.Request) {
+	const limit = 5
+	q := r.URL.Query()
+	hours, _ := strconv.Atoi(q.Get("hours"))
+	bounds := storage.ResolveTimeRange(r.Context(), hours, 0)
+	filter := storage.IssueFilter{
+		Environment:  q.Get("env"),
+		ProjectIDs:   bearerProjectIDs(r, q["project_id"]),
+		UserIdentity: q.Get("user"),
+	}
+	var lastVisit *time.Time
+	if seen, err := time.Parse(time.RFC3339Nano, q.Get("last_visit")); err == nil {
+		lastVisit = &seen
+	}
+	result, err := storage.ListAttentionIssues(r.Context(), ro.pool, filter, bounds.From, bounds.To, lastVisit, limit)
+	if err != nil {
+		slog.Error("list attention issues", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	ids := make([]string, 0, len(result.Regressed)+len(result.New))
+	for _, issue := range append(append([]storage.AttentionIssue{}, result.Regressed...), result.New...) {
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) > 0 {
+		sparklines, err := storage.GetIssueSparklines(r.Context(), ro.pool, ids)
+		if err != nil {
+			slog.Warn("get attention sparklines", "err", err)
+		} else {
+			for _, list := range [][]storage.AttentionIssue{result.Regressed, result.New} {
+				for i := range list {
+					list[i].Sparkline = sparklines[list[i].ID]
+				}
+			}
+		}
+	}
+	writeJSON(w, result)
+}
+
 // handleListAllIssues returns a paginated issue list across all projects.
 // Response: { issues, total, has_more, next_cursor_time?, next_cursor_id? }
 func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
