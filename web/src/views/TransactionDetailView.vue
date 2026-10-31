@@ -1122,7 +1122,7 @@ function traceErrorOffset(e: TraceError): string {
       <router-link
         v-for="e in traceErrorList"
         :key="e.event_id"
-        :to="{ name: 'issue', params: { id: e.issue_id } }"
+        :to="{ name: 'issue-detail', params: { id: e.issue_id } }"
         class="trace-log-row trace-log-row--link"
       >
         <span class="trace-log-row__offset">{{ traceErrorOffset(e) }}</span>
