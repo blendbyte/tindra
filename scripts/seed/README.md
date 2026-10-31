@@ -14,6 +14,18 @@ go run scripts/seed/main.go --db='postgres://tindra:tindra@localhost:5432/tindra
 
 Data is additive. Use a fresh demo project for a clean screenshot session; repeated runs add more telemetry, monitors, alert rules, and comments. Existing release dates are preserved. The seeder does not create login credentials or change existing accounts.
 
+## Showcase for screenshots
+
+For website and documentation screenshots, seed a complete shop into a fresh instance instead of one project. The showcase needs database access and takes the server URL rather than a DSN:
+
+```sh
+go run scripts/seed/main.go --showcase --scale=6 --db='postgres://tindra:tindra@localhost:5432/tindra?sslmode=disable' http://localhost:8080
+```
+
+It creates four projects that tell one story: **Storefront** (the Vue shop front with Web Vitals), **Shop API** (Laravel checkout, orders and PHP profiles), **Payments** (a Go service talking to Stripe) and **Workers** (Celery jobs with continuous Python profiles). Each ships its own release train. A team of five without passwords (nobody can sign in as them) owns and comments on the triaged issues and fills the Users page with different permission sets. Uptime monitors sit with the projects they watch, cron monitors with Workers, and alert rules with Shop API; none of them carries the `Demo:` prefix.
+
+The run staggers when issues were last seen, makes one issue per project new today, gives the checkout incident (`PaymentGatewayTimeout`, trace `Checkout payment authorization`, customer Jane Doe) a six-hour history across several customers, and spreads arrival times so issue histograms show that history. `--scale` multiplies events, transactions and logs; 6 gives a few thousand transactions a day and takes under half a minute. Create your own operator account first; its name shows wherever you act in the screenshots.
+
 ## Screenshot tour
 
 Use the **24h** window for the main tour and **7d** to show historical trends and release rollouts. All screenshots should use the same project and environment selection. The default mixed project includes Laravel, Go, Python, and JavaScript examples; use `--list` to see individual project types.
@@ -32,7 +44,7 @@ Use the **24h** window for the main tour and **7d** to show historical trends an
 | Monitors | Healthy, failing, paused and unknown uptime states; successful, failed and running cron jobs |
 | Alerts | Project-scoped rules, several triggers and channels, and successful or failed delivery history |
 
-Database fixtures use a `Demo:` name prefix. Alert rules are disabled and their historical failures have no scheduled retries. Automatic monitor checks are deferred for 30 days so synthetic endpoints do not overwrite the prepared states during screenshots. These are display fixtures, not active monitoring integrations.
+Outside the showcase, database fixtures use a `Demo:` name prefix. Alert rules are disabled and their historical failures have no scheduled retries. Automatic monitor checks are deferred for 30 days so synthetic endpoints do not overwrite the prepared states during screenshots. These are display fixtures, not active monitoring integrations.
 
 ## Focused testing
 

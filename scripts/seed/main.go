@@ -2,8 +2,12 @@
 //
 // Usage:
 //
-//	go run scripts/seed/main.go [--type=TYPE] [--seed=SECTIONS] [--db=POSTGRES_URL] <DSN>
+//	go run scripts/seed/main.go [--type=TYPE] [--seed=SECTIONS] [--scale=N] [--db=POSTGRES_URL] <DSN>
+//	go run scripts/seed/main.go --showcase [--scale=N] [--db=POSTGRES_URL] <SERVER_URL>
 //	go run scripts/seed/main.go --list
+//
+// --showcase seeds a whole shop for screenshots: four projects, a team, and
+// monitors and alert rules spread over them (see README.md).
 //
 // DSN format: http://PUBLIC_KEY@HOST/PROJECT_ID
 //
@@ -32,6 +36,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -47,7 +52,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/blendbyte/tindra/internal/storage"
 )
 
 // --- DSN parsing ---
@@ -363,24 +371,28 @@ func buildTags(platform string) map[string]string {
 		)
 	case "javascript":
 		tags["browser.name"] = weightedChoice(
-			[]string{"Chrome", "Firefox", "Safari", "Edge"},
-			[]int{62, 18, 14, 6},
+			[]string{"Chrome", "Mobile Safari", "Safari", "Firefox", "Edge"},
+			[]int{46, 24, 12, 11, 7},
 		)
 		tags["browser.version"] = weightedChoice(
-			[]string{"120.0", "121.0", "122.0", "123.0"},
-			[]int{10, 25, 40, 25},
+			[]string{"139.0", "140.0", "141.0", "26.0"},
+			[]int{15, 35, 30, 20},
 		)
 		tags["os.name"] = weightedChoice(
-			[]string{"macOS", "Windows", "Linux"},
-			[]int{45, 38, 17},
+			[]string{"iOS", "Android", "macOS", "Windows"},
+			[]int{30, 22, 26, 22},
 		)
 		tags["url"] = randomChoice([]string{
-			"/dashboard", "/issues", "/settings", "/transactions",
+			"https://shop.example.com/", "https://shop.example.com/cart", "https://shop.example.com/checkout", "https://shop.example.com/products/trail-runner-gtx",
 		})
 	case "go":
 		tags["go.version"] = weightedChoice(
-			[]string{"go1.22", "go1.23", "go1.24"},
-			[]int{20, 50, 30},
+			[]string{"go1.25.3", "go1.26.1"},
+			[]int{35, 65},
+		)
+		tags["server_name"] = weightedChoice(
+			[]string{"payments-7f9c", "payments-b21d", "payments-e4a0"},
+			[]int{40, 35, 25},
 		)
 		tags["os.name"] = weightedChoice(
 			[]string{"Linux", "macOS"},
@@ -433,7 +445,7 @@ func buildContexts(platform string) map[string]any {
 	case "go":
 		ctx["runtime"] = map[string]any{
 			"name":            "go",
-			"version":         weightedChoice([]string{"go1.22.5", "go1.23.4", "go1.24.1"}, []int{15, 40, 45}),
+			"version":         weightedChoice([]string{"go1.25.3", "go1.26.1"}, []int{35, 65}),
 			"go_numcpu":       weightedChoice([]string{"2", "4", "8", "16"}, []int{10, 30, 40, 20}),
 			"go_maxprocs":     "4",
 			"go_numgoroutine": weightedChoice([]string{"18", "34", "52", "91"}, []int{25, 35, 25, 15}),
@@ -445,21 +457,24 @@ func buildContexts(platform string) map[string]any {
 			"build":   "main",
 		}
 	case "javascript":
-		browser := weightedChoice([]string{"Chrome", "Firefox", "Safari", "Edge"}, []int{62, 18, 14, 6})
+		browser := weightedChoice([]string{"Chrome", "Mobile Safari", "Safari", "Firefox", "Edge"}, []int{46, 24, 12, 11, 7})
 		browserVersion := map[string]string{
-			"Chrome":  weightedChoice([]string{"122.0.6261", "123.0.6312", "124.0.6367"}, []int{20, 40, 40}),
-			"Firefox": weightedChoice([]string{"123.0", "124.0", "125.0"}, []int{25, 40, 35}),
-			"Safari":  weightedChoice([]string{"17.3.1", "17.4", "17.4.1"}, []int{20, 35, 45}),
-			"Edge":    weightedChoice([]string{"122.0.2365", "123.0.2420"}, []int{40, 60}),
+			"Chrome":        weightedChoice([]string{"140.0.7339", "141.0.7390"}, []int{45, 55}),
+			"Mobile Safari": weightedChoice([]string{"18.6", "26.0"}, []int{35, 65}),
+			"Safari":        weightedChoice([]string{"18.6", "26.0"}, []int{40, 60}),
+			"Firefox":       weightedChoice([]string{"143.0", "144.0"}, []int{40, 60}),
+			"Edge":          weightedChoice([]string{"140.0.3485", "141.0.3537"}, []int{40, 60}),
 		}[browser]
 		ctx["browser"] = map[string]any{
 			"name":    browser,
 			"version": browserVersion,
 		}
-		ctx["runtime"] = map[string]any{
-			"name":    "node",
-			"version": weightedChoice([]string{"20.11.1", "22.1.0", "22.14.0"}, []int{30, 30, 40}),
+		// Browser events carry the visitor's OS, not a server's.
+		osName := map[string]string{"Mobile Safari": "iOS"}[browser]
+		if osName == "" {
+			osName = weightedChoice([]string{"macOS", "Windows", "Android"}, []int{40, 38, 22})
 		}
+		ctx["os"] = map[string]any{"name": osName}
 	case "ruby":
 		ctx["runtime"] = map[string]any{
 			"name":    "ruby",
@@ -547,7 +562,7 @@ var laravelReleases = []string{"2.8.0", "2.9.0", "2.9.1", "3.0.0-beta.1"}
 var laravelIssues = []issueTemplate{
 	{
 		excType:     "Illuminate\\Database\\QueryException",
-		excValue:    "SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'alice@example.com' for key 'users_email_unique' (SQL: insert into `users` (`name`, `email`, `password`, `updated_at`, `created_at`) values (Alice, alice@example.com, $2y$12$hashedvalue, 2024-03-15 09:14:22, 2024-03-15 09:14:22))",
+		excValue:    "SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'alice@example.com' for key 'users.users_email_unique'",
 		level:       "error",
 		platform:    "php",
 		transaction: "POST /api/auth/register",
@@ -678,7 +693,7 @@ var laravelIssues = []issueTemplate{
 	},
 	{
 		excType:     "Illuminate\\Validation\\ValidationException",
-		excValue:    "The given data was invalid. card_number field is required. expiry_month must be between 1 and 12. cvv must be exactly 3 digits.",
+		excValue:    "The card number field is required. (and 2 more errors)",
 		level:       "warning",
 		platform:    "php",
 		transaction: "POST /api/checkout",
@@ -727,10 +742,10 @@ var laravelIssues = []issueTemplate{
 	},
 	{
 		excType:     "Illuminate\\Auth\\Access\\AuthorizationException",
-		excValue:    "This action is unauthorized. Policy [App\\Policies\\ProjectPolicy@delete] denied access for user #482.",
+		excValue:    "This action is unauthorized.",
 		level:       "error",
 		platform:    "php",
-		transaction: "DELETE /api/projects/{id}",
+		transaction: "POST /api/orders/{id}/refund",
 		hasUser:     true,
 		stacktrace: []stackFrame{
 			{
@@ -746,12 +761,12 @@ var laravelIssues = []issueTemplate{
 				lineno:   450,
 			},
 			{
-				function:    "delete",
-				module:      "App\\Policies\\ProjectPolicy",
-				filename:    "app/Policies/ProjectPolicy.php",
-				lineno:      72,
-				preContext:  []string{"    public function delete(User $user, Project $project): bool", "    {"},
-				contextLine: "        return $user->hasRole('admin') || $user->id === $project->owner_id;",
+				function:    "refund",
+				module:      "App\\Policies\\OrderPolicy",
+				filename:    "app/Policies/OrderPolicy.php",
+				lineno:      41,
+				preContext:  []string{"    public function refund(User $user, Order $order): bool", "    {"},
+				contextLine: "        return $user->can('orders.refund') && $order->total <= $user->refund_limit;",
 				postContext: []string{"    }", ""},
 			},
 			{
@@ -761,13 +776,13 @@ var laravelIssues = []issueTemplate{
 				lineno:   44,
 			},
 			{
-				function:    "destroy",
-				module:      "App\\Http\\Controllers\\Api\\ProjectController",
-				filename:    "app/Http/Controllers/Api/ProjectController.php",
-				lineno:      112,
-				preContext:  []string{"    public function destroy(Request $request, int $id): JsonResponse", "    {", "        $project = Project::findOrFail($id);"},
-				contextLine: "        $this->authorize('delete', $project);",
-				postContext: []string{"        $project->delete();", "        return response()->json(null, 204);", "    }"},
+				function:    "store",
+				module:      "App\\Http\\Controllers\\Api\\RefundController",
+				filename:    "app/Http/Controllers/Api/RefundController.php",
+				lineno:      27,
+				preContext:  []string{"    public function store(RefundRequest $request, Order $order): JsonResponse", "    {"},
+				contextLine: "        $this->authorize('refund', $order);",
+				postContext: []string{"        $refund = $this->refunds->create($order, $request->validated());", "        return response()->json($refund, 201);", "    }"},
 			},
 			{
 				function: "dispatch",
@@ -785,7 +800,7 @@ var laravelIssues = []issueTemplate{
 	},
 	{
 		excType:     "App\\Exceptions\\PaymentException",
-		excValue:    "Stripe charge failed: Your card was declined. Decline code: insufficient_funds. Payment intent: pi_3OqLmz2eZvKYlo2C0abc1234.",
+		excValue:    "Your card was declined.",
 		level:       "error",
 		platform:    "php",
 		transaction: "POST /api/subscriptions",
@@ -853,7 +868,7 @@ var laravelIssues = []issueTemplate{
 	},
 	{
 		excType:     "Illuminate\\Queue\\MaxAttemptsExceededException",
-		excValue:    "App\\Jobs\\SyncProductCatalog has been attempted too many times or run too long. The job may have previously timed out.",
+		excValue:    "App\\Jobs\\SyncProductCatalog has been attempted too many times.",
 		level:       "fatal",
 		platform:    "php",
 		transaction: "queue:work --queue=sync",
@@ -917,7 +932,7 @@ var laravelIssues = []issueTemplate{
 	},
 	{
 		excType:     "Error",
-		excValue:    "Call to a member function load() on null - $subscription is null for user #317 (subscription may have been deleted mid-request)",
+		excValue:    "Call to a member function load() on null",
 		level:       "error",
 		platform:    "php",
 		transaction: "GET /api/users/{id}/billing",
@@ -969,10 +984,10 @@ var laravelIssues = []issueTemplate{
 	},
 	{
 		excType:     "Predis\\Connection\\ConnectionException",
-		excValue:    "Error while reading line from the server. [tcp://redis-primary:6379]",
+		excValue:    "Error while reading line from the server. [tcp://redis:6379]",
 		level:       "error",
 		platform:    "php",
-		transaction: "GET /api/dashboard",
+		transaction: "GET /admin/dashboard",
 		stacktrace: []stackFrame{
 			{
 				function: "read",
@@ -1015,8 +1030,8 @@ var laravelIssues = []issueTemplate{
 			},
 			{
 				function:    "index",
-				module:      "App\\Http\\Controllers\\Api\\DashboardController",
-				filename:    "app/Http/Controllers/Api/DashboardController.php",
+				module:      "App\\Http\\Controllers\\Admin\\DashboardController",
+				filename:    "app/Http/Controllers/Admin/DashboardController.php",
 				lineno:      28,
 				preContext:  []string{"    public function index(Request $request): JsonResponse", "    {"},
 				contextLine: "        return response()->json($this->dashboardService->getSummary($request->user()));",
@@ -1066,7 +1081,7 @@ var laravelTxs = []txTemplate{
 		},
 	},
 	{
-		name:       "GET /api/dashboard",
+		name:       "GET /admin/dashboard",
 		op:         "http.server",
 		durationMs: [2]int{65, 290},
 		platform:   "php",
@@ -1169,21 +1184,21 @@ var laravelTxs = []txTemplate{
 			{op: "db.query", description: "SELECT * FROM `roles` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 5}},
 		},
 	},
-	// N+1: resolving tag names for each issue in a project listing
+	// N+1: loading the author of each review on a product page
 	{
-		name:       "GET /api/issues",
+		name:       "GET /api/products/{slug}/reviews",
 		op:         "http.server",
 		durationMs: [2]int{90, 260},
 		platform:   "php",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT `id`, `title`, `status`, `level`, `last_seen` FROM `issues` WHERE `project_id` = ? ORDER BY `last_seen` DESC LIMIT 25", durationMs: [2]int{10, 30}},
-			{op: "db.query", description: "SELECT `key`, `value` FROM `issue_tags` WHERE `issue_id` = ?", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT `key`, `value` FROM `issue_tags` WHERE `issue_id` = ?", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT `key`, `value` FROM `issue_tags` WHERE `issue_id` = ?", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT `key`, `value` FROM `issue_tags` WHERE `issue_id` = ?", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT `key`, `value` FROM `issue_tags` WHERE `issue_id` = ?", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT `key`, `value` FROM `issue_tags` WHERE `issue_id` = ?", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT `key`, `value` FROM `issue_tags` WHERE `issue_id` = ?", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT `id`, `customer_id`, `rating`, `body`, `created_at` FROM `product_reviews` WHERE `product_id` = ? AND `approved` = 1 ORDER BY `created_at` DESC LIMIT 8", durationMs: [2]int{6, 20}},
+			{op: "db.query", description: "SELECT `id`, `first_name`, `avatar_url` FROM `customers` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT `id`, `first_name`, `avatar_url` FROM `customers` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT `id`, `first_name`, `avatar_url` FROM `customers` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT `id`, `first_name`, `avatar_url` FROM `customers` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT `id`, `first_name`, `avatar_url` FROM `customers` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT `id`, `first_name`, `avatar_url` FROM `customers` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT `id`, `first_name`, `avatar_url` FROM `customers` WHERE `id` = ? LIMIT 1", durationMs: [2]int{2, 6}},
 		},
 	},
 }
@@ -1205,326 +1220,249 @@ var laravelProject = projectDef{
 
 var goReleases = []string{"1.4.2", "1.4.3", "1.5.0", "1.5.1-rc.1"}
 
+// The shop's payment service: authorizes and captures card payments, handles
+// provider webhooks and reconciles the ledger.
 var goIssues = []issueTemplate{
 	{
-		excType:     "DatabaseError",
-		excValue:    "pq: deadlock detected - two concurrent merge requests acquired locks in opposite order on issues and issue_events",
+		excType:     "*url.Error",
+		excValue:    `Post "https://api.stripe.com/v1/payment_intents": context deadline exceeded`,
 		level:       "error",
 		platform:    "go",
-		transaction: "POST /api/issues/{id}/merge",
+		transaction: "POST /v1/payments/authorize",
+		hasUser:     true,
 		stacktrace: []stackFrame{
+			{"(*Client).do", "net/http", "net/http/client.go", 724, "", nil, nil},
 			{
-				function:    "MergeIssues",
-				module:      "storage",
-				filename:    "internal/storage/issues.go",
-				lineno:      311,
-				preContext:  []string{"\t_, err = tx.Exec(ctx, updateSQL, targetID, sourceID)", "\tif err != nil {"},
-				contextLine: "\t\treturn fmt.Errorf(\"merge issues: %w\", err)",
-				postContext: []string{"\t}", "\t}"},
-			},
-			{
-				function:    "handleMerge",
-				module:      "api",
-				filename:    "internal/api/issues.go",
+				function:    "(*Gateway).CreateIntent",
+				module:      "payments/internal/stripe",
+				filename:    "internal/stripe/gateway.go",
 				lineno:      88,
-				preContext:  []string{"\tif err := s.store.MergeIssues(r.Context(), targetID, sourceID); err != nil {"},
-				contextLine: "\t\thttp.Error(w, err.Error(), http.StatusInternalServerError)",
-				postContext: []string{"\t\treturn", "\t}"},
+				preContext:  []string{"\treq.Header.Set(\"Idempotency-Key\", key)", "\tctx, cancel := context.WithTimeout(ctx, g.timeout)", "\tdefer cancel()"},
+				contextLine: "\tresp, err := g.http.Do(req.WithContext(ctx))",
+				postContext: []string{"\tif err != nil {", "\t\treturn nil, fmt.Errorf(\"create intent: %w\", err)", "\t}"},
 			},
-			{"ServeHTTP", "net/http", "net/http/server.go", 2136, "", nil, nil},
+			{
+				function:    "(*Service).Authorize",
+				module:      "payments/internal/payments",
+				filename:    "internal/payments/authorize.go",
+				lineno:      54,
+				preContext:  []string{"\tif err := s.ledger.Reserve(ctx, p); err != nil {", "\t\treturn nil, err", "\t}"},
+				contextLine: "\tintent, err := s.gateway.CreateIntent(ctx, p.Amount, p.Currency, p.IdempotencyKey)",
+				postContext: []string{"\tif err != nil {", "\t\treturn nil, s.release(ctx, p, err)", "\t}"},
+			},
+			{"(*Handler).authorize", "payments/internal/api", "internal/api/payments.go", 41, "", nil, nil},
+			{"ServeHTTP", "github.com/go-chi/chi/v5", "github.com/go-chi/chi/v5/mux.go", 90, "", nil, nil},
+			{"(*conn).serve", "net/http", "net/http/server.go", 2092, "", nil, nil},
 		},
 	},
 	{
-		excType:     "AuthenticationError",
-		excValue:    "JWT signature verification failed: token has expired (exp claim: 2024-03-14T08:00:00Z, now: 2024-03-15T09:14:22Z)",
+		excType:     "*webhook.SignatureError",
+		excValue:    "no signatures found matching the expected signature for payload",
 		level:       "warning",
 		platform:    "go",
-		transaction: "GET /api/me",
-		hasUser:     true,
+		transaction: "POST /webhooks/stripe",
 		stacktrace: []stackFrame{
 			{
-				function:    "verifyToken",
-				module:      "auth",
-				filename:    "internal/auth/jwt.go",
-				lineno:      55,
-				preContext:  []string{"\tparsed, err := jwt.ParseWithClaims(tokenStr, &Claims{}, keyFunc)"},
-				contextLine: "\tif err != nil {",
-				postContext: []string{"\t\treturn nil, fmt.Errorf(\"verify token: %w\", err)", "\t}"},
+				function:    "Verify",
+				module:      "payments/internal/webhook",
+				filename:    "internal/webhook/verify.go",
+				lineno:      37,
+				preContext:  []string{"\texpected := sign(secret, ts, body)", "\tfor _, sig := range header.Signatures {", "\t\tif hmac.Equal(sig, expected) {", "\t\t\treturn nil", "\t\t}", "\t}"},
+				contextLine: "\treturn &SignatureError{Reason: \"no signatures found matching the expected signature for payload\"}",
+				postContext: []string{"}"},
 			},
-			{"authMiddleware", "api", "internal/api/middleware.go", 30, "", nil, nil},
-			{"ServeHTTP", "chi", "vendor/github.com/go-chi/chi/v5/mux.go", 87, "", nil, nil},
-			{"ServeHTTP", "net/http", "net/http/server.go", 2136, "", nil, nil},
+			{"(*Handler).stripeWebhook", "payments/internal/api", "internal/api/webhooks.go", 29, "", nil, nil},
+			{"ServeHTTP", "github.com/go-chi/chi/v5", "github.com/go-chi/chi/v5/mux.go", 90, "", nil, nil},
 		},
 	},
 	{
-		excType:     "TimeoutError",
-		excValue:    "context deadline exceeded after 30000ms - pgxpool: no connections available in pool (size=20, in-use=20, idle=0)",
+		excType:     "*pgconn.PgError",
+		excValue:    "ERROR: deadlock detected (SQLSTATE 40P01)",
 		level:       "error",
 		platform:    "go",
-		transaction: "GET /api/transactions",
-		hasUser:     true,
+		transaction: "ledger.reconcile",
 		stacktrace: []stackFrame{
-			{"(*Pool).Acquire", "pgxpool", "vendor/github.com/jackc/pgx/v5/pgxpool/pool.go", 294, "", nil, nil},
+			{"(*Conn).Exec", "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/conn.go", 457, "", nil, nil},
 			{
-				function:    "ListTransactions",
-				module:      "storage",
-				filename:    "internal/storage/transactions.go",
-				lineno:      48,
-				preContext:  []string{"\tconn, err := s.pool.Acquire(ctx)"},
-				contextLine: "\tif err != nil {",
-				postContext: []string{"\t\treturn nil, fmt.Errorf(\"acquire conn: %w\", err)", "\t}"},
+				function:    "(*Ledger).Settle",
+				module:      "payments/internal/ledger",
+				filename:    "internal/ledger/settle.go",
+				lineno:      112,
+				preContext:  []string{"\tfor _, entry := range batch {", "\t\t// Entries arrive in provider order, not account order."},
+				contextLine: "\t\tif _, err := tx.Exec(ctx, settleEntry, entry.AccountID, entry.Amount); err != nil {",
+				postContext: []string{"\t\t\treturn fmt.Errorf(\"settle %s: %w\", entry.ID, err)", "\t\t}", "\t}"},
 			},
-			{"handleList", "api", "internal/api/transactions.go", 33, "", nil, nil},
-			{"ServeHTTP", "net/http", "net/http/server.go", 2136, "", nil, nil},
+			{"(*Reconciler).Run", "payments/internal/ledger", "internal/ledger/reconcile.go", 66, "", nil, nil},
+			{"(*Scheduler).run", "payments/internal/jobs", "internal/jobs/scheduler.go", 48, "", nil, nil},
 		},
 	},
 	{
-		excType:     "panic",
-		excValue:    "runtime error: index out of range [5] with length 3 - evaluating alert threshold conditions",
+		excType:     "runtime.Error",
+		excValue:    "invalid memory address or nil pointer dereference",
 		level:       "fatal",
 		platform:    "go",
-		transaction: "POST /api/alerts",
-		fingerprint: []string{"go-panic", "index-out-of-range", "alerts-engine"},
+		transaction: "POST /v1/refunds",
 		handled:     new(false),
 		stacktrace: []stackFrame{
 			{
-				function:    "evaluateConditions",
-				module:      "alerts",
-				filename:    "internal/alerts/engine.go",
-				lineno:      142,
-				preContext:  []string{"\tfor i, cond := range rule.Conditions {", "\t\tval := metrics[i]"},
-				contextLine: "\t\tif thresholds[i] > val {",
-				postContext: []string{"\t\t\treturn false", "\t\t}"},
+				function:    "(*Service).Refund",
+				module:      "payments/internal/payments",
+				filename:    "internal/payments/refund.go",
+				lineno:      73,
+				preContext:  []string{"\tcharge, err := s.store.Charge(ctx, req.PaymentID)", "\tif err != nil {", "\t\treturn nil, err", "\t}"},
+				contextLine: "\tif req.Amount > charge.Capture.Amount-charge.Refunded {",
+				postContext: []string{"\t\treturn nil, ErrRefundExceedsCapture", "\t}"},
 			},
-			{"(*Engine).evaluate", "alerts", "internal/alerts/engine.go", 89, "", nil, nil},
-			{"(*Engine).Run", "alerts", "internal/alerts/engine.go", 54, "", nil, nil},
-			{"(*Server).Start.func3", "cmd", "cmd/tindra/main.go", 88, "", nil, nil},
+			{"(*Handler).refund", "payments/internal/api", "internal/api/refunds.go", 35, "", nil, nil},
+			{"ServeHTTP", "github.com/go-chi/chi/v5", "github.com/go-chi/chi/v5/mux.go", 90, "", nil, nil},
+			{"(*conn).serve", "net/http", "net/http/server.go", 2092, "", nil, nil},
 		},
 	},
 	{
-		excType:     "pgx: ERROR",
-		excValue:    `pgx: ERROR: value too long for type character varying(255) - "release" field received 312-byte string from SDK (truncation would lose version metadata)`,
-		level:       "error",
+		excType:     "*payments.IdempotencyError",
+		excValue:    "idempotency key reused with a different amount",
+		level:       "warning",
 		platform:    "go",
-		transaction: "POST /api/{publicKey}/envelope/",
+		transaction: "POST /v1/payments/authorize",
 		stacktrace: []stackFrame{
-			{"(*Conn).exec", "pgx", "vendor/github.com/jackc/pgx/v5/conn.go", 622, "", nil, nil},
 			{
-				function:    "batchWrite",
-				module:      "ingest",
-				filename:    "internal/ingest/writer.go",
-				lineno:      88,
-				preContext:  []string{"\tb := &pgx.Batch{}", "\tfor _, ev := range batch {", "\t\tb.Queue(insertSQL, ev.ID, ev.ProjectID, ev.Release, ev.Environment)"},
-				contextLine: "\t\t// ev.Release is not validated/truncated before insert",
-				postContext: []string{"\t}", "\tresults := s.pool.SendBatch(ctx, b)"},
+				function:    "(*Store).Claim",
+				module:      "payments/internal/payments",
+				filename:    "internal/payments/idempotency.go",
+				lineno:      52,
+				preContext:  []string{"\tif prev.Amount != p.Amount || prev.Currency != p.Currency {"},
+				contextLine: "\t\treturn &IdempotencyError{Key: p.IdempotencyKey, Reason: \"reused with a different amount\"}",
+				postContext: []string{"\t}", "\treturn nil"},
 			},
-			{"(*BatchWriter).flush", "ingest", "internal/ingest/writer.go", 55, "", nil, nil},
-			{"(*BatchWriter).Run", "ingest", "internal/ingest/writer.go", 30, "", nil, nil},
+			{"(*Service).Authorize", "payments/internal/payments", "internal/payments/authorize.go", 39, "", nil, nil},
+			{"(*Handler).authorize", "payments/internal/api", "internal/api/payments.go", 41, "", nil, nil},
 		},
 	},
 	{
-		excType:     "strconv.NumError",
-		excValue:    `strconv.ParseInt: parsing "abc": invalid syntax - "cursor" query parameter must be a valid int64`,
+		excType:     "*json.SyntaxError",
+		excValue:    "invalid character '<' looking for beginning of value",
 		level:       "error",
 		platform:    "go",
-		transaction: "GET /api/issues",
+		transaction: "fx.refresh",
 		stacktrace: []stackFrame{
+			{"(*decodeState).unmarshal", "encoding/json", "encoding/json/decode.go", 175, "", nil, nil},
 			{
-				function:    "parseCursor",
-				module:      "api",
-				filename:    "internal/api/pagination.go",
-				lineno:      28,
-				preContext:  []string{`\traw := r.URL.Query().Get("cursor")`},
-				contextLine: `\tn, err := strconv.ParseInt(raw, 10, 64)`,
-				postContext: []string{`\tif err != nil {`, `\t\treturn 0, fmt.Errorf("invalid cursor: %w", err)`, `\t}`},
+				function:    "(*Rates).Refresh",
+				module:      "payments/internal/fx",
+				filename:    "internal/fx/rates.go",
+				lineno:      61,
+				preContext:  []string{"\tdefer resp.Body.Close()", "\tvar body ratesResponse"},
+				contextLine: "\tif err := json.NewDecoder(resp.Body).Decode(&body); err != nil {",
+				postContext: []string{"\t\treturn fmt.Errorf(\"decode rates: %w\", err)", "\t}"},
 			},
-			{"handleListIssues", "api", "internal/api/issues.go", 42, "", nil, nil},
-			{"ServeHTTP", "chi", "vendor/github.com/go-chi/chi/v5/mux.go", 87, "", nil, nil},
-			{"ServeHTTP", "net/http", "net/http/server.go", 2136, "", nil, nil},
+			{"(*Scheduler).run", "payments/internal/jobs", "internal/jobs/scheduler.go", 48, "", nil, nil},
 		},
 	},
 }
 
 var goTxs = []txTemplate{
 	{
-		name:       "GET /api/issues",
+		name:       "POST /v1/payments/authorize",
 		op:         "http.server",
-		durationMs: [2]int{18, 95},
+		durationMs: [2]int{180, 720},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT id, title, status, level, environment, last_seen, times_seen, fingerprint FROM issues WHERE project_id = $1 AND ($2::text IS NULL OR status = $2) ORDER BY last_seen DESC LIMIT 50", durationMs: [2]int{8, 45}},
-			{op: "db.query", description: "SELECT COUNT(*) FROM issues WHERE project_id = $1 AND status = 'open'", durationMs: [2]int{3, 12}},
+			{op: "db.query", description: "SELECT amount, currency, status FROM idempotency_keys WHERE key = $1", durationMs: [2]int{2, 8}},
+			{op: "db.query", description: "INSERT INTO ledger_holds (account_id, amount, currency, expires_at) VALUES ($1, $2, $3, $4)", durationMs: [2]int{3, 12}},
+			{op: "http.client", description: "POST https://api.stripe.com/v1/payment_intents", durationMs: [2]int{140, 620}},
+			{op: "db.query", description: "INSERT INTO payments (id, order_id, amount, currency, provider_ref, status) VALUES ($1, $2, $3, $4, $5, 'authorized')", durationMs: [2]int{3, 10}},
+			{op: "cache.set", description: "SET payment:{id}", durationMs: [2]int{1, 3}},
 		},
 	},
 	{
-		name:       "GET /api/issues/:id",
+		name:       "POST /v1/payments/{id}/capture",
 		op:         "http.server",
-		durationMs: [2]int{22, 110},
+		durationMs: [2]int{120, 460},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT i.*, p.name AS project_name FROM issues i JOIN projects p ON p.id = i.project_id WHERE i.id = $1", durationMs: [2]int{5, 18}},
-			{op: "db.query", description: "SELECT e.id, e.timestamp, e.level, e.environment, e.release, e.exception, e.breadcrumbs, e.tags, e.contexts, e.user FROM events e WHERE e.issue_id = $1 ORDER BY e.timestamp DESC LIMIT 10", durationMs: [2]int{10, 55}},
-			{op: "db.query", description: "SELECT c.id, c.body, c.created_at, u.name AS author_name FROM comments c JOIN users u ON u.id = c.user_id WHERE c.issue_id = $1 ORDER BY c.created_at ASC", durationMs: [2]int{4, 14}},
+			{op: "db.query", description: "SELECT id, amount, provider_ref, status FROM payments WHERE id = $1 FOR UPDATE", durationMs: [2]int{2, 9}},
+			{op: "http.client", description: "POST https://api.stripe.com/v1/payment_intents/{id}/capture", durationMs: [2]int{90, 380}},
+			{op: "db.query", description: "UPDATE payments SET status = 'captured', captured_at = now() WHERE id = $1", durationMs: [2]int{2, 8}},
+			{op: "queue.publish", description: "payments.captured", durationMs: [2]int{1, 4}},
 		},
 	},
 	{
-		name:       "POST /api/issues/:id/resolve",
+		name:       "GET /v1/payments/{id}",
 		op:         "http.server",
-		durationMs: [2]int{12, 40},
+		durationMs: [2]int{6, 40},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "db.query", description: "UPDATE issues SET status = 'resolved', resolved_at = $2, resolved_by = $3 WHERE id = $1 AND project_id = $4", durationMs: [2]int{5, 20}},
-			{op: "db.query", description: "INSERT INTO issue_activity (issue_id, actor_id, action, created_at) VALUES ($1, $2, 'resolved', NOW())", durationMs: [2]int{3, 10}},
+			{op: "cache.get", description: "GET payment:{id}", durationMs: [2]int{1, 3}},
+			{op: "db.query", description: "SELECT id, order_id, amount, currency, status, captured_at FROM payments WHERE id = $1", durationMs: [2]int{2, 12}},
 		},
 	},
 	{
-		name:       "GET /api/transactions",
+		name:       "POST /v1/refunds",
 		op:         "http.server",
-		durationMs: [2]int{25, 130},
+		durationMs: [2]int{150, 520},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT id, name, op, duration_ms, status, started_at, environment, release FROM transactions WHERE project_id = $1 AND ($2::text IS NULL OR name = $2) ORDER BY started_at DESC LIMIT 50", durationMs: [2]int{12, 70}},
-			{op: "db.query", description: "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50, percentile_cont(0.75) WITHIN GROUP (ORDER BY duration_ms) AS p75, percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95, percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99 FROM transactions WHERE project_id = $1 AND name = $2 AND started_at > NOW() - INTERVAL '24 hours'", durationMs: [2]int{6, 22}},
+			{op: "db.query", description: "SELECT id, amount, refunded, provider_ref FROM payments WHERE id = $1 FOR UPDATE", durationMs: [2]int{2, 9}},
+			{op: "http.client", description: "POST https://api.stripe.com/v1/refunds", durationMs: [2]int{110, 430}},
+			{op: "db.query", description: "INSERT INTO refunds (payment_id, amount, reason, provider_ref) VALUES ($1, $2, $3, $4)", durationMs: [2]int{2, 8}},
+			{op: "queue.publish", description: "payments.refunded", durationMs: [2]int{1, 4}},
 		},
 	},
 	{
-		name:       "POST /api/:projectId/envelope/",
+		name:       "POST /webhooks/stripe",
 		op:         "http.server",
-		durationMs: [2]int{5, 30},
+		durationMs: [2]int{8, 45},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "ingest.parse", description: "parse sentry envelope - extract header + item type", durationMs: [2]int{1, 5}},
-			{op: "ingest.validate", description: "validate event fields and project public key", durationMs: [2]int{1, 4}},
-			{op: "ingest.buffer", description: "write event to ring buffer (cap=10000)", durationMs: [2]int{1, 3}},
+			{op: "webhook.verify", description: "verify Stripe-Signature", durationMs: [2]int{1, 3}},
+			{op: "db.query", description: "INSERT INTO provider_events (id, type, payload) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING", durationMs: [2]int{2, 9}},
+			{op: "queue.publish", description: "payments.provider_event", durationMs: [2]int{1, 4}},
 		},
 	},
 	{
-		name:       "GET /api/releases",
-		op:         "http.server",
-		durationMs: [2]int{15, 60},
-		platform:   "go",
-		spans: []spanNode{
-			{op: "db.query", description: "SELECT r.version, r.created_at, COUNT(DISTINCT e.id) AS event_count, COUNT(DISTINCT i.id) AS issue_count FROM releases r LEFT JOIN events e ON e.release = r.version AND e.project_id = r.project_id LEFT JOIN issues i ON i.first_seen_release = r.version WHERE r.project_id = $1 GROUP BY r.id ORDER BY r.created_at DESC LIMIT 25", durationMs: [2]int{10, 45}},
-		},
-	},
-	{
-		name:       "POST /api/projects",
-		op:         "http.server",
-		durationMs: [2]int{30, 80},
-		platform:   "go",
-		spans: []spanNode{
-			{op: "db.query", description: "INSERT INTO projects (id, name, slug, public_key, created_by, created_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id", durationMs: [2]int{8, 30}},
-			{op: "db.query", description: "INSERT INTO audit_log (actor_id, action, resource_type, resource_id, metadata, created_at) VALUES ($1, 'project.created', 'project', $2, $3, NOW())", durationMs: [2]int{5, 15}},
-		},
-	},
-	{
-		name:       "sourcemap.upload",
+		name:       "ledger.reconcile",
 		op:         "task",
-		durationMs: [2]int{300, 1800},
+		durationMs: [2]int{900, 4200},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "file.read", description: "read sourcemap bundle from multipart body (2.4 MB)", durationMs: [2]int{40, 120}},
-			{op: "sourcemap.parse", description: "json.Unmarshal source map (sources + mappings)", durationMs: [2]int{80, 400}},
-			{op: "sourcemap.validate", description: "validate sources/sourcesContent arrays match", durationMs: [2]int{10, 40}},
-			{op: "file.write", description: "write to DATA_DIR/sourcemaps/{project}/{release}/{hash}.map", durationMs: [2]int{30, 100}},
-			{op: "db.query", description: "INSERT INTO sourcemaps (id, project_id, release, filename, content_hash, size_bytes, path, uploaded_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) ON CONFLICT (project_id, release, filename) DO UPDATE SET content_hash = EXCLUDED.content_hash, path = EXCLUDED.path, uploaded_at = EXCLUDED.uploaded_at", durationMs: [2]int{5, 18}},
+			{op: "http.client", description: "GET https://api.stripe.com/v1/balance_transactions", durationMs: [2]int{180, 900}},
+			{op: "db.query", description: "SELECT id, provider_ref, amount FROM payments WHERE captured_at >= $1 AND reconciled_at IS NULL", durationMs: [2]int{40, 260}},
+			{op: "db.query", description: "UPDATE ledger_entries SET settled = true WHERE account_id = $1 AND id = ANY($2)", durationMs: [2]int{60, 600}},
+			{op: "db.query", description: "UPDATE payments SET reconciled_at = now() WHERE id = ANY($1)", durationMs: [2]int{20, 140}},
 		},
 	},
 	{
-		name:       "alert.evaluate",
+		name:       "fx.refresh",
 		op:         "task",
-		durationMs: [2]int{50, 220},
+		durationMs: [2]int{120, 600},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT id, name, conditions, threshold, window_seconds, channel FROM alert_rules WHERE project_id = $1 AND enabled = true", durationMs: [2]int{5, 18}},
-			{op: "db.query", description: "SELECT COUNT(*) FROM issues WHERE project_id = $1 AND status = 'open' AND last_seen > NOW() - make_interval(secs => $2)", durationMs: [2]int{6, 22}},
-			{op: "alert.check", description: "evaluate threshold conditions against current metrics", durationMs: [2]int{2, 10}},
-			{op: "http.client", description: "POST https://hooks.slack.com/services/... (alert webhook)", durationMs: [2]int{40, 140}},
-			{op: "db.query", description: "INSERT INTO alert_history (rule_id, triggered_at, metric_value, threshold) VALUES ($1, NOW(), $2, $3)", durationMs: [2]int{3, 10}},
+			{op: "http.client", description: "GET https://rates.example.com/v1/latest?base=USD", durationMs: [2]int{80, 520}},
+			{op: "cache.set", description: "SET fx:rates", durationMs: [2]int{1, 3}},
 		},
 	},
 	{
-		name:       "GET /api/settings/tokens",
-		op:         "http.server",
-		durationMs: [2]int{10, 35},
-		platform:   "go",
-		spans: []spanNode{
-			{op: "db.query", description: "SELECT id, name, prefix, scopes, created_at, last_used_at, expires_at FROM api_tokens WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC", durationMs: [2]int{6, 22}},
-		},
-	},
-	{
-		name:       "GET /api/events",
-		op:         "http.server",
-		durationMs: [2]int{30, 150},
-		platform:   "go",
-		spans: []spanNode{
-			{op: "db.query", description: "SELECT e.id, e.timestamp, e.level, e.environment, e.release, e.transaction, e.platform, e.tags FROM events e WHERE e.issue_id = $1 AND ($2::timestamptz IS NULL OR e.timestamp < $2) ORDER BY e.timestamp DESC LIMIT 50", durationMs: [2]int{10, 60}},
-			{op: "db.query", description: "SELECT e.exception, e.breadcrumbs, e.contexts, e.user, e.modules FROM events e WHERE e.id = $1", durationMs: [2]int{5, 25}},
-			{op: "db.query", description: "SELECT COUNT(*) FROM events WHERE issue_id = $1", durationMs: [2]int{3, 12}},
-		},
-	},
-	{
-		name:       "ingest.batch_write",
+		name:       "settlement.export",
 		op:         "task",
-		durationMs: [2]int{8, 55},
+		durationMs: [2]int{2200, 7800},
 		platform:   "go",
 		spans: []spanNode{
-			{op: "ingest.dequeue", description: "drain ring buffer - batch up to 1000 events or 200ms window", durationMs: [2]int{1, 8}},
-			{op: "db.query", description: "INSERT INTO events (id, project_id, issue_id, timestamp, level, ...) VALUES ... ON CONFLICT (id) DO NOTHING - batch of 47 events", durationMs: [2]int{5, 35}},
-			{op: "db.query", description: "UPDATE issues SET times_seen = times_seen + $1, last_seen = $2 WHERE id = ANY($3)", durationMs: [2]int{3, 15}},
-		},
-	},
-	{
-		name:       "POST /api/issues/bulk-resolve",
-		op:         "http.server",
-		durationMs: [2]int{40, 200},
-		platform:   "go",
-		spans: []spanNode{
-			{op: "db.query", description: "SELECT id FROM issues WHERE id = ANY($1) AND project_id = $2", durationMs: [2]int{5, 20}},
-			{op: "db.query", description: "UPDATE issues SET status = 'resolved', resolved_at = NOW(), resolved_by = $1 WHERE id = ANY($2)", durationMs: [2]int{8, 40}},
-			{op: "db.query", description: "INSERT INTO issue_activity (issue_id, actor_id, action, created_at) SELECT unnest($1), $2, 'bulk_resolved', NOW()", durationMs: [2]int{5, 20}},
-		},
-	},
-	{
-		name:       "retention.worker",
-		op:         "task",
-		durationMs: [2]int{800, 8000},
-		platform:   "go",
-		spans: []spanNode{
-			{op: "db.query", description: "SELECT project_id, retention_days FROM projects WHERE retention_days IS NOT NULL", durationMs: [2]int{3, 12}},
-			{op: "db.query", description: "DELETE FROM events WHERE project_id = $1 AND timestamp < NOW() - make_interval(days => $2) RETURNING id", durationMs: [2]int{200, 4000}},
-			{op: "db.query", description: "DELETE FROM issues WHERE project_id = $1 AND last_seen < NOW() - make_interval(days => $2) AND id NOT IN (SELECT DISTINCT issue_id FROM events WHERE project_id = $1)", durationMs: [2]int{100, 2000}},
-			{op: "db.query", description: "UPDATE projects SET last_retention_run = NOW() WHERE id = $1", durationMs: [2]int{3, 10}},
-		},
-	},
-	// N+1: resolving project name for each event in an activity feed
-	{
-		name:       "GET /api/activity",
-		op:         "http.server",
-		durationMs: [2]int{80, 220},
-		platform:   "go",
-		spans: []spanNode{
-			{op: "db.query", description: "SELECT id, project_id, issue_id, timestamp, level FROM events ORDER BY received_at DESC LIMIT 20", durationMs: [2]int{8, 25}},
-			{op: "db.query", description: "SELECT id, name, slug FROM projects WHERE id = $1", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT id, name, slug FROM projects WHERE id = $1", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT id, name, slug FROM projects WHERE id = $1", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT id, name, slug FROM projects WHERE id = $1", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT id, name, slug FROM projects WHERE id = $1", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT id, name, slug FROM projects WHERE id = $1", durationMs: [2]int{2, 6}},
-			{op: "db.query", description: "SELECT id, name, slug FROM projects WHERE id = $1", durationMs: [2]int{2, 6}},
+			{op: "db.query", description: "SELECT p.id, p.amount, p.currency, r.amount AS refunded FROM payments p LEFT JOIN refunds r ON r.payment_id = p.id WHERE p.captured_at::date = $1", durationMs: [2]int{300, 1800}},
+			{op: "file.write", description: "write settlement CSV", durationMs: [2]int{200, 900}},
+			{op: "http.client", description: "PUT https://storage.example.com/settlements/{date}.csv", durationMs: [2]int{150, 800}},
 		},
 	},
 }
 
 var goProject = projectDef{
 	name:         "go",
-	description:  "Go HTTP API (chi, pgx, stdlib - mirrors Tindra itself)",
+	description:  "Go payment service (chi, pgx, Stripe, webhooks, ledger jobs)",
 	releases:     goReleases,
 	environments: defaultEnvironments,
 	issues:       goIssues,
-	issueCounts:  []int{8, 6, 3, 1, 4, 9},
+	issueCounts:  []int{18, 9, 4, 2, 6, 3},
 	txs:          goTxs,
-	txCounts:     []int{20, 15, 10, 18, 30, 8, 9, 3, 5, 9, 15, 30, 5, 3, 12},
+	txCounts:     []int{30, 22, 40, 8, 26, 6, 12, 3},
 }
 
 // =============================================================================
@@ -1536,28 +1474,28 @@ var pythonReleases = []string{"0.9.0", "0.9.1", "1.0.0", "1.0.1"}
 var pythonIssues = []issueTemplate{
 	{
 		excType:     "ValueError",
-		excValue:    "invalid literal for int() with base 10: 'undefined' - project_id field received non-numeric string from webhook payload",
+		excValue:    "invalid literal for int() with base 10: 'undefined'",
 		level:       "error",
 		platform:    "python",
-		transaction: "/ingest/webhook",
+		transaction: "POST /webhooks/supplier",
 		stacktrace: []stackFrame{
 			{
-				function:    "parse_payload",
-				module:      "ingest.parser",
-				filename:    "ingest/parser.py",
+				function:    "parse_stock_update",
+				module:      "suppliers.parser",
+				filename:    "suppliers/parser.py",
 				lineno:      77,
-				preContext:  []string{"def parse_payload(raw: dict) -> Payload:", "    event_id = raw.get('event_id')"},
-				contextLine: "    project_id = int(raw.get('project_id'))",
-				postContext: []string{"    return Payload(event_id=event_id, project_id=project_id)", ""},
+				preContext:  []string{"def parse_stock_update(raw: dict) -> StockUpdate:", "    sku = raw['sku'].strip().upper()"},
+				contextLine: "    quantity = int(raw.get('quantity'))",
+				postContext: []string{"    return StockUpdate(sku=sku, quantity=quantity)", ""},
 			},
 			{
-				function:    "handle_webhook",
-				module:      "api.views",
-				filename:    "api/views.py",
-				lineno:      203,
-				preContext:  []string{"@csrf_exempt", "def handle_webhook(request):"},
-				contextLine: "    payload = parse_payload(json.loads(request.body))",
-				postContext: []string{"    process_event.delay(payload)", "    return JsonResponse({'ok': True})"},
+				function:    "supplier_webhook",
+				module:      "suppliers.views",
+				filename:    "suppliers/views.py",
+				lineno:      41,
+				preContext:  []string{"@csrf_exempt", "def supplier_webhook(request):"},
+				contextLine: "    update = parse_stock_update(json.loads(request.body))",
+				postContext: []string{"    apply_stock_update.delay(update.sku, update.quantity)", "    return JsonResponse({'ok': True})"},
 			},
 			{"dispatch", "django.core.handlers.base", "django/core/handlers/base.py", 115, "", nil, nil},
 			{"__call__", "django.core.handlers.wsgi", "django/core/handlers/wsgi.py", 140, "", nil, nil},
@@ -1565,38 +1503,37 @@ var pythonIssues = []issueTemplate{
 	},
 	{
 		excType:     "RateLimitError",
-		excValue:    "upstream API returned 429: rate limit exceeded for /v1/chat/completions (model=gpt-4o, org=org-acme, limit=500 RPM)",
+		excValue:    "Error code: 429 - Rate limit reached for requests",
 		level:       "error",
 		platform:    "python",
-		transaction: "/generate",
-		hasUser:     true,
+		transaction: "celery: app.tasks.write_product_copy",
 		stacktrace: []stackFrame{
 			{"_handle_response", "openai._base_client", "openai/_base_client.py", 455, "", nil, nil},
 			{"create", "openai.resources.chat.completions", "openai/resources/chat/completions.py", 88, "", nil, nil},
 			{
-				function:    "generate_summary",
-				module:      "app.ai",
-				filename:    "app/ai.py",
+				function:    "draft_description",
+				module:      "app.copywriter",
+				filename:    "app/copywriter.py",
 				lineno:      31,
-				preContext:  []string{"def generate_summary(text: str, model: str = 'gpt-4o') -> str:", "    client = openai.OpenAI()"},
-				contextLine: "    response = client.chat.completions.create(model=model, messages=[{\"role\": \"user\", \"content\": text}])",
+				preContext:  []string{"def draft_description(product: Product) -> str:", "    prompt = DESCRIPTION_PROMPT.format(name=product.name, specs=product.specs)"},
+				contextLine: "    response = client.chat.completions.create(model=settings.COPY_MODEL, messages=[{\"role\": \"user\", \"content\": prompt}])",
 				postContext: []string{"    return response.choices[0].message.content", ""},
 			},
 			{
-				function:    "summarize",
-				module:      "api.views",
-				filename:    "api/views.py",
+				function:    "write_product_copy",
+				module:      "app.tasks",
+				filename:    "app/tasks.py",
 				lineno:      88,
-				preContext:  []string{"@require_POST", "@login_required"},
-				contextLine: "    summary = generate_summary(request.POST['text'])",
-				postContext: []string{"    return JsonResponse({'summary': summary})"},
+				preContext:  []string{"@shared_task(bind=True, max_retries=3)", "def write_product_copy(self, product_id: int):", "    product = Product.objects.get(pk=product_id)"},
+				contextLine: "    product.description = draft_description(product)",
+				postContext: []string{"    product.save(update_fields=['description'])"},
 			},
-			{"dispatch", "django.views.generic.base", "django/views/generic/base.py", 93, "", nil, nil},
+			{"__call__", "celery.app.trace", "celery/app/trace.py", 760, "", nil, nil},
 		},
 	},
 	{
 		excType:     "ValidationError",
-		excValue:    "email: this field is required; password: ensure this value has at least 8 characters (it has 5); username: a user with that username already exists",
+		excValue:    "{'email': ['Enter a valid email address.']}",
 		level:       "warning",
 		platform:    "python",
 		transaction: "POST /api/auth/register",
@@ -1619,7 +1556,7 @@ var pythonIssues = []issueTemplate{
 	},
 	{
 		excType:     "pydantic_core._pydantic_core.ValidationError",
-		excValue:    "3 validation errors for CreateItemRequest\nbody.price\n  Input should be greater than 0 [type=greater_than]\nbody.sku\n  String should match pattern '^[A-Z0-9]{6,12}$' [type=string_pattern_mismatch]\nbody.category_id\n  Input should be a valid UUID [type=uuid_parsing]",
+		excValue:    "2 validation errors for CreateItemRequest\nprice\n  Input should be greater than 0 [type=greater_than, input_value=0, input_type=int]\nsku\n  String should match pattern '^[A-Z0-9-]{6,16}$' [type=string_pattern_mismatch, input_value='tr-01', input_type=str]",
 		level:       "warning",
 		platform:    "python",
 		transaction: "POST /api/v1/items",
@@ -1642,7 +1579,7 @@ var pythonIssues = []issueTemplate{
 	},
 	{
 		excType:     "sqlalchemy.exc.OperationalError",
-		excValue:    "(psycopg2.OperationalError) FATAL: remaining connection slots are reserved for non-replication superuser connections - pool_size=20, overflow=10, checked_out=30",
+		excValue:    "(psycopg2.OperationalError) FATAL:  remaining connection slots are reserved for non-replication superuser connections",
 		level:       "error",
 		platform:    "python",
 		transaction: "GET /api/v1/reports/{id}",
@@ -1673,7 +1610,7 @@ var pythonIssues = []issueTemplate{
 	},
 	{
 		excType:     "celery.exceptions.MaxRetriesExceededError",
-		excValue:    "Can't retry app.tasks.send_invoice_pdf[c8f3b2d1-4e5a-4b6c-9d8e-1f2a3b4c5d6e] args:('inv_20240315_84712',) - max retries (5) exceeded",
+		excValue:    "Can't retry app.tasks.send_invoice_pdf[c8f3b2d1-4e5a-4b6c-9d8e-1f2a3b4c5d6e] args:('INV-20482',) kwargs:{}",
 		level:       "fatal",
 		platform:    "python",
 		transaction: "celery:app.tasks.send_invoice_pdf",
@@ -1698,14 +1635,15 @@ var pythonIssues = []issueTemplate{
 
 var pythonTxs = []txTemplate{
 	{
-		name:       "GET /api/users",
+		name:       "GET /v1/recommendations/{customer_id}",
 		op:         "http.server",
-		durationMs: [2]int{20, 90},
+		durationMs: [2]int{20, 140},
 		platform:   "python",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT \"users\".\"id\", \"users\".\"email\", \"users\".\"name\", \"users\".\"created_at\", \"users\".\"last_login\" FROM \"users\" WHERE \"users\".\"is_active\" = True ORDER BY \"users\".\"created_at\" DESC LIMIT 25 OFFSET 0", durationMs: [2]int{6, 30}},
-			{op: "cache.get", description: "user_list:page=1:filter=active", durationMs: [2]int{1, 4}},
-			{op: "db.query", description: "SELECT COUNT(*) AS \"__count\" FROM \"users\" WHERE \"users\".\"is_active\" = True", durationMs: [2]int{3, 12}},
+			{op: "cache.get", description: "recs:{customer_id}", durationMs: [2]int{1, 4}},
+			{op: "db.query", description: "SELECT product_id, quantity FROM order_items JOIN orders ON orders.id = order_items.order_id WHERE orders.customer_id = %s ORDER BY orders.created_at DESC LIMIT 50", durationMs: [2]int{6, 40}},
+			{op: "model.predict", description: "rank candidates (implicit ALS)", durationMs: [2]int{8, 60}},
+			{op: "cache.set", description: "recs:{customer_id} ttl=900", durationMs: [2]int{1, 3}},
 		},
 	},
 	{
@@ -1714,38 +1652,34 @@ var pythonTxs = []txTemplate{
 		durationMs: [2]int{25, 110},
 		platform:   "python",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT categories.id, categories.name FROM categories WHERE categories.id = $1 FOR SHARE", durationMs: [2]int{4, 15}},
-			{op: "db.query", description: "INSERT INTO items (id, name, sku, price, category_id, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING id, created_at", durationMs: [2]int{5, 20}},
-			{op: "cache.delete", description: "items:category:{category_id}:*", durationMs: [2]int{1, 4}},
-			{op: "db.query", description: "INSERT INTO audit_events (entity_type, entity_id, action, actor_id, payload, created_at) VALUES ('item', $1, 'created', $2, $3, NOW())", durationMs: [2]int{3, 10}},
+			{op: "db.query", description: "SELECT categories.id, categories.name FROM categories WHERE categories.id = %s FOR SHARE", durationMs: [2]int{4, 15}},
+			{op: "db.query", description: "INSERT INTO items (id, name, sku, price, category_id, created_at) VALUES (%s, %s, %s, %s, %s, NOW()) RETURNING id, created_at", durationMs: [2]int{5, 20}},
+			{op: "cache.delete", description: "items:category:{category_id}", durationMs: [2]int{1, 4}},
 		},
 	},
 	{
-		name:       "celery: app.tasks.generate_report",
+		name:       "celery: app.tasks.build_sales_report",
 		op:         "queue.task",
 		durationMs: [2]int{800, 5000},
 		platform:   "python",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT reports.id, reports.config, reports.date_range_start, reports.date_range_end FROM reports WHERE reports.id = %s", durationMs: [2]int{4, 15}},
-			{op: "db.query", description: "SELECT events.*, users.email FROM events JOIN users ON users.id = events.user_id WHERE events.created_at BETWEEN %s AND %s AND events.project_id = %s ORDER BY events.created_at", durationMs: [2]int{200, 2000}},
-			{op: "compute", description: "aggregate metrics - group by day, compute p50/p95/p99 latencies", durationMs: [2]int{100, 800}},
-			{op: "file.write", description: "render report to PDF (WeasyPrint)", durationMs: [2]int{300, 1500}},
-			{op: "http.client", description: "PUT https://s3.amazonaws.com/{bucket}/reports/{report_id}.pdf", durationMs: [2]int{80, 400}},
+			{op: "db.query", description: "SELECT orders.id, orders.total, orders.currency, orders.created_at, customers.country FROM orders JOIN customers ON customers.id = orders.customer_id WHERE orders.created_at BETWEEN %s AND %s", durationMs: [2]int{200, 2000}},
+			{op: "compute", description: "aggregate revenue by day and country", durationMs: [2]int{100, 800}},
+			{op: "file.write", description: "render report PDF", durationMs: [2]int{300, 1500}},
+			{op: "http.client", description: "PUT https://storage.example.com/reports/{report_id}.pdf", durationMs: [2]int{80, 400}},
 			{op: "db.query", description: "UPDATE reports SET status = 'complete', file_url = %s, completed_at = NOW() WHERE id = %s", durationMs: [2]int{3, 12}},
-			{op: "cache.delete", description: "report:{report_id}", durationMs: [2]int{1, 3}},
 		},
 	},
 	{
-		name:       "POST /ingest/webhook",
+		name:       "POST /webhooks/supplier",
 		op:         "http.server",
 		durationMs: [2]int{8, 40},
 		platform:   "python",
 		spans: []spanNode{
 			{op: "http.verify", description: "verify HMAC-SHA256 webhook signature", durationMs: [2]int{1, 3}},
 			{op: "cache.get", description: "idempotency:{webhook_id}", durationMs: [2]int{1, 4}},
-			{op: "db.query", description: "INSERT INTO webhook_events (id, source, event_type, payload, received_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (id) DO NOTHING", durationMs: [2]int{3, 12}},
-			{op: "queue.dispatch", description: "app.tasks.process_webhook_event", durationMs: [2]int{2, 6}},
-			{op: "cache.put", description: "idempotency:{webhook_id} ttl=86400", durationMs: [2]int{1, 3}},
+			{op: "db.query", description: "INSERT INTO supplier_events (id, supplier_id, event_type, payload, received_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (id) DO NOTHING", durationMs: [2]int{3, 12}},
+			{op: "queue.dispatch", description: "app.tasks.apply_stock_update", durationMs: [2]int{2, 6}},
 		},
 	},
 	{
@@ -1755,20 +1689,20 @@ var pythonTxs = []txTemplate{
 		platform:   "python",
 		spans: []spanNode{
 			{op: "cache.get", description: "search:{query_hash}", durationMs: [2]int{1, 4}},
-			{op: "db.query", description: "SELECT id, name, description, ts_rank(search_vector, query) AS rank FROM items, to_tsquery('english', $1) query WHERE search_vector @@ query ORDER BY rank DESC LIMIT 20", durationMs: [2]int{15, 80}},
-			{op: "db.query", description: "SELECT item_id, url FROM item_images WHERE item_id = ANY($1) AND is_primary = true", durationMs: [2]int{5, 20}},
-			{op: "cache.put", description: "search:{query_hash} ttl=30", durationMs: [2]int{1, 3}},
+			{op: "db.query", description: "SELECT id, name, ts_rank(search_vector, query) AS rank FROM items, to_tsquery('english', %s) query WHERE search_vector @@ query ORDER BY rank DESC LIMIT 20", durationMs: [2]int{15, 80}},
+			{op: "db.query", description: "SELECT item_id, url FROM item_images WHERE item_id = ANY(%s) AND is_primary = true", durationMs: [2]int{5, 20}},
+			{op: "cache.set", description: "search:{query_hash} ttl=30", durationMs: [2]int{1, 3}},
 		},
 	},
 	{
-		name:       "celery: app.tasks.process_webhook_event",
+		name:       "celery: app.tasks.apply_stock_update",
 		op:         "queue.task",
-		durationMs: [2]int{50, 400},
+		durationMs: [2]int{30, 260},
 		platform:   "python",
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT id, source, event_type, payload FROM webhook_events WHERE id = %s AND processed_at IS NULL", durationMs: [2]int{3, 12}},
-			{op: "http.client", description: "POST https://api.internal/events/ingest (forward to internal pipeline)", durationMs: [2]int{15, 120}},
-			{op: "db.query", description: "UPDATE webhook_events SET processed_at = NOW(), status = 'ok' WHERE id = %s", durationMs: [2]int{3, 10}},
+			{op: "db.query", description: "SELECT id, stock_qty, reserved_qty FROM inventory WHERE sku = %s FOR UPDATE", durationMs: [2]int{3, 20}},
+			{op: "db.query", description: "UPDATE inventory SET stock_qty = %s, updated_at = NOW() WHERE sku = %s", durationMs: [2]int{3, 14}},
+			{op: "cache.delete", description: "product:{sku}:availability", durationMs: [2]int{1, 3}},
 		},
 	},
 }
@@ -1790,98 +1724,122 @@ var pythonProject = projectDef{
 
 var jsReleases = []string{"1.4.2", "1.4.3", "1.5.0", "1.5.1-rc.1"}
 
+// The shop's storefront: a Vue single-page app for browsing, cart and checkout.
 var jsIssues = []issueTemplate{
 	{
-		excType:     "TypeError",
-		excValue:    "Cannot read properties of null (reading 'userId') - session expired mid-render before auth guard could redirect",
-		level:       "error",
-		platform:    "javascript",
-		transaction: "/dashboard",
-		handled:     new(false),
-		hasUser:     true,
-		stacktrace: []stackFrame{
-			{
-				function:    "resolveUser",
-				module:      "auth/session",
-				filename:    "src/auth/session.ts",
-				lineno:      42,
-				preContext:  []string{"export function resolveUser(session: Session | null) {", "  if (!session) return null"},
-				contextLine: "  return session.user.userId",
-				postContext: []string{"}", ""},
-			},
-			{
-				function:    "DashboardView.setup",
-				module:      "views/dashboard",
-				filename:    "src/views/DashboardView.vue",
-				lineno:      18,
-				preContext:  []string{"const route = useRoute()", ""},
-				contextLine: "const user = resolveUser(useSession())",
-				postContext: []string{"const issues = useIssues({ userId: user.userId })", ""},
-			},
-			{"mount", "runtime-core", "node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js", 1234, "", nil, nil},
-		},
-	},
-	{
-		excType:     "TypeError",
-		excValue:    "Cannot destructure property 'data' of 'undefined' - TanStack Query returned undefined before suspense boundary caught it",
-		level:       "error",
-		platform:    "javascript",
-		transaction: "/issues/:id",
-		hasUser:     true,
-		stacktrace: []stackFrame{
-			{
-				function:    "useIssueDetail",
-				module:      "composables/useIssueDetail",
-				filename:    "src/composables/useIssueDetail.ts",
-				lineno:      24,
-				preContext:  []string{"export function useIssueDetail(id: string) {", "  const res = useQuery({ queryKey: ['issue', id], queryFn: () => fetchIssue(id) })"},
-				contextLine: "  const { data: issue } = res",
-				postContext: []string{"  return { issue, isLoading: res.isLoading }", "}"},
-			},
-			{"IssueDetailView.setup", "views/IssueDetail", "src/views/IssueDetailView.vue", 11, "", nil, nil},
-			{"mount", "runtime-core", "node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js", 1234, "", nil, nil},
-		},
-	},
-	{
-		excType:     "ECONNREFUSED",
-		excValue:    "connect ECONNREFUSED 127.0.0.1:6379 - Redis appears unreachable; background queue worker cannot process jobs",
-		level:       "error",
-		platform:    "javascript",
-		transaction: "worker.processQueue",
-		handled:     new(false),
-		stacktrace: []stackFrame{
-			{"createConnectionError", "ioredis/built/utils", "node_modules/ioredis/built/utils/index.js", 141, "", nil, nil},
-			{"Socket.<anonymous>", "ioredis/built/connectors", "node_modules/ioredis/built/connectors/StandaloneConnector.js", 44, "", nil, nil},
-			{
-				function:    "connectToRedis",
-				module:      "lib/queue",
-				filename:    "src/lib/queue.ts",
-				lineno:      18,
-				preContext:  []string{"const redis = new IORedis(process.env.REDIS_URL)"},
-				contextLine: "redis.on('error', (err) => { throw err })",
-				postContext: []string{"export const queue = new Queue('jobs', { connection: redis })", ""},
-			},
-		},
-	},
-	{
 		excType:     "ChunkLoadError",
-		excValue:    "Loading chunk 42 failed. (missing: https://app.example.com/assets/IssueDetail-DHk3js9.js) - CDN cache may have stale references after deploy",
+		excValue:    "Loading chunk 482 failed.",
 		level:       "error",
 		platform:    "javascript",
-		transaction: "/issues/:id",
-		fingerprint: []string{"chunk-load-error", "IssueDetail"},
+		transaction: "/products/:slug",
 		handled:     new(false),
+		hasUser:     true,
 		stacktrace: []stackFrame{
-			{"__webpack_require__.f.j", "webpack/runtime", "webpack/runtime/ensure chunk.js", 22, "", nil, nil},
-			{"Promise.then.then", "runtime-core", "node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js", 5511, "", nil, nil},
+			{"requireEnsure", "webpack/runtime", "assets/runtime.4f2a9c.js", 1, "", nil, nil},
 			{
-				function:    "loadIssueDetail",
-				module:      "router/index",
-				filename:    "src/router/index.ts",
-				lineno:      44,
-				preContext:  []string{"const routes = [", "  {", "    path: '/issues/:id',"},
-				contextLine: "    component: () => import('../views/IssueDetailView.vue'),",
-				postContext: []string{"    meta: { requiresAuth: true },", "  },", "]"},
+				function:    "loadProductGallery",
+				module:      "router/routes",
+				filename:    "src/router/routes.ts",
+				lineno:      27,
+				preContext:  []string{"  {", "    path: '/products/:slug',"},
+				contextLine: "    component: () => import('@/views/ProductView.vue'),",
+				postContext: []string{"    meta: { layout: 'shop' },", "  },"},
+			},
+			{"resolveAsyncComponents", "vue-router", "node_modules/vue-router/dist/vue-router.mjs", 2041, "", nil, nil},
+		},
+	},
+	{
+		excType:     "TypeError",
+		excValue:    "Cannot read properties of undefined (reading 'price')",
+		level:       "error",
+		platform:    "javascript",
+		transaction: "/cart",
+		handled:     new(false),
+		hasUser:     true,
+		stacktrace: []stackFrame{
+			{
+				function:    "lineTotal",
+				module:      "cart/totals",
+				filename:    "src/cart/totals.ts",
+				lineno:      14,
+				preContext:  []string{"export function lineTotal(line: CartLine) {", "  // Variants removed from the catalog leave the line without one."},
+				contextLine: "  return line.variant.price * line.quantity",
+				postContext: []string{"}"},
+			},
+			{
+				function:    "CartSummary.setup",
+				module:      "components/cart",
+				filename:    "src/components/cart/CartSummary.vue",
+				lineno:      22,
+				preContext:  []string{"const cart = useCart()"},
+				contextLine: "const subtotal = computed(() => cart.lines.reduce((sum, line) => sum + lineTotal(line), 0))",
+				postContext: []string{"const shipping = useShippingEstimate(subtotal)"},
+			},
+			{"callWithErrorHandling", "runtime-core", "node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js", 199, "", nil, nil},
+		},
+	},
+	{
+		excType:     "TypeError",
+		excValue:    "Failed to fetch",
+		level:       "error",
+		platform:    "javascript",
+		transaction: "/checkout",
+		hasUser:     true,
+		stacktrace: []stackFrame{
+			{
+				function:    "request",
+				module:      "api/client",
+				filename:    "src/api/client.ts",
+				lineno:      31,
+				preContext:  []string{"export async function request<T>(path: string, init?: RequestInit): Promise<T> {"},
+				contextLine: "  const res = await fetch(`${API_BASE}${path}`, { credentials: 'include', ...init })",
+				postContext: []string{"  if (!res.ok) throw new ApiError(res.status, await res.text())", "  return res.json()"},
+			},
+			{
+				function:    "submitOrder",
+				module:      "checkout/submit",
+				filename:    "src/checkout/submit.ts",
+				lineno:      48,
+				preContext:  []string{"  const payment = await confirmCardPayment(form.card)"},
+				contextLine: "  return request<Order>('/api/checkout', { method: 'POST', body: JSON.stringify(payload) })",
+				postContext: []string{"}"},
+			},
+		},
+	},
+	{
+		excType:     "Error",
+		excValue:    "Hydration completed but contains mismatches.",
+		level:       "warning",
+		platform:    "javascript",
+		transaction: "/",
+		stacktrace: []stackFrame{
+			{"hydrate", "runtime-core", "node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js", 1630, "", nil, nil},
+			{
+				function:    "mountApp",
+				module:      "main",
+				filename:    "src/main.ts",
+				lineno:      19,
+				preContext:  []string{"const app = createSSRApp(App)", "app.use(router).use(pinia)"},
+				contextLine: "app.mount('#app', true)",
+				postContext: []string{""},
+			},
+		},
+	},
+	{
+		excType:     "AbortError",
+		excValue:    "The user aborted a request.",
+		level:       "info",
+		platform:    "javascript",
+		transaction: "/search",
+		stacktrace: []stackFrame{
+			{
+				function:    "useSearch.run",
+				module:      "search/useSearch",
+				filename:    "src/search/useSearch.ts",
+				lineno:      36,
+				preContext:  []string{"  controller?.abort()", "  controller = new AbortController()"},
+				contextLine: "  results.value = await request<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal })",
+				postContext: []string{""},
 			},
 		},
 	},
@@ -1889,128 +1847,107 @@ var jsIssues = []issueTemplate{
 
 var jsTxs = []txTemplate{
 	{
-		name:       "dashboard load",
+		name:       "/",
 		op:         "pageload",
-		durationMs: [2]int{180, 950},
+		durationMs: [2]int{420, 1600},
 		platform:   "javascript",
 		spans: []spanNode{
-			{op: "browser.cache", description: "service worker cache lookup", durationMs: [2]int{2, 8}},
-			{op: "http.client", description: "GET /api/issues?status=open&limit=50", durationMs: [2]int{60, 200}},
-			{op: "http.client", description: "GET /api/transactions?limit=10", durationMs: [2]int{50, 180}},
-			{op: "http.client", description: "GET /api/releases?limit=5", durationMs: [2]int{30, 100}},
-			{op: "browser.render", description: "vue component tree hydration", durationMs: [2]int{20, 80}},
-			{op: "browser.paint", description: "LCP - issue list first visible", durationMs: [2]int{10, 40}},
+			{op: "resource.script", description: "/assets/index.8c1f3e.js", durationMs: [2]int{60, 260}},
+			{op: "resource.css", description: "/assets/index.2b7d41.css", durationMs: [2]int{20, 90}, concurrent: true},
+			{op: "http.client", description: "GET /api/catalog/featured", durationMs: [2]int{60, 240}},
+			{op: "resource.img", description: "/images/hero/autumn-collection.webp", durationMs: [2]int{90, 520}, concurrent: true},
+			{op: "ui.render", description: "hydrate app", durationMs: [2]int{30, 120}},
 		},
 	},
 	{
-		name:       "issue list render",
-		op:         "ui.render",
-		durationMs: [2]int{8, 45},
-		platform:   "javascript",
-		spans: []spanNode{
-			{op: "vue.render", description: "IssueListView - diff + patch", durationMs: [2]int{3, 15}},
-			{op: "vue.render", description: "VirtualScroller (n=500 rows, 20 visible)", durationMs: [2]int{4, 20}},
-			{op: "browser.paint", description: "composite - issue rows paint", durationMs: [2]int{2, 8}},
-		},
-	},
-	{
-		name:       "issue detail load",
-		op:         "navigation",
-		durationMs: [2]int{90, 400},
-		platform:   "javascript",
-		spans: []spanNode{
-			{op: "http.client", description: "GET /api/issues/{id}", durationMs: [2]int{20, 80}},
-			{op: "http.client", description: "GET /api/issues/{id}/events?limit=10", durationMs: [2]int{25, 100}},
-			{op: "http.client", description: "GET /api/issues/{id}/comments", durationMs: [2]int{10, 40}},
-			{op: "vue.render", description: "IssueDetailView - stack trace + breadcrumbs", durationMs: [2]int{15, 60}},
-			{op: "browser.paint", description: "LCP - stack trace visible", durationMs: [2]int{5, 20}},
-		},
-	},
-	{
-		name:       "command palette open",
-		op:         "ui.interaction",
-		durationMs: [2]int{5, 30},
-		platform:   "javascript",
-		spans: []spanNode{
-			{op: "vue.render", description: "CommandPalette mount + focus trap", durationMs: [2]int{3, 12}},
-			{op: "http.client", description: "GET /api/search?q={query}&limit=10", durationMs: [2]int{20, 80}},
-			{op: "vue.render", description: "CommandPalette results list (n=10)", durationMs: [2]int{2, 8}},
-		},
-	},
-	{
-		name:       "transaction detail load",
-		op:         "navigation",
-		durationMs: [2]int{120, 550},
-		platform:   "javascript",
-		spans: []spanNode{
-			{op: "http.client", description: "GET /api/transactions/{id}", durationMs: [2]int{25, 90}},
-			{op: "http.client", description: "GET /api/transactions/{id}/spans", durationMs: [2]int{30, 110}},
-			{op: "vue.render", description: "TransactionDetailView - span waterfall", durationMs: [2]int{20, 75}},
-			{op: "browser.paint", description: "LCP - span waterfall visible", durationMs: [2]int{8, 30}},
-		},
-	},
-	{
-		name:       "performance overview load",
+		name:       "/products/:slug",
 		op:         "pageload",
-		durationMs: [2]int{200, 1100},
+		durationMs: [2]int{380, 1500},
 		platform:   "javascript",
 		spans: []spanNode{
-			{op: "browser.cache", description: "service worker cache lookup", durationMs: [2]int{2, 8}},
-			{op: "http.client", description: "GET /api/transactions/summary?limit=25", durationMs: [2]int{70, 220}},
-			{op: "http.client", description: "GET /api/spans/db?hours=24", durationMs: [2]int{50, 160}},
-			{op: "browser.render", description: "vue component tree hydration", durationMs: [2]int{25, 90}},
-			{op: "browser.paint", description: "LCP - transaction table visible", durationMs: [2]int{12, 50}},
+			{op: "resource.script", description: "/assets/ProductView.91ad2c.js", durationMs: [2]int{40, 200}},
+			{op: "http.client", description: "GET /api/products/{slug}", durationMs: [2]int{50, 220}},
+			{op: "http.client", description: "GET /api/products/{slug}/reviews", durationMs: [2]int{40, 180}, concurrent: true},
+			{op: "resource.img", description: "/images/products/{slug}/1.webp", durationMs: [2]int{80, 480}},
+			{op: "ui.render", description: "render product gallery", durationMs: [2]int{15, 70}},
 		},
 	},
 	{
-		name:       "releases list load",
+		name:       "/collections/:handle",
+		op:         "navigation",
+		durationMs: [2]int{120, 600},
+		platform:   "javascript",
+		spans: []spanNode{
+			{op: "http.client", description: "GET /api/collections/{handle}?page=1", durationMs: [2]int{50, 260}},
+			{op: "resource.img", description: "/images/products/*/thumb.webp", durationMs: [2]int{40, 300}},
+			{op: "ui.render", description: "render product grid", durationMs: [2]int{12, 60}},
+		},
+	},
+	{
+		name:       "/cart",
+		op:         "navigation",
+		durationMs: [2]int{90, 420},
+		platform:   "javascript",
+		spans: []spanNode{
+			{op: "http.client", description: "GET /api/cart", durationMs: [2]int{30, 160}},
+			{op: "http.client", description: "GET /api/shipping/estimate", durationMs: [2]int{40, 220}},
+			{op: "ui.render", description: "render cart", durationMs: [2]int{8, 40}},
+		},
+	},
+	{
+		name:       "/checkout",
+		op:         "pageload",
+		durationMs: [2]int{520, 2100},
+		platform:   "javascript",
+		spans: []spanNode{
+			{op: "resource.script", description: "/assets/CheckoutView.d03b7e.js", durationMs: [2]int{50, 240}},
+			{op: "resource.script", description: "https://js.stripe.com/v3/", durationMs: [2]int{120, 650}, concurrent: true},
+			{op: "http.client", description: "GET /api/cart", durationMs: [2]int{30, 160}},
+			{op: "http.client", description: "GET /api/checkout/session", durationMs: [2]int{40, 200}},
+			{op: "ui.render", description: "mount payment form", durationMs: [2]int{30, 140}},
+		},
+	},
+	{
+		name:       "/account/orders",
+		op:         "navigation",
+		durationMs: [2]int{110, 520},
+		platform:   "javascript",
+		spans: []spanNode{
+			{op: "http.client", description: "GET /api/orders?limit=20", durationMs: [2]int{40, 260}},
+			{op: "ui.render", description: "render order history", durationMs: [2]int{10, 50}},
+		},
+	},
+	{
+		name:       "/search",
 		op:         "navigation",
 		durationMs: [2]int{80, 380},
 		platform:   "javascript",
 		spans: []spanNode{
-			{op: "http.client", description: "GET /api/releases?limit=20", durationMs: [2]int{30, 120}},
-			{op: "vue.render", description: "ReleasesView - release rows", durationMs: [2]int{10, 40}},
-			{op: "browser.paint", description: "LCP - release list visible", durationMs: [2]int{5, 20}},
+			{op: "http.client", description: "GET /api/search?q={query}", durationMs: [2]int{40, 260}},
+			{op: "ui.render", description: "render results", durationMs: [2]int{8, 40}},
 		},
 	},
 	{
-		name:       "settings load",
-		op:         "pageload",
-		durationMs: [2]int{150, 700},
+		name:       "add to cart",
+		op:         "ui.action.click",
+		durationMs: [2]int{60, 320},
 		platform:   "javascript",
 		spans: []spanNode{
-			{op: "browser.cache", description: "service worker cache lookup", durationMs: [2]int{2, 8}},
-			{op: "http.client", description: "GET /api/settings", durationMs: [2]int{40, 140}},
-			{op: "http.client", description: "GET /api/projects", durationMs: [2]int{35, 120}},
-			{op: "http.client", description: "GET /api/users", durationMs: [2]int{30, 100}},
-			{op: "browser.render", description: "vue component tree hydration", durationMs: [2]int{18, 65}},
-			{op: "browser.paint", description: "LCP - settings panel visible", durationMs: [2]int{8, 35}},
-		},
-	},
-	{
-		name:       "release detail load",
-		op:         "navigation",
-		durationMs: [2]int{100, 460},
-		platform:   "javascript",
-		spans: []spanNode{
-			{op: "http.client", description: "GET /api/releases/{id}", durationMs: [2]int{25, 90}},
-			{op: "http.client", description: "GET /api/releases/{id}/issues", durationMs: [2]int{30, 110}},
-			{op: "http.client", description: "GET /api/releases/{id}/transactions", durationMs: [2]int{28, 100}},
-			{op: "vue.render", description: "ReleaseDetailView - issues + tx tables", durationMs: [2]int{15, 55}},
-			{op: "browser.paint", description: "LCP - release stats visible", durationMs: [2]int{6, 25}},
+			{op: "http.client", description: "POST /api/cart/lines", durationMs: [2]int{40, 260}},
+			{op: "ui.render", description: "update cart badge", durationMs: [2]int{2, 12}},
 		},
 	},
 }
 
 var jsProject = projectDef{
 	name:         "javascript",
-	description:  "Frontend JavaScript SPA (Vue 3, TanStack Query, browser errors)",
+	description:  "Storefront single-page app (Vue 3, browser errors, Web Vitals)",
 	releases:     jsReleases,
 	environments: defaultEnvironments,
 	issues:       jsIssues,
-	issueCounts:  []int{12, 5, 4, 7},
+	issueCounts:  []int{22, 12, 9, 6, 3},
 	txs:          jsTxs,
-	txCounts:     []int{30, 20, 25, 8, 20, 25, 15, 22, 18},
+	txCounts:     []int{40, 34, 26, 22, 18, 10, 14, 24},
 }
 
 // =============================================================================
@@ -2239,14 +2176,14 @@ func buildTransaction(tmpl txTemplate, ts time.Time, releases, envs []string) ma
 	return tx
 }
 
-// seedWebVitals generates realistic Web Vitals with a ~70/20/10 good/ni/poor distribution.
+// seedWebVitals generates realistic Web Vitals with a ~84/11/5 good/ni/poor distribution.
 func seedWebVitals() map[string]any {
 	vitalMs := func(good, poor int) float64 { //nolint:gosec
 		r := rand.Float64()
 		switch {
-		case r < 0.70:
+		case r < 0.84:
 			return jitterMs(good/4, good) // good range: 25%–100% of threshold
-		case r < 0.90:
+		case r < 0.95:
 			return jitterMs(good, poor) // needs-improvement
 		default:
 			return jitterMs(poor, poor+poor/2) // poor
@@ -2255,9 +2192,9 @@ func seedWebVitals() map[string]any {
 	clsVal := func() float64 { //nolint:gosec
 		r := rand.Float64()
 		switch {
-		case r < 0.70:
+		case r < 0.84:
 			return rand.Float64() * 0.1 // good: 0–0.1
-		case r < 0.90:
+		case r < 0.95:
 			return 0.1 + rand.Float64()*0.15 // needs-improvement: 0.1–0.25
 		default:
 			return 0.25 + rand.Float64()*0.2 // poor: 0.25–0.45
@@ -2282,7 +2219,9 @@ func seedWebVitals() map[string]any {
 // Uptime monitor seeding
 // =============================================================================
 
-func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
+// seedUptimeMonitors writes the uptime fixtures. projectFor maps each
+// fixture's project key ("storefront", "shop-api", "payments") to a project.
+func seedUptimeMonitors(pool *pgxpool.Pool, projectFor func(key string) string, prefix string) (failed int) {
 	ctx := context.Background()
 
 	// outageWindow is a closed interval [startAgo, endAgo] where startAgo is
@@ -2307,6 +2246,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 		baseRespMs    int // median response time for healthy checks
 		outages       []outageWindow
 		forceDown     bool // force last 3 historical checks + fresh check to "down"
+		project       string
 		noChecks      bool // skip all check history (state remains "unknown")
 	}
 
@@ -2315,7 +2255,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 
 	specs := []monitorSpec{
 		{
-			name: "API health check", url: "https://api.example.com/health",
+			name: "API health check", project: "shop-api", url: "https://api.example.com/health",
 			method: "GET", intervalSecs: 60, expectedCodes: "200",
 			monitorStatus: "active", description: "mostly up: small outage 3 days ago and 10 days ago",
 			baseRespMs: 85,
@@ -2325,14 +2265,14 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 			},
 		},
 		{
-			name: "Marketing site", url: "https://www.example.com",
+			name: "Marketing site", project: "storefront", url: "https://www.example.com",
 			method: "GET", intervalSecs: 300, expectedCodes: "200",
 			bodyContains:  sp("Welcome"),
 			monitorStatus: "active", description: "100% uptime over 7 days",
 			baseRespMs: 125,
 		},
 		{
-			name: "Payment gateway", url: "https://pay.example.com/ping",
+			name: "Payment gateway", project: "payments", url: "https://pay.example.com/ping",
 			method: "HEAD", intervalSecs: 60, expectedCodes: "200",
 			monitorStatus: "active", description: "currently down: 503 errors",
 			baseRespMs: 95,
@@ -2342,7 +2282,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 			forceDown: true,
 		},
 		{
-			name: "Admin panel", url: "https://admin.example.com",
+			name: "Admin panel", project: "shop-api", url: "https://admin.example.com",
 			method: "GET", intervalSecs: 300, expectedCodes: "200",
 			monitorStatus: "active", description: "up with two planned maintenance windows",
 			baseRespMs: 210,
@@ -2352,13 +2292,13 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 			},
 		},
 		{
-			name: "Staging environment", url: "https://staging.example.com/health",
+			name: "Staging environment", project: "storefront", url: "https://staging.example.com/health",
 			method: "GET", intervalSecs: 300, expectedCodes: "200",
 			monitorStatus: "paused", description: "paused: 30 checks recorded before pause",
 			baseRespMs: 155,
 		},
 		{
-			name: "CDN edge node", url: "https://cdn.example.com/assets/app.js",
+			name: "CDN edge node", project: "storefront", url: "https://cdn.example.com/assets/app.js",
 			method: "HEAD", intervalSecs: 300, expectedCodes: "200,304",
 			monitorStatus: "active", description: "no history yet: state unknown",
 			noChecks: true,
@@ -2375,7 +2315,7 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 				 expected_codes, body_contains, status, next_check_at)
 			VALUES ($1,$2,$3,$4,$5,10,$6,$7,$8, NOW() + INTERVAL '30 days')
 			RETURNING id`,
-			projectID, "Demo: "+spec.name, spec.url, spec.method, spec.intervalSecs,
+			projectFor(spec.project), prefix+spec.name, spec.url, spec.method, spec.intervalSecs,
 			spec.expectedCodes, spec.bodyContains, spec.monitorStatus,
 		).Scan(&monID)
 		if err != nil {
@@ -2534,17 +2474,22 @@ func seedUptimeMonitors(pool *pgxpool.Pool, projectID string) (failed int) {
 	return failed
 }
 
-func seedCronMonitors(target dsn, pool *pgxpool.Pool) (failed int) {
+func seedCronMonitors(target dsn, pool *pgxpool.Pool, prefix string) (failed int) {
 	ctx := context.Background()
 	now := time.Now().UTC()
-	specs := []struct{ name, schedule, status string }{
-		{"Daily backup", "0 2 * * *", "ok"},
-		{"Payment processor", "*/15 * * * *", "error"},
-		{"Queue worker heartbeat", "*/5 * * * *", "in_progress"},
-		{"Weekly report", "0 9 * * 1", "unknown"},
-		{"Hourly inventory sync", "0 * * * *", "ok"},
-		{"Email digest", "0 8 * * *", "error"},
-		{"Thumbnail generator", "*/30 * * * *", "ok"},
+	// every is the schedule's spacing, so the run history fills the 20-run
+	// strip at the rhythm the schedule promises.
+	specs := []struct {
+		name, schedule, status string
+		every                  time.Duration
+	}{
+		{"Daily backup", "0 2 * * *", "ok", 24 * time.Hour},
+		{"Payment processor", "*/15 * * * *", "error", 15 * time.Minute},
+		{"Queue worker heartbeat", "*/5 * * * *", "in_progress", 5 * time.Minute},
+		{"Weekly report", "0 9 * * 1", "unknown", 7 * 24 * time.Hour},
+		{"Hourly inventory sync", "0 * * * *", "ok", time.Hour},
+		{"Email digest", "0 8 * * *", "error", 24 * time.Hour},
+		{"Thumbnail generator", "*/30 * * * *", "ok", 30 * time.Minute},
 	}
 	fmt.Println("\n=== Cron Monitors ===")
 	for _, spec := range specs {
@@ -2556,19 +2501,19 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) (failed int) {
 			defer tx.Rollback(ctx) //nolint:errcheck
 			var id string
 			err = tx.QueryRow(ctx, `INSERT INTO cron_monitors(project_id,name,schedule,grace_period_secs,next_expected_at)
-                VALUES($1,$2,$3,300,$4) RETURNING id`, target.projectID, "Demo: "+spec.name, spec.schedule, now.Add(30*24*time.Hour)).Scan(&id)
+                VALUES($1,$2,$3,300,$4) RETURNING id`, target.projectID, prefix+spec.name, spec.schedule, now.Add(30*24*time.Hour)).Scan(&id)
 			if err != nil {
 				return err
 			}
 			if spec.status != "unknown" {
-				for i := 7; i >= 0; i-- {
+				for i := 19; i >= 0; i-- {
 					status := "ok"
 					if i == 0 {
 						status = spec.status
-					} else if i == 3 && spec.status == "error" {
+					} else if (i == 1 || i == 7) && spec.status == "error" {
 						status = "error"
 					}
-					at := now.Add(-time.Duration(i)*24*time.Hour - time.Minute)
+					at := now.Add(-time.Duration(i)*spec.every - time.Minute)
 					var finished *time.Time
 					var duration *int
 					if status != "in_progress" {
@@ -2582,7 +2527,7 @@ func seedCronMonitors(target dsn, pool *pgxpool.Pool) (failed int) {
 						return err
 					}
 				}
-				_, err = tx.Exec(ctx, `UPDATE cron_monitors SET last_checkin_status=$2,last_checkin_at=$3,is_running=$4,last_ok_at=CASE WHEN $2='ok' THEN $3::timestamptz ELSE $5::timestamptz END WHERE id=$1`, id, spec.status, now.Add(-time.Minute), spec.status == "in_progress", now.Add(-24*time.Hour-time.Minute))
+				_, err = tx.Exec(ctx, `UPDATE cron_monitors SET last_checkin_status=$2,last_checkin_at=$3,is_running=$4,last_ok_at=CASE WHEN $2='ok' THEN $3::timestamptz ELSE $5::timestamptz END WHERE id=$1`, id, spec.status, now.Add(-time.Minute), spec.status == "in_progress", now.Add(-2*spec.every-time.Minute))
 				if err != nil {
 					return err
 				}
@@ -2682,6 +2627,8 @@ func main() {
 	listTypes := flag.Bool("list", false, "list available project types and exit")
 	dbURL := flag.String("db", "", "postgres connection URL for monitors (default: DATABASE_URL from .env)")
 	seedSections := flag.String("seed", "all", `comma-separated sections: issues, transactions, profiles, logs, monitors, alerts, workflow (or "all")`)
+	scale := flag.Int("scale", 1, "multiply the volume of events, transactions and logs")
+	showcase := flag.Bool("showcase", false, "seed a complete shop across four projects with a team, for screenshots (requires --db; takes the server URL instead of a DSN)")
 	flag.Parse()
 
 	if *listTypes {
@@ -2715,6 +2662,14 @@ func main() {
 	if strings.TrimSpace(*seedSections) != "all" && (seed["monitors"] || seed["alerts"]) && resolvedDB == "" {
 		fmt.Fprintf(os.Stderr, "error: --db or DATABASE_URL in .env is required to seed monitors or alerts\n")
 		os.Exit(1)
+	}
+
+	if *showcase {
+		if flag.NArg() < 1 {
+			fmt.Fprintf(os.Stderr, "Usage: %s --showcase [--scale=N] [--db=POSTGRES_URL] <SERVER_URL>\n", os.Args[0])
+			os.Exit(1)
+		}
+		os.Exit(runShowcase(flag.Arg(0), resolvedDB, max(1, *scale)))
 	}
 
 	if flag.NArg() < 1 {
@@ -2758,6 +2713,57 @@ func main() {
 		}
 	}
 
+	res := seedProject(target, def, seed, resolvedDB, seedOptions{scale: max(1, *scale), prefix: "Demo: "})
+	printSummary(res, seed)
+	if res.failed > 0 {
+		os.Exit(1)
+	}
+}
+
+// seedOptions tune one project's run. The zero value matches the original
+// single-project seed apart from the volume, which scale sets.
+type seedOptions struct {
+	scale int // multiplies events, transactions and logs
+	// prefix is put before monitor and alert rule names, so fixtures added to
+	// a real instance stand out ("Demo: ").
+	prefix string
+	// profiles limits the profile section to "php" or "python" formats; empty
+	// seeds both.
+	profiles string
+	// spread staggers when each issue was last seen, quietest issues longest
+	// ago, so a list does not show every issue as seen minutes ago.
+	spread bool
+	// showcaseIssue repeats the linked checkout failure this many extra times,
+	// for different customers, so its issue has a real history.
+	showcaseIssue int
+}
+
+// seedResult is what one project's seeding run delivered.
+type seedResult struct {
+	sent, failed  int
+	profiledNames []string
+}
+
+func printSummary(res seedResult, seed map[string]bool) {
+	fmt.Printf("\nDone. %d envelopes sent, %d failures.\n", res.sent, res.failed)
+	fmt.Println("Screenshot tour: Dashboard, Issues, Performance (transactions, queries, caches, jobs, browser), Releases, Logs, and Monitors. Use the 24h window; use 7d for the deployment history.")
+	if seed["workflow"] {
+		fmt.Println("Open Checkout payment authorization and PaymentGatewayTimeout to explore linked traces, logs, and the same customer. With --db, the workflow also includes triage states and comments when an existing operator account is available.")
+	}
+	if seed["monitors"] || seed["alerts"] {
+		fmt.Println("Seeded monitors defer automatic checks for 30 days. Seeded alert rules are disabled and have no pending deliveries.")
+	}
+	if len(res.profiledNames) > 0 {
+		fmt.Println("\nTransactions with a flame graph (Performance → Transactions):")
+		for _, n := range res.profiledNames {
+			fmt.Printf("  %s\n", n)
+		}
+	}
+}
+
+// seedProject delivers the selected sections of one project definition to
+// one project. With a database URL it also writes the database fixtures.
+func seedProject(target dsn, def projectDef, seed map[string]bool, resolvedDB string, opts seedOptions) seedResult {
 	sections := make([]string, 0, len(seed))
 	for _, s := range canonicalSections {
 		if seed[s] {
@@ -2823,7 +2829,9 @@ func main() {
 					fmt.Printf("  FAIL  %s: %v\n", label, err)
 					failed++
 				} else {
-					fmt.Printf("  OK    %s\n", label)
+					if opts.scale == 1 {
+						fmt.Printf("  OK    %s\n", label)
+					}
 					sent++
 				}
 				mu.Unlock()
@@ -2838,29 +2846,55 @@ func main() {
 
 	if seed["issues"] {
 		fmt.Println("=== Issues ===")
+		// The server keeps the first event it processes as an issue's first
+		// seen time and release, so each issue's oldest event goes out, and is
+		// grouped, before the rest of its history.
+		type plannedEvent struct {
+			tmpl issueTemplate
+			ts   time.Time
+		}
+		var oldest, rest []plannedEvent
 		for i, tmpl := range def.issues {
 			count := 5
 			if i < len(def.issueCounts) {
 				count = def.issueCounts[i]
 			}
+			count *= opts.scale
+			offset := issueOffset(i, opts.spread)
+			events := make([]plannedEvent, 0, count+1)
+			// With spread, each project's last issue is new today: its whole
+			// history falls inside the last ten hours.
+			fresh := opts.spread && i == len(def.issues)-1
 			for j := 0; j < count; j++ {
-				ts := showcaseTime(j, count)
-				evt := buildErrorEvent(tmpl, ts, def.releases, def.environments)
-				label := fmt.Sprintf("[%s] %s: %s", tmpl.platform, tmpl.excType, truncate(tmpl.excValue, 60))
-				deliver(label, evt, "event")
+				at := showcaseTime(j, count).Add(-offset)
+				if fresh {
+					at = trafficBiasedTime(10 * time.Hour)
+				}
+				events = append(events, plannedEvent{tmpl, at})
+			}
+			if opts.spread && i < 3 || !opts.spread && i%2 == 1 {
+				ago := time.Duration(rand.Intn(10*60)) * time.Second //nolint:gosec
+				events = append(events, plannedEvent{tmpl, time.Now().UTC().Add(-ago)})
+			}
+			first := 0
+			for j, e := range events {
+				if e.ts.Before(events[first].ts) {
+					first = j
+				}
+			}
+			oldest = append(oldest, events[first])
+			rest = append(rest, append(events[:first:first], events[first+1:]...)...)
+		}
+		send := func(events []plannedEvent) {
+			for _, e := range events {
+				evt := buildErrorEvent(e.tmpl, e.ts, def.releases, def.environments)
+				deliver(fmt.Sprintf("[%s] %s: %s", e.tmpl.platform, e.tmpl.excType, truncate(e.tmpl.excValue, 60)), evt, "event")
 			}
 		}
-
-		fmt.Println("\n=== Fresh events (last 10 min) ===")
-		for i, tmpl := range def.issues {
-			if i%2 == 0 {
-				continue
-			}
-			ts := time.Now().UTC().Add(-time.Duration(rand.Intn(10*60)) * time.Second) //nolint:gosec
-			evt := buildErrorEvent(tmpl, ts, def.releases, def.environments)
-			label := fmt.Sprintf("[fresh] [%s] %s: %s", tmpl.platform, tmpl.excType, truncate(tmpl.excValue, 60))
-			deliver(label, evt, "event")
-		}
+		send(oldest)
+		deliverWg.Wait()
+		time.Sleep(groupingDelay)
+		send(rest)
 	}
 
 	if seed["transactions"] {
@@ -2870,6 +2904,7 @@ func main() {
 			if i < len(def.txCounts) {
 				count = def.txCounts[i]
 			}
+			count *= opts.scale
 			for j := 0; j < count; j++ {
 				ts := showcaseTime(j, count)
 				tx := buildTransaction(tmpl, ts, def.releases, def.environments)
@@ -2890,8 +2925,15 @@ func main() {
 	}
 
 	if seed["profiles"] {
+		phpProfiles, pyProfiles := laravelProfiles, pythonProfiles
+		switch opts.profiles {
+		case "php":
+			pyProfiles = nil
+		case "python":
+			phpProfiles = nil
+		}
 		fmt.Println("\n=== Profiled transactions (v1, PHP style) ===")
-		for _, tmpl := range laravelProfiles {
+		for _, tmpl := range phpProfiles {
 			for i := 0; i < 6; i++ {
 				ts := time.Now().UTC().Add(-profileAge())
 				tx, profile := buildV1Profile(tmpl, ts, def.releases, def.environments)
@@ -2905,7 +2947,7 @@ func main() {
 		}
 
 		fmt.Println("\n=== Profiled transactions (v2, continuous) ===")
-		for _, tmpl := range pythonProfiles {
+		for _, tmpl := range pyProfiles {
 			for i := 0; i < 3; i++ {
 				start := time.Now().UTC().Add(-profileAge())
 				chunk, txs := buildV2Session(tmpl, start, 3, def.releases, def.environments)
@@ -2923,17 +2965,17 @@ func main() {
 		// These names exist nowhere else in the seed data, so anything on this
 		// list is guaranteed to have a flame graph when you open it.
 		profiledNames = nil
-		for _, tmpl := range laravelProfiles {
+		for _, tmpl := range phpProfiles {
 			profiledNames = append(profiledNames, tmpl.txName+"  (v1, transaction-based)")
 		}
-		for _, tmpl := range pythonProfiles {
+		for _, tmpl := range pyProfiles {
 			profiledNames = append(profiledNames, tmpl.txName+"  (v2, continuous)")
 		}
 	}
 
 	if seed["logs"] {
 		fmt.Println("\n=== Logs ===")
-		logBatches := buildLogBatches(def.releases, def.environments)
+		logBatches := buildLogBatches(def.releases, def.environments, opts.scale)
 		for i, batch := range logBatches {
 			label := fmt.Sprintf("[logs] batch %d (%d records)", i+1, len(batch))
 			deliver(label, batch, "log")
@@ -2946,6 +2988,20 @@ func main() {
 
 	if seed["workflow"] {
 		fmt.Println("\n=== Linked investigations ===")
+		if opts.showcaseIssue > 0 {
+			// Earlier occurrences of the checkout failure, oldest first so the
+			// issue starts at the first of them.
+			customers := slices.DeleteFunc(slices.Clone(seedUsers), func(u seedUser) bool { return u.email == "" })
+			for k := opts.showcaseIssue; k > 0; k-- {
+				at := time.Now().UTC().Add(-time.Duration(k) * 6 * time.Hour / time.Duration(opts.showcaseIssue)).Add(-time.Duration(rand.Intn(300)) * time.Second) //nolint:gosec
+				items, _ := buildInvestigationAt(def, 0, at, customers[k%len(customers)])
+				deliverItems("[workflow] earlier checkout failure", items)
+				if k == opts.showcaseIssue {
+					deliverWg.Wait()
+					time.Sleep(groupingDelay)
+				}
+			}
+		}
 		for i := range 4 {
 			items, eventID := buildInvestigation(def, i)
 			workflowIDs = append(workflowIDs, eventID)
@@ -2960,11 +3016,11 @@ func main() {
 			pool, err := pgxpool.New(context.Background(), resolvedDB)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: connect to DB: %v\n", err)
-				os.Exit(1)
+				return seedResult{sent: sent, failed: failed + 1}
 			}
 			defer pool.Close()
-			failed += seedCronMonitors(target, pool)
-			failed += seedUptimeMonitors(pool, target.projectID)
+			failed += seedCronMonitors(target, pool, opts.prefix)
+			failed += seedUptimeMonitors(pool, func(string) string { return target.projectID }, opts.prefix)
 		} else {
 			fmt.Println("\n(skip monitors - set DATABASE_URL in .env or pass --db=POSTGRES_URL)")
 		}
@@ -2987,40 +3043,23 @@ func main() {
 			pool, err := pgxpool.New(context.Background(), resolvedDB)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: connect to DB: %v\n", err)
-				os.Exit(1)
+				return seedResult{sent: sent, failed: failed + 1}
 			}
 			defer pool.Close()
-			failed += seedAlertRules(pool, target.projectID)
+			failed += seedAlertRules(pool, target.projectID, opts.prefix)
 		} else {
 			fmt.Println("\n(skip alerts: set DATABASE_URL in .env or pass --db=POSTGRES_URL)")
 		}
 	}
 
-	fmt.Printf("\nDone. %d envelopes sent, %d failures.\n", sent, failed)
-	fmt.Println("Screenshot tour: Dashboard, Issues, Performance (transactions, queries, caches, jobs, browser), Releases, Logs, and Monitors. Use the 24h window; use 7d for the deployment history.")
-	if seed["workflow"] {
-		fmt.Println("Open Checkout payment authorization and PaymentGatewayTimeout to explore linked traces, logs, and the same customer. With --db, the workflow also includes triage states and comments when an existing operator account is available.")
-	}
-	if seed["monitors"] || seed["alerts"] {
-		fmt.Println("Demo monitors defer automatic checks for 30 days. Demo alert rules are disabled and have no pending deliveries.")
-	}
-
-	if len(profiledNames) > 0 {
-		fmt.Println("\nTransactions with a flame graph (Performance → Transactions):")
-		for _, n := range profiledNames {
-			fmt.Printf("  %s\n", n)
-		}
-	}
-	if failed > 0 {
-		os.Exit(1)
-	}
+	return seedResult{sent: sent, failed: failed, profiledNames: profiledNames}
 }
 
 // =============================================================================
 // Alert rule seeding
 // =============================================================================
 
-func seedAlertRules(pool *pgxpool.Pool, projectID string) (failed int) {
+func seedAlertRules(pool *pgxpool.Pool, projectID, prefix string) (failed int) {
 	// firingDef describes one alert_firings row to seed for a rule.
 	type firingDef struct {
 		firedAgo   time.Duration
@@ -3129,7 +3168,7 @@ func seedAlertRules(pool *pgxpool.Pool, projectID string) (failed int) {
 			},
 		},
 		{
-			name: "High error volume (disabled)", enabled: false,
+			name: "High error volume", enabled: false,
 			trigger: "event_count", threshold: ip(200), windowMins: ip(30),
 			channel: "discord", webhookURL: sp("https://discord.com/api/webhooks/example/placeholder"),
 			cooldownMins: 60,
@@ -3158,7 +3197,7 @@ func seedAlertRules(pool *pgxpool.Pool, projectID string) (failed int) {
 				 filter_level, filter_environment, min_occurrences, filter_search, last_fired_at)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			RETURNING id`,
-			"Demo: "+r.name, r.enabled, r.trigger, r.threshold, r.windowMins,
+			prefix+r.name, r.enabled, r.trigger, r.threshold, r.windowMins,
 			r.channel, r.webhookURL, r.emailTo, r.cooldownMins,
 			r.filterLevel, r.filterEnv, nil, r.filterSearch, lastFiredAt,
 		).Scan(&id)
@@ -3223,72 +3262,127 @@ func seedAlertRules(pool *pgxpool.Pool, projectID string) (failed int) {
 // Log seeding
 // =============================================================================
 
+// Log templates name their placeholders, so each one gets a value of the
+// right kind: a route where a route belongs, a sensible percentage, a
+// threshold below the measured value.
 var logMessages = map[string][]string{
 	"trace": {
-		"entering handler %s",
-		"db query: SELECT * FROM %s WHERE id = $1",
-		"cache lookup: key=%s hit=false",
-		"serializing response: %d bytes",
-		"middleware chain: %s",
+		"entering handler {route}",
+		"cache lookup key=product:{sku} hit=false",
+		"serialized response: {bytes} bytes",
 	},
 	"debug": {
-		"request started: %s %s",
-		"auth token validated for user %s",
-		"cache hit: key=%s ttl=%ds",
-		"query took %dms: SELECT FROM %s",
-		"config loaded: %s=%s",
-		"background job enqueued: %s",
-		"session resumed: user_id=%s",
+		"request started: {route}",
+		"session resumed for {user}",
+		"cache hit key=cart:{session} ttl={ttl}s",
+		"query took {ms}ms: SELECT … FROM {table}",
+		"job {job} enqueued on queue default",
 	},
 	"info": {
-		"user %s logged in from %s",
-		"order #%d created by user %s",
-		"password reset email sent to %s",
-		"project %s: new deploy %s received",
-		"cron job %s completed in %dms",
-		"webhook delivered to %s: %d",
-		"rate limit check passed: %s %d/%d",
-		"file upload complete: %s (%d bytes)",
-		"email delivered: %s → %s",
-		"signup: user %s joined plan %s",
+		"{user} signed in",
+		"order {order} placed by {user} ({items} items)",
+		"payment {payment} captured for order {order}",
+		"order {order} shipped via {carrier}",
+		"password reset email sent to {email}",
+		"job {job} completed in {ms}ms",
+		"webhook {webhook} delivered: HTTP 200",
+		"stock updated for {sku}: {qty} available",
+		"coupon {coupon} applied to order {order}",
 	},
 	"warning": {
-		"slow query detected: %dms > threshold %dms",
-		"retry attempt %d/3 for %s",
-		"disk usage at %d%% of quota",
-		"deprecated endpoint %s called by %s",
-		"auth: unusual login location for user %s",
-		"queue depth high: %d items pending",
-		"memory usage: %dMB (warning threshold %dMB)",
+		"slow query: {ms_slow}ms on {table} (threshold 500ms)",
+		"retry {attempt}/3 for job {job}",
+		"disk usage at {pct}% on db-1",
+		"carrier {carrier} rates API slow: {ms_slow}ms",
+		"queue default backlog: {backlog} jobs pending",
+		"low stock for {sku}: {low} left",
+		"card declined for order {order}: insufficient_funds",
 	},
 	"error": {
-		"database connection failed: %s",
-		"failed to send email to %s: connection refused",
-		"panic recovered in handler %s: %s",
-		"payment processing failed for order #%d: %s",
-		"file not found: %s",
-		"external API %s returned 503 after %dms",
-		"failed to acquire lock for job %s",
+		"payment authorization failed for order {order}: provider timeout",
+		"failed to send order confirmation to {email}: SMTP 421",
+		"{api} returned 503 after {ms_slow}ms",
+		"could not acquire lock inventory:{sku}",
+		"webhook {webhook} delivery failed: HTTP 500",
 	},
 	"fatal": {
-		"cannot connect to database after %d retries: %s",
-		"config error: required env var %s is missing",
-		"migration failed at version %d: %s",
-		"port %d already in use - cannot start",
+		"worker crashed: out of memory (limit 512MB)",
+		"cannot reach database after 5 retries: connection refused",
 	},
 }
 
 var logRoutes = []string{
-	"GET /api/users", "POST /api/orders", "GET /api/products",
-	"PUT /api/users/{id}", "DELETE /api/sessions", "GET /api/dashboard",
-	"POST /api/webhooks", "GET /api/reports", "POST /api/payments",
+	"GET /api/products/{slug}", "POST /api/cart/lines", "GET /api/cart",
+	"POST /api/checkout", "GET /api/orders", "POST /v1/payments/authorize",
+	"POST /webhooks/stripe", "GET /api/search",
 }
 
-var logTables = []string{"users", "orders", "products", "sessions", "events", "logs"}
-var logJobs = []string{"send_digest", "cleanup_sessions", "sync_inventory", "generate_report", "process_refunds"}
-var logKeys = []string{"feature_flags", "user_prefs", "rate_limits", "config_v2"}
-var logPlans = []string{"free", "pro", "enterprise"}
-var logAPIs = []string{"stripe.com", "sendgrid.com", "twilio.com", "github.com"}
+var logTables = []string{"orders", "order_items", "products", "inventory", "payments", "customers"}
+var logJobs = []string{"SendOrderConfirmation", "SyncProductCatalog", "apply_stock_update", "build_sales_report", "ledger.reconcile"}
+var logAPIs = []string{"api.stripe.com", "api.sendgrid.com", "rates.example.com", "api.carrier.example.com"}
+var logCarriers = []string{"DHL", "UPS", "FedEx"}
+var logSKUs = []string{"TR-GTX-42", "PK-38L-OLV", "JK-RAIN-M", "SB-DOWN-L", "HL-USB-400"}
+
+// logPlaceholder resolves one named placeholder to a value of its kind.
+func logPlaceholder(name string) string {
+	user := randomChoice(seedUsers)
+	n := func(lo, hi int) string { return strconv.Itoa(lo + rand.Intn(hi-lo+1)) } //nolint:gosec
+	switch name {
+	case "user":
+		if user.username != "" {
+			return user.username
+		}
+		return "guest"
+	case "email":
+		if user.email != "" {
+			return user.email
+		}
+		return "jane.doe@example.com"
+	case "route":
+		return randomChoice(logRoutes)
+	case "table":
+		return randomChoice(logTables)
+	case "job":
+		return randomChoice(logJobs)
+	case "api":
+		return randomChoice(logAPIs)
+	case "carrier":
+		return randomChoice(logCarriers)
+	case "sku":
+		return randomChoice(logSKUs)
+	case "order":
+		return "ORD-" + n(10200, 10999)
+	case "payment":
+		return "pay_" + newEventID()[:12]
+	case "webhook":
+		return "evt_" + newEventID()[:12]
+	case "session":
+		return newEventID()[:8]
+	case "coupon":
+		return randomChoice([]string{"AUTUMN15", "WELCOME10", "FREESHIP"})
+	case "items":
+		return n(1, 6)
+	case "qty":
+		return n(12, 340)
+	case "low":
+		return n(1, 4)
+	case "ms":
+		return n(4, 180)
+	case "ms_slow":
+		return n(620, 4800)
+	case "ttl":
+		return n(30, 900)
+	case "bytes":
+		return n(800, 48000)
+	case "attempt":
+		return n(1, 3)
+	case "pct":
+		return n(81, 94)
+	case "backlog":
+		return n(240, 1800)
+	}
+	return name
+}
 
 func logBody(level string) string {
 	msgs := logMessages[level]
@@ -3296,20 +3390,18 @@ func logBody(level string) string {
 		return "log entry"
 	}
 	tmpl := randomChoice(msgs)
-	user := randomChoice(seedUsers)
-	route := randomChoice(logRoutes)
-	table := randomChoice(logTables)
-	job := randomChoice(logJobs)
-	api := randomChoice(logAPIs)
-	n := rand.Intn(9000) + 1000 //nolint:gosec
-
-	s := tmpl
-	s = strings.ReplaceAll(s, "%s", func() string {
-		candidates := []string{user.username, user.email, route, table, job, api, randomChoice(logKeys), randomChoice(logPlans)}
-		return randomChoice(candidates)
-	}())
-	s = strings.ReplaceAll(s, "%d", strconv.Itoa(n))
-	return s
+	var b strings.Builder
+	for {
+		start := strings.IndexByte(tmpl, '{')
+		end := strings.IndexByte(tmpl, '}')
+		if start < 0 || end < start {
+			b.WriteString(tmpl)
+			return b.String()
+		}
+		b.WriteString(tmpl[:start])
+		b.WriteString(logPlaceholder(tmpl[start+1 : end]))
+		tmpl = tmpl[end+1:]
+	}
 }
 
 func buildLogRecord(level string, ts time.Time, releases, environments []string) map[string]any {
@@ -3357,7 +3449,7 @@ var logLevelWeights = []struct {
 	{"info", 50},
 	{"warning", 20},
 	{"error", 8},
-	{"fatal", 2},
+	{"fatal", 1},
 }
 
 func pickLogLevel() string {
@@ -3375,9 +3467,9 @@ func pickLogLevel() string {
 	return "info"
 }
 
-func buildLogBatches(releases, environments []string) [][]map[string]any {
+func buildLogBatches(releases, environments []string, scale int) [][]map[string]any {
 	// Send historical logs in batches of 20 spread over the past 7 days.
-	total := 360
+	total := 360 * max(1, scale)
 	batchSize := 20
 	var batches [][]map[string]any
 	for i := 0; i < total; i += batchSize {
@@ -3397,7 +3489,11 @@ func buildFreshLogs(releases, environments []string) []map[string]any {
 	for i := range 30 {
 		ago := time.Duration(rand.Intn(2*60)) * time.Second //nolint:gosec
 		ts := time.Now().UTC().Add(-ago)
-		level := []string{"info", "info", "info", "debug", "warning", "error", "fatal", "trace"}[i%8]
+		// Every severity shows in the last day, but a fatal only once.
+		level := []string{"info", "info", "info", "debug", "warning", "info", "error", "debug"}[i%8]
+		if i < 2 {
+			level = []string{"fatal", "trace"}[i]
+		}
 		batch = append(batch, buildLogRecord(level, ts, releases, environments))
 	}
 	return batch
@@ -3492,8 +3588,14 @@ var laravelProfiles = []profileTemplate{
 			{weight: 6},
 		},
 		spans: []spanNode{
-			{op: "db.query", description: "SELECT * FROM `orders` WHERE `status` = ? ORDER BY `created_at` DESC LIMIT 50", durationMs: [2]int{90, 240}},
+			{op: "middleware.handle", description: "Authenticate", durationMs: [2]int{3, 8}},
 			{op: "cache.get", description: "orders:index:page:1", durationMs: [2]int{2, 9}},
+			{op: "db.query", description: "SELECT COUNT(*) AS aggregate FROM `orders` WHERE `status` = ?", durationMs: [2]int{12, 40}},
+			{op: "db.query", description: "SELECT * FROM `orders` WHERE `status` = ? ORDER BY `created_at` DESC LIMIT 50", durationMs: [2]int{90, 240}},
+			{op: "db.query", description: "SELECT * FROM `order_items` WHERE `order_items`.`order_id` IN (?, ?, ?, ?, ?)", durationMs: [2]int{20, 60}},
+			{op: "function", description: "OrderResource::collection", durationMs: [2]int{30, 90}, children: []spanNode{
+				{op: "function", description: "Money::format", durationMs: [2]int{8, 30}},
+			}},
 			{op: "template.render", description: "resources/views/orders/index.blade.php", durationMs: [2]int{18, 60}},
 		},
 	},
@@ -3840,6 +3942,22 @@ func releaseAt(ts time.Time, releases []string) string {
 	return releases[index]
 }
 
+// groupingDelay gives the server's asynchronous writers time to group the
+// events already accepted before later ones arrive.
+const groupingDelay = 2 * time.Second
+
+// issueOffsetCap keeps the quietest issue inside the default 24h window.
+const issueOffsetCap = 20 * time.Hour
+
+// issueOffset moves an issue's whole history back in time: busy issues stay
+// current, quieter ones were last seen hours ago.
+func issueOffset(index int, spread bool) time.Duration {
+	if !spread {
+		return 0
+	}
+	return min(time.Duration(index*index)*9*time.Minute, issueOffsetCap)
+}
+
 // Keep every screen populated in the default 24h filter and retain a weekly baseline.
 func showcaseTime(index, count int) time.Time {
 	now := time.Now().UTC().Add(-time.Minute)
@@ -3896,36 +4014,127 @@ func fitSpans(spans []map[string]any, start, end time.Time) []map[string]any {
 	return spans
 }
 
+// checkoutStacks are the PHP stack traces of the four linked checkout
+// failures, so each issue points at the code that raised it.
+var checkoutStacks = func() [][]stackFrame {
+	controller := stackFrame{
+		function: "store", module: "App\\Http\\Controllers\\Api\\CheckoutController", filename: "app/Http/Controllers/Api/CheckoutController.php", lineno: 58,
+		preContext:  []string{"        $order = $this->orders->draft($request->user(), $cart);", "        $this->inventory->reserve($order);", "        $this->promotions->apply($order, $request->input('coupon'));"},
+		contextLine: "        $payment = $this->payments->authorize($order);",
+		postContext: []string{"        $order->markPaid($payment);", "        SendReceipt::dispatch($order);"},
+	}
+	kernel := stackFrame{function: "handle", module: "Illuminate\\Foundation\\Http\\Kernel", filename: "vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php", lineno: 147}
+	at := func(line int, context string, pre ...string) stackFrame {
+		f := controller
+		f.lineno, f.contextLine, f.preContext, f.postContext = line, context, pre, nil
+		return f
+	}
+	return [][]stackFrame{
+		{
+			{function: "transfer", module: "GuzzleHttp\\Handler\\CurlHandler", filename: "vendor/guzzlehttp/guzzle/src/Handler/CurlHandler.php", lineno: 44},
+			{
+				function: "authorize", module: "App\\Services\\Payments\\PaymentClient", filename: "app/Services/Payments/PaymentClient.php", lineno: 37,
+				preContext:  []string{"    public function authorize(Order $order): Payment", "    {", "        $payload = PaymentPayload::fromOrder($order);"},
+				contextLine: "        $response = $this->http->timeout(3)->post('/v1/payments/authorize', $payload);",
+				postContext: []string{"", "        return Payment::fromResponse($response->throw());", "    }"},
+			},
+			controller,
+			kernel,
+		},
+		{
+			{
+				function: "reserve", module: "App\\Services\\InventoryService", filename: "app/Services/InventoryService.php", lineno: 52,
+				preContext:  []string{"        $stock = Inventory::lockForUpdate()->findOrFail($line->product_id);", "        if ($stock->available() < $line->quantity) {"},
+				contextLine: "            throw new InventoryConflict('Reserved quantity exceeds available inventory');",
+				postContext: []string{"        }", "        $stock->reserve($line->quantity);"},
+			},
+			at(56, "        $this->inventory->reserve($order);", "        $order = $this->orders->draft($request->user(), $cart);"),
+			kernel,
+		},
+		{
+			{
+				function: "failed", module: "App\\Jobs\\SendReceipt", filename: "app/Jobs/SendReceipt.php", lineno: 61,
+				preContext:  []string{"    public function failed(Throwable $e): void", "    {"},
+				contextLine: "        throw new ReceiptDeliveryError('Receipt delivery exhausted its retry budget', previous: $e);",
+				postContext: []string{"    }"},
+			},
+			{function: "process", module: "Illuminate\\Queue\\Worker", filename: "vendor/laravel/framework/src/Illuminate/Queue/Worker.php", lineno: 435},
+		},
+		{
+			{
+				function: "apply", module: "App\\Services\\PromotionService", filename: "app/Services/PromotionService.php", lineno: 29,
+				preContext:  []string{"        $promotion = $this->promotions->find($code);", "        if ($promotion->ends_at->isPast()) {"},
+				contextLine: "            throw new ExpiredPromotion('Promotion expired before checkout completed');",
+				postContext: []string{"        }"},
+			},
+			at(57, "        $this->promotions->apply($order, $request->input('coupon'));", "        $this->inventory->reserve($order);"),
+			kernel,
+		},
+	}
+}()
+
+// checkoutSpans is the checkout request behind the linked investigations:
+// authenticate, load the cart, lock stock, apply promotions, then wait on the
+// payment provider before writing the order and queueing its follow-ups.
+var checkoutSpans = []spanNode{
+	{op: "middleware.handle", description: "Authenticate session", durationMs: [2]int{6, 6}},
+	{op: "cache.get", description: "GET cart:9f2c41", durationMs: [2]int{3, 3}},
+	{op: "db.query", description: "SELECT id, sku, price FROM products WHERE id IN (?, ?, ?)", durationMs: [2]int{12, 12}},
+	{op: "db.query", description: "SELECT id, quantity FROM inventory WHERE product_id = $1 FOR UPDATE", durationMs: [2]int{95, 95}},
+	{op: "function", description: "Apply promotions", durationMs: [2]int{9, 9}, children: []spanNode{
+		{op: "cache.get", description: "GET promo:AUTUMN15", durationMs: [2]int{2, 2}},
+	}},
+	{op: "http.client", description: "POST https://payments.example.com/v1/payments/authorize", durationMs: [2]int{3000, 3000}},
+	{op: "db.query", description: "INSERT INTO orders (customer_id, total, currency, status) VALUES (?, ?, ?, ?)", durationMs: [2]int{6, 6}},
+	{op: "queue.publish", description: "orders.receipt", durationMs: [2]int{5, 5}},
+	{op: "queue.publish", description: "orders.payment_retry", durationMs: [2]int{4, 4}},
+}
+
 func buildInvestigation(def projectDef, index int) ([]envelopeItem, string) {
+	return buildInvestigationAt(def, index, time.Now().UTC().Add(-time.Duration(3+index*4)*time.Minute), seedUsers[0])
+}
+
+// buildInvestigationAt builds one linked checkout failure for customer u at ts.
+func buildInvestigationAt(def projectDef, index int, ts time.Time, u seedUser) ([]envelopeItem, string) {
 	names := []string{"Checkout payment authorization", "Inventory reservation", "Receipt delivery", "Discount validation"}
-	ts := time.Now().UTC().Add(-time.Duration(3+index*4) * time.Minute)
-	u := seedUsers[0]
 	tmpl := def.issues[index%len(def.issues)]
 	tmpl.excType = []string{"PaymentGatewayTimeout", "InventoryConflict", "ReceiptDeliveryError", "ExpiredPromotion"}[index]
 	tmpl.excValue = []string{"Payment provider did not respond within 3 seconds", "Reserved quantity exceeds available inventory", "Receipt delivery exhausted its retry budget", "Promotion expired before checkout completed"}[index]
 	tmpl.transaction = "POST /api/checkout"
 	tmpl.fingerprint = []string{"tindra-demo", def.name, names[index]}
+	if tmpl.platform == "php" {
+		tmpl.stacktrace = checkoutStacks[index]
+	}
+	// Each occurrence is its own order; the most recent one is ORD-10482.
+	order := "ORD-10482"
+	if age := time.Since(ts); age > 30*time.Minute {
+		order = fmt.Sprintf("ORD-%d", 10482-int(age/(10*time.Minute)))
+	}
 	event := buildErrorEvent(tmpl, ts.Add(3100*time.Millisecond), def.releases, []string{"production"})
 	eventID := newEventID()
 	event["event_id"] = eventID
 	event["user"] = sentryUserMap(u)
-	event["request"] = map[string]any{"url": "https://shop.example.com/api/checkout", "method": "POST", "headers": map[string]string{"Content-Type": "application/json"}, "data": map[string]any{"currency": "USD", "items": 3, "order_id": "ORD-10482"}}
-	tx := buildTransaction(txTemplate{name: names[index], platform: tmpl.platform, op: "http.server", durationMs: [2]int{3200, 3200}, spans: []spanNode{
-		{op: "cache.get", description: "GET catalog:featured", durationMs: [2]int{4, 4}},
-		{op: "db.query", description: "SELECT id, quantity FROM inventory WHERE product_id = $1 FOR UPDATE", durationMs: [2]int{95, 95}},
-		{op: "http.client", description: "POST https://payments.example.com/authorize", durationMs: [2]int{3000, 3000}},
-		{op: "queue.publish", description: "orders.payment_retry", durationMs: [2]int{18, 18}},
-	}}, ts, def.releases, []string{"production"})
+	event["request"] = map[string]any{"url": "https://shop.example.com/api/checkout", "method": "POST", "headers": map[string]string{"Content-Type": "application/json"}, "data": map[string]any{"currency": "USD", "items": 3, "order_id": order}}
+	tx := buildTransaction(txTemplate{name: names[index], platform: tmpl.platform, op: "http.server", durationMs: [2]int{3200, 3200}, spans: checkoutSpans}, ts, def.releases, []string{"production"})
 	tx["event_id"] = newEventID()
 	tx["user"] = sentryUserMap(u)
 	trace := tx["contexts"].(map[string]any)["trace"].(map[string]any)
 	trace["status"] = "internal_error"
 	event["contexts"].(map[string]any)["trace"] = trace
-	spans := tx["spans"].([]map[string]any)
-	spans[0]["data"].(map[string]any)["cache.hit"] = index%2 == 0
-	spans[[]int{2, 1, 3, 0}[index]]["status"] = "internal_error"
+	// Each case fails in its own span: the payment call, the inventory lock,
+	// the receipt job or the promotion lookup.
+	failing := []string{"payments.example.com", "FROM inventory", "orders.receipt", "promo:"}[index]
+	for _, span := range tx["spans"].([]map[string]any) {
+		description, _ := span["description"].(string)
+		if strings.Contains(description, failing) {
+			span["status"] = "internal_error"
+		}
+		if strings.HasPrefix(description, "GET cart:") {
+			span["data"].(map[string]any)["cache.hit"] = index%2 == 0
+		}
+	}
 	var logs []map[string]any
-	for i, body := range []string{"Checkout started for order ORD-10482", "Inventory reserved for 3 items", tmpl.excValue} {
+	for i, body := range []string{"Checkout started for order " + order, "Inventory reserved for 3 items", tmpl.excValue} {
 		record := buildLogRecord([]string{"info", "debug", "error"}[i], ts.Add(time.Duration(i)*time.Second), def.releases, []string{"production"})
 		record["body"], record["trace_id"], record["span_id"] = body, trace["trace_id"], trace["span_id"]
 		attrs := record["attributes"].(map[string]any)
@@ -3938,7 +4147,7 @@ func buildInvestigation(def projectDef, index int) ([]envelopeItem, string) {
 			attrs[key] = value
 		}
 		attrs["http.status_code"] = []int{200, 200, 500}[i]
-		attrs["order.id"], attrs["http.route"], attrs["http.method"] = "ORD-10482", "/api/checkout", "POST"
+		attrs["order.id"], attrs["http.route"], attrs["http.method"] = order, "/api/checkout", "POST"
 		logs = append(logs, record)
 	}
 	return []envelopeItem{{typ: "event", payload: event}, {typ: "transaction", payload: tx}, {typ: "log", payload: logs}}, eventID
@@ -3983,13 +4192,15 @@ func seedWorkflow(ctx context.Context, pool *pgxpool.Pool, projectID string, eve
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE issues SET assignee_id=(SELECT id FROM users WHERE perm_manage_issues OR perm_manage_users ORDER BY created_at LIMIT 1) WHERE id=$1`, issueID)
+		// With a team, each issue goes to a different person and the comment
+		// comes from whoever picked it up; alone, the operator does both.
+		_, err = tx.Exec(ctx, `UPDATE issues SET assignee_id=(SELECT id FROM users WHERE perm_manage_issues OR perm_manage_users ORDER BY created_at OFFSET $2 % GREATEST(1,(SELECT count(*) FROM users WHERE perm_manage_issues OR perm_manage_users)) LIMIT 1) WHERE id=$1`, issueID, i+1)
 		if err != nil {
 			return err
 		}
 
 		_, err = tx.Exec(ctx, `INSERT INTO issue_comments(issue_id,user_id,body)
-            SELECT $1,id,$2 FROM users WHERE perm_manage_issues OR perm_manage_users ORDER BY created_at LIMIT 1`, issueID,
+            SELECT $1,assignee_id,$2 FROM issues WHERE id=$1 AND assignee_id IS NOT NULL`, issueID,
 			[]string{"Reproduced after the latest deployment. The linked trace shows the payment timeout; retry handling is under investigation.", "Inventory contention is isolated to the checkout path. Checking the query plan before changing the lock strategy.", "Fixed in the latest release and verified with a replay of the affected order.", "Expected validation failure for expired promotions. Ignored while the checkout copy is updated."}[i%4])
 		if err != nil {
 			return err
@@ -4009,4 +4220,179 @@ func seedReleases(ctx context.Context, pool *pgxpool.Pool, projectID string, rel
 		}
 	}
 	return nil
+}
+
+// =============================================================================
+// Showcase
+// =============================================================================
+
+// The showcase seeds one fictional outdoor-gear shop for screenshots: four
+// projects that share releases, customers and a checkout incident, a small
+// team that triages it, and monitors and alert rules spread over the projects
+// they watch. Fixture names carry no "Demo:" prefix.
+
+type showcaseProject struct {
+	slug, name string
+	def        projectDef
+	sections   []string
+	opts       seedOptions
+}
+
+// withReleases gives a project its own release train: each service ships on
+// its own schedule, and none of them runs a beta in production.
+func withReleases(def projectDef, releases ...string) projectDef {
+	def.releases = releases
+	return def
+}
+
+func showcaseProjects(scale int) []showcaseProject {
+	common := []string{"issues", "transactions", "logs"}
+	return []showcaseProject{
+		{slug: "storefront", name: "Storefront", def: withReleases(jsProject, "2.12.0", "2.13.0", "2.13.1", "2.14.0"), sections: common,
+			opts: seedOptions{scale: scale, spread: true}},
+		{slug: "shop-api", name: "Shop API", def: withReleases(laravelProject, "3.6.2", "3.7.0", "3.7.1", "3.8.0"), sections: append(common, "profiles", "workflow"),
+			opts: seedOptions{scale: scale, spread: true, profiles: "php", showcaseIssue: 24}},
+		{slug: "payments", name: "Payments", def: withReleases(goProject, "1.18.0", "1.18.1", "1.19.0", "1.19.1"), sections: common,
+			opts: seedOptions{scale: scale, spread: true}},
+		{slug: "workers", name: "Workers", def: withReleases(pythonProject, "0.31.0", "0.32.0", "0.32.1", "0.33.0"), sections: append(common, "profiles"),
+			opts: seedOptions{scale: scale, spread: true, profiles: "python"}},
+	}
+}
+
+// showcaseTeam are the people who triage the shop's issues. They have no
+// password, so nobody can sign in as them; they exist to own issues, write
+// comments and fill the Users page with real permission sets.
+var showcaseTeam = []struct {
+	name, email string
+	perms       storage.UserPermissions
+}{
+	{"Mara Lindqvist", "mara.lindqvist@example.com", storage.UserPermissions{ManageProjects: true, ManageUsers: true, ManageAlerts: true, ManageIssues: true}},
+	{"Jonas Becker", "jonas.becker@example.com", storage.UserPermissions{ManageAlerts: true, ManageIssues: true}},
+	{"Aiko Tanaka", "aiko.tanaka@example.com", storage.UserPermissions{ManageIssues: true}},
+	{"Samuel Okafor", "samuel.okafor@example.com", storage.UserPermissions{ManageProjects: true, ManageAlerts: true, ManageIssues: true}},
+	{"Lena Vogel", "lena.vogel@example.com", storage.UserPermissions{}},
+}
+
+// serverBase accepts the server URL or any project DSN on it.
+func serverBase(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("expected the server URL, for example http://localhost:8080")
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+// ensureProject returns the project with this slug, creating it when missing.
+func ensureProject(ctx context.Context, pool *pgxpool.Pool, slug, name string) (id, key string, err error) {
+	err = pool.QueryRow(ctx, `SELECT id::text, public_key FROM projects WHERE slug=$1`, slug).Scan(&id, &key)
+	if err == nil {
+		return id, key, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", err
+	}
+	p, err := storage.CreateProject(ctx, pool, slug, name)
+	if err != nil {
+		return "", "", err
+	}
+	return p.ID, p.PublicKey, nil
+}
+
+// ensureTeam adds the showcase team, leaving accounts that already exist alone.
+func ensureTeam(ctx context.Context, pool *pgxpool.Pool) error {
+	for _, m := range showcaseTeam {
+		_, err := pool.Exec(ctx, `INSERT INTO users (email, name, password_hash,
+				perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at)
+			VALUES ($1, $2, '', $3, $4, $5, $6, now() - interval '90 days')
+			ON CONFLICT (email) DO NOTHING`,
+			m.email, m.name, m.perms.ManageProjects, m.perms.ManageUsers, m.perms.ManageAlerts, m.perms.ManageIssues)
+		if err != nil {
+			return fmt.Errorf("team member %s: %w", m.email, err)
+		}
+	}
+	return nil
+}
+
+// runShowcase seeds the whole shop and returns the process exit code.
+func runShowcase(rawURL, dbURL string, scale int) int {
+	if dbURL == "" {
+		fmt.Println("error: --showcase needs --db or DATABASE_URL in .env")
+		return 1
+	}
+	base, err := serverBase(rawURL)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+		return 1
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		fmt.Printf("error: connect to DB: %v\n", err)
+		return 1
+	}
+	defer pool.Close()
+	if err := ensureTeam(ctx, pool); err != nil {
+		fmt.Printf("error: %v\n", err)
+		return 1
+	}
+
+	projects := showcaseProjects(scale)
+	targets := map[string]dsn{}
+	for _, p := range projects {
+		id, key, err := ensureProject(ctx, pool, p.slug, p.name)
+		if err == nil {
+			err = seedReleases(ctx, pool, id, p.def.releases)
+		}
+		if err != nil {
+			fmt.Printf("error: project %s: %v\n", p.slug, err)
+			return 1
+		}
+		targets[p.slug] = dsn{publicKey: key, baseURL: base, projectID: id}
+	}
+
+	start := time.Now()
+	var total seedResult
+	for _, p := range projects {
+		fmt.Printf("\n##### %s (%s) #####\n", p.name, p.slug)
+		seed := map[string]bool{}
+		for _, s := range p.sections {
+			seed[s] = true
+		}
+		res := seedProject(targets[p.slug], p.def, seed, dbURL, p.opts)
+		total.sent += res.sent
+		total.failed += res.failed
+		total.profiledNames = append(total.profiledNames, res.profiledNames...)
+	}
+
+	// The server stamps everything with the time it arrived, and issue
+	// histograms count by that; spread the seeded history back out.
+	time.Sleep(groupingDelay)
+	ids := make([]string, 0, len(targets))
+	for _, t := range targets {
+		ids = append(ids, t.projectID)
+	}
+	for _, table := range []string{"events", "transactions"} {
+		if _, err := pool.Exec(ctx, `UPDATE `+table+` SET received_at = timestamp WHERE project_id = ANY($1::uuid[]) AND received_at > timestamp`, ids); err != nil {
+			fmt.Printf("  FAIL  backdate %s: %v\n", table, err)
+			total.failed++
+		}
+	}
+
+	total.failed += seedUptimeMonitors(pool, func(key string) string { return targets[key].projectID }, "")
+	total.failed += seedCronMonitors(targets["workers"], pool, "")
+	total.failed += seedAlertRules(pool, targets["shop-api"].projectID, "")
+
+	fmt.Printf("\nDone in %s. %d envelopes sent, %d failures.\n", time.Since(start).Round(time.Second), total.sent, total.failed)
+	fmt.Println("Projects: Storefront, Shop API, Payments and Workers, with releases, a team of five and their monitors and alert rules.")
+	fmt.Println("The checkout incident: Shop API → PaymentGatewayTimeout, its trace Checkout payment authorization, customer Jane Doe (101).")
+	if len(total.profiledNames) > 0 {
+		fmt.Println("\nTransactions with a flame graph:")
+		for _, n := range total.profiledNames {
+			fmt.Printf("  %s\n", n)
+		}
+	}
+	if total.failed > 0 {
+		return 1
+	}
+	return 0
 }
