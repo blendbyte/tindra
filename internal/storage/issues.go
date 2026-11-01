@@ -221,6 +221,13 @@ func upsertIssueOnce(ctx context.Context, pool issueDB, projectID, fingerprint, 
 			                          WHEN status = 'ignored' AND ignore_count_limit IS NOT NULL AND (ignore_count + 1) >= ignore_count_limit THEN NOW()
 			                          ELSE regressed_at
 			                        END,
+			    regressed_release  = CASE
+			                          WHEN status = 'resolved' THEN NULLIF($5, '')
+			                          WHEN status = 'open' AND snooze_ended_at IS NOT NULL THEN NULLIF($5, '')
+			                          WHEN status = 'ignored' AND ignore_until IS NOT NULL AND ignore_until < now() THEN NULLIF($5, '')
+			                          WHEN status = 'ignored' AND ignore_count_limit IS NOT NULL AND (ignore_count + 1) >= ignore_count_limit THEN NULLIF($5, '')
+			                          ELSE regressed_release
+			                        END,
 			    -- A snooze that ended is only remembered until the next event.
 			    snooze_ended_at    = NULL
 			FROM prev
@@ -229,7 +236,7 @@ func upsertIssueOnce(ctx context.Context, pool issueDB, projectID, fingerprint, 
 			          status = 'regressed' AND (
 			              prev_status IN ('resolved', 'ignored')
 			              OR (prev_status = 'open' AND prev_snooze_ended_at IS NOT NULL))
-		`, existingID, ts, level, environment).Scan(
+		`, existingID, ts, level, environment, release).Scan(
 			&iss.ID, &iss.ProjectID, &iss.Fingerprint, &iss.Title,
 			&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
 			&iss.AssigneeID, &iss.Environment,

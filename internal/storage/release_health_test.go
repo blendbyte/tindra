@@ -22,7 +22,7 @@ func TestReleaseHealthMatchesPageWithoutTransactions(t *testing.T) {
 		require.NoError(t, err)
 		issue, _, _, err := storage.UpsertIssue(ctx, testPool, p.ID, "health", "Health", "error", "error", "", "v0", time.Now())
 		require.NoError(t, err)
-		_, err = testPool.Exec(ctx, "UPDATE issues SET status='regressed' WHERE id=$1", issue.ID)
+		_, err = testPool.Exec(ctx, "UPDATE issues SET status='regressed', regressed_release='v0' WHERE id=$1", issue.ID)
 		require.NoError(t, err)
 		_, err = testPool.Exec(ctx, `INSERT INTO events(project_id,issue_id,timestamp,payload) SELECT $1,$2,NOW(),'{"release":"v0"}' FROM generate_series(1,2)`, p.ID, issue.ID)
 		require.NoError(t, err)

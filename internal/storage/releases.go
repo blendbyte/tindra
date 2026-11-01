@@ -81,15 +81,15 @@ func ListReleaseMetadata(ctx context.Context, pool *pgxpool.Pool, filter Release
 }
 
 // Reuse identical issue-health definitions in full and dashboard responses.
-// They match GetReleaseIssues: a regression counts once, as regressed, even
-// when the release also introduced it.
+// They match GetReleaseIssues: an issue is regressed in the release it came
+// back in, and counts once, as regressed, even when that release also
+// introduced it. Older releases it was seen in keep counting it as new.
 const releaseIssueCountsSQL = `		(SELECT COUNT(*) FROM issues
 		 WHERE project_id = r.project_id AND first_release = r.version
-		   AND status <> 'regressed')                                                       AS new_issues,
-		(SELECT COUNT(DISTINCT i.id) FROM issues i
-		 JOIN events e ON e.issue_id = i.id
-		 WHERE i.status = 'regressed'
-		   AND e.project_id = r.project_id AND e.release = r.version)                       AS regressed_issues`
+		   AND (status <> 'regressed' OR regressed_release IS DISTINCT FROM r.version))     AS new_issues,
+		(SELECT COUNT(*) FROM issues
+		 WHERE project_id = r.project_id AND status = 'regressed'
+		   AND regressed_release = r.version)                                               AS regressed_issues`
 
 const releaseSelectSQL = `
 	SELECT
@@ -278,7 +278,7 @@ func GetReleaseIssues(ctx context.Context, pool *pgxpool.Pool, releaseID string)
 		SELECT
 			i.id, i.title, i.status, i.level, i.first_seen, i.last_seen, i.event_count,
 			CASE
-				WHEN i.status = 'regressed' THEN 'regressed'
+				WHEN i.status = 'regressed' AND i.regressed_release = $2 THEN 'regressed'
 				WHEN i.first_release = $2 THEN 'new'
 				ELSE 'ongoing'
 			END AS category
@@ -289,7 +289,7 @@ func GetReleaseIssues(ctx context.Context, pool *pgxpool.Pool, releaseID string)
 		)
 		ORDER BY
 			CASE
-				WHEN i.status = 'regressed' THEN 0
+				WHEN i.status = 'regressed' AND i.regressed_release = $2 THEN 0
 				WHEN i.first_release = $2 THEN 1
 				ELSE 2
 			END,
