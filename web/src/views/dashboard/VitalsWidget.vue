@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useInvestigationStore } from '@/stores/investigation'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, formatPct } from '@/utils/formatters'
 import Icon from '@/components/Icon.vue'
 import type { TransactionSummary } from '@/api/types'
 import { fmt, useWindowLabel } from './shared'
@@ -35,7 +35,7 @@ const p95Tone = computed((): Tone => p95.value === null ? '' : p95.value > 2000 
 const apdexTone = computed((): Tone => apdex.value === null ? '' : apdex.value < 0.7 ? 'danger' : apdex.value < 0.94 ? 'warning' : '')
 
 const vitals = computed(() => [
-  { key: 'error-rate', label: 'error rate', value: errorRate.value === null ? null : `${errorRate.value.toFixed(1)}%`, tone: errorTone.value },
+  { key: 'error-rate', label: 'error rate', value: errorRate.value === null ? null : formatPct(errorRate.value), tone: errorTone.value },
   { key: 'p95', label: 'p95 latency', value: p95.value === null ? null : formatDuration(p95.value), tone: p95Tone.value },
   { key: 'transactions', label: 'transactions', value: transactions.value === null ? null : fmt(transactions.value), tone: '' as Tone },
   { key: 'apdex', label: 'apdex · T=500ms', value: apdex.value === null ? null : apdex.value.toFixed(2), tone: apdexTone.value },

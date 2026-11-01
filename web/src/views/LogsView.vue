@@ -284,7 +284,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
 
     <!-- Log table -->
     <div v-else-if="data" class="perf-table-wrap">
-      <table class="perf-table">
+      <table class="perf-table perf-table--logs">
         <thead>
           <tr>
             <th class="log-time-col"><div class="col-sort">Time</div></th>
@@ -316,7 +316,7 @@ onUnmounted(() => clearTimeout(debounceTimer))
                   {{ formatTs(log.timestamp) }}
                 </time>
               </td>
-              <td>
+              <td class="log-level-col">
                 <span class="tag">
                   <span class="leveldot" :class="`leveldot--${log.level}`" />
                   {{ log.level }}
@@ -421,5 +421,38 @@ onUnmounted(() => clearTimeout(debounceTimer))
 .log-timestamp {
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
+}
+
+/* Phones: a log line is its time, level and project over the message, which
+   gets the full width and two lines, instead of a table scrolled sideways
+   with the message cut off at the edge. */
+@media (max-width: 640px) {
+  .perf-table--logs { display: block; width: 100%; min-width: 0; }
+  .perf-table--logs thead { display: none; }
+  .perf-table--logs tbody,
+  .perf-table--logs tr:not(.perf-table__row),
+  .perf-table--logs tr:not(.perf-table__row) > * { display: block; }
+  .perf-table--logs .perf-table__row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 6px;
+    padding: 10px 16px;
+  }
+  .perf-table--logs .perf-table__row > td { padding: 0; border-bottom: none; }
+  .perf-table--logs .log-time-col { grid-area: 1 / 1; width: auto; }
+  .perf-table--logs .log-level-col { grid-area: 1 / 2; }
+  .perf-table--logs .log-proj-col { grid-area: 1 / 3; justify-self: end; min-width: 0; }
+  .perf-table--logs .log-env-col { display: none; }
+  .perf-table--logs .log-msg-col { grid-area: 2 / 1 / 3 / 4; min-width: 0; max-width: none; }
+  .perf-table--logs .log-msg { align-items: flex-start; }
+  .perf-table--logs .log-msg__body {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow-wrap: anywhere;
+  }
 }
 </style>

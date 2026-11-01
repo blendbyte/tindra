@@ -148,6 +148,12 @@ for (const list of lists) {
         expect(await rows.first().evaluate(el => getComputedStyle(el).gridTemplateColumns)).toBe(headerTracks)
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      if (list.path === '/performance/transactions' && width === 1440) {
+        // The stat strip's error rate takes the same red as the table's,
+        // instead of the plain figure colour that the value rule sets.
+        const red = await rows.locator('.tx-failure').first().evaluate(el => getComputedStyle(el).color)
+        expect(await page.locator('.txstat__value.tx-failure').evaluate(el => getComputedStyle(el).color)).toBe(red)
+      }
       if (list.path.startsWith('/performance/transactions')) {
         const badge = rows.first().locator('.projtag')
         await expect(badge).toHaveAttribute('title', projectName)
@@ -156,6 +162,13 @@ for (const list of lists) {
         expect(Math.max(...projectWidths)).toBeLessThanOrEqual(240)
       }
       if (list.path === '/logs') expect(await page.locator('.log-msg__body').evaluate(el => el.clientWidth)).toBeGreaterThan(100)
+      // On phones a log line puts its message on its own line under the time
+      // and level, instead of a table cut off at the screen edge.
+      if (list.path === '/logs' && width <= 640) {
+        const [time, message] = await Promise.all([rows.first().locator('.log-time-col').boundingBox(), rows.first().locator('.log-msg-col').boundingBox()])
+        expect(message!.y).toBeGreaterThanOrEqual(time!.y + time!.height - 1)
+        expect(message!.width).toBeGreaterThan(width * 0.8)
+      }
       if (width === 320 && list.header && !stacked) {
         const scroller = page.getByRole('region').filter({ has: rows.first() })
         await scroller.focus()

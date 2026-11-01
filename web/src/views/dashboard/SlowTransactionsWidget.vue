@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { investigationQuery } from '@/router/investigation'
 import { useInvestigationStore } from '@/stores/investigation'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, formatFraction } from '@/utils/formatters'
+import { failureClass } from '@/views/performance/changes'
 import type { TransactionSummary } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 
@@ -22,7 +23,7 @@ const slowTx = computed(() =>
   <div class="db-sec">
     <div class="db-sec__head">
       <h2 class="db-sec__title">Slowest transactions</h2>
-      <RouterLink :to="investigation.link('/performance/transactions')" class="db-sec__link">open performance <Icon name="arrow-right" :size="11" /></RouterLink>
+      <RouterLink :to="investigation.link('/performance/transactions')" class="db-sec__link">all transactions <Icon name="arrow-right" :size="11" /></RouterLink>
     </div>
     <template v-if="loading">
       <div v-for="i in 5" :key="i" class="db-tx-row">
@@ -48,10 +49,8 @@ const slowTx = computed(() =>
           <span class="db-tx-row__name">{{ tx.transaction }}</span>
           <span class="db-tx-row__meta">
             {{ tx.op.split('.')[0] }} · p50 {{ formatDuration(tx.p50) }} ·
-            <span
-              class="db-tx-row__pct"
-              :class="{ 'db-tx-row__pct--warn': tx.failure_rate > 0.02, 'db-tx-row__pct--bad': tx.failure_rate > 0.1 }"
-            >{{ (tx.failure_rate * 100).toFixed(1) }}% errors</span>
+            <span v-if="tx.failure_rate > 0" :class="failureClass(tx.failure_rate)">{{ formatFraction(tx.failure_rate) }} errors</span>
+            <template v-else>no errors</template>
           </span>
         </span>
         <span
@@ -115,6 +114,4 @@ const slowTx = computed(() =>
 /* Slow is degraded, not broken: a long P95 is amber at most, so the slowest
    list does not read as five failures (The Earned Red Rule). */
 .db-tx-row__val--warn { color: var(--warning); }
-.db-tx-row__pct--warn { color: var(--warning); }
-.db-tx-row__pct--bad { color: var(--danger); }
 </style>

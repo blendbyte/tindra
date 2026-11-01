@@ -336,9 +336,12 @@ select.mon-field__input { cursor: pointer; }
 
 /* Failing rows lead and read heavier (The Urgency Order Rule). */
 .monrow--failing .monrow__name { font-weight: 600; color: var(--text-1); }
+/* "Error for 1d" reads as one phrase: same face and size as the state. */
 .monrow__since {
+  flex-shrink: 0;
   white-space: nowrap;
-  font-family: var(--mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--danger);
 }

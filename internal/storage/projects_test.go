@@ -231,8 +231,20 @@ func TestListProjects_events24h(t *testing.T) {
 	if found.Events24h != 2 {
 		t.Errorf("Events24h: got %d, want 2", found.Events24h)
 	}
-	if found.EventCount < 3 {
-		t.Errorf("EventCount (month): got %d, want >= 3 (includes old event if same month)", found.EventCount)
+	// EventCount counts from the start of the calendar month, so the event
+	// from 2 days ago counts only when it falls in this month. On the 1st and
+	// 2nd of a month it belongs to the previous one. Ask the database, whose
+	// clock and time zone the count uses.
+	var oldInMonth bool
+	if err := testPool.QueryRow(ctx, `SELECT now() - INTERVAL '2 days' >= date_trunc('month', now())`).Scan(&oldInMonth); err != nil {
+		t.Fatalf("month check: %v", err)
+	}
+	wantMonth := int64(2)
+	if oldInMonth {
+		wantMonth = 3
+	}
+	if found.EventCount != wantMonth {
+		t.Errorf("EventCount (month): got %d, want %d (event from 2 days ago in this month: %v)", found.EventCount, wantMonth, oldInMonth)
 	}
 }
 

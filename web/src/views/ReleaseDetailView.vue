@@ -4,7 +4,8 @@ import { computed, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, formatPct } from '@/utils/formatters'
+import { splitTitle } from '@/utils/issueTitle'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Release, ReleaseIssue, ReleaseTxSummary } from '@/api/types'
 import Icon from '@/components/Icon.vue'
@@ -129,7 +130,6 @@ function levelClass(level: string) {
     <div class="detail-body">
       <div class="detail-hero">
         <div class="detail-hero__tags">
-          <span class="tag"><Icon name="package" :size="11" /> {{ release.version }}</span>
           <span v-if="projectName(release.project_id)" class="tag">{{ projectName(release.project_id) }}</span>
           <span class="tag"><Icon name="clock" :size="11" /> {{ formatRel(release.deployed_at) }}</span>
         </div>
@@ -151,14 +151,14 @@ function levelClass(level: string) {
           </div>
           <div class="stat">
             <div class="stat__label">P50</div>
-            <div class="stat__value mono">
+            <div class="stat__value">
               {{ release.tx_count > 0 ? formatDuration(release.tx_p50) : '–' }}
             </div>
           </div>
           <div class="stat">
             <div class="stat__label">Error rate</div>
-            <div class="stat__value" :style="{ color: release.tx_error_rate > 5 ? 'var(--danger)' : release.tx_error_rate > 2 ? 'var(--warning)' : undefined }">
-              {{ release.tx_count > 0 ? (release.tx_error_rate > 0 ? release.tx_error_rate.toFixed(1) + '%' : '–') : '–' }}
+            <div class="stat__value" :class="release.tx_count > 0 ? failureClass(release.tx_error_rate / 100) : ''">
+              {{ release.tx_count > 0 ? formatPct(release.tx_error_rate) : '–' }}
             </div>
           </div>
           <div class="stat">
@@ -178,9 +178,11 @@ function levelClass(level: string) {
 
       <!-- Tab strip + content - full width -->
       <div style="grid-column: 1 / -1">
-        <div class="optabs" style="padding: 0; margin-top: 8px">
+        <div class="optabs optabs--underline" role="tablist" style="margin-top: 8px">
           <button
             class="optab"
+            role="tab"
+            :aria-selected="activeTab === 'transactions'"
             :class="{ 'optab--active': activeTab === 'transactions' }"
             @click="chosenTab = 'transactions'"
           >
@@ -189,6 +191,8 @@ function levelClass(level: string) {
           </button>
           <button
             class="optab"
+            role="tab"
+            :aria-selected="activeTab === 'issues'"
             :class="{ 'optab--active': activeTab === 'issues' }"
             @click="chosenTab = 'issues'"
           >
@@ -222,11 +226,11 @@ function levelClass(level: string) {
                 <span class="optag" :class="`optag--${tx.op.split('.')[0]}`">{{ tx.op }}</span>
                 <span class="mono rel-tx-label">{{ tx.transaction }}</span>
               </div>
-              <span class="rel-tx-num">{{ tx.sample_count.toLocaleString() }}</span>
+              <span class="rel-tx-num mono">{{ tx.sample_count.toLocaleString() }}</span>
               <span class="rel-tx-num mono">{{ formatDuration(tx.p50) }}</span>
               <span class="rel-tx-num mono">{{ formatDuration(tx.p95) }}</span>
-              <span class="rel-tx-num" :class="tx.error_rate > 0 ? failureClass(tx.error_rate / 100) : 'muted'">
-                {{ tx.error_rate > 0 ? tx.error_rate.toFixed(1) + '%' : '–' }}
+              <span class="rel-tx-num mono" :class="failureClass(tx.error_rate / 100)">
+                {{ formatPct(tx.error_rate) }}
               </span>
             </div>
           </div>
@@ -254,7 +258,7 @@ function levelClass(level: string) {
                   @click="router.push(`/issues/${issue.id}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
-                  <div class="rel-issue-title">{{ issue.title }}</div>
+                  <div class="rel-issue-title" :title="issue.title"><template v-if="splitTitle(issue.title).type"><span class="issue__title-type">{{ splitTitle(issue.title).type }}</span><span class="rel-issue-title__sep">: </span></template>{{ splitTitle(issue.title).message }}</div>
                   <span class="rel-issue-count mono">{{ issue.event_count.toLocaleString() }}</span>
                   <span class="rel-issue-time">{{ formatRel(issue.last_seen) }}</span>
                 </div>
@@ -277,7 +281,7 @@ function levelClass(level: string) {
                   @click="router.push(`/issues/${issue.id}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
-                  <div class="rel-issue-title">{{ issue.title }}</div>
+                  <div class="rel-issue-title" :title="issue.title"><template v-if="splitTitle(issue.title).type"><span class="issue__title-type">{{ splitTitle(issue.title).type }}</span><span class="rel-issue-title__sep">: </span></template>{{ splitTitle(issue.title).message }}</div>
                   <span class="rel-issue-count mono">{{ issue.event_count.toLocaleString() }}</span>
                   <span class="rel-issue-time">{{ formatRel(issue.last_seen) }}</span>
                 </div>
@@ -300,7 +304,7 @@ function levelClass(level: string) {
                   @click="router.push(`/issues/${issue.id}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
-                  <div class="rel-issue-title">{{ issue.title }}</div>
+                  <div class="rel-issue-title" :title="issue.title"><template v-if="splitTitle(issue.title).type"><span class="issue__title-type">{{ splitTitle(issue.title).type }}</span><span class="rel-issue-title__sep">: </span></template>{{ splitTitle(issue.title).message }}</div>
                   <span class="rel-issue-count mono">{{ issue.event_count.toLocaleString() }}</span>
                   <span class="rel-issue-time">{{ formatRel(issue.last_seen) }}</span>
                 </div>

@@ -175,6 +175,12 @@ describe('SpanTable (db)', () => {
       expect(wrapper.find('.txcharts').exists()).toBe(true)
     })
 
+    it('labels the chart with what it counts, not with the per-minute rate', () => {
+      setupMocks([makeSpan('SELECT 1')], false, false, makeTimeseries())
+      const wrapper = mount(SpanTable, { props: { kind: 'db' }, global: { stubs } })
+      expect(wrapper.find('.txchart-panel__label').text()).toBe('Queries')
+    })
+
     it('does not render the timeseries section when data is empty', () => {
       setupMocks([makeSpan('SELECT 1')], false, false, { buckets: [], bucket_size: 'hour' })
       const wrapper = mount(SpanTable, { props: { kind: 'db' }, global: { stubs } })

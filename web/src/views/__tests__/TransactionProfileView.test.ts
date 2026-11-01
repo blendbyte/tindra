@@ -23,7 +23,8 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
-vi.mock('@/utils/formatters', () => ({
+vi.mock('@/utils/formatters', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/formatters')>(),
   formatDuration: vi.fn((n: number) => `${n}ms`),
 }))
 
@@ -375,28 +376,21 @@ describe('TransactionProfileView', () => {
     })
   })
 
-  describe('formatTPM branches', () => {
-    it('shows <0.001/min for very low tpm', () => {
+  describe('rate formatting', () => {
+    it('prints a quiet endpoint like every other performance page', () => {
       const s = { ...makeSummary(), tpm: 0.0005, sample_count: 1, failure_rate: 0 }
       setupMocks([s])
       const wrapper = mount(TransactionProfileView, { global: { stubs } })
-      expect(wrapper.text()).toContain('<0.001/min')
-    })
-
-    it('shows 4 decimal places for tpm between 0.001 and 0.01', () => {
-      const s = { ...makeSummary(), tpm: 0.005, sample_count: 1, failure_rate: 0 }
-      setupMocks([s])
-      const wrapper = mount(TransactionProfileView, { global: { stubs } })
-      expect(wrapper.text()).toContain('/min')
+      expect(wrapper.text()).toContain('<0.01/min')
     })
   })
 
   describe('formatFailureRate branches', () => {
-    it('shows <0.01% for very small failure rates', () => {
+    it('shows <0.1% for very small failure rates', () => {
       const s = { ...makeSummary(), tpm: 1.0, sample_count: 100, failure_rate: 0.000001 }
       setupMocks([s])
       const wrapper = mount(TransactionProfileView, { global: { stubs } })
-      expect(wrapper.text()).toContain('<0.01%')
+      expect(wrapper.text()).toContain('<0.1%')
     })
   })
 

@@ -43,7 +43,8 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn().mockResolvedValue({ buckets: [], bucket_size: 'hour' }),
 }))
 
-vi.mock('@/utils/formatters', () => ({
+vi.mock('@/utils/formatters', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/formatters')>(),
   formatDuration: vi.fn((n: number) => `${n}ms`),
   formatRel: vi.fn(() => '2m ago'),
   formatTs: vi.fn((s: string) => s),
@@ -164,6 +165,17 @@ describe('TransactionListView', () => {
       expect(section.findAll('.perf-change__delta')[1].text()).toContain('900')
     })
 
+    it('marks row deltas only when both windows have enough requests, like the sentence', () => {
+      const prev = [{ ...makeSummary('/thin'), sample_count: 6, p95: 300 }, { ...makeSummary('/busy'), sample_count: 40, p95: 300 }]
+      const now = [{ ...makeSummary('/thin'), sample_count: 40, p95: 900 }, { ...makeSummary('/busy'), sample_count: 40, p95: 900 }]
+      setupWithComparison(now, prev)
+      const wrapper = mount(TransactionListView, { global: { stubs } })
+      const rows = wrapper.findAll('.txrow')
+      const row = (name: string) => rows.find(r => r.text().includes(name))!
+      expect(row('/thin').find('.tx-delta--worse').exists()).toBe(false)
+      expect(row('/busy').find('.tx-delta--worse').text()).toBe('↑200%')
+    })
+
     it('says so when nothing changed, and waits for the comparison before saying anything', () => {
       const now = [{ ...makeSummary('/cart'), sample_count: 40, p95: 300 }]
       setupWithComparison(now, now)
@@ -261,7 +273,7 @@ describe('TransactionListView', () => {
     it('navigates to transaction profile on row click', async () => {
       setupMocks([makeSummary('/api/users', 'http.server')])
       const wrapper = mount(TransactionListView, { global: { stubs } })
-      const rows = wrapper.findAll('.tx-row')
+      const rows = wrapper.findAll('.txrow')
       const clickableRow = rows.find(r => r.classes('tx-row--clickable') || r.attributes('data-clickable'))
       if (clickableRow) {
         await clickableRow.trigger('click')
@@ -451,11 +463,11 @@ describe('TransactionListView', () => {
       expect(wrapper.find('.tx-failure').exists()).toBe(true)
     })
 
-    it('shows <0.01% for extremely low failure rate', () => {
+    it('shows <0.1% for extremely low failure rate', () => {
       const tiinySummary = { ...makeSummary('/api/rare-fail'), failure_rate: 0.000001 }
       setupMocks([tiinySummary])
       const wrapper = mount(TransactionListView, { global: { stubs } })
-      expect(wrapper.text()).toContain('<0.01%')
+      expect(wrapper.text()).toContain('<0.1%')
     })
   })
 

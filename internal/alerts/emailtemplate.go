@@ -10,160 +10,70 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blendbyte/tindra/internal/emailstyle"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
 //go:embed assets/tindra-logo.png
 var LogoPNG []byte
 
-// baseLayoutTmpl is the shared wrapper used by all transactional emails.
-// It accepts a Title and pre-rendered Body (template.HTML - caller is responsible for escaping).
-var baseLayoutTmpl = template.Must(template.New("base").Parse(
-	`<!DOCTYPE html>
-<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="X-UA-Compatible" content="IE=edge">
-<!--[if mso]>
-<xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
-<![endif]-->
-<title>{{.Title}}</title>
-<style>
-  body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}
-  table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse}
-  img{border:0;height:auto;line-height:100%;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic}
-  a[x-apple-data-detectors]{color:inherit!important;text-decoration:none!important}
-</style>
-</head>
-<body style="margin:0;padding:0;background-color:#f5f6f8;word-spacing:normal;">
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#f5f6f8;">
-<tr><td align="center" style="padding:20px 10px;">
-
-  <!--[if (gte mso 9)|(IE)]>
-  <table width="680" align="center" cellpadding="0" cellspacing="0" role="presentation"><tr><td>
-  <![endif]-->
-  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:680px;margin:0 auto;">
-
-    <!-- Card (logo + body on white) -->
-    <tr><td style="background-color:#ffffff;border-radius:12px;padding:24px 20px;">
-      <div style="text-align:center;margin-bottom:28px;">
-        <a href="{{.PublicURL}}" style="border:0;text-decoration:none;"><img src="{{.LogoSrc}}" width="160" height="45" alt="Tindra" style="border:0;display:inline-block;width:160px;height:auto;max-width:100%;"></a>
-      </div>
-      {{.Body}}
-    </td></tr>
-
-    <!-- Footer -->
-    <tr><td style="padding-top:24px;text-align:center;font-size:12px;color:#9ca3af;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-      <a href="https://tindra.sh" style="color:#9ca3af;text-decoration:none;">tindra.sh</a>
-      &nbsp;&middot;&nbsp;
-      <a href="https://github.com/blendbyte/tindra" style="color:#9ca3af;text-decoration:none;">GitHub</a>
-    </td></tr>
-
-  </table>
-  <!--[if (gte mso 9)|(IE)]>
-  </td></tr></table>
-  <![endif]-->
-
-</td></tr>
-</table>
-</body>
-</html>`))
-
-type baseEmailData struct {
-	Title     string
-	Body      template.HTML
-	LogoSrc   string
-	PublicURL string
-}
-
 // renderBase wraps pre-rendered body HTML in the shared Tindra email layout.
 // body must already be HTML-safe (use template.HTML to mark it as trusted).
-func renderBase(title string, body template.HTML, logoSrc, publicURL string) (string, error) {
-	var buf bytes.Buffer
-	if err := baseLayoutTmpl.Execute(&buf, baseEmailData{
-		Title:     title,
-		Body:      body,
-		LogoSrc:   logoSrc,
-		PublicURL: publicURL,
-	}); err != nil {
-		return "", fmt.Errorf("render base layout: %w", err)
-	}
-	return buf.String(), nil
+func renderBase(title string, body template.HTML, publicURL string) (string, error) {
+	return emailstyle.Layout(title, body, publicURL)
 }
 
-// ---- Invite email ----
-
-var inviteBodyTmpl = template.Must(template.New("invite-body").Parse(
-	`<h1 style="margin:0 0 10px;font-size:22px;font-weight:700;color:#111827;letter-spacing:-0.3px;line-height:1.3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">You&#39;ve been invited</h1>
-<p style="margin:0 0 28px;font-size:15px;line-height:1.65;color:#6b7280;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  You&#39;ve been invited to join <strong style="color:#111827;font-weight:600;">Tindra</strong>.
-  Click the button below to set up your account.
-</p>
-
-<table cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
+// button renders the primary call to action in the app's accent colour, with
+// a VML fallback so Outlook draws it as a button too.
+const buttonTmpl = `<table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 28px;">
   <tr>
-    <td style="border-radius:8px;background-color:#6366f1;mso-padding-alt:0;">
-      <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{.InviteURL}}" style="height:44px;v-text-anchor:middle;width:200px;" arcsize="18%" stroke="f" fillcolor="#6366f1"><w:anchorlock/><center style="color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;font-weight:600;">Accept invitation &rarr;</center></v:roundrect><![endif]-->
-      <!--[if !mso]><!--><a href="{{.InviteURL}}" style="display:inline-block;padding:13px 28px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;letter-spacing:-0.1px;line-height:1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Accept invitation &rarr;</a><!--<![endif]-->
+    <td style="border-radius:8px;background-color:__ACCENT__;mso-padding-alt:0;">
+      <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{.Href}}" style="height:42px;v-text-anchor:middle;width:210px;" arcsize="18%" stroke="f" fillcolor="__ACCENT__"><w:anchorlock/><center style="color:#ffffff;font-family:Arial,sans-serif;font-size:14px;font-weight:600;">{{.Label}} &rarr;</center></v:roundrect><![endif]-->
+      <!--[if !mso]><!--><a href="{{.Href}}" style="display:inline-block;padding:13px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;line-height:1;__SANS__">{{.Label}} &rarr;</a><!--<![endif]-->
     </td>
   </tr>
-</table>
+</table>`
 
-<p style="margin:0 0 4px;font-size:12px;color:#9ca3af;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Or copy this link into your browser:</p>
-<p style="margin:0;font-size:12px;line-height:1.5;word-break:break-all;font-family:'Courier New',Courier,monospace;">
-  <a href="{{.InviteURL}}" style="color:#6366f1;text-decoration:none;">{{.InviteURL}}</a>
-</p>
+// linkBlock is the call to action for invite and reset emails: the button,
+// the link to copy, and a note on when it expires.
+const linkBlockTmpl = `<h1 style="margin:0 0 8px;font-size:22px;font-weight:600;color:__TEXT1__;letter-spacing:-0.2px;line-height:1.3;__SANS__">{{.Heading}}</h1>
+<p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:__TEXT2__;__SANS__">{{.Lead}}</p>
+{{template "button" .}}
+<p style="margin:0 0 4px;font-size:12px;color:__TEXT3__;line-height:1.5;__SANS__">Or copy this link into your browser:</p>
+<p style="margin:0 0 24px;font-size:12px;line-height:1.5;word-break:break-all;__MONO__"><a href="{{.Href}}" style="color:__ACCENT__;text-decoration:none;">{{.Href}}</a></p>
+<p style="margin:0;padding-top:16px;border-top:1px solid __HAIRLINE__;font-size:12px;color:__TEXT3__;line-height:1.6;__SANS__">{{.Note}}</p>`
 
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:28px 0;">
-  <tr><td style="border-top:1px solid #f3f4f6;font-size:0;">&nbsp;</td></tr>
-</table>
+var linkEmailTmpl = template.Must(template.Must(template.New("link").Parse(emailstyle.Expand(linkBlockTmpl))).New("button").Parse(emailstyle.Expand(buttonTmpl)))
 
-<p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  This invitation expires in <strong style="color:#9ca3af;">7 days</strong>.
-  If you weren&#39;t expecting this, you can safely ignore this email.
-</p>`))
+type linkEmailData struct {
+	Heading string
+	Lead    template.HTML
+	Href    string
+	Label   string
+	Note    template.HTML
+}
 
-// ---- Password reset email ----
-
-var passwordResetBodyTmpl = template.Must(template.New("password-reset-body").Parse(
-	`<h1 style="margin:0 0 10px;font-size:22px;font-weight:700;color:#111827;letter-spacing:-0.3px;line-height:1.3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Reset your password</h1>
-<p style="margin:0 0 28px;font-size:15px;line-height:1.65;color:#6b7280;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  An administrator requested a password reset for your account.
-  Click the button below to set a new password.
-</p>
-
-<table cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
-  <tr>
-    <td style="border-radius:8px;background-color:#6366f1;mso-padding-alt:0;">
-      <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{.ResetURL}}" style="height:44px;v-text-anchor:middle;width:200px;" arcsize="18%" stroke="f" fillcolor="#6366f1"><w:anchorlock/><center style="color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;font-weight:600;">Reset password &rarr;</center></v:roundrect><![endif]-->
-      <!--[if !mso]><!--><a href="{{.ResetURL}}" style="display:inline-block;padding:13px 28px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;letter-spacing:-0.1px;line-height:1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Reset password &rarr;</a><!--<![endif]-->
-    </td>
-  </tr>
-</table>
-
-<p style="margin:0 0 4px;font-size:12px;color:#9ca3af;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Or copy this link into your browser:</p>
-<p style="margin:0;font-size:12px;line-height:1.5;word-break:break-all;font-family:'Courier New',Courier,monospace;">
-  <a href="{{.ResetURL}}" style="color:#6366f1;text-decoration:none;">{{.ResetURL}}</a>
-</p>
-
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:28px 0;">
-  <tr><td style="border-top:1px solid #f3f4f6;font-size:0;">&nbsp;</td></tr>
-</table>
-
-<p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  This link expires in <strong style="color:#9ca3af;">24 hours</strong>.
-  If you weren&#39;t expecting this, you can safely ignore this email.
-</p>`))
+func renderLinkBody(d linkEmailData) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := linkEmailTmpl.ExecuteTemplate(&buf, "link", d); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil
+}
 
 // RenderPasswordResetEmail returns (html, text) for a password reset email.
 func RenderPasswordResetEmail(resetURL, publicURL string) (string, string, error) {
-	logoSrc := strings.TrimRight(publicURL, "/") + "/assets/email-logo.png"
-	var bodyBuf bytes.Buffer
-	if err := passwordResetBodyTmpl.Execute(&bodyBuf, struct{ ResetURL string }{resetURL}); err != nil {
+	body, err := renderLinkBody(linkEmailData{
+		Heading: "Reset your password",
+		Lead:    "An administrator requested a password reset for your account. Click the button below to set a new password.",
+		Href:    resetURL,
+		Label:   "Reset password",
+		Note:    "This link expires in <strong style=\"color:" + emailstyle.Text2 + ";font-weight:600;\">24 hours</strong>. If you weren&#39;t expecting this, you can safely ignore this email.",
+	})
+	if err != nil {
 		return "", "", fmt.Errorf("render password reset body: %w", err)
 	}
-	html, err := renderBase("Reset your Tindra password", template.HTML(bodyBuf.String()), logoSrc, strings.TrimRight(publicURL, "/"))
+	html, err := renderBase("Reset your Tindra password", body, publicURL)
 	if err != nil {
 		return "", "", err
 	}
@@ -180,8 +90,15 @@ func RenderPasswordResetEmail(resetURL, publicURL string) (string, string, error
 
 // ---- Alert email ----
 
+// An alert email reads like the app: it leads with what happened, coloured by
+// what kind of news it is (red for something broken, amber for a regression,
+// violet for something new, green for a recovery), then lists what fired as
+// rows, then links to the page that shows it.
+
 type alertIssueData struct {
-	Title         string
+	Title         string // the full title, for the plain-text part
+	TitleType     string
+	TitleText     string
 	Level         string
 	LevelColor    string
 	Environment   string
@@ -210,6 +127,7 @@ type alertUptimeMonitorData struct {
 	MonitorURL string
 	State      string
 	StateColor string
+	For        string // how long it has been down: "3h 2m"
 	Expected   string
 	Received   string
 	ResponseMs string
@@ -226,10 +144,16 @@ type alertLogData struct {
 	Environment string
 }
 
+// headPart is one run of the headline; Color is empty for plain text.
+type headPart struct {
+	Text  string
+	Color string
+}
+
 type alertEmailData struct {
+	Head           []headPart
 	RuleName       string
 	FiredAt        string
-	TriggerLine    string
 	ViewURL        string
 	ViewLabel      string
 	Issues         []alertIssueData
@@ -240,204 +164,190 @@ type alertEmailData struct {
 	MoreLabel      string
 }
 
-var alertBodyTmpl = template.Must(template.New("alert-body").Parse(
-	`<h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:#111827;letter-spacing:-0.3px;line-height:1.3;word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">Alert: {{.RuleName}}</h1>
-<p style="margin:0 0 20px;font-size:15px;line-height:1.65;color:#6b7280;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  {{.TriggerLine}}
-</p>
+// Row building blocks shared by every kind of alert row.
+const (
+	rowStyle  = `padding:14px 0;border-bottom:1px solid __HAIRLINE__;word-break:break-word;__SANS__`
+	metaStyle = `margin:0 0 4px;font-size:12px;line-height:1.5;color:__TEXT3__;`
+	dotStyle  = `display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px;`
+	nameStyle = `margin:0;font-size:15px;font-weight:500;line-height:1.45;color:__TEXT1__;text-decoration:none;`
+	subStyle  = `margin:4px 0 0;font-size:12px;line-height:1.5;color:__TEXT3__;`
+)
 
-{{if .Issues}}
+var alertBodyTmpl = template.Must(template.Must(template.New("alert-body").Parse(emailstyle.Expand(strings.NewReplacer(
+	"__ROW__", rowStyle, "__META__", metaStyle, "__DOT__", dotStyle, "__NAME__", nameStyle, "__SUB__", subStyle,
+).Replace(`<h1 style="margin:0 0 6px;font-size:22px;font-weight:600;color:__TEXT1__;letter-spacing:-0.2px;line-height:1.3;__SANS__">{{range .Head}}{{if .Color}}<span style="color:{{.Color}};">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}</h1>
+<p style="margin:0 0 20px;font-size:13px;line-height:1.5;color:__TEXT3__;__SANS__">Alert rule <strong style="color:__TEXT2__;font-weight:600;">{{.RuleName}}</strong> fired {{.FiredAt}}</p>
+
+{{if or .Issues .Monitors .UptimeMonitors .Logs}}
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border-top:1px solid __HAIRLINE__;margin:0 0 {{if .MoreCount}}12{{else}}24{{end}}px;">
 {{range .Issues}}
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
-  <tr>
-    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
-      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
-        <strong style="color:{{.LevelColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.Level}}</strong>{{if .Environment}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.Environment}}</span>{{end}}{{if .ProjectName}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.ProjectName}}</span>{{end}}
-      </p>
-      <a href="{{.URL}}" style="font-size:13px;font-weight:600;color:#111827;text-decoration:none;line-height:1.4;word-break:break-all;">{{.Title}}</a>
-      {{if .OccurredAt}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">{{.OccurredAt}}</p>{{end}}
-      {{if .RequestURL}}<p style="margin:7px 0 0;font-size:11px;font-family:'Courier New',Courier,monospace;color:#6b7280;word-break:break-all;">{{if .RequestMethod}}<span style="padding:1px 5px;background-color:#e5e7eb;border-radius:3px;color:#374151;font-weight:600;letter-spacing:0.3px;">{{.RequestMethod}}</span> {{end}}{{.RequestURL}}</p>{{end}}
-      {{if .Message}}<p style="margin:7px 0 0;font-size:12px;color:#374151;line-height:1.5;word-break:break-all;">{{.Message}}</p>{{end}}
-      {{if .StackFrames}}<div style="margin-top:7px;padding:7px 9px;background-color:#f3f4f6;border-radius:4px;font-family:'Courier New',Courier,monospace;font-size:11px;color:#6b7280;line-height:1.6;">{{range .StackFrames}}<div style="word-break:break-all;">{{.}}</div>{{end}}</div>{{end}}
-    </td>
-  </tr>
-</table>
+  <tr><td style="__ROW__">
+    <p style="__META__"><span style="__DOT__background:{{.LevelColor}};"></span><strong style="color:__TEXT2__;font-weight:600;">{{.Level}}</strong>{{if .Environment}} &middot; {{.Environment}}{{end}}{{if .ProjectName}} &middot; {{.ProjectName}}{{end}}{{if .OccurredAt}} &middot; {{.OccurredAt}}{{end}}</p>
+    <a href="{{.URL}}" style="__NAME__">{{if .TitleType}}<span style="color:__ACCENT__;font-size:14px;__MONO__">{{.TitleType}}</span>: {{end}}{{.TitleText}}</a>
+    {{if .RequestURL}}<p style="__SUB__color:__TEXT2__;word-break:break-all;__MONO__">{{if .RequestMethod}}<strong style="color:__TEXT1__;font-weight:600;">{{.RequestMethod}}</strong> {{end}}{{.RequestURL}}</p>{{end}}
+    {{if .Message}}<p style="margin:6px 0 0;font-size:13px;line-height:1.5;color:__TEXT2__;">{{.Message}}</p>{{end}}
+    {{if .StackFrames}}<div style="margin-top:8px;padding:8px 10px;background-color:__SURFACE__;border-radius:6px;font-size:12px;line-height:1.6;color:__TEXT2__;__MONO__">{{range .StackFrames}}<div style="word-break:break-all;">{{.}}</div>{{end}}</div>{{end}}
+  </td></tr>
 {{end}}
-{{end}}
-{{if .Monitors}}
 {{range .Monitors}}
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
-  <tr>
-    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
-      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
-        <strong style="color:{{.StateColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.State}}</strong>&nbsp;&bull;&nbsp;<span style="color:#6b7280;font-family:'Courier New',Courier,monospace;">{{.Schedule}}</span>
-      </p>
-      <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#111827;line-height:1.45;">{{.Name}}</p>
-      {{if .NextAt}}<p style="margin:0 0 2px;font-size:12px;color:#9ca3af;">Expected at {{.NextAt}}</p>{{end}}
-      {{if .LastErrAt}}<p style="margin:0 0 2px;font-size:12px;color:#9ca3af;">Last error at {{.LastErrAt}}</p>{{end}}
-      {{if .LastOkAt}}<p style="margin:0;font-size:12px;color:#9ca3af;">Last OK at {{.LastOkAt}}</p>{{end}}
-    </td>
-  </tr>
-</table>
+  <tr><td style="__ROW__">
+    <p style="__META__"><span style="__DOT__background:{{.StateColor}};"></span><strong style="color:{{.StateColor}};font-weight:600;">{{.State}}</strong> &middot; <span style="__MONO__">{{.Schedule}}</span></p>
+    <p style="__NAME__">{{.Name}}</p>
+    {{if or .NextAt .LastErrAt .LastOkAt}}<p style="__SUB__">{{if .LastErrAt}}Last error at {{.LastErrAt}}{{end}}{{if and .LastErrAt .LastOkAt}} &middot; {{end}}{{if .LastOkAt}}Last OK at {{.LastOkAt}}{{end}}{{if and .NextAt (or .LastErrAt .LastOkAt)}} &middot; {{end}}{{if .NextAt}}Expected at {{.NextAt}}{{end}}</p>{{end}}
+  </td></tr>
 {{end}}
-{{end}}
-{{if .UptimeMonitors}}
 {{range .UptimeMonitors}}
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
-  <tr>
-    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
-      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
-        <strong style="color:{{.StateColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.State}}</strong>{{if .Received}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">expected {{.Expected}}, got {{.Received}}</span>{{end}}{{if .ResponseMs}}&nbsp;&bull;&nbsp;<span style="color:#9ca3af;">{{.ResponseMs}}</span>{{end}}
-      </p>
-      {{if .MonitorURL}}<a href="{{.MonitorURL}}" style="font-size:13px;font-weight:600;color:#111827;text-decoration:none;line-height:1.4;">{{.Name}}</a>{{else}}<p style="margin:0;font-size:13px;font-weight:600;color:#111827;line-height:1.4;">{{.Name}}</p>{{end}}
-      <p style="margin:4px 0 0;font-size:11px;font-family:'Courier New',Courier,monospace;color:#6b7280;">{{.URL}}</p>
-      {{if .DownSince}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Down since {{.DownSince}}</p>{{end}}
-      {{if .Downtime}}<p style="margin:5px 0 0;font-size:11px;color:#9ca3af;">Was down for {{.Downtime}}</p>{{end}}
-      {{if .History}}<p style="margin:7px 0 0;line-height:1;font-size:0;">{{range .History}}<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 1px;background:{{if eq . "up"}}#22c55e{{else}}#ef4444{{end}};"></span>{{end}}</p>{{end}}
-    </td>
-  </tr>
-</table>
+  <tr><td style="__ROW__">
+    <p style="__META__"><span style="__DOT__background:{{.StateColor}};"></span><strong style="color:{{.StateColor}};font-weight:600;">{{.State}}{{if .For}} for {{.For}}{{end}}</strong>{{if .Received}} &middot; expected {{.Expected}}, got {{.Received}}{{end}}{{if .ResponseMs}} &middot; {{.ResponseMs}}{{end}}</p>
+    {{if .MonitorURL}}<a href="{{.MonitorURL}}" style="__NAME__">{{.Name}}</a>{{else}}<p style="__NAME__">{{.Name}}</p>{{end}}
+    <p style="__SUB__color:__TEXT2__;word-break:break-all;__MONO__">{{.URL}}</p>
+    {{if .DownSince}}<p style="__SUB__">Down since {{.DownSince}}</p>{{end}}
+    {{if .Downtime}}<p style="__SUB__">Was down for {{.Downtime}}</p>{{end}}
+    {{if .History}}<p style="margin:8px 0 0;line-height:1;font-size:0;">{{range .History}}<span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 2px 0 0;background:{{if eq . "up"}}__PASSTICK__{{else}}__DANGER__{{end}};"></span>{{end}}</p>{{end}}
+  </td></tr>
 {{end}}
-{{end}}
-{{if .Logs}}
 {{range .Logs}}
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
-  <tr>
-    <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;word-break:break-all;">
-      <p style="margin:0 0 5px;font-size:11px;line-height:1;">
-        <strong style="color:{{.LevelColor}};text-transform:uppercase;letter-spacing:0.5px;">{{.Level}}</strong>{{if .Environment}}&nbsp;&bull;&nbsp;<span style="color:#6b7280;">{{.Environment}}</span>{{end}}{{if .Time}}&nbsp;&bull;&nbsp;<span style="color:#9ca3af;">{{.Time}}</span>{{end}}
-      </p>
-      <p style="margin:0;font-size:13px;color:#111827;line-height:1.45;font-family:'Courier New',Courier,monospace;">{{.Body}}</p>
-    </td>
-  </tr>
+  <tr><td style="__ROW__">
+    <p style="__META__"><span style="__DOT__background:{{.LevelColor}};"></span><strong style="color:__TEXT2__;font-weight:600;">{{.Level}}</strong>{{if .Environment}} &middot; {{.Environment}}{{end}}{{if .Time}} &middot; {{.Time}}{{end}}</p>
+    <p style="margin:0;font-size:13px;line-height:1.5;color:__TEXT1__;__MONO__">{{.Body}}</p>
+  </td></tr>
+{{end}}
 </table>
 {{end}}
-{{end}}
-{{if .MoreCount}}<p style="margin:0 0 20px;font-size:12px;color:#9ca3af;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">and {{.MoreCount}} more {{.MoreLabel}}</p>{{end}}
+{{if .MoreCount}}<p style="margin:0 0 24px;font-size:13px;color:__TEXT3__;__SANS__">and {{.MoreCount}} more {{.MoreLabel}}</p>{{end}}
 
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
-  <tr>
-    <td style="background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;padding:16px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-      <p style="margin:0 0 3px;font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.6px;font-weight:600;">Fired at</p>
-      <p style="margin:0;font-size:14px;color:#111827;font-weight:500;">{{.FiredAt}}</p>
-    </td>
-  </tr>
-</table>
+{{if .ViewURL}}{{template "button" .}}{{end}}
 
-{{if .ViewURL}}
-<table cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
-  <tr>
-    <td style="border-radius:8px;background-color:#6366f1;mso-padding-alt:0;">
-      <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{.ViewURL}}" style="height:44px;v-text-anchor:middle;width:180px;" arcsize="18%" stroke="f" fillcolor="#6366f1"><w:anchorlock/><center style="color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;font-weight:600;">{{.ViewLabel}} &rarr;</center></v:roundrect><![endif]-->
-      <!--[if !mso]><!--><a href="{{.ViewURL}}" style="display:inline-block;padding:13px 28px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;letter-spacing:-0.1px;line-height:1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">{{.ViewLabel}} &rarr;</a><!--<![endif]-->
-    </td>
-  </tr>
-</table>
-{{end}}
-
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 16px;">
-  <tr><td style="border-top:1px solid #f3f4f6;font-size:0;">&nbsp;</td></tr>
-</table>
-
-<p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+<p style="margin:0;padding-top:16px;border-top:1px solid __HAIRLINE__;font-size:12px;color:__TEXT3__;line-height:1.6;__SANS__">
   You&#39;re receiving this because an alert rule in your Tindra instance fired.
-  Manage alert rules in <strong style="color:#9ca3af;">Settings &rsaquo; Alerts</strong>.
-</p>`))
+  Manage alert rules in <strong style="color:__TEXT2__;font-weight:600;">Settings &rsaquo; Alerts</strong>.
+</p>`)))).New("button").Parse(emailstyle.Expand(strings.ReplaceAll(strings.ReplaceAll(buttonTmpl, "{{.Href}}", "{{.ViewURL}}"), "{{.Label}}", "{{.ViewLabel}}"))))
 
+// alertLevelColor is the level dot's colour, as in the app's .leveldot.
 func alertLevelColor(level string) string {
 	switch level {
 	case "fatal", "error":
-		return "#ef4444"
+		return emailstyle.Danger
 	case "warning":
-		return "#f59e0b"
+		return emailstyle.Warning
 	case "info":
-		return "#3b82f6"
+		return emailstyle.Info
 	default:
-		return "#9ca3af"
+		return emailstyle.Text3
 	}
 }
 
 // alertTriggerLine returns a human-readable sentence describing why this alert fired.
 func alertTriggerLine(p AlertPayload) string {
+	var b strings.Builder
+	for _, part := range alertHeadline(p) {
+		b.WriteString(part.Text)
+	}
+	return b.String()
+}
+
+func countOf(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// alertHeadline is the trigger sentence in parts, with the part that carries
+// the news in its state colour.
+func alertHeadline(p AlertPayload) []headPart {
+	plain := func(s string) []headPart { return []headPart{{Text: s}} }
+	lead := func(color, text, rest string) []headPart {
+		parts := []headPart{{Text: text, Color: color}}
+		if rest != "" {
+			parts = append(parts, headPart{Text: rest})
+		}
+		return parts
+	}
+	newIssues := func(n int) []headPart {
+		verb := " were created since the last alert."
+		if n == 1 {
+			verb = " was created since the last alert."
+		}
+		return lead(emailstyle.Accent, countOf(n, "new issue", "new issues"), verb)
+	}
+	regressed := func(n int) []headPart {
+		return lead(emailstyle.Warning, countOf(n, "previously resolved issue", "previously resolved issues")+" regressed", " since the last alert.")
+	}
 	if _, isTest := p.Details["test"]; isTest {
-		return "This is a test alert. No action required."
+		return plain("This is a test alert. No action required.")
 	}
 	switch p.Trigger {
 	case "new_issue":
-		count, _ := detailInt(p.Details, "new_issue_count")
-		if count == 1 {
-			return "1 new issue was created since the last alert."
-		}
-		return fmt.Sprintf("%d new issues were created since the last alert.", count)
+		n, _ := detailInt(p.Details, "new_issue_count")
+		return newIssues(n)
 	case "regressed":
-		count, _ := detailInt(p.Details, "regressed_count")
-		if count == 1 {
-			return "1 previously resolved issue regressed since the last alert."
-		}
-		return fmt.Sprintf("%d previously resolved issues regressed since the last alert.", count)
+		r, _ := detailInt(p.Details, "regressed_count")
+		return regressed(r)
 	case "new_or_regressed":
 		n, _ := detailInt(p.Details, "new_issue_count")
 		r, _ := detailInt(p.Details, "regressed_count")
 		switch {
 		case n > 0 && r > 0:
-			return fmt.Sprintf("%d new issue(s) and %d regression(s) since the last alert.", n, r)
+			return []headPart{
+				{Text: countOf(n, "new issue", "new issues"), Color: emailstyle.Accent},
+				{Text: " and "},
+				{Text: countOf(r, "regression", "regressions"), Color: emailstyle.Warning},
+				{Text: " since the last alert."},
+			}
 		case n > 0:
-			if n == 1 {
-				return "1 new issue was created since the last alert."
-			}
-			return fmt.Sprintf("%d new issues were created since the last alert.", n)
+			return newIssues(n)
 		default:
-			if r == 1 {
-				return "1 previously resolved issue regressed since the last alert."
-			}
-			return fmt.Sprintf("%d previously resolved issues regressed since the last alert.", r)
+			return regressed(r)
 		}
 	case "event_count":
 		count, _ := detailInt(p.Details, "event_count")
 		threshold, _ := detailInt(p.Details, "threshold")
 		windowMins, _ := detailInt(p.Details, "window_mins")
-		return fmt.Sprintf("%d events in the last %d minutes (threshold: %d).", count, windowMins, threshold)
+		return lead(emailstyle.Danger, fmt.Sprintf("%d events in the last %d minutes", count, windowMins), fmt.Sprintf(" (threshold: %d).", threshold))
 	case "log_count":
 		count, _ := detailInt(p.Details, "log_count")
 		threshold, _ := detailInt(p.Details, "threshold")
 		windowMins, _ := detailInt(p.Details, "window_mins")
-		query := logCountQueryLabel(p)
-		if query != "" {
-			return fmt.Sprintf("%d logs matching %s in the last %d minutes (threshold: %d).", count, query, windowMins, threshold)
+		// The count leads in red; the filter follows in plain text so a long
+		// query does not turn the whole headline red.
+		rest := fmt.Sprintf(" (threshold: %d).", threshold)
+		if query := logCountQueryLabel(p); query != "" {
+			rest = " matched " + query + rest
 		}
-		return fmt.Sprintf("%d logs in the last %d minutes (threshold: %d).", count, windowMins, threshold)
+		return lead(emailstyle.Danger, fmt.Sprintf("%d logs in the last %d minutes", count, windowMins), rest)
 	case "cron_missed":
-		count, _ := detailInt(p.Details, "missed_count")
-		if count == 1 {
-			return "1 cron monitor missed its expected check-in."
+		n, _ := detailInt(p.Details, "missed_count")
+		if n == 1 {
+			return lead(emailstyle.Danger, "1 cron monitor missed its expected check-in.", "")
 		}
-		return fmt.Sprintf("%d cron monitors missed their expected check-in.", count)
+		return lead(emailstyle.Danger, fmt.Sprintf("%d cron monitors missed their expected check-in.", n), "")
 	case "cron_error":
-		count, _ := detailInt(p.Details, "error_count")
-		if count == 1 {
-			return "1 cron monitor reported an error."
+		n, _ := detailInt(p.Details, "error_count")
+		if n == 1 {
+			return lead(emailstyle.Danger, "1 cron monitor reported an error.", "")
 		}
-		return fmt.Sprintf("%d cron monitors reported errors.", count)
+		return lead(emailstyle.Danger, fmt.Sprintf("%d cron monitors reported errors.", n), "")
 	case "uptime_down":
-		count, _ := detailInt(p.Details, "down_count")
-		if count == 1 {
-			return "1 uptime monitor is down."
+		n, _ := detailInt(p.Details, "down_count")
+		if n == 1 {
+			return lead(emailstyle.Danger, "1 uptime monitor is down.", "")
 		}
-		return fmt.Sprintf("%d uptime monitors are down.", count)
+		return lead(emailstyle.Danger, fmt.Sprintf("%d uptime monitors are down.", n), "")
 	case "uptime_recovered":
-		count, _ := detailInt(p.Details, "recovered_count")
-		if count == 1 {
-			return "1 uptime monitor has recovered."
+		n, _ := detailInt(p.Details, "recovered_count")
+		if n == 1 {
+			return lead(emailstyle.Success, "1 uptime monitor has recovered.", "")
 		}
-		return fmt.Sprintf("%d uptime monitors have recovered.", count)
+		return lead(emailstyle.Success, fmt.Sprintf("%d uptime monitors have recovered.", n), "")
 	case "issue_auto_resolved":
-		count, _ := detailInt(p.Details, "resolved_count")
-		if count == 1 {
-			return "1 issue was automatically resolved."
+		n, _ := detailInt(p.Details, "resolved_count")
+		if n == 1 {
+			return plain("1 issue was automatically resolved.")
 		}
-		return fmt.Sprintf("%d issues were automatically resolved.", count)
+		return plain(fmt.Sprintf("%d issues were automatically resolved.", n))
 	default:
-		return fmt.Sprintf("Alert rule %q fired.", p.RuleName)
+		return plain(fmt.Sprintf("Alert rule %q fired.", p.RuleName))
 	}
 }
 
@@ -456,8 +366,11 @@ func buildIssueCards(issues []*storage.Issue, projectName string, projectNames m
 		if n := projectNames[iss.ProjectID]; n != "" {
 			name = n
 		}
+		typ, text := emailstyle.SplitTitle(iss.Title)
 		cards = append(cards, alertIssueData{
 			Title:         iss.Title,
+			TitleType:     typ,
+			TitleText:     text,
 			Level:         iss.Level,
 			LevelColor:    alertLevelColor(iss.Level),
 			Environment:   env,
@@ -473,22 +386,7 @@ func buildIssueCards(issues []*storage.Issue, projectName string, projectNames m
 	return cards
 }
 
-func formatDowntime(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	if h > 0 {
-		return fmt.Sprintf("%dh %dm", h, m)
-	}
-	if m > 0 {
-		return fmt.Sprintf("%dm", m)
-	}
-	return "less than a minute"
-}
-
-func buildUptimeMonitorCards(monitors []*storage.UptimeMonitor, trigger, base string) []alertUptimeMonitorData {
+func buildUptimeMonitorCards(monitors []*storage.UptimeMonitor, trigger, base string, firedAt time.Time) []alertUptimeMonitorData {
 	cards := make([]alertUptimeMonitorData, 0, len(monitors))
 	for _, m := range monitors {
 		card := alertUptimeMonitorData{
@@ -512,22 +410,56 @@ func buildUptimeMonitorCards(monitors []*storage.UptimeMonitor, trigger, base st
 		}
 		if trigger == "uptime_recovered" {
 			card.State = "Recovered"
-			card.StateColor = "#16a34a"
+			card.StateColor = emailstyle.Success
 			if m.WentDownAt != nil && m.LastOkAt != nil {
-				card.Downtime = formatDowntime(m.LastOkAt.Sub(*m.WentDownAt))
+				card.Downtime = emailstyle.FormatSpan(m.LastOkAt.Sub(*m.WentDownAt))
 			}
 		} else {
 			card.State = "Down"
-			card.StateColor = "#ef4444"
+			card.StateColor = emailstyle.Danger
+			// Like the monitors page: the outage counts from when it went
+			// down, or from the last good check when that is all we know.
 			if m.WentDownAt != nil {
 				card.DownSince = m.WentDownAt.UTC().Format("2 Jan 2006 15:04 UTC")
+				card.For = emailstyle.FormatSpan(firedAt.Sub(*m.WentDownAt))
 			} else if m.LastOkAt != nil {
 				card.DownSince = m.LastOkAt.UTC().Format("2 Jan 2006 15:04 UTC") + " (approx)"
+				card.For = emailstyle.FormatSpan(firedAt.Sub(*m.LastOkAt))
 			}
 		}
 		cards = append(cards, card)
 	}
 	return cards
+}
+
+// cronStateLabel and cronStateColor name a cron monitor's state the way the
+// monitors page does: failures in red, a running job in plain text.
+func cronStateLabel(state string) string {
+	switch state {
+	case "ok":
+		return "OK"
+	case "missed":
+		return "Missed"
+	case "error":
+		return "Error"
+	case "in_progress":
+		return "Running"
+	default:
+		return "Unknown"
+	}
+}
+
+func cronStateColor(state string) string {
+	switch state {
+	case "ok":
+		return emailstyle.Success
+	case "missed", "error":
+		return emailstyle.Danger
+	case "in_progress":
+		return emailstyle.Text2
+	default:
+		return emailstyle.Text3
+	}
 }
 
 func moreLabel(trigger string, count int) string {
@@ -547,6 +479,12 @@ func moreLabel(trigger string, count int) string {
 			return "log"
 		}
 		return "logs"
+	case "new_or_regressed":
+		// The rest can be new or regressed, so the label names neither.
+		if count == 1 {
+			return "issue"
+		}
+		return "issues"
 	default:
 		if count == 1 {
 			return "new issue"
@@ -651,7 +589,6 @@ func buildLogCards(logs []*storage.Log) []alertLogData {
 // RenderAlertEmail returns (html, text) for an alert notification email.
 func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, error) {
 	base := strings.TrimRight(publicURL, "/")
-	logoSrc := base + "/assets/email-logo.png"
 
 	isCron := payload.Trigger == "cron_missed" || payload.Trigger == "cron_error"
 	isUptime := payload.Trigger == "uptime_down" || payload.Trigger == "uptime_recovered"
@@ -676,25 +613,16 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	}
 
 	issueCards := buildIssueCards(payload.Issues, payload.ProjectName, payload.ProjectNames, base)
-	uptimeCards := buildUptimeMonitorCards(payload.UptimeMonitors, payload.Trigger, base)
+	uptimeCards := buildUptimeMonitorCards(payload.UptimeMonitors, payload.Trigger, base, payload.FiredAt)
 	logCards := buildLogCards(payload.Logs)
 
 	var monitorCards []alertMonitorData
 	for _, m := range payload.Monitors {
 		card := alertMonitorData{
-			Name:     m.Name,
-			Schedule: m.Schedule,
-			State:    m.State,
-		}
-		switch m.State {
-		case "missed":
-			card.StateColor = "#ef4444"
-		case "error":
-			card.StateColor = "#ef4444"
-		case "in_progress":
-			card.StateColor = "#f59e0b"
-		default:
-			card.StateColor = "#9ca3af"
+			Name:       m.Name,
+			Schedule:   m.Schedule,
+			State:      cronStateLabel(m.State),
+			StateColor: cronStateColor(m.State),
 		}
 		if m.NextExpectedAt != nil {
 			card.NextAt = m.NextExpectedAt.UTC().Format("2 Jan 2006 15:04 UTC")
@@ -748,9 +676,9 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	}
 
 	data := alertEmailData{
+		Head:           alertHeadline(payload),
 		RuleName:       payload.RuleName,
 		FiredAt:        payload.FiredAt.UTC().Format("Mon, 2 Jan 2006 at 15:04 UTC"),
-		TriggerLine:    alertTriggerLine(payload),
 		ViewURL:        viewURL,
 		ViewLabel:      viewLabel,
 		Issues:         issueCards,
@@ -761,16 +689,16 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 		MoreLabel:      moreLabel(payload.Trigger, moreCount),
 	}
 	var bodyBuf bytes.Buffer
-	if err := alertBodyTmpl.Execute(&bodyBuf, data); err != nil {
+	if err := alertBodyTmpl.ExecuteTemplate(&bodyBuf, "alert-body", data); err != nil {
 		return "", "", fmt.Errorf("render alert body: %w", err)
 	}
-	html, err := renderBase("[Tindra] "+payload.RuleName, template.HTML(bodyBuf.String()), logoSrc, base)
+	html, err := renderBase("[Tindra] "+payload.RuleName, template.HTML(bodyBuf.String()), base)
 	if err != nil {
 		return "", "", err
 	}
 
 	var tb strings.Builder
-	fmt.Fprintf(&tb, "Alert: %s\n\n%s\n\n", payload.RuleName, data.TriggerLine)
+	fmt.Fprintf(&tb, "%s\n\nAlert rule: %s\n\n", alertTriggerLine(payload), payload.RuleName)
 
 	for _, iss := range data.Issues {
 		tb.WriteString("----------------------------------------\n")
@@ -881,12 +809,17 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 // RenderInviteEmail returns (html, text) for an invite email.
 // publicURL is the base URL of the Tindra instance (e.g. "https://tindra.example.com").
 func RenderInviteEmail(inviteURL, publicURL string) (string, string, error) {
-	logoSrc := strings.TrimRight(publicURL, "/") + "/assets/email-logo.png"
-	var bodyBuf bytes.Buffer
-	if err := inviteBodyTmpl.Execute(&bodyBuf, struct{ InviteURL string }{inviteURL}); err != nil {
+	body, err := renderLinkBody(linkEmailData{
+		Heading: "You\u2019ve been invited",
+		Lead:    "You\u2019ve been invited to join <strong style=\"color:" + emailstyle.Text1 + ";font-weight:600;\">Tindra</strong>. Click the button below to set up your account.",
+		Href:    inviteURL,
+		Label:   "Accept invitation",
+		Note:    "This invitation expires in <strong style=\"color:" + emailstyle.Text2 + ";font-weight:600;\">7 days</strong>. If you weren&#39;t expecting this, you can safely ignore this email.",
+	})
+	if err != nil {
 		return "", "", fmt.Errorf("render invite body: %w", err)
 	}
-	html, err := renderBase("You've been invited to Tindra", template.HTML(bodyBuf.String()), logoSrc, strings.TrimRight(publicURL, "/"))
+	html, err := renderBase("You've been invited to Tindra", body, publicURL)
 	if err != nil {
 		return "", "", err
 	}

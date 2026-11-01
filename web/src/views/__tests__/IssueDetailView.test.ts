@@ -227,10 +227,11 @@ describe('IssueDetailView', () => {
       expect(wrapper.find('.detail-hero__level').text()).toBe('error')
     })
 
-    it('renders the issue status pill', () => {
+    it('states the issue state once, in the sentence rather than again in the facts', () => {
       setupQueries()
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      expect(wrapper.find('.statuspill--open').exists()).toBe(true)
+      expect(wrapper.find('.issue-verdict__lead').text()).toMatch(/^Ongoing for/)
+      expect(wrapper.find('.issue-meta .statuspill').exists()).toBe(false)
     })
 
     it('renders the event count', () => {
@@ -452,14 +453,14 @@ describe('IssueDetailView', () => {
       const resolvedIssue = { ...baseIssue, status: 'resolved' }
       setupQueries(resolvedIssue)
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      expect(wrapper.find('.statuspill--resolved').exists()).toBe(true)
+      expect(wrapper.find('.issue-verdict__lead').text()).toBe('Resolved')
     })
 
     it('shows Reopen button when issue is ignored', () => {
       const ignoredIssue = { ...baseIssue, status: 'ignored' }
       setupQueries(ignoredIssue)
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      expect(wrapper.find('.statuspill--ignored').exists()).toBe(true)
+      expect(wrapper.find('.issue-verdict__lead').text()).toBe('Ignored')
     })
   })
 
@@ -1394,10 +1395,11 @@ describe('IssueDetailView', () => {
       expect(wrapper.find('.issue-verdict__lead--quiet').text()).toMatch(/^Ongoing for \d+d$/)
     })
 
-    it('shows Unassigned label in meta when assignee_id is null', () => {
+    it('says an issue is unassigned in the sentence, not again in the facts', () => {
       setupQueries()
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      expect(wrapper.find('.issue-meta').text()).toContain('Unassigned')
+      expect(wrapper.find('.issue-verdict').text()).toContain('Nobody is assigned yet.')
+      expect(wrapper.find('.issue-meta').text()).not.toContain('Unassigned')
     })
 
     it('clicking a user in assignee dropdown calls assignIssue', async () => {
@@ -1443,9 +1445,8 @@ describe('IssueDetailView', () => {
       const ignoredWithUntil = { ...baseIssue, status: 'ignored', ignore_until: futureDate }
       setupQueries(ignoredWithUntil)
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      expect(wrapper.find('.statuspill--ignored').exists()).toBe(true)
-      // The "until <date>" text appears in the meta section
-      expect(wrapper.find('.issue-meta').text()).toContain('until')
+      expect(wrapper.find('.issue-verdict__lead').text()).toBe('Ignored')
+      expect(wrapper.find('.issue-verdict').text()).toContain('until')
     })
 
     it('shows occurrence count remaining when issue has ignore_count_limit', () => {
@@ -1458,7 +1459,7 @@ describe('IssueDetailView', () => {
       }
       setupQueries(ignoredWithCount)
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      expect(wrapper.find('.issue-meta').text()).toContain('40 left')
+      expect(wrapper.find('.issue-verdict').text()).toContain('for 40 more events.')
     })
 
     it('shows 0 left when ignore_count equals ignore_count_limit', () => {
@@ -1471,7 +1472,7 @@ describe('IssueDetailView', () => {
       }
       setupQueries(ignoredExhausted)
       const wrapper = mount(IssueDetailView, { global: { stubs } })
-      expect(wrapper.find('.issue-meta').text()).toContain('0 left')
+      expect(wrapper.find('.issue-verdict').text()).toContain('for 0 more events.')
     })
   })
 

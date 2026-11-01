@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { formatDuration, formatRate, formatPct, formatRel, formatTs } from '../formatters'
+import { formatDuration, formatRate, formatPct, formatFraction, formatRel, formatTs } from '../formatters'
 
 describe('formatDuration', () => {
   it('returns <1ms for values less than 1', () => {
@@ -42,32 +42,53 @@ describe('formatDuration', () => {
 })
 
 describe('formatRate', () => {
-  it('formats to one decimal place with /min suffix', () => {
-    expect(formatRate(0)).toBe('0.0/min')
-    expect(formatRate(1)).toBe('1.0/min')
-    expect(formatRate(12.34)).toBe('12.3/min')
-    expect(formatRate(100.99)).toBe('101.0/min')
+  it('prints two decimals below 100 and whole numbers above', () => {
+    expect(formatRate(1)).toBe('1.00/min')
+    expect(formatRate(12.345)).toBe('12.35/min')
+    expect(formatRate(100.99)).toBe('101/min')
+    expect(formatRate(9999.9)).toBe('10000/min')
+  })
+
+  it('never prints a busy-looking zero for a quiet endpoint', () => {
+    expect(formatRate(0)).toBe('0/min')
+    expect(formatRate(0.004)).toBe('<0.01/min')
+    expect(formatRate(0.01)).toBe('0.01/min')
   })
 
   it('handles negative values', () => {
-    expect(formatRate(-5)).toBe('-5.0/min')
-  })
-
-  it('handles very large values', () => {
-    expect(formatRate(9999.9)).toBe('9999.9/min')
+    expect(formatRate(-5)).toBe('-5.00/min')
   })
 })
 
 describe('formatPct', () => {
   it('formats to one decimal place with % suffix', () => {
-    expect(formatPct(0)).toBe('0.0%')
-    expect(formatPct(100)).toBe('100.0%')
     expect(formatPct(50.6)).toBe('50.6%')
     expect(formatPct(33.33)).toBe('33.3%')
+    expect(formatPct(5)).toBe('5.0%')
+  })
+
+  it('keeps zero and a full share short', () => {
+    expect(formatPct(0)).toBe('0%')
+    expect(formatPct(100)).toBe('100%')
+    expect(formatPct(99.97)).toBe('100%')
+  })
+
+  it('marks shares too small for one decimal instead of rounding them to zero', () => {
+    expect(formatPct(0.04)).toBe('<0.1%')
+    expect(formatPct(0.05)).toBe('0.1%')
   })
 
   it('handles negative values', () => {
     expect(formatPct(-1)).toBe('-1.0%')
+  })
+})
+
+describe('formatFraction', () => {
+  it('prints a fraction as a percentage', () => {
+    expect(formatFraction(0)).toBe('0%')
+    expect(formatFraction(0.0634)).toBe('6.3%')
+    expect(formatFraction(1)).toBe('100%')
+    expect(formatFraction(0.0001)).toBe('<0.1%')
   })
 })
 

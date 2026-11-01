@@ -9,14 +9,14 @@ import { useToast } from '@/composables/useToast'
 import { investigationQuery } from '@/router/investigation'
 import { useInvestigationStore } from '@/stores/investigation'
 import type { Transaction, TransactionSummary, TxTimeseries, ReleaseMetadata, TransactionListPage } from '@/api/types'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, formatRate, formatFraction } from '@/utils/formatters'
 import { useFormatters } from '@/composables/useFormatters'
 import FilterChip from '@/components/FilterChip.vue'
 import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
-import { failureClass, perfChanges, perfVerdict } from './performance/changes'
+import { failureClass, perfChanges, perfVerdict, MIN_SAMPLES } from './performance/changes'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 
 const router = useRouter()
@@ -211,9 +211,9 @@ const { data: compSummaries, refetch: refetchComparison } = useQuery({
 })
 
 const compMap = computed(() => {
-  const map = new Map<string, { p50: number; p95: number }>()
+  const map = new Map<string, { p50: number; p95: number; sample_count: number }>()
   for (const s of compSummaries.value ?? []) {
-    map.set(`${s.transaction}|${s.op}|${s.project_id}`, { p50: s.p50, p95: s.p95 })
+    map.set(`${s.transaction}|${s.op}|${s.project_id}`, { p50: s.p50, p95: s.p95, sample_count: s.sample_count })
   }
   return map
 })
@@ -225,9 +225,12 @@ const changesReady = computed(() => !userMode.value && compSummaries.value !== u
 const changes = computed(() => perfChanges(filteredSummaries.value, compSummaries.value ?? []))
 const changeVerdict = computed(() => perfVerdict(changes.value, perf.windowHrs))
 
+// A row shows a change only on the same evidence the sentence above it needs,
+// so a "↑141%" from six requests never sits under "Nothing got slower".
 function getDelta(s: TransactionSummary, metric: 'p50' | 'p95') {
   const prev = compMap.value.get(`${s.transaction}|${s.op}|${s.project_id}`)
   if (!prev || prev[metric] === 0) return null
+  if (s.sample_count < MIN_SAMPLES || prev.sample_count < MIN_SAMPLES) return null
   const pct = ((s[metric] - prev[metric]) / prev[metric]) * 100
   if (Math.abs(pct) < 5) return null
   return {
@@ -278,23 +281,11 @@ function opClass(op: string) {
   return `optag--${op.split('.')[0]}`
 }
 
-function formatTPM(tpm: number) {
-  if (tpm < 0.01) return '<0.01/min'
-  if (tpm >= 100) return `${Math.round(tpm)}/min`
-  return `${tpm.toFixed(2)}/min`
-}
-
 function formatTimeSpent(ms: number) {
   if (ms >= 3_600_000) return `${(ms / 3_600_000).toFixed(2)}hr`
   if (ms >= 60_000) return `${(ms / 60_000).toFixed(2)}min`
   if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)}s`
   return `${ms}ms`
-}
-
-function formatFailureRate(rate: number) {
-  if (rate === 0) return '0%'
-  if (rate < 0.0001) return '<0.01%'
-  return `${(rate * 100).toFixed(2)}%`
 }
 
 function projectName(projectId: string) {
@@ -413,7 +404,7 @@ function apdexClass(score: number): string {
                 <span class="perf-change__meta">{{ c.summary.op }} · {{ projectName(c.summary.project_id) }} · {{ c.summary.sample_count.toLocaleString() }} requests</span>
               </span>
               <span class="perf-change__delta">
-                <template v-if="c.kind === 'failing'">errors {{ formatFailureRate(c.before) }} <span aria-hidden="true">→</span><span class="sr-only">to</span> <strong>{{ formatFailureRate(c.after) }}</strong></template>
+                <template v-if="c.kind === 'failing'">errors {{ formatFraction(c.before) }} <span aria-hidden="true">→</span><span class="sr-only">to</span> <strong>{{ formatFraction(c.after) }}</strong></template>
                 <template v-else>p95 {{ formatDuration(c.before) }} <span aria-hidden="true">→</span><span class="sr-only">to</span> <strong>{{ formatDuration(c.after) }}</strong></template>
               </span>
             </RouterLink>
@@ -428,7 +419,7 @@ function apdexClass(score: number): string {
         </div>
         <div class="txstat">
           <span class="txstat__label">TPM</span>
-          <span class="txstat__value">{{ formatTPM(stats.totalTpm) }}</span>
+          <span class="txstat__value">{{ formatRate(stats.totalTpm) }}</span>
         </div>
         <div class="txstat">
           <span class="txstat__label">P50</span>
@@ -444,7 +435,7 @@ function apdexClass(score: number): string {
         </div>
         <div class="txstat">
           <span class="txstat__label">Error rate</span>
-          <span class="txstat__value" :class="failureClass(stats.failureRate)">{{ formatFailureRate(stats.failureRate) }}</span>
+          <span class="txstat__value" :class="failureClass(stats.failureRate)">{{ formatFraction(stats.failureRate) }}</span>
         </div>
       </div>
 
@@ -603,7 +594,7 @@ function apdexClass(score: number): string {
                 <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="s.transaction">{{ s.transaction }}</span>
                 <span class="projtag" :title="projectName(s.project_id)">{{ projectName(s.project_id) }}</span>
                 <span class="tx-num-cell">{{ s.sample_count.toLocaleString() }}</span>
-                <span class="tx-num-cell">{{ formatTPM(s.tpm) }}</span>
+                <span class="tx-num-cell">{{ formatRate(s.tpm) }}</span>
                 <span class="tx-num-cell tx-num-cell--stat">
                   <span>{{ formatDuration(s.p50) }}</span>
                   <span v-if="getDelta(s, 'p50')" class="tx-delta" :class="getDelta(s, 'p50')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p50')!.label }}</span>
@@ -613,7 +604,7 @@ function apdexClass(score: number): string {
                   <span v-if="getDelta(s, 'p95')" class="tx-delta" :class="getDelta(s, 'p95')!.cls" :title="`vs. prev ${perf.windowHrs}`">{{ getDelta(s, 'p95')!.label }}</span>
                 </span>
                 <span class="tx-num-cell" :class="apdexClass(s.apdex)">{{ s.apdex.toFixed(2) }}</span>
-                <span class="tx-num-cell" :class="failureClass(s.failure_rate)">{{ formatFailureRate(s.failure_rate) }}</span>
+                <span class="tx-num-cell" :class="failureClass(s.failure_rate)">{{ formatFraction(s.failure_rate) }}</span>
                 <span class="tx-num-cell tx-num-cell--right">{{ formatTimeSpent(s.time_spent_ms) }}</span>
               </RouterLink>
             </template>

@@ -21,6 +21,7 @@ import type { IgnorePayload } from '@/components/IgnoreButton.vue'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 import { useMe } from '@/composables/useMe'
 import { useDebounced } from '@/composables/useDebounced'
+import { splitTitle } from '@/utils/issueTitle'
 
 const router = useRouter()
 const route = useRoute()
@@ -770,9 +771,10 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           <a :href="investigation.link(`/issues/${sorted[vRow.index]?.id}`)" class="issue__title" @click.stop="navigateIssue($event, vRow.index, sorted[vRow.index].id)">
             <div style="min-width: 0; flex: 1">
               <div class="issue__title-text">
-                <span class="issue__title-type">{{ sorted[vRow.index]?.title.split(':')[0] }}</span>
-                <span style="color: var(--text-3)">: </span>
-                <span class="issue__title-msg">{{ sorted[vRow.index]?.title.split(':').slice(1).join(':').trim() }}</span>
+                <template v-if="splitTitle(sorted[vRow.index]?.title ?? '').type">
+                  <span class="issue__title-type">{{ splitTitle(sorted[vRow.index].title).type }}</span><span style="color: var(--text-3)">: </span>
+                </template>
+                <span class="issue__title-msg">{{ splitTitle(sorted[vRow.index]?.title ?? '').message }}</span>
               </div>
               <div class="issue__sub">
                 <span v-if="rowState(sorted[vRow.index])" class="statechip" :class="`statechip--${rowState(sorted[vRow.index])}`">{{ rowState(sorted[vRow.index]) }}</span>

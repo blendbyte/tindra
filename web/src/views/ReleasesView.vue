@@ -7,7 +7,8 @@ import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 import { useInvestigationStore } from '@/stores/investigation'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, formatPct } from '@/utils/formatters'
+import { failureClass } from '@/views/performance/changes'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Release, ReleaseListPage } from '@/api/types'
 import Icon from '@/components/Icon.vue'
@@ -236,8 +237,8 @@ function formatCount(n: number) {
               {{ r.tx_p50 === 0 ? '–' : formatDuration(r.tx_p50) }}
             </span>
 
-            <span class="relrow__num mono" :class="r.tx_error_rate > 5 ? 'tx-failure' : r.tx_error_rate > 2 ? 'tx-warn' : r.tx_error_rate > 0 ? '' : 'muted'">
-              {{ r.tx_count > 0 ? (r.tx_error_rate > 0 ? r.tx_error_rate.toFixed(1) + '%' : '–') : '–' }}
+            <span class="relrow__num mono" :class="r.tx_count > 0 ? failureClass(r.tx_error_rate / 100) : 'muted'">
+              {{ r.tx_count > 0 ? formatPct(r.tx_error_rate) : '–' }}
             </span>
 
 

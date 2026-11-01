@@ -695,6 +695,7 @@ func TestTopTransactions_includesPrevP50(t *testing.T) {
 
 	// Seed in the previous window (prevFrom = from - 7 days)
 	seedTransaction(t, p.ID, "/api/stable", 80, prevDay)
+	seedTransaction(t, p.ID, "/api/stable", 80, prevDay.Add(time.Minute))
 
 	txns, err := topTransactions(context.Background(), testPool, []string{p.ID}, from, now, 5)
 	if err != nil {
@@ -705,6 +706,10 @@ func TestTopTransactions_includesPrevP50(t *testing.T) {
 	}
 	if txns[0].P50PrevMs != 80 {
 		t.Errorf("P50PrevMs: got %d, want 80", txns[0].P50PrevMs)
+	}
+	// The email only shows a change backed by enough requests in both weeks.
+	if txns[0].P50PrevCount != 2 {
+		t.Errorf("P50PrevCount: got %d, want 2", txns[0].P50PrevCount)
 	}
 }
 
@@ -725,7 +730,7 @@ func TestTopTransactions_prevP50ZeroWhenNoPrevData(t *testing.T) {
 	if len(txns) != 1 {
 		t.Fatalf("expected 1 transaction, got %d", len(txns))
 	}
-	if txns[0].P50PrevMs != 0 {
-		t.Errorf("P50PrevMs should be 0 with no prior data, got %d", txns[0].P50PrevMs)
+	if txns[0].P50PrevMs != 0 || txns[0].P50PrevCount != 0 {
+		t.Errorf("P50PrevMs and P50PrevCount should be 0 with no prior data, got %d and %d", txns[0].P50PrevMs, txns[0].P50PrevCount)
 	}
 }

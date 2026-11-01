@@ -80,7 +80,10 @@ const yTicks = computed(() => {
   })
 })
 
+// The baseline is always "0": a value formatter may print zero as "<1ms",
+// which reads as a measurement on an axis.
 function fmtAxis(v: number): string {
+  if (v === 0) return '0'
   if (props.formatValue) return props.formatValue(v)
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
   if (v >= 1000) return `${(v / 1000).toFixed(1)}k`

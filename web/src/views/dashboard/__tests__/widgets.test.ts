@@ -20,7 +20,8 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
-vi.mock('@/utils/formatters', () => ({
+vi.mock('@/utils/formatters', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/formatters')>(),
   formatDuration: vi.fn((n: number) => `${n}ms`),
   formatRel: vi.fn(() => '2m ago'),
 }))
@@ -318,11 +319,21 @@ describe('SlowTransactionsWidget', () => {
     const rows = wrapper.findAll('.db-tx-row')
     expect(rows[0].find('.db-tx-row__val--warn').text()).toBe('2500ms')
     expect(wrapper.find('.db-tx-row__val--bad').exists()).toBe(false)
-    expect(rows[0].find('.db-tx-row__pct--warn').text()).toBe('3.0% errors')
-    expect(rows[0].find('.db-tx-row__pct--bad').exists()).toBe(false)
+    // Error rates follow the performance tables: amber from 1%, red from 5%.
+    expect(rows[0].find('.tx-warn').text()).toBe('3.0% errors')
+    expect(rows[0].find('.tx-failure').exists()).toBe(false)
     expect(rows[1].find('.db-tx-row__val--warn').exists()).toBe(false)
-    expect(rows[1].find('.db-tx-row__pct--bad').text()).toBe('12.0% errors')
+    expect(rows[1].find('.tx-failure').text()).toBe('12.0% errors')
     expect(rows[0].find('.db-tx-row__meta').text()).toBe('http · p50 600ms · 3.0% errors')
+  })
+
+  it('says "no errors" instead of printing a zero rate', () => {
+    const wrapper = mount(SlowTransactionsWidget, {
+      props: { loading: false, txSummaries: [tx({ transaction: '/a', p50: 600, p95: 2500, failure_rate: 0 })] },
+      global: { stubs },
+    })
+    expect(wrapper.find('.db-tx-row__meta').text()).toBe('http · p50 600ms · no errors')
+    expect(wrapper.find('.tx-warn').exists()).toBe(false)
   })
 })
 
