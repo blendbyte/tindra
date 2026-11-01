@@ -12,7 +12,7 @@ vi.mock('@/views/dashboard/shared', () => ({
   useProjectScope: () => ({ buildQs: (extra: Record<string, string> = {}) => new URLSearchParams({ project_id: 'p1', ...extra }).toString() }),
 }))
 
-type Options = { queryKey: { value: unknown[] }; queryFn: (ctx: { signal: AbortSignal }) => Promise<unknown>; meta?: { shell?: boolean }; refetchInterval?: number }
+type Options = { queryKey: { value: unknown[] }; queryFn: (ctx: { signal: AbortSignal }) => Promise<unknown>; meta?: { shell?: boolean }; refetchInterval?: { value: number | false } }
 const options = () => vi.mocked(useQuery).mock.calls.map(c => c[0] as unknown as Options)
 const signal = new AbortController().signal
 
@@ -45,8 +45,30 @@ describe('useMonitorQueries', () => {
     useMonitorQueries({ shell: true })
     for (const o of options()) {
       expect(o.meta).toEqual({ shell: true })
-      expect(o.refetchInterval).toBe(SHELL_REFRESH_MS)
+      expect(o.refetchInterval?.value).toBe(SHELL_REFRESH_MS)
     }
+  })
+
+  it('stops shell polling while the page is paused, on a past range or browsing history', () => {
+    const investigation = useInvestigationStore()
+    useMonitorQueries({ shell: true })
+    useAttentionQuery(null, { shell: true })
+    const intervals = () => options().map(o => o.refetchInterval?.value)
+    expect(intervals()).toEqual([SHELL_REFRESH_MS, SHELL_REFRESH_MS, SHELL_REFRESH_MS])
+
+    investigation.paused = true
+    expect(intervals()).toEqual([false, false, false])
+    investigation.paused = false
+    investigation.browsingHistory = true
+    expect(intervals()).toEqual([false, false, false])
+    investigation.browsingHistory = false
+    expect(intervals()).toEqual([SHELL_REFRESH_MS, SHELL_REFRESH_MS, SHELL_REFRESH_MS])
+  })
+
+  it('leaves page queries to the page freshness polling', () => {
+    useMonitorQueries()
+    useAttentionQuery(null)
+    expect(options().every(o => o.refetchInterval === undefined)).toBe(true)
   })
 })
 
