@@ -38,7 +38,8 @@ func TestWorkerEventBatchesReconcileAndPreserveShells(t *testing.T) {
 	require.NoError(t, err)
 	_, err = testPool.Exec(ctx, `INSERT INTO event_tags(event_id,issue_id,project_id,key,value) SELECT id,issue_id,project_id,'test','value' FROM events`)
 	require.NoError(t, err)
-	// Retention must still repair drift for affected issues, not merely subtract.
+	// Retention subtracts what it deleted instead of recounting the issue, so a
+	// drifted count stays drifted by the same amount.
 	_, err = testPool.Exec(ctx, "UPDATE issues SET event_count=999999 WHERE id=$1", open)
 	require.NoError(t, err)
 	trace := &capTrace{matchSQL: "DELETE FROM events"}
@@ -49,7 +50,7 @@ func TestWorkerEventBatchesReconcileAndPreserveShells(t *testing.T) {
 	require.Equal(t, 2, capCount(t, "issues"))
 	var count int
 	require.NoError(t, testPool.QueryRow(ctx, "SELECT event_count FROM issues WHERE id=$1", open).Scan(&count))
-	require.Equal(t, 7, count)
+	require.Equal(t, 999999-12000, count)
 	require.NoError(t, testPool.QueryRow(ctx, "SELECT event_count FROM issues WHERE id=$1", regressed).Scan(&count))
 	require.Zero(t, count)
 }
@@ -103,7 +104,7 @@ func (b *beforeIssueLock) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pg
 	return ctx
 }
 func (*beforeIssueLock) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
-func TestWorkerEventRecountIncludesConcurrentGrouping(t *testing.T) {
+func TestWorkerEventDecrementIncludesConcurrentGrouping(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 	issue := seedRetainedIssue(t, "open", 1, 0)
@@ -134,18 +135,116 @@ func TestWorkerEventRecountIncludesConcurrentGrouping(t *testing.T) {
 	require.Equal(t, 1, count)
 	require.Equal(t, 1, capCount(t, "events"))
 }
-func TestWorkerEventPassBudget(t *testing.T) {
+func TestWorkerEventBudgetStopsBetweenBatchesAndResumes(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
-	id := seedRetainedIssue(t, "open", 200001, 0)
-	retention.NewWorker(testPool, 90).RunOnce(ctx)
+	id := seedRetainedIssue(t, "open", 12000, 1)
+	clock := newStepClock()
+	trace := &capTrace{matchSQL: "DELETE FROM events", afterBatch: func() { clock.Advance(600 * time.Millisecond) }}
+	worker := retention.NewWorker(capPool(t, trace), 90).WithClock(clock.Now, time.Second)
+	require.True(t, worker.RunOnce(ctx))
+	require.Equal(t, []int64{5000, 5000}, trace.batches)
+	require.Equal(t, 2001, capCount(t, "events"))
+	require.Equal(t, 2001, issueEventCount(t, id))
+	require.False(t, worker.RunOnce(ctx))
 	require.Equal(t, 1, capCount(t, "events"))
-	var count int
-	require.NoError(t, testPool.QueryRow(ctx, "SELECT event_count FROM issues WHERE id=$1", id).Scan(&count))
-	require.Equal(t, 1, count)
-	retention.NewWorker(testPool, 90).RunOnce(ctx)
+	require.Equal(t, 1, issueEventCount(t, id))
+}
+
+func issueEventCount(t *testing.T, id string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, testPool.QueryRow(context.Background(), "SELECT event_count FROM issues WHERE id=$1", id).Scan(&n))
+	return n
+}
+
+func issueExists(t *testing.T, id string) bool {
+	t.Helper()
+	var ok bool
+	require.NoError(t, testPool.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM issues WHERE id=$1)", id).Scan(&ok))
+	return ok
+}
+
+// Two issues of 6000 expired events each span three batches: the first issue
+// fills batch one and starts batch two, which the second issue shares and
+// finishes in batch three. Each batch subtracts only its own rows.
+func TestWorkerEventDecrementAcrossBatches(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	a := seedRetainedIssue(t, "open", 6000, 3)
+	b := seedRetainedIssue(t, "regressed", 6000, 4)
+	var counts [][2]int
+	trace := &capTrace{matchSQL: "DELETE FROM events"}
+	pool := capPool(t, trace)
+	worker := retention.NewWorker(pool, 90)
+	// Snapshot both counts after each committed batch. The hook runs while the
+	// batch transaction is still open, so record the previous batch's result.
+	trace.afterBatch = func() {
+		counts = append(counts, [2]int{issueEventCount(t, a), issueEventCount(t, b)})
+	}
+	require.False(t, worker.RunOnce(ctx))
+	require.Equal(t, []int64{5000, 5000, 2000}, trace.batches)
+	require.Equal(t, [][2]int{{6003, 6004}, {1003, 6004}, {3, 2004}}, counts)
+	require.Equal(t, 3, issueEventCount(t, a))
+	require.Equal(t, 4, issueEventCount(t, b))
+	require.Equal(t, 7, capCount(t, "events"))
+}
+
+// A resolved or ignored issue goes once a later batch removes its last event,
+// not before. Open and regressed issues keep their shell at zero.
+func TestWorkerEventDeletesIssueWhenLastEventPurged(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	ids := map[string]string{}
+	for _, status := range []string{"resolved", "ignored", "open", "regressed"} {
+		ids[status] = seedRetainedIssue(t, status, 3000, 0)
+	}
+	var afterFirst map[string]bool
+	trace := &capTrace{matchSQL: "DELETE FROM events"}
+	trace.afterBatch = func() {
+		if len(trace.batches) == 2 {
+			// The first batch has committed: it emptied resolved and touched
+			// ignored, which still has events.
+			afterFirst = map[string]bool{}
+			for status, id := range ids {
+				afterFirst[status] = issueExists(t, id)
+			}
+		}
+	}
+	retention.NewWorker(capPool(t, trace), 90).RunOnce(ctx)
+	require.Equal(t, []int64{5000, 5000, 2000}, trace.batches)
+	require.Equal(t, map[string]bool{"resolved": false, "ignored": true, "open": true, "regressed": true}, afterFirst)
+	require.False(t, issueExists(t, ids["resolved"]))
+	require.False(t, issueExists(t, ids["ignored"]))
+	for _, status := range []string{"open", "regressed"} {
+		require.True(t, issueExists(t, ids[status]), status)
+		require.Zero(t, issueEventCount(t, ids[status]), status)
+	}
 	require.Zero(t, capCount(t, "events"))
 }
+
+// Counts drift, so emptiness comes from the events themselves. An issue whose
+// stored count overstates its rows is still emptied, and one whose count
+// understates them is clamped at zero but kept while events remain.
+func TestWorkerEventEmptinessIgnoresDriftedCounts(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	overstated := seedRetainedIssue(t, "resolved", 2, 0)
+	overstatedOpen := seedRetainedIssue(t, "open", 2, 0)
+	understated := seedRetainedIssue(t, "ignored", 3, 2)
+	_, err := testPool.Exec(ctx, "UPDATE issues SET event_count=50 WHERE id = ANY($1::uuid[])", []string{overstated, overstatedOpen})
+	require.NoError(t, err)
+	_, err = testPool.Exec(ctx, "UPDATE issues SET event_count=1 WHERE id=$1", understated)
+	require.NoError(t, err)
+	retention.NewWorker(testPool, 90).RunOnce(ctx)
+	require.False(t, issueExists(t, overstated))
+	require.True(t, issueExists(t, overstatedOpen))
+	require.Zero(t, issueEventCount(t, overstatedOpen))
+	require.True(t, issueExists(t, understated))
+	require.Zero(t, issueEventCount(t, understated))
+	require.Equal(t, 2, capCount(t, "events"))
+}
+
 func TestMembershipMovesWaitForRetention(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()

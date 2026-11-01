@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -51,16 +52,37 @@ type environmentQuerier interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
+// environmentsQuery walks each table's (project_id, environment) partial index
+// one distinct value at a time per project, so a refresh costs one index
+// descent per environment instead of reading every indexed row. Projects come
+// from the projects table so the walk never depends on skip scan, and unknown
+// ids simply match nothing. The environment predicates repeat the partial index
+// predicate so the planner can use it.
+var environmentsQuery = `WITH RECURSIVE scope AS MATERIALIZED (
+ SELECT id FROM projects WHERE cardinality($1::uuid[]) = 0 OR id = ANY($1::uuid[])
+)` + environmentWalk("events") + environmentWalk("transactions") + environmentWalk("logs") + `
+SELECT environment FROM events_environments WHERE environment IS NOT NULL
+UNION SELECT environment FROM transactions_environments WHERE environment IS NOT NULL
+UNION SELECT environment FROM logs_environments WHERE environment IS NOT NULL
+ORDER BY environment`
+
+// environmentWalk yields every environment of table per scoped project, ending
+// each project's walk with a NULL row once no larger value remains.
+func environmentWalk(table string) string {
+	next := `(SELECT environment FROM ` + table + ` WHERE project_id = %s AND environment IS NOT NULL AND environment <> ''%s ORDER BY environment LIMIT 1)`
+	return `, ` + table + `_environments(project_id, environment) AS (
+ SELECT s.id, ` + fmt.Sprintf(next, "s.id", "") + ` FROM scope s
+ UNION ALL SELECT w.project_id, ` + fmt.Sprintf(next, "w.project_id", " AND environment > w.environment") + `
+ FROM ` + table + `_environments w WHERE w.environment IS NOT NULL
+)`
+}
+
 func serveEnvironments(w http.ResponseWriter, r *http.Request, db environmentQuerier) {
 	ids := bearerProjectIDs(r, r.URL.Query()["project_id"])
 	if ids == nil {
 		ids = []string{}
 	}
-	rows, err := db.Query(r.Context(), `SELECT DISTINCT environment FROM (
- SELECT environment FROM events WHERE (cardinality($1::uuid[]) = 0 OR project_id = ANY($1::uuid[]))
- UNION SELECT environment FROM transactions WHERE (cardinality($1::uuid[]) = 0 OR project_id = ANY($1::uuid[]))
- UNION SELECT environment FROM logs WHERE (cardinality($1::uuid[]) = 0 OR project_id = ANY($1::uuid[]))
- ) environments WHERE environment IS NOT NULL AND environment <> '' ORDER BY environment`, ids)
+	rows, err := db.Query(r.Context(), environmentsQuery, ids)
 	if err != nil {
 		http.Error(w, "Could not load environments", 500)
 		return

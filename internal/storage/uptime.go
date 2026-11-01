@@ -367,7 +367,8 @@ func ListUptimeChecks(ctx context.Context, pool *pgxpool.Pool, monitorID string,
 }
 
 // GetUptimeStats returns aggregate uptime percentages and average response
-// time over 24-hour, 7-day, and 30-day windows.
+// time over 24-hour, 7-day, and 30-day windows. Every figure lies within the
+// 30-day window, so older checks kept for retention are never read.
 func GetUptimeStats(ctx context.Context, pool *pgxpool.Pool, monitorID string) (*UptimeStats, error) {
 	var s UptimeStats
 	var avgMs *float64
@@ -386,7 +387,7 @@ func GetUptimeStats(ctx context.Context, pool *pgxpool.Pool, monitorID string) (
                 / NULLIF(SUM(CASE WHEN checked_at > NOW() - INTERVAL '30 days' THEN 1 ELSE 0 END)::float, 0),
             0),
             AVG(CASE WHEN checked_at > NOW() - INTERVAL '24 hours' AND status='up' THEN response_ms ELSE NULL END)
-        FROM uptime_checks WHERE monitor_id = $1`, monitorID,
+        FROM uptime_checks WHERE monitor_id = $1 AND checked_at > NOW() - INTERVAL '30 days'`, monitorID,
 	).Scan(&s.UptimePct24h, &s.UptimePct7d, &s.UptimePct30d, &avgMs)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)

@@ -294,7 +294,7 @@ func TestGetSpanSummaries_jobCategory(t *testing.T) {
 	}
 }
 
-// TestGetSpanSummaries_unknownCategory verifies that an unknown category uses the default filter (TRUE).
+// TestGetSpanSummaries_unknownCategory verifies that an unknown category falls back to the span page ops.
 func TestGetSpanSummaries_unknownCategory(t *testing.T) {
 	p := setupProjectForSpans(t)
 	now := time.Now().UTC()
@@ -313,8 +313,8 @@ func TestGetSpanSummaries_unknownCategory(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Error("expected custom.thing span visible with unknown category (default filter = TRUE)")
+	if found {
+		t.Error("an unknown category must stay within the span page ops, not show custom.thing")
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -103,9 +102,8 @@ func writeTxBatch(ctx context.Context, pool batchSender, batch []BufferedTransac
 	txIDs := make([]string, len(batch))
 	rows := make([][]any, 0, len(batch))
 	for i, tx := range batch {
-		// Time-ordered (v7) IDs keep primary-key inserts at the right edge of
-		// the index instead of scattering them like random v4 IDs.
-		txIDs[i] = uuid.Must(uuid.NewV7()).String()
+		// Explicit, time-ordered IDs (see newRowID).
+		txIDs[i] = newRowID()
 		rows = append(rows, []any{txIDs[i], tx.ProjectID, nilStr(tx.TraceID), nilStr(tx.SpanID), tx.Transaction,
 			tx.Op, tx.Status, tx.DurationMs, tx.StartTimestamp, tx.Timestamp,
 			nilStr(tx.Environment), nilStr(tx.Release), nilStr(tx.Platform), nilJSON(tx.Measurements),
@@ -149,7 +147,7 @@ func writeTxBatch(ctx context.Context, pool batchSender, batch []BufferedTransac
 			spanRows = append(spanRows, []any{
 				txIDs[i], sp.SpanID, nilStr(sp.ParentSpanID), sp.Op, nilStr(sp.Description),
 				sp.StartTimestamp, sp.Timestamp, sp.DurationMs, sp.Status, nilJSON(sp.Data),
-				tx.ProjectID, nilStr(tx.Environment), nilStr(tx.Release),
+				tx.ProjectID, nilStr(tx.Environment), nilStr(tx.Release), newRowID(),
 			})
 		}
 	}
@@ -158,7 +156,7 @@ func writeTxBatch(ctx context.Context, pool batchSender, batch []BufferedTransac
 		queueInserts(spanBatch, `INSERT INTO spans
 			(transaction_id, span_id, parent_span_id, op, description,
 			 start_timestamp, timestamp, duration_ms, status, data,
-			 project_id, environment, release) VALUES `, "", spanRows, 10)
+			 project_id, environment, release, id) VALUES `, "", spanRows, 10)
 		if err := execBatch(ctx, pool, spanBatch); err != nil {
 			return nil, err
 		}

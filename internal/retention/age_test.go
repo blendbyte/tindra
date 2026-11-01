@@ -3,6 +3,7 @@ package retention_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -35,7 +36,7 @@ func TestWorkerAgeBatchesReceiptTimeAndCascades(t *testing.T) {
 			seedAgeRows(t, table, 12000, 7)
 			trace := &capTrace{matchSQL: "DELETE FROM " + table}
 			retention.NewWorker(capPool(t, trace), 90).RunOnce(context.Background())
-			require.Equal(t, []int64{5000, 5000, 2000}, trace.batches)
+			require.Equal(t, wantBatches(12000, ageBatch(table)), trace.batches)
 			require.Equal(t, 7, capCount(t, table))
 			var fresh int
 			require.NoError(t, testPool.QueryRow(context.Background(), "SELECT count(*) FROM "+table+" WHERE received_at > NOW()-interval '1 day'").Scan(&fresh))
@@ -63,23 +64,46 @@ func TestWorkerAgeCancellationAndArrivals(t *testing.T) {
 				require.NoError(t, err)
 			}
 			retention.NewWorker(capPool(t, trace), 90).RunOnce(ctx)
-			require.Equal(t, []int64{5000}, trace.batches)
-			require.Equal(t, 7008, capCount(t, table))
+			require.Equal(t, []int64{ageBatch(table)}, trace.batches)
+			require.Equal(t, 12008-int(ageBatch(table)), capCount(t, table))
 			retention.NewWorker(testPool, 90).RunOnce(context.Background())
 			require.Equal(t, 8, capCount(t, table))
 		})
 	}
 }
-func TestWorkerAgePassBudget(t *testing.T) {
+
+// ageBatch is the largest batch the worker uses for table. Transactions
+// cascade to their spans, so they go in smaller batches.
+func ageBatch(table string) int64 {
+	if table == "transactions" {
+		return retention.TxPurgeBatch
+	}
+	return retention.AgePurgeBatch
+}
+
+// A pass used to stop at 200k rows per table. With time to spare it now
+// drains the whole backlog in one pass and reports nothing left behind.
+func TestWorkerAgePassContinuesPastOldCap(t *testing.T) {
 	seedAgeRows(t, "logs", 205000, 7)
 	trace := &capTrace{matchSQL: "DELETE FROM logs"}
-	worker := retention.NewWorker(capPool(t, trace), 90)
-	require.True(t, worker.RunOnce(context.Background()))
-	require.Len(t, trace.batches, 40)
-	for _, n := range trace.batches {
-		require.EqualValues(t, 5000, n)
-	}
-	require.Equal(t, 5007, capCount(t, "logs"))
+	clock := newStepClock()
+	worker := retention.NewWorker(capPool(t, trace), 90).WithClock(clock.Now, time.Minute)
 	require.False(t, worker.RunOnce(context.Background()))
+	require.Equal(t, wantBatches(205000, retention.AgePurgeBatch), trace.batches)
+	require.Equal(t, 7, capCount(t, "logs"))
+}
+
+// When the table budget runs out mid-backlog the pass stops between batches,
+// reports the backlog, and the next pass picks up where it left off.
+func TestWorkerAgeBudgetStopsBetweenBatchesAndResumes(t *testing.T) {
+	seedAgeRows(t, "logs", 12000, 7)
+	clock := newStepClock()
+	trace := &capTrace{matchSQL: "DELETE FROM logs", afterBatch: func() { clock.Advance(600 * time.Millisecond) }}
+	worker := retention.NewWorker(capPool(t, trace), 90).WithClock(clock.Now, time.Second)
+	require.True(t, worker.RunOnce(context.Background()))
+	require.Equal(t, []int64{5000, 5000}, trace.batches)
+	require.Equal(t, 2007, capCount(t, "logs"))
+	require.False(t, worker.RunOnce(context.Background()))
+	require.Equal(t, []int64{5000, 5000, 2000}, trace.batches)
 	require.Equal(t, 7, capCount(t, "logs"))
 }

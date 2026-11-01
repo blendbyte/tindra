@@ -70,21 +70,29 @@ func TestRetentionUnavailableDatabaseStopsWithoutReportingDeletes(t *testing.T) 
 	require.NoError(t, err)
 	pool.Close()
 	w := NewWorker(pool, 90).WithRowLimits(1, 1).WithProfileLimits(1, 1)
-	require.Zero(t, w.purgeProfiles(ctx, time.Now()))
+	// A failed statement reports neither deletions nor a backlog, so the loop
+	// waits the full hour rather than hammering an unavailable database.
+	none := func(n int64, behind bool) {
+		t.Helper()
+		require.Zero(t, n)
+		require.False(t, behind)
+	}
+	none(w.purgeProfiles(ctx, time.Now()))
 	require.Zero(t, w.purgeProfilesStorageCap(ctx))
-	e, i := w.purgeEvents(ctx, time.Now())
+	e, i, behind := w.purgeEvents(ctx, time.Now())
 	require.Zero(t, e)
 	require.Zero(t, i)
-	require.Zero(t, w.purgeTransactions(ctx, time.Now()))
-	require.Zero(t, w.purgeCronCheckins(ctx, time.Now()))
+	require.False(t, behind)
+	none(w.purgeTransactions(ctx, time.Now()))
+	none(w.purgeCronCheckins(ctx, time.Now()))
 	require.Zero(t, w.purgeAlertFirings(ctx))
-	require.Zero(t, w.purgeLogsRowCap(ctx))
-	w.purgeExpiredAuthTokens(ctx)
+	none(w.purgeLogsRowCap(ctx))
+	require.False(t, w.purge(ctx))
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	require.Zero(t, w.purgeAlertFirings(cancelled))
-	require.Zero(t, w.purgeLogsRowCap(cancelled))
-	require.Zero(t, w.purgeCronCheckins(cancelled, time.Now()))
+	none(w.purgeLogsRowCap(cancelled))
+	none(w.purgeCronCheckins(cancelled, time.Now()))
 }
 
 func TestTokenRetentionDeleteFailurePreservesTokenForRetry(t *testing.T) {

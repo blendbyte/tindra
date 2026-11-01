@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestRetentionRetriesExhaustedBudgetThenReturnsToHourly(t *testing.T) {
+func TestRetentionRetriesBacklogSoonThenReturnsToHourly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -18,17 +18,24 @@ func TestRetentionRetriesExhaustedBudgetThenReturnsToHourly(t *testing.T) {
 		if calls.Load() != 1 {
 			t.Fatalf("startup calls=%d", calls.Load())
 		}
-		time.Sleep(5 * time.Minute)
+		// A pass that left a table behind is followed half a minute later,
+		// not after the five minutes that used to cap throughput.
+		time.Sleep(29 * time.Second)
+		synctest.Wait()
+		if calls.Load() != 1 {
+			t.Fatalf("backlog retry ran early: %d", calls.Load())
+		}
+		time.Sleep(time.Second)
 		synctest.Wait()
 		if calls.Load() != 2 {
 			t.Fatalf("backlog retry calls=%d", calls.Load())
 		}
-		time.Sleep(59 * time.Minute)
+		time.Sleep(time.Hour - time.Second)
 		synctest.Wait()
 		if calls.Load() != 2 {
 			t.Fatalf("quiet cycle ran early: %d", calls.Load())
 		}
-		time.Sleep(time.Minute)
+		time.Sleep(time.Second)
 		synctest.Wait()
 		if calls.Load() != 3 {
 			t.Fatalf("hourly calls=%d", calls.Load())
@@ -52,12 +59,12 @@ func TestRetentionWaitStartsAfterPassFinishes(t *testing.T) {
 			return true
 		})
 		synctest.Wait()
-		time.Sleep(14 * time.Minute)
+		time.Sleep(10*time.Minute + backlogDelay - time.Second)
 		synctest.Wait()
 		if calls.Load() != 1 {
 			t.Fatalf("passes overlapped: %d", calls.Load())
 		}
-		time.Sleep(time.Minute)
+		time.Sleep(time.Second)
 		synctest.Wait()
 		if calls.Load() != 2 {
 			t.Fatalf("backlog did not resume: %d", calls.Load())

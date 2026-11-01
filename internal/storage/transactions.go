@@ -329,7 +329,12 @@ type TxCountTimeseries struct {
 }
 
 func GetTransactionCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, env, name, op, userIdentity string, release ...string) (*TxCountTimeseries, error) {
-	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, true, ResolveTimeRange(ctx, hours, 0), release)
+	window := ResolveTimeRange(ctx, hours, 0)
+	q, args, bucketSize := transactionTimeseriesQuery(projectIDs, hours, env, name, op, userIdentity, true, window, release)
+	filtered := env != "" || name != "" || op != "" || userIdentity != "" || (len(release) > 0 && release[0] != "")
+	if bucketSize == "hour" && !filtered {
+		q, args = transactionUsageCountsQuery(projectIDs, window)
+	}
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
@@ -344,6 +349,48 @@ func GetTransactionCounts(ctx context.Context, pool *pgxpool.Pool, projectIDs []
 		result.Buckets = append(result.Buckets, b)
 	}
 	return result, rows.Err()
+}
+
+// transactionUsageCountsQuery reads unfiltered hourly counts from the
+// telemetry_usage counters instead of aggregating raw transactions. The
+// counters bucket by received_at, not start_timestamp, so a transaction that
+// started in one hour and arrived in the next lands in the later hour. Complete
+// UTC hours come from the counters; the partial hours at either edge of the
+// window are counted from raw rows so the bounds stay exact.
+func transactionUsageCountsQuery(projectIDs []string, window TimeRange) (string, []any) {
+	fullFrom := window.From.Truncate(time.Hour)
+	if fullFrom.Before(window.From) {
+		fullFrom = fullFrom.Add(time.Hour)
+	}
+	fullTo := window.To.Truncate(time.Hour)
+	if fullTo.Before(fullFrom) {
+		fullTo = fullFrom
+	}
+	headTo := fullFrom
+	if window.To.Before(headTo) {
+		headTo = window.To
+	}
+	args := []any{window.From, headTo, fullFrom, fullTo, window.To}
+	project := ""
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		project = " AND project_id = ANY($6::uuid[])"
+	}
+	q := `
+		SELECT bucket, SUM(n)::bigint AS count FROM (
+			SELECT bucket, n FROM telemetry_usage
+			WHERE kind = 'transactions' AND bucket >= $3 AND bucket < $4` + project + `
+			UNION ALL
+			SELECT date_trunc('hour', received_at, 'UTC'), COUNT(*) FROM transactions
+			WHERE received_at >= $1 AND received_at < $2` + project + ` GROUP BY 1
+			UNION ALL
+			SELECT date_trunc('hour', received_at, 'UTC'), COUNT(*) FROM transactions
+			WHERE received_at >= $4 AND received_at < $5` + project + ` GROUP BY 1
+		) usage(bucket, n)
+		GROUP BY bucket
+		ORDER BY bucket ASC
+	`
+	return q, args
 }
 
 func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, userIdentity string, countsOnly bool, window TimeRange, releases []string) (string, []any, string) {

@@ -3,6 +3,7 @@ package retention_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -62,21 +63,19 @@ func TestWorkerUptimeCancellationResumes(t *testing.T) {
 	require.Equal(t, 7, capCount(t, "uptime_checks"))
 }
 func TestWorkerUptimeBudgetAndDisabled(t *testing.T) {
-	seedUptimeBacklog(t, 205000, 7)
+	seedUptimeBacklog(t, 12000, 7)
 	ctx := context.Background()
 	retention.NewWorker(testPool, 0).RunOnce(ctx)
-	require.Equal(t, 205007, capCount(t, "uptime_checks"))
-	trace := &capTrace{matchSQL: "DELETE FROM uptime_checks"}
-	worker := retention.NewWorker(capPool(t, trace), 90)
-	worker.RunOnce(ctx)
-	require.Len(t, trace.batches, 40)
-	for _, n := range trace.batches {
-		require.EqualValues(t, 5000, n)
-	}
-	require.Equal(t, 5007, capCount(t, "uptime_checks"))
+	require.Equal(t, 12007, capCount(t, "uptime_checks"))
+	clock := newStepClock()
+	trace := &capTrace{matchSQL: "DELETE FROM uptime_checks", afterBatch: func() { clock.Advance(600 * time.Millisecond) }}
+	worker := retention.NewWorker(capPool(t, trace), 90).WithClock(clock.Now, time.Second)
+	require.True(t, worker.RunOnce(ctx))
+	require.Equal(t, []int64{5000, 5000}, trace.batches)
+	require.Equal(t, 2007, capCount(t, "uptime_checks"))
 	var first string
 	require.NoError(t, testPool.QueryRow(ctx, "SELECT id::text FROM uptime_checks ORDER BY checked_at,id LIMIT 1").Scan(&first))
-	require.Equal(t, "00000000-0000-0000-0000-000000030d41", first) // 200001
-	worker.RunOnce(ctx)
+	require.Equal(t, "00000000-0000-0000-0000-000000002711", first) // 10001
+	require.False(t, worker.RunOnce(ctx))
 	require.Equal(t, 7, capCount(t, "uptime_checks"))
 }

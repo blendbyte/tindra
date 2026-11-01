@@ -54,9 +54,9 @@ func writeLogBatch(ctx context.Context, pool batchSender, batch []BufferedLog) e
 	b := &pgx.Batch{}
 	rows := make([][]any, 0, len(batch))
 	for _, l := range batch {
-		rows = append(rows, []any{l.ProjectID, l.Timestamp, l.Level, l.Body, nilStr(l.TraceID), nilStr(l.SpanID), nilStr(l.Environment), nilStr(l.Release), nilJSONDefault(l.Attributes)})
+		rows = append(rows, []any{l.ProjectID, l.Timestamp, l.Level, l.Body, nilStr(l.TraceID), nilStr(l.SpanID), nilStr(l.Environment), nilStr(l.Release), nilJSONDefault(l.Attributes), newRowID()})
 	}
-	queueInserts(b, "INSERT INTO logs (project_id, timestamp, level, body, trace_id, span_id, environment, release, attributes) VALUES ", "", rows, 0)
+	queueInserts(b, "INSERT INTO logs (project_id, timestamp, level, body, trace_id, span_id, environment, release, attributes, id) VALUES ", "", rows, 0)
 	if err := execBatch(ctx, pool, b); err != nil {
 		return err
 	}
