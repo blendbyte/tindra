@@ -15,9 +15,9 @@
     "lint": "oxlint --deny-warnings"
   },
   "dependencies": {
-    "@tanstack/vue-query": "^5.104.4",
-    "@tanstack/vue-virtual": "^3.13.47",
-    "cronstrue": "^3.32.0",
+    "@tanstack/vue-query": "^5.105.0",
+    "@tanstack/vue-virtual": "^3.13.48",
+    "cronstrue": "^3.38.0",
     "pinia": "^4.1.0",
     "shiki": "^4.5.0",
     "vue": "^3.5.44",
@@ -29,12 +29,16 @@
     "@vitejs/plugin-vue": "^6.0.10",
     "@vitest/coverage-v8": "^5.0.5",
     "@vue/test-utils": "^2.5.1",
-    "happy-dom": "^20.14.6",
+    "happy-dom": "^21.0.4",
     "oxlint": "1.87.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vitest": "^5.0.5",
     "vue-tsc": "^3.3.13"
+  },
+  "overrides": {
+    "glob": "^14.0.3",
+    "minimatch": "^11.0.3"
   }
 }
