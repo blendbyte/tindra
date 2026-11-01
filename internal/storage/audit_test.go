@@ -16,6 +16,26 @@ func truncateAuditLog(t *testing.T) {
 	}
 }
 
+// waitAuditRows waits until the audit log holds n rows. WriteAuditLog inserts
+// in a goroutine, and a fixed sleep raced it on busy CI runners.
+func waitAuditRows(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var count int
+		if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM audit_log").Scan(&count); err != nil {
+			t.Fatalf("count audit_log: %v", err)
+		}
+		if count >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("audit log has %d rows after 10s, want %d", count, n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestWriteAuditLog_appearsInList(t *testing.T) {
 	truncateAuditLog(t)
 
@@ -24,8 +44,7 @@ func TestWriteAuditLog_appearsInList(t *testing.T) {
 		IP:        "127.0.0.1",
 	})
 
-	// WriteAuditLog is async; give it a moment to complete.
-	time.Sleep(50 * time.Millisecond)
+	waitAuditRows(t, 1)
 
 	rows, err := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{})
 	if err != nil {
@@ -49,7 +68,7 @@ func TestWriteAuditLog_withDetails(t *testing.T) {
 		EventType: "project.created",
 		Details:   map[string]any{"slug": "my-app"},
 	})
-	time.Sleep(50 * time.Millisecond)
+	waitAuditRows(t, 1)
 
 	rows, err := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{})
 	if err != nil {
@@ -73,15 +92,7 @@ func TestListAuditLog_filterByKind(t *testing.T) {
 	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "auth.login"})
 	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "project.created"})
 
-	// WriteAuditLog is async; poll until both rows land or 2s elapses.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-		all, _ := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{})
-		if len(all) == 2 {
-			break
-		}
-	}
+	waitAuditRows(t, 2)
 
 	rows, err := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{Kind: "auth"})
 	if err != nil {
@@ -106,7 +117,7 @@ func TestListAuditLog_filterBySearch(t *testing.T) {
 	actorID := u.ID
 	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "auth.login", ActorID: &actorID, IP: "10.0.0.1"})
 	storage.WriteAuditLog(testPool, storage.AuditEntry{EventType: "auth.logout", IP: "192.168.1.1"})
-	time.Sleep(50 * time.Millisecond)
+	waitAuditRows(t, 2)
 
 	rows, err := storage.ListAuditLog(context.Background(), testPool, storage.AuditFilter{Search: "audit@example.com"})
 	if err != nil {
