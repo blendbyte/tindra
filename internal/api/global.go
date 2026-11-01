@@ -1173,6 +1173,25 @@ func (ro *router) handleListTransactionSummaries(w http.ResponseWriter, r *http.
 	writeJSON(w, summaries)
 }
 
+// handleGetProjectPerformance returns each project's request volume, latency and
+// failure rate for the window and the window before it, plus their total.
+func (ro *router) handleGetProjectPerformance(w http.ResponseWriter, r *http.Request) {
+	hours := 24
+	if h := r.URL.Query().Get("hours"); h != "" {
+		if n, err := strconv.Atoi(h); err == nil && n >= 1 && n <= 2160 {
+			hours = n
+		}
+	}
+	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	overview, err := storage.GetPerformanceOverview(r.Context(), ro.pool, projectIDs, hours, r.URL.Query().Get("env"), r.URL.Query().Get("user"))
+	if err != nil {
+		slog.Error("get project performance", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, overview)
+}
+
 // handleTransactionTimeseries returns bucketed request counts and latency percentiles.
 func (ro *router) handleTransactionTimeseries(w http.ResponseWriter, r *http.Request) {
 	ro.transactionTimeseries(w, r, false)

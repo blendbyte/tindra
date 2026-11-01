@@ -456,6 +456,9 @@ func transactionTimeseriesQuery(projectIDs []string, hours int, env, name, op, u
 	return q, userQueryArgs(userIdentity, args), bucketSize
 }
 
+// failedTransactionStatuses are the statuses counted as failed requests.
+const failedTransactionStatuses = `'internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded'`
+
 func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, hours int, offsetHours int, env string, name string, op string, release string, userIdentity string) ([]*TransactionSummary, error) {
 	if hours <= 0 || hours > 2160 {
 		hours = 24
@@ -511,7 +514,7 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 					COUNT(CASE WHEN duration_ms > 500 AND duration_ms <= 2000 THEN 1 END)::float8 * 0.5
 				) / NULLIF(COUNT(*), 0),
 			0) AS apdex,
-			COUNT(CASE WHEN status IN ('internal_error', 'unavailable', 'data_loss', 'unknown_error', 'deadline_exceeded') THEN 1 END)::float8 / COUNT(*) AS failure_rate,
+			COUNT(CASE WHEN status IN (`+failedTransactionStatuses+`) THEN 1 END)::float8 / COUNT(*) AS failure_rate,
 			SUM(duration_ms)::bigint AS time_spent_ms
 		FROM transactions
 		`+where+`

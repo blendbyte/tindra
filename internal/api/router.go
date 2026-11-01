@@ -246,6 +246,7 @@ func NewRouter(cfg Config) *Handle {
 		r.Get("/api/projects/metadata", ro.handleListProjectMetadata)
 		r.Get("/api/environments", ro.handleEnvironments)
 		r.Get("/api/projects/stats", ro.handleGetProjectStats)
+		r.Get("/api/projects/performance", ro.handleGetProjectPerformance)
 		r.Get("/api/setup-status", ro.handleSetupProjects)
 		r.With(ro.requirePerm("manage_projects")).Post("/api/projects", ro.handleCreateProject)
 		r.Get("/api/projects/{projectID}/quota", ro.handleGetProjectQuota)

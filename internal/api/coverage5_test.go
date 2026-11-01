@@ -1371,3 +1371,73 @@ func TestGetStats_correctAPIKey(t *testing.T) {
 		t.Errorf("expected 200 for correct API key, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// handleGetProjectPerformance
+// ---------------------------------------------------------------------------
+
+func TestGetProjectPerformance(t *testing.T) {
+	for _, query := range []string{
+		"",
+		"?hours=48",
+		"?hours=0",
+		"?hours=nope",
+		"?env=production",
+		"?user=alice",
+		fmt.Sprintf("?project_id=%s", testProject.ID),
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/projects/performance"+query, nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		globalHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%q: expected 200, got %d: %s", query, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Projects []json.RawMessage `json:"projects"`
+			Total    *struct {
+				Requests int64 `json:"requests"`
+			} `json:"total"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("%q: decode: %v", query, err)
+		}
+		if body.Projects == nil || body.Total == nil {
+			t.Errorf("%q: expected projects and total", query)
+		}
+	}
+}
+
+func TestGetProjectPerformance_requiresAuth(t *testing.T) {
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/projects/performance", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestGetProjectPerformance_bearerTokenStaysInItsProject(t *testing.T) {
+	truncateTokens(t)
+	tok := bearerToken(t, testProject.ID)
+	other, err := storage.CreateProject(context.Background(), testPool, "perf-api-other", "Other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { _, _ = storage.DeleteProjectByID(context.Background(), testPool, other.ID) })
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO transactions (project_id, transaction, op, status, duration_ms, start_timestamp, timestamp)
+		VALUES ($1, '/other', 'http.server', 'ok', 10, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour')`, other.ID); err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/performance?project_id="+other.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	globalHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), other.ID) {
+		t.Errorf("token for one project read another: %s", rec.Body.String())
+	}
+}
