@@ -1,14 +1,18 @@
 .PHONY: run build test test-fast lint migrate migrate-create web db db-stop db-destroy db-logs cli
 
 BINARY  := bin/tindra
-COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
-DEV_COMPOSE := $(COMPOSE) -p tindra-dev -f docker-compose.dev.yml
+# Deferred (=, not :=) so only the db targets ask Docker; every other target,
+# including migrate-create, runs without starting the compose plugin.
+COMPOSE = $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+DEV_COMPOSE = $(COMPOSE) -p tindra-dev -f docker-compose.dev.yml
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # Load .env if it exists; copy .env.example to .env for local dev
 -include .env
 export
+# Exporting would expand the deferred compose command for every recipe line.
+unexport COMPOSE DEV_COMPOSE
 
 run:
 	go run -ldflags="-X main.Version=$(VERSION) -X main.Commit=$(COMMIT)" ./cmd/tindra serve

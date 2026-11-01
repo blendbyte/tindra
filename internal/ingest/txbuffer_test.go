@@ -90,8 +90,7 @@ func TestWriteTxBatch_spansDenormalized(t *testing.T) {
 	defer cancel()
 	go buf.Run(ctx, testPool)
 
-	// Wait long enough for the 200ms ticker to flush.
-	time.Sleep(400 * time.Millisecond)
+	waitPersisted(t, buf.Stats, 1)
 	cancel()
 
 	var projectID, environment, release string
@@ -132,8 +131,8 @@ func TestTransactionBuffer_batchFlushOn100(t *testing.T) {
 	defer cancel()
 	go buf.Run(ctx, testPool)
 
-	// Give the goroutine time to drain the pre-filled buffer.
-	time.Sleep(300 * time.Millisecond)
+	// All 100 must commit; the full batch flushes without waiting for the ticker.
+	waitPersisted(t, buf.Stats, 100)
 	cancel()
 }
 
@@ -204,5 +203,23 @@ func TestWriteTxBatch_persistsUser(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("app_users: got %d, want 1", n)
+	}
+}
+
+// waitPersisted waits until a buffer has committed n items. Persisted only
+// moves after the write commits, so the rows are visible once it returns. A
+// fixed sleep raced the 200ms flush on slow CI runners.
+func waitPersisted(t *testing.T, stats func() ingest.Stats, n uint64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s := stats()
+		if s.Persisted >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("buffer committed %d of %d items: %+v", s.Persisted, n, s)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

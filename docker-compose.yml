@@ -2,6 +2,8 @@ services:
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
+    # Docker's 64 MB default /dev/shm is too small for parallel queries.
+    shm_size: 1g
     environment:
       POSTGRES_DB: tindra
       POSTGRES_USER: tindra

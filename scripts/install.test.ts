@@ -64,12 +64,21 @@ exit 0
 const password = 'correct-horse-battery'
 const account = ['admin@example.com', 'Admin', password, password]
 
+describe('docker-compose.yml', () => {
+  test('gives Postgres the same shared memory as the installer', () => {
+    const repoCompose = readFileSync(new URL('../docker-compose.yml', import.meta.url).pathname, 'utf8')
+    expect(repoCompose).toMatch(/postgres:\n    image: postgres:18-alpine\n(    .*\n)*?    shm_size: 1g\n/)
+  })
+})
+
 describe('install.sh', () => {
   test('behind a local proxy it binds to loopback and keeps secrets private', () => {
     const r = run(dir => [dir, 'https://tindra.example.com', '8080', 'y', ...account, 'y'])
     expect(r.exitCode).toBe(0)
     expect(r.compose()).toContain('- "127.0.0.1:8080:8080"')
     expect(r.compose()).toContain('TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"')
+    // Postgres needs more shared memory than Docker's 64 MB for parallel queries.
+    expect(r.compose()).toMatch(/postgres:\n    image: postgres:18-alpine\n(    .*\n)*?    shm_size: 1g\n/)
     // The compose file holds the database password.
     expect(r.composeMode()).toBe(0o600)
     // The account password goes in on stdin, never as an argument.
