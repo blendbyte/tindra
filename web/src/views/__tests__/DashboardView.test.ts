@@ -405,14 +405,17 @@ describe('DashboardView', () => {
   })
 
   describe('widget layout', () => {
-    it('lets the briefing end the main column and keeps health, then performance, beside it', () => {
+    it('follows the briefing with the week\'s traffic and keeps health, then performance, beside it', () => {
       const wrapper = makeWrapper({
         projects: [{ id: 'p1', name: 'A', slug: 'a' }, { id: 'p2', name: 'B', slug: 'b' }],
       })
       const titles = (column: string) => wrapper.findAll(`${column} .db-sec__title`).map(t => t.text())
-      expect(wrapper.find('.db-main > .brief').exists()).toBe(true)
-      expect(wrapper.findAll('.db-main > *')).toHaveLength(1)
-      expect(titles('.db-aside')).toEqual(['Vitals · 24h', 'Release health', 'Projects', 'Recent alerts', 'Slowest transactions', 'Traffic · last 7 days'])
+      const main = wrapper.findAll('.db-main > *')
+      expect(main).toHaveLength(2)
+      expect(main[0].classes()).toContain('brief')
+      expect(main[1].classes()).toContain('db-tail')
+      expect(titles('.db-tail')).toEqual(['Traffic · last 7 days'])
+      expect(titles('.db-aside')).toEqual(['Vitals · 24h', 'Release health', 'Projects', 'Recent alerts', 'Slowest transactions'])
     })
 
     it('fetches widget data only once the dashboard itself is shown', () => {

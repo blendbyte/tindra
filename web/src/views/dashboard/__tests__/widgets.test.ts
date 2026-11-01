@@ -416,5 +416,6 @@ describe('TransactionDensityWidget', () => {
     expect(wrapper.findAll('.db-heatmap__row')).toHaveLength(7)
     expect(wrapper.findAll('.db-heatmap__row .db-heatmap__cell')).toHaveLength(7 * 24)
     expect(wrapper.find('.db-heatmap__row .db-heatmap__cell').attributes('data-tip')).toMatch(/00:00–01:00 · no events$/)
+    expect(wrapper.findAll('.db-heatmap__tick').map(t => t.text())).toEqual(['00:00', '06:00', '12:00', '18:00'])
   })
 })
