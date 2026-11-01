@@ -5,8 +5,18 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// newRowID returns a time-ordered (v7) primary key. The column defaults are
+// random v4 UUIDs, which scatter inserts over the whole primary-key index; on
+// a large spans table that index no longer fits in memory and every insert
+// reads a page from disk. v7 keys land at the right edge, which stays cached.
+// Generated here rather than with uuidv7() so Postgres before 18 still works.
+func newRowID() string {
+	return uuid.Must(uuid.NewV7()).String()
+}
 
 // queueInserts groups rows into bounded statements so usage triggers aggregate
 // once per flush chunk. All chunks retain SendBatch's transaction semantics.

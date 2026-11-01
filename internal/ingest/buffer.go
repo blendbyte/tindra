@@ -62,9 +62,9 @@ func writeBatch(ctx context.Context, pool batchSender, batch []BufferedEvent) er
 	b := &pgx.Batch{}
 	rows := make([][]any, 0, len(batch))
 	for _, e := range batch {
-		rows = append(rows, []any{e.ProjectID, e.EventID, e.Timestamp, e.Payload, nilStr(e.TraceID), nilStr(e.SpanID)})
+		rows = append(rows, []any{e.ProjectID, e.EventID, e.Timestamp, e.Payload, nilStr(e.TraceID), nilStr(e.SpanID), newRowID()})
 	}
-	queueInserts(b, "INSERT INTO events (project_id, event_id, timestamp, payload, trace_id, span_id) VALUES ", " ON CONFLICT (project_id, event_id) WHERE event_id IS NOT NULL DO NOTHING", rows, 0)
+	queueInserts(b, "INSERT INTO events (project_id, event_id, timestamp, payload, trace_id, span_id, id) VALUES ", " ON CONFLICT (project_id, event_id) WHERE event_id IS NOT NULL DO NOTHING", rows, 0)
 	if err := execBatch(ctx, pool, b); err != nil {
 		return err
 	}
