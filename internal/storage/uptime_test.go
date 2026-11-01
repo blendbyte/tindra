@@ -622,6 +622,43 @@ func TestGetUptimeStats_halfUp(t *testing.T) {
 	}
 }
 
+func TestGetUptimeStats_ignoresChecksOlderThanThirtyDays(t *testing.T) {
+	p := setupProjectForUptime(t)
+	m := seedUptimeMonitor(t, p.ID, "stats-windows", "https://example.com")
+	ctx := context.Background()
+	insert := func(status string, responseMs int, age string) {
+		t.Helper()
+		_, err := testPool.Exec(ctx, `INSERT INTO uptime_checks (monitor_id, status, response_ms, checked_at)
+			VALUES ($1, $2, $3, NOW() - $4::interval)`, m.ID, status, responseMs, age)
+		require.NoError(t, err)
+	}
+	// 24h: 1 of 2 up; 7d: 1 of 4 up; 30d: 5 of 8 up.
+	insert("up", 100, "1 hour")
+	insert("down", 900, "2 hours")
+	insert("down", 900, "2 days")
+	insert("down", 900, "6 days")
+	for _, age := range []string{"8 days", "20 days", "29 days", "29 days 23 hours"} {
+		insert("up", 500, age)
+	}
+	want := storage.UptimeStats{UptimePct24h: 50, UptimePct7d: 25, UptimePct30d: 62.5}
+	check := func() {
+		t.Helper()
+		s, err := storage.GetUptimeStats(ctx, testPool, m.ID)
+		require.NoError(t, err)
+		require.Equal(t, want.UptimePct24h, s.UptimePct24h)
+		require.Equal(t, want.UptimePct7d, s.UptimePct7d)
+		require.Equal(t, want.UptimePct30d, s.UptimePct30d)
+		require.NotNil(t, s.AvgResponseMs)
+		require.Equal(t, 100, *s.AvgResponseMs)
+	}
+	check()
+	for _, age := range []string{"30 days 1 hour", "45 days", "89 days"} {
+		insert("down", 5000, age)
+		insert("up", 5000, age)
+	}
+	check()
+}
+
 // ---------- GetDueUptimeMonitors ----------
 
 func TestGetDueUptimeMonitors_neverChecked(t *testing.T) {
