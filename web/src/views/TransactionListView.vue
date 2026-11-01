@@ -10,6 +10,7 @@ import { investigationQuery } from '@/router/investigation'
 import { useInvestigationStore } from '@/stores/investigation'
 import type { Transaction, TransactionSummary, TxTimeseries, ReleaseMetadata, TransactionListPage } from '@/api/types'
 import { formatDuration, formatRate, formatFraction } from '@/utils/formatters'
+import { spanStatusLabel } from '@/utils/spanStatus'
 import { useFormatters } from '@/composables/useFormatters'
 import FilterChip from '@/components/FilterChip.vue'
 import Icon from '@/components/Icon.vue'
@@ -525,7 +526,7 @@ function apdexClass(score: number): string {
                 <span class="mono" style="color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="t.transaction">{{ t.transaction }}</span>
                 <span class="projtag" :title="projectName(t.project_id)">{{ projectName(t.project_id) }}</span>
                 <span class="tx-num-cell">{{ formatDuration(t.duration_ms) }}</span>
-                <span class="statuspill" :class="t.status === 'ok' ? 'statuspill--resolved' : 'statuspill--open'">{{ t.status }}</span>
+                <span class="statuspill" :class="t.status === 'ok' ? 'statuspill--resolved' : 'statuspill--open'">{{ spanStatusLabel(t.status) }}</span>
               </RouterLink>
             </div>
           </div>

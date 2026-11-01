@@ -1128,13 +1128,20 @@ describe('TransactionDetailView', () => {
       setupMocks()
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       expect(wrapper.find('.tx-status--ok').exists()).toBe(true)
-      expect(wrapper.find('.tx-status--ok').text()).toBe('ok')
+      expect(wrapper.find('.tx-status--ok').text()).toBe('OK')
     })
 
-    it('renders error status badge when tx has error status', () => {
-      setupMocks({ ...baseTx, status: 'error' })
+    // Sentry statuses are snake_case codes; the stat showed "Internal_error".
+    it('renders a failed status as words with the error tone', () => {
+      setupMocks({ ...baseTx, status: 'internal_error' })
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
-      expect(wrapper.find('.tx-status--error').exists()).toBe(true)
+      expect(wrapper.find('.tx-status--error').text()).toBe('Internal error')
+    })
+
+    it('gives a non-failure, non-ok status the warning tone', () => {
+      setupMocks({ ...baseTx, status: 'cancelled' })
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.tx-status--warn').text()).toBe('Cancelled')
     })
   })
 

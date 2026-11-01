@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { ApiError, apiFetch } from '@/api/client'
 import type { Transaction, Span, TraceError, Log, LogListPage, FlameGraph } from '@/api/types'
 import { formatDuration } from '@/utils/formatters'
+import { spanStatusLabel, spanStatusTone } from '@/utils/spanStatus'
 import { useTimezone } from '@/composables/useTimezone'
 import Icon from '@/components/Icon.vue'
 import FlameGraphView from '@/components/FlameGraph.vue'
@@ -730,7 +731,7 @@ function traceErrorOffset(e: TraceError): string {
         </div>
         <div class="stat">
           <div class="stat__label">Status</div>
-          <div class="stat__value stat__value--md"><span class="tx-status" :class="`tx-status--${tx.status}`">{{ tx.status }}</span></div>
+          <div class="stat__value stat__value--md"><span class="tx-status" :class="`tx-status--${spanStatusTone(tx.status)}`">{{ spanStatusLabel(tx.status) }}</span></div>
         </div>
         <div class="stat">
           <div class="stat__label">Started</div>

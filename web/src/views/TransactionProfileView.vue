@@ -8,6 +8,7 @@ import { apiFetch } from '@/api/client'
 import { useInvestigationStore } from '@/stores/investigation'
 import type { TransactionSummary, TxTimeseries, TxListPage } from '@/api/types'
 import { formatDuration, formatRate, formatFraction } from '@/utils/formatters'
+import { spanStatusLabel, spanStatusTone } from '@/utils/spanStatus'
 import { useTimezone } from '@/composables/useTimezone'
 import { WINDOW_MAP } from '@/utils/time'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
@@ -341,7 +342,7 @@ function projectName(projectId: string) {
               />
               <span class="tx-sample-dur__val">{{ formatDuration(s.duration_ms) }}</span>
             </span>
-            <span><span class="tx-status" :class="`tx-status--${s.status}`">{{ s.status }}</span></span>
+            <span><span class="tx-status" :class="`tx-status--${spanStatusTone(s.status)}`">{{ spanStatusLabel(s.status) }}</span></span>
             <span class="tx-sample-row__project" :title="projectName(s.project_id)">{{ projectName(s.project_id) }}</span>
             <span class="tx-sample-row__trace" :title="s.trace_id || s.id">{{ s.trace_id || s.id }}</span>
           </div>

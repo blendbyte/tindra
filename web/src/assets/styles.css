@@ -2839,7 +2839,6 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   gap: 6px;
   color: var(--text-2);
-  text-transform: capitalize;
 }
 .tx-status::before {
   content: '';
@@ -2850,7 +2849,7 @@ a { color: inherit; text-decoration: none; }
 }
 .tx-status--ok::before { background: var(--success); }
 .tx-status--error::before { background: var(--danger); }
-.tx-status--timeout::before { background: var(--warning); }
+.tx-status--warn::before { background: var(--warning); }
 
 .tx-duration {
   font-family: var(--mono);
