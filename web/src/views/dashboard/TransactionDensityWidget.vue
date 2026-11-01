@@ -100,6 +100,10 @@ function cellColor(v: number): string {
           :style="cellColor(cell) ? { background: cellColor(cell) } : undefined"
         />
       </div>
+      <!-- Hour axis under the grid, every six hours. -->
+      <div class="db-heatmap__axis" aria-hidden="true">
+        <span v-for="h in [0, 6, 12, 18]" :key="h" class="db-heatmap__tick" :style="{ left: `${(h / 24) * 100}%` }">{{ String(h).padStart(2, '0') }}:00</span>
+      </div>
       <div class="db-heatmap__foot">
         <span class="db-heatmap__leg-lbl">low</span>
         <div class="db-heatmap__cell db-heatmap__cell--legend" style="background: oklch(from var(--accent) l c h / 0.20)" />
@@ -125,7 +129,7 @@ function cellColor(v: number): string {
 .db-heatmap__row {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   margin-bottom: 2px;
 }
 
@@ -142,7 +146,7 @@ function cellColor(v: number): string {
 .db-heatmap__cell {
   position: relative;
   flex: 1;
-  height: 9px;
+  height: 16px;
   border-radius: 2px;
   background: var(--surface-2);
   min-width: 0;
@@ -170,6 +174,29 @@ function cellColor(v: number): string {
 .db-heatmap__cell--legend {
   flex: none;
   width: 11px;
+  height: 11px;
+}
+
+/* Ticks sit over the cell area: the day labels take the first 28px. */
+.db-heatmap__axis {
+  position: relative;
+  height: 14px;
+  margin: 4px 0 0 28px;
+}
+
+.db-heatmap__tick {
+  position: absolute;
+  top: 0;
+  font-size: 10px;
+  color: var(--text-3);
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 768px) {
+  .db-heatmap { padding: 8px 0 10px; }
+  .db-heatmap__row { gap: 1px; }
+  .db-heatmap__cell { height: 12px; }
 }
 
 .db-heatmap__foot {

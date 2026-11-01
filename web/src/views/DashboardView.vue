@@ -161,9 +161,14 @@ function finishSetup() {
   <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
   <div v-else class="page">
     <div class="db-body">
-      <!-- Main column: the briefing alone, ending on its calm line ────────── -->
+      <!-- Main column: the briefing, then the week's traffic ──────────────── -->
       <div class="db-main">
         <BriefingWidget :loading="loading" :open-count="openCount" :busiest="issues" :last-visit="lastVisit" />
+        <!-- Full width: squeezed into the aside the hourly cells were too small to
+             read, and a calm briefing left the main column nearly empty. -->
+        <div class="db-tail">
+          <TransactionDensityWidget />
+        </div>
       </div>
 
       <!-- Aside column: health, then performance context ────────────────── -->
@@ -173,7 +178,6 @@ function finishSetup() {
         <ProjectsWidget />
         <AlertsWidget />
         <SlowTransactionsWidget :loading="loading" :tx-summaries="txSummaries" />
-        <TransactionDensityWidget />
       </aside>
     </div>
   </div>
@@ -196,6 +200,10 @@ function finishSetup() {
   border-right: 1px solid var(--border-soft);
 }
 
+.db-tail {
+  padding: 8px 16px 40px;
+}
+
 .db-aside {
   min-width: 0;
   padding: 32px 8px 40px;
@@ -208,6 +216,7 @@ function finishSetup() {
 @media (max-width: 768px) {
   .db-body { grid-template-columns: 1fr; }
   .db-main { border-right: none; }
+  .db-tail { padding: 0 0 28px; }
   /* On phones the health summary follows the briefing. */
   .db-aside { padding: 8px 0 28px; border-top: 1px solid var(--border-soft); }
 }
