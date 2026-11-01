@@ -499,3 +499,56 @@ func TestFold_intervalWithASingleThreadSelected(t *testing.T) {
 		t.Errorf("interval = %s, want 20ms", got)
 	}
 }
+
+// The PHP SDK sends no in_app on profile frames, so frames under a dependency
+// directory have to be marked as library code from their path, or the graph's
+// library colour never shows. An explicit SDK answer still wins, and a frame
+// with no telling path stays unknown.
+func TestFold_infersLibraryFramesFromDependencyPaths(t *testing.T) {
+	yes := true
+	no := false
+	p := &ingest.Profile{
+		Frames: []ingest.ProfileFrame{
+			{Function: "main", Filename: "public/index.php", AbsPath: "/var/www/app/public/index.php"},
+			{Function: "Kernel::handle", Filename: "vendor/laravel/framework/src/Kernel.php"},
+			{Function: "Client::get", AbsPath: "/var/www/app/vendor/predis/predis/src/Client.php"},
+			{Function: "render", Filename: "node_modules/vue/dist/vue.mjs"},
+			{Function: "loads", AbsPath: "/usr/lib/python3/dist-packages/json/decoder.py"},
+			{Function: "query", AbsPath: "/srv/.venv/lib/python3.12/site-packages/sqlalchemy/orm.py"},
+			{Function: "Win::run", AbsPath: `C:\app\vendor\acme\lib\Win.php`},
+			{Function: "patched", Filename: "vendor/acme/patched.php", InApp: &yes},
+			{Function: "helper", Filename: "app/helper.py", InApp: &no},
+			{Function: "advendor", Filename: "app/advendor/thing.php"},
+		},
+		Stacks: [][]int32{{1, 0}, {2, 0}, {3, 0}, {4, 0}, {5, 0}, {6, 0}, {7, 0}, {8, 0}, {9, 0}},
+	}
+	for i := range p.Stacks {
+		p.Samples = append(p.Samples, ingest.ProfileSample{ThreadID: "1", StackID: int32(i), TimestampNs: int64(100 * (i + 1))})
+	}
+	g := profiles.Fold([]*ingest.Profile{p}, profiles.FoldOptions{})
+
+	root := child(t, g.Root, "main")
+	if root.InApp != nil {
+		t.Errorf("main: in_app = %v, want unknown", *root.InApp)
+	}
+	want := map[string]*bool{
+		"Kernel::handle": &no,
+		"Client::get":    &no,
+		"render":         &no,
+		"loads":          &no,
+		"query":          &no,
+		"Win::run":       &no,
+		"patched":        &yes,
+		"helper":         &no,
+		"advendor":       nil,
+	}
+	for fn, w := range want {
+		got := child(t, root, fn).InApp
+		switch {
+		case w == nil && got != nil:
+			t.Errorf("%s: in_app = %v, want unknown", fn, *got)
+		case w != nil && (got == nil || *got != *w):
+			t.Errorf("%s: in_app = %v, want %v", fn, got, *w)
+		}
+	}
+}

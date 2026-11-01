@@ -39,6 +39,19 @@ const rects = computed(() =>
     : layoutFlame(props.graph.root)
 )
 
+// The legend only explains the grey of library frames, so it shows when the
+// graph has at least one. Searched over the whole graph rather than the zoomed
+// part, so zooming does not make it come and go.
+const hasLibraryFrames = computed(() => {
+  const stack = [props.graph.root]
+  while (stack.length) {
+    const n = stack.pop()!
+    if (isLibraryFrame(n)) return true
+    if (n.children) stack.push(...n.children)
+  }
+  return false
+})
+
 const rows = computed(() => maxDepth(rects.value) + 1)
 const height = computed(() => Math.max(ROW_HEIGHT, rows.value * (ROW_HEIGHT + ROW_GAP)))
 const matchCount = computed(() => {
@@ -290,7 +303,7 @@ watch(() => props.graph, resetZoom)
         v-tooltip="'Too few samples to measure the sampling period, so durations are not shown'"
       >no timings</span>
 
-      <span class="flame__legend">
+      <span v-if="hasLibraryFrames" class="flame__legend">
         <span class="flame__swatch flame__swatch--app" />app
         <span class="flame__swatch flame__swatch--lib" />library
       </span>
@@ -470,7 +483,16 @@ watch(() => props.graph, resetZoom)
   display: inline-block;
 }
 
-.flame__swatch--app { background: oklch(var(--flame-l) var(--flame-c) 285); }
+/* Application frames take a hue per module, so their swatch shows several. */
+.flame__swatch--app {
+  width: 14px;
+  background: linear-gradient(
+    90deg,
+    oklch(var(--flame-l) var(--flame-c) 285) 0 33%,
+    oklch(var(--flame-l) var(--flame-c) 155) 0 66%,
+    oklch(var(--flame-l) var(--flame-c) 60) 0
+  );
+}
 .flame__swatch--lib { background: var(--flame-muted); }
 .flame__swatch--lib + * { margin-left: 0; }
 

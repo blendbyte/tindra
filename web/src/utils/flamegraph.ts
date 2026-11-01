@@ -110,6 +110,8 @@ export function frameHue(node: FlameNode): number {
  *
  * Only an explicit false counts. Some SDKs, the PHP one among them, never send
  * the field at all, and treating absent as false would grey out a whole graph.
+ * The server fills it in from the path for frames under a dependency directory
+ * (vendor/, node_modules/, site-packages/), so those still read as library.
  */
 export function isLibraryFrame(node: FlameNode): boolean {
   return node.in_app === false

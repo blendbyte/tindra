@@ -163,11 +163,41 @@ func childFor(index map[*FlameNode]map[string]*FlameNode, node *FlameNode, f ing
 		Module:   f.Module,
 		Filename: f.Filename,
 		Lineno:   f.Lineno,
-		InApp:    f.InApp,
+		InApp:    inApp(f),
 	}
 	kids[key] = child
 	node.Children = append(node.Children, child)
 	return child
+}
+
+// dependencyDirs are the directories package managers install third-party code
+// into: Composer, npm and pip.
+var dependencyDirs = []string{"/vendor/", "/node_modules/", "/site-packages/", "/dist-packages/"}
+
+// inApp reports whether a frame is the application's own code.
+//
+// An SDK's answer always wins. The PHP SDK never sends one for profiles, so
+// without a fallback every Laravel frame drew as application code and the
+// graph's "library" colour never appeared. A frame whose path runs through a
+// dependency directory is library code; anything else stays unknown rather
+// than guessed as application code.
+func inApp(f ingest.ProfileFrame) *bool {
+	if f.InApp != nil {
+		return f.InApp
+	}
+	for _, path := range []string{f.AbsPath, f.Filename} {
+		if path == "" {
+			continue
+		}
+		p := "/" + strings.ReplaceAll(path, "\\", "/")
+		for _, dir := range dependencyDirs {
+			if strings.Contains(p, dir) {
+				no := false
+				return &no
+			}
+		}
+	}
+	return nil
 }
 
 func frameKey(f ingest.ProfileFrame) string {

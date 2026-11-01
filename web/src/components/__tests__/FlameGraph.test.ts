@@ -146,10 +146,22 @@ describe('FlameGraph', () => {
       expect((await mountSized(graph({ sample_interval_ns: 0 }))).text()).toContain('no timings')
     })
 
-    it('has a search box and a legend', async () => {
+    it('has a search box', async () => {
       const w = await mountSized()
       expect(w.find('.flame__input').attributes('aria-label')).toBe('Find a frame')
-      expect(w.find('.flame__legend').text()).toContain('library')
+    })
+
+    // The legend explains the grey of library frames. With none in the graph
+    // it named a colour that appeared nowhere, as on every PHP profile.
+    it('shows the legend only when the graph has library frames', async () => {
+      expect((await mountSized()).find('.flame__legend').exists()).toBe(false)
+
+      const nested = graph()
+      nested.root.children![0]!.children![0]!.in_app = false
+      const legend = (await mountSized(nested)).find('.flame__legend')
+      expect(legend.exists()).toBe(true)
+      expect(legend.text()).toContain('app')
+      expect(legend.text()).toContain('library')
     })
   })
 
