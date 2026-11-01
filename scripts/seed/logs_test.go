@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -16,13 +17,13 @@ func TestLogBodiesResolveEveryPlaceholder(t *testing.T) {
 	for level, templates := range logMessages {
 		for _, tmpl := range templates {
 			for _, name := range regexp.MustCompile(`\{([a-z_]+)\}`).FindAllStringSubmatch(tmpl, -1) {
-				require.NotEqual(t, name[1], logPlaceholder(name[1]), "%s template %q has unknown placeholder %s", level, tmpl, name[0])
+				require.NotEqual(t, name[1], logPlaceholder(name[1], seedUsers[0]), "%s template %q has unknown placeholder %s", level, tmpl, name[0])
 			}
 		}
 	}
 	for range 500 {
 		for level := range logMessages {
-			body := logBody(level)
+			body := logBody(level, randomChoice(seedUsers))
 			require.NotRegexp(t, `%[sd%]`, body)
 			require.NotRegexp(t, `\{(?:user|email|order|ms|ms_slow|pct|sku|job|api|carrier|table)\}`, body)
 			if m := regexp.MustCompile(`disk usage at (\d+)%`).FindStringSubmatch(body); m != nil {
@@ -54,4 +55,21 @@ func TestServerBaseAcceptsURLsAndDSNs(t *testing.T) {
 	require.Equal(t, "https://tindra.example.com", base)
 	_, err = serverBase("localhost")
 	require.Error(t, err)
+}
+
+// A log line that names a customer has to belong to that customer: filtering
+// the Logs page to Jane Doe showed "failed to send order confirmation to
+// tobias.w@example.com" because the message and the user attributes were
+// drawn separately.
+func TestLogRecordNamesOnlyItsOwnUser(t *testing.T) {
+	for range 2000 {
+		rec := buildLogRecord("error", time.Now(), []string{"1.0.0"}, []string{"production"})
+		body := rec["body"].(string)
+		attrs := rec["attributes"].(map[string]any)
+		for _, u := range seedUsers {
+			if u.email != "" && strings.Contains(body, u.email) {
+				require.Equal(t, u.email, attrs["user.email"], body)
+			}
+		}
+	}
 }

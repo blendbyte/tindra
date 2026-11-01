@@ -3324,8 +3324,11 @@ var logCarriers = []string{"DHL", "UPS", "FedEx"}
 var logSKUs = []string{"TR-GTX-42", "PK-38L-OLV", "JK-RAIN-M", "SB-DOWN-L", "HL-USB-400"}
 
 // logPlaceholder resolves one named placeholder to a value of its kind.
-func logPlaceholder(name string) string {
-	user := randomChoice(seedUsers)
+// logPlaceholder fills one template slot. {user} and {email} name the log's
+// own user, so a line about one customer never carries another customer's
+// attributes, which the Logs page's user filter would then show under the
+// wrong person.
+func logPlaceholder(name string, user seedUser) string {
 	n := func(lo, hi int) string { return strconv.Itoa(lo + rand.Intn(hi-lo+1)) } //nolint:gosec
 	switch name {
 	case "user":
@@ -3337,7 +3340,7 @@ func logPlaceholder(name string) string {
 		if user.email != "" {
 			return user.email
 		}
-		return "jane.doe@example.com"
+		return "customer@example.com"
 	case "route":
 		return randomChoice(logRoutes)
 	case "table":
@@ -3384,7 +3387,7 @@ func logPlaceholder(name string) string {
 	return name
 }
 
-func logBody(level string) string {
+func logBody(level string, user seedUser) string {
 	msgs := logMessages[level]
 	if len(msgs) == 0 {
 		return "log entry"
@@ -3399,7 +3402,7 @@ func logBody(level string) string {
 			return b.String()
 		}
 		b.WriteString(tmpl[:start])
-		b.WriteString(logPlaceholder(tmpl[start+1 : end]))
+		b.WriteString(logPlaceholder(tmpl[start+1:end], user))
 		tmpl = tmpl[end+1:]
 	}
 }
@@ -3412,7 +3415,8 @@ func buildLogRecord(level string, ts time.Time, releases, environments []string)
 		"sentry.environment": env,
 		"sentry.release":     release,
 	}
-	for k, v := range sentryUserAttrs(randomChoice(seedUsers)) {
+	user := randomChoice(seedUsers)
+	for k, v := range sentryUserAttrs(user) {
 		attrs[k] = v
 	}
 
@@ -3433,7 +3437,7 @@ func buildLogRecord(level string, ts time.Time, releases, environments []string)
 	rec := map[string]any{
 		"timestamp":  float64(ts.UnixNano()) / 1e9,
 		"level":      level,
-		"body":       logBody(level),
+		"body":       logBody(level, user),
 		"attributes": attrs,
 	}
 
