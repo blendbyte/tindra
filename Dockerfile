@@ -1,7 +1,7 @@
 # Stage 1: Build frontend (runs on build host for speed)
 # Base images are pinned by digest; Renovate updates tag and digest together.
 # Keep the Bun version in step with packageManager in web/package.json.
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS web-builder
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS web-builder
 WORKDIR /web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
@@ -12,7 +12,7 @@ COPY web/ ./
 RUN bunx vite build
 
 # Stage 2: Compile Go binary (cross-compile on build host)
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -29,7 +29,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
 RUN mkdir -p /data/sourcemaps
 
 # Stage 3: Minimal runtime image
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 COPY --from=builder /tindra /tindra
 COPY --from=builder --chown=65532:65532 /data/ /data/
 EXPOSE 8080
