@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,6 +32,12 @@ type SpanTimeseries struct {
 	BucketSize string       `json:"bucket_size"`
 }
 
+// Each span page (database, cache, jobs) aggregates one category of ops, and
+// each category has its own partial index (spans_db_start, spans_cache_start,
+// spans_job_start; migration 0037) holding only those spans. A query can use
+// one only if it implies the index predicate, so these filters must match the
+// migration text arm for arm; a different spelling (ILIKE, a bind parameter)
+// cannot be proven and falls back to reading every span.
 func spanOpFilter(category string) string {
 	switch category {
 	case "db":
@@ -40,7 +47,36 @@ func spanOpFilter(category string) string {
 	case "job":
 		return "(s.op LIKE 'task%' OR s.op LIKE 'queue%' OR s.op LIKE 'celery%' OR s.op LIKE 'job%')"
 	}
-	return "TRUE"
+	// Every caller passes one of the categories above. Anything else matches
+	// nothing rather than scanning all spans without an index.
+	return "FALSE"
+}
+
+// spanCategory returns the span page category of op, or "" when no page
+// shows it. Prefixes match the LIKE filters above (both case sensitive).
+func spanCategory(op string) string {
+	switch {
+	case strings.HasPrefix(op, "db"):
+		return "db"
+	case strings.HasPrefix(op, "cache"):
+		return "cache"
+	case strings.HasPrefix(op, "task"), strings.HasPrefix(op, "queue"),
+		strings.HasPrefix(op, "celery"), strings.HasPrefix(op, "job"):
+		return "job"
+	}
+	return ""
+}
+
+// spanProjectScope adds the project condition. Without a project filter it
+// lists every project, so the leading project_id column of the category
+// indexes is one index range per project on any Postgres version; before 18
+// there is no skip scan, and the whole index would be read.
+func spanProjectScope(args []any, projectIDs []string) ([]any, string) {
+	if len(projectIDs) > 0 {
+		args = append(args, projectIDs)
+		return args, fmt.Sprintf(" AND s.project_id = ANY($%d::uuid[])", len(args))
+	}
+	return args, " AND s.project_id = ANY(ARRAY(SELECT id FROM projects))"
 }
 
 func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, projectIDs []string, hours int, env, release string, userIdentity ...string) ([]*SpanSummary, error) {
@@ -51,10 +87,8 @@ func GetSpanSummaries(ctx context.Context, pool *pgxpool.Pool, category string, 
 	window := ResolveTimeRange(ctx, hours, 0)
 	args := []any{window.From, window.To}
 	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= $1 AND s.start_timestamp < $2`, spanOpFilter(category))
-	if len(projectIDs) > 0 {
-		args = append(args, projectIDs)
-		where += " AND s.project_id = ANY($3::uuid[])"
-	}
+	args, scope := spanProjectScope(args, projectIDs)
+	where += scope
 
 	if env != "" {
 		args = append(args, env)
@@ -152,10 +186,8 @@ func GetSpanTimeseries(ctx context.Context, pool *pgxpool.Pool, category string,
 	window := ResolveTimeRange(ctx, hours, 0)
 	args := []any{window.From, window.To}
 	where := fmt.Sprintf(`WHERE %s AND s.start_timestamp >= $1 AND s.start_timestamp < $2`, spanOpFilter(category))
-	if len(projectIDs) > 0 {
-		args = append(args, projectIDs)
-		where += " AND s.project_id = ANY($3::uuid[])"
-	}
+	args, scope := spanProjectScope(args, projectIDs)
+	where += scope
 
 	if env != "" {
 		args = append(args, env)
@@ -213,17 +245,20 @@ func GetSpanSamples(ctx context.Context, pool *pgxpool.Pool, op, description str
 	if hours <= 0 || hours > 2160 {
 		hours = 24
 	}
-	if projectIDs == nil {
-		projectIDs = []string{}
-	}
-
 	window := ResolveTimeRange(ctx, hours, 0)
-	args := []any{window.From, projectIDs, op, description, window.To}
+	args := []any{window.From, window.To, op, description}
 	where := `
 		WHERE s.op = $3
 		  AND COALESCE(s.description, '') = $4
-		  AND s.start_timestamp >= $1 AND s.start_timestamp < $5
-		  AND (CARDINALITY($2::uuid[]) = 0 OR s.project_id = ANY($2::uuid[]))`
+		  AND s.start_timestamp >= $1 AND s.start_timestamp < $2`
+	// Samples open from a span page row. Adding that page's filter lets the
+	// planner use its category index; s.op = $3 alone can't prove it. Other
+	// ops still work, without an index.
+	if category := spanCategory(op); category != "" {
+		where += " AND " + spanOpFilter(category)
+	}
+	args, scope := spanProjectScope(args, projectIDs)
+	where += scope
 
 	if env != "" {
 		args = append(args, env)
