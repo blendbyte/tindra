@@ -1,45 +1,33 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useInvestigationStore } from '@/stores/investigation'
-import { formatDuration, formatPct } from '@/utils/formatters'
+import { formatDuration, formatFraction } from '@/utils/formatters'
 import Icon from '@/components/Icon.vue'
-import type { TransactionSummary } from '@/api/types'
+import { apdexTone, enoughSamples, errorTone, failureRose, p95Rose, p95Tone, type PerformanceOverview, type Tone } from './overview'
 import { fmt, useWindowLabel } from './shared'
 
 const props = defineProps<{
   loading: boolean
-  txSummaries?: TransactionSummary[]
+  overview?: PerformanceOverview
 }>()
 
 const investigation = useInvestigationStore()
 const windowLabel = useWindowLabel()
 
-// Every figure is weighted by sample count, so busy endpoints count for more.
-function weighted(pick: (t: TransactionSummary) => number): number | null {
-  const s = props.txSummaries
-  if (!s?.length) return null
-  const total = s.reduce((acc, t) => acc + t.sample_count, 0)
-  if (!total) return null
-  return s.reduce((acc, t) => acc + pick(t) * t.sample_count, 0) / total
-}
+const total = computed(() => props.overview?.total)
+// Without requests there is no rate or latency to report.
+const measured = computed(() => total.value && total.value.requests > 0 ? total.value : null)
+const tone = (t: Tone): Tone => measured.value && enoughSamples(measured.value) ? t : ''
 
-// failure_rate is a fraction; the widget speaks in percent.
-const errorRate = computed(() => { const r = weighted(t => t.failure_rate); return r === null ? null : r * 100 })
-const p95 = computed(() => weighted(t => t.p95))
-const apdex = computed(() => weighted(t => t.apdex))
-const transactions = computed(() => props.txSummaries?.reduce((total, row) => total + row.sample_count, 0) ?? null)
-
-type Tone = 'danger' | 'warning' | ''
-const errorTone = computed((): Tone => errorRate.value === null ? '' : errorRate.value > 5 ? 'danger' : errorRate.value > 2 ? 'warning' : '')
-const p95Tone = computed((): Tone => p95.value === null ? '' : p95.value > 2000 ? 'danger' : p95.value > 1000 ? 'warning' : '')
-const apdexTone = computed((): Tone => apdex.value === null ? '' : apdex.value < 0.7 ? 'danger' : apdex.value < 0.94 ? 'warning' : '')
-
-const vitals = computed(() => [
-  { key: 'error-rate', label: 'error rate', value: errorRate.value === null ? null : formatPct(errorRate.value), tone: errorTone.value },
-  { key: 'p95', label: 'p95 latency', value: p95.value === null ? null : formatDuration(p95.value), tone: p95Tone.value },
-  { key: 'transactions', label: 'transactions', value: transactions.value === null ? null : fmt(transactions.value), tone: '' as Tone },
-  { key: 'apdex', label: 'apdex · T=500ms', value: apdex.value === null ? null : apdex.value.toFixed(2), tone: apdexTone.value },
-])
+const vitals = computed(() => {
+  const m = measured.value
+  return [
+    { key: 'error-rate', label: 'error rate', value: m && formatFraction(m.failure_rate), tone: m ? tone(errorTone(m.failure_rate)) : '', rose: !!m && failureRose(m), was: m && formatFraction(m.prev_failure_rate) },
+    { key: 'p95', label: 'p95 latency', value: m && formatDuration(m.p95), tone: m ? tone(p95Tone(m.p95)) : '', rose: !!m && p95Rose(m), was: m && formatDuration(m.prev_p95) },
+    { key: 'transactions', label: 'transactions', value: total.value ? fmt(total.value.requests) : null, tone: '', rose: false, was: null },
+    { key: 'apdex', label: 'apdex · T=500ms', value: m && m.apdex.toFixed(2), tone: m ? tone(apdexTone(m.apdex)) : '', rose: false, was: null },
+  ]
+})
 </script>
 
 <template>
@@ -53,7 +41,12 @@ const vitals = computed(() => [
         <dt class="vitals__label">{{ vital.label }}</dt>
         <dd class="vitals__value">
           <span v-if="loading" class="skel" style="display: inline-block; width: 56px; height: 22px" />
-          <span v-else-if="vital.value !== null" :class="vital.tone && `vitals__value--${vital.tone}`">{{ vital.value }}</span>
+          <template v-else-if="vital.value !== null">
+            <span :class="vital.tone && `vitals__value--${vital.tone}`">{{ vital.value }}</span>
+            <span v-if="vital.rose" class="vitals__rose" :title="`Up from ${vital.was} in the previous ${windowLabel}`">
+              <Icon name="arrow-up" :size="11" /><span class="sr-only">Up from {{ vital.was }} in the previous {{ windowLabel }}</span>
+            </span>
+          </template>
           <span v-else class="vitals__value--muted">–</span>
         </dd>
       </div>
@@ -98,6 +91,8 @@ const vitals = computed(() => [
   color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
+
+.vitals__rose { display: inline-flex; margin-left: 4px; vertical-align: 2px; color: var(--text-3); }
 
 .vitals__value--danger { color: var(--danger); }
 .vitals__value--warning { color: var(--warning); }

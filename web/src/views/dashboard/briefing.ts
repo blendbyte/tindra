@@ -37,6 +37,14 @@ export type BrokenMonitor =
   | { kind: 'uptime'; monitor: UptimeMonitor; since: string | null; history: CheckState[] }
   | { kind: 'cron'; monitor: CronMonitor; since: string | null; history: CheckState[] }
 
+export function uptimeHistory(m: UptimeMonitor): CheckState[] {
+  return (m.recent_checks ?? []).map(c => (c.status === 'up' ? 'ok' : 'bad'))
+}
+
+export function cronHistory(m: CronMonitor): CheckState[] {
+  return (m.recent_checkins ?? []).map(c => (c.status === 'ok' ? 'ok' : c.status === 'error' ? 'bad' : 'pending'))
+}
+
 // Active monitors that are failing now: uptime first, then cron, longest
 // outage first within each kind. Paused monitors never count as broken.
 // Inputs that are not lists (an error body, a stale cache entry) count as empty.
@@ -51,7 +59,7 @@ export function brokenMonitors(uptimeInput: UptimeMonitor[] = [], cronInput: Cro
       kind: 'uptime' as const,
       monitor: m,
       since: uptimeSince(m),
-      history: (m.recent_checks ?? []).map(c => (c.status === 'up' ? 'ok' : 'bad') as CheckState),
+      history: uptimeHistory(m),
     }))
     .sort(byOnset)
   const failing: BrokenMonitor[] = cron
@@ -60,17 +68,30 @@ export function brokenMonitors(uptimeInput: UptimeMonitor[] = [], cronInput: Cro
       kind: 'cron' as const,
       monitor: m,
       since: cronSince(m),
-      history: (m.recent_checkins ?? []).map(c => (c.status === 'ok' ? 'ok' : c.status === 'error' ? 'bad' : 'pending') as CheckState),
+      history: cronHistory(m),
     }))
     .sort(byOnset)
   return [...down, ...failing]
 }
 
-export function healthyMonitorCount(uptimeInput: UptimeMonitor[] = [], cronInput: CronMonitor[] = []): number {
+function healthyMonitors(uptimeInput: UptimeMonitor[], cronInput: CronMonitor[]): (UptimeMonitor | CronMonitor)[] {
   const uptime = Array.isArray(uptimeInput) ? uptimeInput : []
   const cron = Array.isArray(cronInput) ? cronInput : []
-  return uptime.filter(m => m.status === 'active' && m.state === 'up').length +
-    cron.filter(m => m.status === 'active' && (m.state === 'ok' || m.state === 'in_progress') && !cronUnchecked(m)).length
+  return [
+    ...uptime.filter(m => m.status === 'active' && m.state === 'up'),
+    ...cron.filter(m => m.status === 'active' && (m.state === 'ok' || m.state === 'in_progress') && !cronUnchecked(m)),
+  ]
+}
+
+export function healthyMonitorCount(uptimeInput: UptimeMonitor[] = [], cronInput: CronMonitor[] = []): number {
+  return healthyMonitors(uptimeInput, cronInput).length
+}
+
+// Healthy monitors per project.
+export function healthyMonitorCounts(uptimeInput: UptimeMonitor[] = [], cronInput: CronMonitor[] = []): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const m of healthyMonitors(uptimeInput, cronInput)) counts.set(m.project_id, (counts.get(m.project_id) ?? 0) + 1)
+  return counts
 }
 
 export function brokenTitle(b: BrokenMonitor): string {

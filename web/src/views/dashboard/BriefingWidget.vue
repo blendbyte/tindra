@@ -6,7 +6,9 @@ import { useFormatters } from '@/composables/useFormatters'
 import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import QueryFeedback from '@/components/QueryFeedback.vue'
-import { fmt, useWindowLabel, type DashboardIssue } from './shared'
+import CheckHistory from './CheckHistory.vue'
+import { useWindowLabel } from './shared'
+import { degradedVitals, type PerformanceOverview } from './overview'
 import { plural } from '@/utils/plural'
 import { useNow } from '@/composables/useNow'
 import { useAttentionQuery, useMonitorQueries } from '@/composables/useBriefingData'
@@ -19,8 +21,8 @@ import {
 const props = defineProps<{
   loading: boolean
   openCount: number
-  busiest: DashboardIssue[]
   lastVisit: number | null
+  overview?: PerformanceOverview
 }>()
 
 const investigation = useInvestigationStore()
@@ -74,11 +76,10 @@ function retryMonitors() {
   cron.refetch()
 }
 
-// Busiest open issues not already listed above, so each issue appears once.
-const busiestRest = computed(() => {
-  const shown = new Set([...regressed.value, ...fresh.value].map(i => i.id))
-  return props.busiest.filter(i => !shown.has(i.id)).sort((a, b) => b.event_count - a.event_count).slice(0, 5)
-})
+// Nothing failing and nothing new, yet requests can still be failing or slow:
+// that is not "all clear", so the verdict names what is out of range.
+const outOfRange = computed(() => degradedVitals(props.overview?.total))
+const degraded = computed(() => v.value.clear ? outOfRange.value : [])
 
 const lede = computed(() => {
   if (props.lastVisit === null || issuesUnknown.value) return ''
@@ -123,11 +124,6 @@ function issueMeta(issue: AttentionIssue): string[] {
   ].filter((p): p is string => !!p)
 }
 
-function historySlots(history: BrokenMonitor['history']) {
-  const recent = history.slice(-20)
-  return [...Array(20 - recent.length).fill('empty'), ...recent] as string[]
-}
-
 const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime' ? '/monitors/uptime' : '/monitors/cron')
 </script>
 
@@ -138,20 +134,27 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
         <span class="skel" style="width: 62%; height: 30px" />
         <span class="skel" style="width: 44%; height: 14px" />
       </div>
-      <template v-else>
-        <h1 id="brief-verdict" class="brief__verdict">
-          <template v-if="v.clear">
-            <Icon name="check-circle" :size="26" class="brief__clear-icon" />
+      <div v-else-if="v.clear" class="brief__calm-head">
+        <h1 id="brief-verdict" class="brief__verdict brief__verdict--calm">
+          <template v-if="degraded.length">Nothing is broken.</template>
+          <template v-else>
+            <Icon name="check-circle" :size="20" class="brief__clear-icon" />
             All clear.
           </template>
-          <template v-else>
-            <span v-if="v.broken" class="brief__verdict-broken">{{ v.broken }}</span>{{ v.broken && v.changed ? ' ' : '' }}<span v-if="v.changed" class="brief__verdict-changed">{{ v.changed }}</span>
-          </template>
         </h1>
-        <p v-if="v.clear" class="brief__lede">
+        <p class="brief__lede">
           No monitors failing and no new or regressed issues {{ windowPhrase }}.
+          <span v-if="degraded.length" class="brief__lede-line">
+            Outside the healthy range:
+            <template v-for="(d, i) in degraded" :key="d.key">{{ i ? ', ' : '' }}{{ d.label }} <span class="brief__degraded" :class="`brief__degraded--${d.tone}`">{{ d.value }}</span></template>.
+          </span>
         </p>
-        <p v-else-if="lede" class="brief__lede">{{ lede }}</p>
+      </div>
+      <template v-else>
+        <h1 id="brief-verdict" class="brief__verdict">
+          <span v-if="v.broken" class="brief__verdict-broken">{{ v.broken }}</span>{{ v.broken && v.changed ? ' ' : '' }}<span v-if="v.changed" class="brief__verdict-changed">{{ v.changed }}</span>
+        </h1>
+        <p v-if="lede" class="brief__lede">{{ lede }}</p>
       </template>
     </header>
 
@@ -186,9 +189,7 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
               </span>
               <span class="brief-row__meta">{{ brokenMeta(b).join(' · ') }}</span>
             </span>
-            <span class="brief-row__viz brief-history" role="img" :aria-label="`Last ${b.history.length} checks`">
-              <i v-for="(s, i) in historySlots(b.history)" :key="i" :class="`brief-history__tick--${s}`" />
-            </span>
+            <span class="brief-row__viz"><CheckHistory :history="b.history" /></span>
             <span class="brief-row__age brief-row__age--danger" :title="b.since ? `Failing since ${new Date(b.since).toLocaleString()}` : undefined">
               {{ formatSpan(b.since, now) }}
             </span>
@@ -246,44 +247,27 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
       </div>
     </section>
 
-    <!-- Busiest ongoing ────────────────────────────────────────────────────── -->
-    <section v-if="!loading && busiestRest.length" class="brief__group brief__group--quiet" aria-labelledby="brief-busiest">
-      <h2 id="brief-busiest" class="brief__group-title">Busiest open issues</h2>
-      <ul class="brief__rows">
-        <li v-for="issue in busiestRest" :key="issue.id">
-          <RouterLink :to="investigation.link(`/issues/${issue.id}`)" class="brief-row brief-row--quiet">
-            <span :class="`leveldot leveldot--${issue.level}`" />
-            <span class="brief-row__main">
-              <span class="brief-row__title">
-                <span v-if="splitTitle(issue.title).type" class="brief-row__type mono">{{ splitTitle(issue.title).type }}</span><template v-if="splitTitle(issue.title).type">: </template>{{ splitTitle(issue.title).message }}
-              </span>
-            </span>
-            <span class="brief-row__viz">
-              <Sparkline v-if="issue.sparkline?.length" :data="issue.sparkline" :width="132" :height="16" color="var(--text-3)" />
-            </span>
-            <span class="brief-row__age mono">{{ fmt(issue.event_count) }}</span>
-          </RouterLink>
-        </li>
-      </ul>
-    </section>
-
-    <p v-if="!briefingLoading && !loading" class="brief__calm">
-      <template v-if="v.clear">{{ plural(openCount, 'open issue', 'open issues') }}<template v-if="healthy">, {{ plural(healthy, 'monitor', 'monitors') }} healthy</template>.</template>
-      <template v-else>Everything else is steady: {{ plural(openCount, 'open issue', 'open issues') }} in total<template v-if="healthy">, {{ plural(healthy, 'monitor', 'monitors') }} healthy</template>.</template>
+    <p v-if="!v.clear && !briefingLoading && !loading" class="brief__calm">
+      <template v-if="!outOfRange.length">Everything else is steady: </template>{{ plural(openCount, 'open issue', 'open issues') }} in total<template v-if="healthy">, {{ plural(healthy, 'monitor', 'monitors') }} healthy</template>.
       <RouterLink :to="investigation.link('/issues')" class="brief__calm-link">All issues <Icon name="arrow-right" :size="12" /></RouterLink>
     </p>
   </section>
 </template>
 
 <style scoped>
-.brief {
-  padding: 28px 32px 36px;
-  min-width: 0;
-}
+.brief { min-width: 0; }
 
 /* ── Verdict ────────────────────────────────────────────────────────────────── */
 
-.brief__head { max-width: 62rem; }
+.brief__head { max-width: 62rem; padding-inline: 16px; }
+
+/* Nothing to report takes one line, so the overview starts right below it. */
+.brief__calm-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+}
 
 .brief__verdict {
   margin: 0;
@@ -295,9 +279,15 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   text-wrap: balance;
 }
 
+.brief__verdict--calm {
+  flex: none;
+  font-size: var(--text-xl);
+  letter-spacing: -0.02em;
+}
+
 .brief__verdict-broken { color: var(--danger); }
 .brief__verdict-changed { color: var(--text-1); }
-.brief__clear-icon { color: var(--success); vertical-align: -3px; margin-right: 4px; }
+.brief__clear-icon { display: inline-block; vertical-align: -3px; margin-right: 6px; color: var(--success); }
 
 .brief__lede {
   margin: 8px 0 0;
@@ -307,6 +297,12 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   max-width: 70ch;
 }
 
+.brief__calm-head .brief__lede { margin: 0; flex: 1 1 28rem; }
+.brief__lede-line { display: block; }
+.brief__degraded { font-family: var(--mono); font-size: 0.93em; font-weight: 500; font-variant-numeric: tabular-nums; }
+.brief__degraded--danger { color: var(--danger); }
+.brief__degraded--warning { color: var(--warning); }
+
 .brief__verdict-skel { display: flex; flex-direction: column; gap: 12px; }
 
 .brief :deep(.query-feedback) { margin: 20px 0 0; }
@@ -314,11 +310,10 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
 /* ── Groups ─────────────────────────────────────────────────────────────────── */
 
 .brief__group { margin-top: 32px; }
-.brief__group + .brief__group--quiet { margin-top: 40px; }
 
 .brief__group-title {
-  margin: 0 -12px;
-  padding: 0 12px 10px;
+  margin: 0;
+  padding: 0 16px 10px;
   border-bottom: 1px solid var(--border);
   font-size: var(--text-sm);
   font-weight: 600;
@@ -327,8 +322,6 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   align-items: baseline;
   gap: 8px;
 }
-
-.brief__group--quiet .brief__group-title { color: var(--text-2); }
 
 .brief__count {
   font-family: var(--mono);
@@ -347,8 +340,7 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   grid-template-columns: 88px minmax(0, 1fr) 132px 72px;
   align-items: center;
   gap: 16px;
-  padding: 13px 12px;
-  margin: 0 -12px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--border-soft);
   color: inherit;
   text-decoration: none;
@@ -362,16 +354,7 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
    and weight; new and regressed issues step down from them. */
 .brief__group--broken .brief-row { padding-block: 16px; }
 .brief__group--broken .brief-row__title { font-size: var(--text-lg); font-weight: 600; text-wrap: pretty; }
-.brief__group--broken .brief-history { height: 22px; }
-
-.brief-row--quiet {
-  grid-template-columns: 88px minmax(0, 1fr) 132px 72px;
-  padding-block: 10px;
-}
-
-/* The dot starts where the chips' text starts above it, so the label column
-   keeps one left edge down the page. */
-.brief-row--quiet .leveldot { justify-self: start; margin-left: 7px; }
+.brief__group--broken .brief-row__viz :deep(.check-history) { height: 22px; }
 
 .brief-chip {
   justify-self: start;
@@ -400,8 +383,6 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   text-overflow: ellipsis;
 }
 
-.brief-row--quiet .brief-row__title { font-size: var(--text-sm); font-weight: 400; color: var(--text-2); }
-
 .brief-row__type { color: var(--accent); font-size: 0.93em; }
 
 .brief-row__new {
@@ -425,12 +406,6 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
 
 .brief-row__viz { display: flex; align-items: center; justify-content: flex-start; }
 
-.brief-history { gap: 2px; height: 18px; }
-.brief-history i { flex: 1; height: 100%; border-radius: 1px; background: var(--border-soft); }
-.brief-history .brief-history__tick--ok { background: oklch(from var(--success) l c h / 0.55); }
-.brief-history .brief-history__tick--bad { background: var(--danger); }
-.brief-history .brief-history__tick--pending { background: var(--warning); }
-
 .brief-row__age {
   justify-self: end;
   font-family: var(--mono);
@@ -452,12 +427,13 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   text-decoration: none;
 }
 
-.brief__more-links { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: 12px; }
+.brief__more-links { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: 12px; padding-inline: 16px; }
 .brief__more:hover,
 .brief__calm-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .brief__calm {
-  margin: 28px 0 0;
+  margin: 20px 0 0;
+  padding-inline: 16px;
   font-size: var(--text-sm);
   color: var(--text-3);
   display: flex;
@@ -467,18 +443,13 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
 }
 
 @media (max-width: 768px) {
-  .brief { padding: 20px 16px 28px; }
-  .brief-row,
-  .brief-row--quiet {
+  .brief-row {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "chip age" "main main";
     gap: 6px 12px;
-    margin: 0 -8px;
-    padding: 12px 8px;
+    padding: 12px 16px;
   }
   .brief-chip { grid-area: chip; }
-  .brief-row--quiet { grid-template-columns: 8px minmax(0, 1fr) auto; grid-template-areas: "dot main age"; align-items: start; }
-  .brief-row--quiet .leveldot { grid-area: dot; margin: 6px 0 0; }
   .brief-row__main { grid-area: main; }
   .brief-row__age { grid-area: age; }
   .brief-row__viz { display: none; }

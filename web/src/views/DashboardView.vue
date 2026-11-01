@@ -14,10 +14,14 @@ import Icon from '@/components/Icon.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import ProjectSetup from '@/components/ProjectSetup.vue'
 import { useProjectScope } from './dashboard/shared'
-import { takeLastVisit, touchVisit } from './dashboard/briefing'
+import { brokenMonitors, takeLastVisit, touchVisit } from './dashboard/briefing'
+import { useAttentionQuery, useMonitorQueries, usePerformanceOverview } from '@/composables/useBriefingData'
 import BriefingWidget from './dashboard/BriefingWidget.vue'
 import VitalsWidget from './dashboard/VitalsWidget.vue'
-import ProjectsWidget from './dashboard/ProjectsWidget.vue'
+import ProjectPerformanceWidget from './dashboard/ProjectPerformanceWidget.vue'
+import PerformanceTrendWidget from './dashboard/PerformanceTrendWidget.vue'
+import MonitorsOverviewWidget from './dashboard/MonitorsOverviewWidget.vue'
+import BusiestIssuesWidget from './dashboard/BusiestIssuesWidget.vue'
 import TransactionDensityWidget from './dashboard/TransactionDensityWidget.vue'
 import SlowTransactionsWidget from './dashboard/SlowTransactionsWidget.vue'
 import AlertsWidget from './dashboard/AlertsWidget.vue'
@@ -69,6 +73,9 @@ onUnmounted(() => {
   touchVisit()
 })
 
+const { data: performance, isFetching: performanceFetching } = usePerformanceOverview()
+const performanceLoading = computed(() => performanceFetching.value && !performance.value)
+
 const openCount = computed(() => issuesPage.value?.total ?? 0)
 const issues = computed(() => issuesPage.value?.issues ?? [])
 const releases = computed(() => releasesPage.value?.releases ?? [])
@@ -79,6 +86,30 @@ const loading = computed(
     (txFetching.value && !txSummaries.value) ||
     (releasesFetching.value && !releasesPage.value),
 )
+
+// ── Order of the page ─────────────────────────────────────────────────────────
+// What needs attention always leads. Once nothing does, the overview has the
+// page to itself: performance first, then the monitors, with the backlog last.
+
+const attention = useAttentionQuery(lastVisit)
+const { uptime, cron } = useMonitorQueries()
+
+const calm = computed(() => {
+  const page = attention.data.value
+  if (!page || !uptime.data.value || !cron.data.value) return false
+  return page.regressed_total + page.new_total === 0 && brokenMonitors(uptime.data.value, cron.data.value).length === 0
+})
+
+const sections = computed(() => calm.value
+  ? ['projects', 'trend', 'monitors', 'traffic', 'busiest'] as const
+  : ['projects', 'busiest', 'trend', 'traffic'] as const)
+
+// Busiest open issues not already listed in the briefing, so each appears once.
+const busiestRest = computed(() => {
+  const page = attention.data.value
+  const shown = new Set([...(page?.regressed ?? []), ...(page?.new ?? [])].map(i => i.id))
+  return issues.value.filter(i => !shown.has(i.id)).sort((a, b) => b.event_count - a.event_count).slice(0, 5)
+})
 
 // ── First-run / empty state ───────────────────────────────────────────────────
 
@@ -161,21 +192,22 @@ function finishSetup() {
   <!-- Dashboard ─────────────────────────────────────────────────────────────── -->
   <div v-else class="page">
     <div class="db-body">
-      <!-- Main column: the briefing, then the week's traffic ──────────────── -->
+      <!-- Main column: the briefing, then the overview ─────────────────────── -->
       <div class="db-main">
-        <BriefingWidget :loading="loading" :open-count="openCount" :busiest="issues" :last-visit="lastVisit" />
-        <!-- Full width: squeezed into the aside the hourly cells were too small to
-             read, and a calm briefing left the main column nearly empty. -->
-        <div class="db-tail">
-          <TransactionDensityWidget />
-        </div>
+        <BriefingWidget :loading="loading" :open-count="openCount" :last-visit="lastVisit" :overview="performance" />
+        <template v-for="section in sections" :key="section">
+          <ProjectPerformanceWidget v-if="section === 'projects'" :loading="performanceLoading" :overview="performance" />
+          <PerformanceTrendWidget v-else-if="section === 'trend'" />
+          <MonitorsOverviewWidget v-else-if="section === 'monitors'" />
+          <TransactionDensityWidget v-else-if="section === 'traffic'" />
+          <BusiestIssuesWidget v-else :issues="busiestRest" :open-count="openCount" />
+        </template>
       </div>
 
       <!-- Aside column: health, then performance context ────────────────── -->
       <aside class="db-aside" aria-label="Health summary">
-        <VitalsWidget :loading="loading" :tx-summaries="txSummaries" />
+        <VitalsWidget :loading="performanceLoading" :overview="performance" />
         <ReleasesWidget :loading="loading" :releases="releases" />
-        <ProjectsWidget />
         <AlertsWidget />
         <SlowTransactionsWidget :loading="loading" :tx-summaries="txSummaries" />
       </aside>
@@ -197,16 +229,16 @@ function finishSetup() {
 
 .db-main {
   min-width: 0;
+  padding: 28px 16px 40px;
   border-right: 1px solid var(--border-soft);
 }
 
-.db-tail {
-  padding: 8px 16px 40px;
-}
+/* The widgets are separated by the shared .db-sec rule; this is its first step. */
+.db-main > :deep(.brief) { margin-bottom: 32px; }
 
 .db-aside {
   min-width: 0;
-  padding: 32px 8px 40px;
+  padding: 28px 8px 40px;
 }
 
 @media (max-width: 1080px) {
@@ -215,8 +247,7 @@ function finishSetup() {
 
 @media (max-width: 768px) {
   .db-body { grid-template-columns: 1fr; }
-  .db-main { border-right: none; }
-  .db-tail { padding: 0 0 28px; }
+  .db-main { padding: 20px 0 28px; border-right: none; }
   /* On phones the health summary follows the briefing. */
   .db-aside { padding: 8px 0 28px; border-top: 1px solid var(--border-soft); }
 }

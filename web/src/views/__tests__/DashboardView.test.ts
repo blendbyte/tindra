@@ -95,6 +95,7 @@ function setupQueries({
   projectIssueCounts = [] as Array<{ project_id: string; open_issues: number }>,
   projStatsFetching = false,
   attention = { regressed: [], regressed_total: 0, new: [], new_total: 0 } as unknown,
+  performance = undefined as unknown,
 } = {}) {
   vi.mocked(useProjectsStore).mockReturnValue({ selectedIds: [], projects } as any)
   const results: Record<string, unknown> = {
@@ -109,6 +110,8 @@ function setupQueries({
     'uptime-monitors': { data: ref(uptimeMonitors), isFetching: ref(false), isError: ref(false), refetch: vi.fn() },
     'monitors': { data: ref(cronMonitors), isFetching: ref(false), isError: ref(false), refetch: vi.fn() },
     'projects/stats': { data: ref(projectIssueCounts), isFetching: ref(projStatsFetching) },
+    'project-performance': { data: ref(performance), isFetching: ref(false) },
+    'dash-tx-series': { data: ref({ bucket_size: 'hour', buckets: [] }), isFetching: ref(false) },
   }
   vi.mocked(useQuery).mockImplementation(((options: any) => {
     const name = queryName(options)
@@ -405,17 +408,61 @@ describe('DashboardView', () => {
   })
 
   describe('widget layout', () => {
-    it('follows the briefing with the week\'s traffic and keeps health, then performance, beside it', () => {
+    const twoProjects = [{ id: 'p1', name: 'A', slug: 'a' }, { id: 'p2', name: 'B', slug: 'b' }]
+    const upMonitor = { id: 'u1', project_id: 'p1', name: 'API', status: 'active', state: 'up', last_checked_at: null, recent_checks: [] }
+    const downMonitor = { ...upMonitor, state: 'down', went_down_at: new Date(Date.now() - 60_000).toISOString(), last_ok_at: null, last_status_code: 502, last_error: null, consecutive_failures: 2 }
+    const busiest = { issues: [{ id: 'i1', title: 'TypeError: x', level: 'error', event_count: 4, sparkline: [], project_id: 'p1' }], total: 1 }
+    const mainTitles = (wrapper: ReturnType<typeof makeWrapper>) => wrapper.findAll('.db-main .db-sec__title').map(t => t.text())
+
+    it('keeps health, then alerts and slow transactions, in the aside', () => {
+      const wrapper = makeWrapper({ projects: twoProjects })
+      expect(wrapper.findAll('.db-aside .db-sec__title').map(t => t.text())).toEqual(['Vitals · 24h', 'Release health', 'Recent alerts', 'Slowest transactions'])
+    })
+
+    it('gives a calm page to the overview, with the backlog last', () => {
+      const wrapper = makeWrapper({ projects: twoProjects, uptimeMonitors: [upMonitor], issues: busiest })
+      expect(mainTitles(wrapper)).toEqual([
+        'Projects · 24h',
+        'Requests and latency · 24h',
+        expect.stringContaining('Monitors'),
+        'Traffic · last 7 days',
+        'Busiest open issues',
+      ])
+    })
+
+    it('leads with the briefing when something needs attention, and drops the monitor board', () => {
+      const wrapper = makeWrapper({ projects: twoProjects, uptimeMonitors: [downMonitor], issues: busiest })
+      expect(wrapper.find('#brief-broken').exists()).toBe(true)
+      expect(mainTitles(wrapper)).toEqual([
+        'Projects · 24h',
+        'Busiest open issues',
+        'Requests and latency · 24h',
+        'Traffic · last 7 days',
+      ])
+    })
+
+    it('does not treat a page as calm until the briefing has loaded', () => {
+      const wrapper = makeWrapper({ projects: twoProjects, attention: null, uptimeMonitors: [upMonitor] })
+      expect(mainTitles(wrapper)).not.toContainEqual(expect.stringContaining('Monitors'))
+    })
+
+    it('shows a single project without the project table', () => {
+      const wrapper = makeWrapper({ uptimeMonitors: [upMonitor] })
+      expect(mainTitles(wrapper)[0]).toBe('Requests and latency · 24h')
+    })
+
+    it('lists a busy issue once, in the briefing rather than again under busiest', () => {
+      const shown = { id: 'i1', project_id: 'p1', title: 'TypeError: x', level: 'error', status: 'open', event_count: 4, user_count: 0, first_seen: new Date().toISOString(), last_seen: new Date().toISOString(), regressed_at: null, first_release: null, assignee: null }
+      const wrapper = makeWrapper({ issues: busiest, attention: { regressed: [], regressed_total: 0, new: [shown], new_total: 1 } })
+      expect(mainTitles(wrapper)).not.toContain('Busiest open issues')
+    })
+
+    it('feeds the vitals and the verdict from the performance overview', () => {
       const wrapper = makeWrapper({
-        projects: [{ id: 'p1', name: 'A', slug: 'a' }, { id: 'p2', name: 'B', slug: 'b' }],
+        performance: { projects: [], total: { requests: 200, p50: 100, p95: 300, apdex: 0.5, failure_rate: 0.1, prev_requests: 0, prev_p95: 0, prev_failure_rate: 0 } },
       })
-      const titles = (column: string) => wrapper.findAll(`${column} .db-sec__title`).map(t => t.text())
-      const main = wrapper.findAll('.db-main > *')
-      expect(main).toHaveLength(2)
-      expect(main[0].classes()).toContain('brief')
-      expect(main[1].classes()).toContain('db-tail')
-      expect(titles('.db-tail')).toEqual(['Traffic · last 7 days'])
-      expect(titles('.db-aside')).toEqual(['Vitals · 24h', 'Release health', 'Projects', 'Recent alerts', 'Slowest transactions'])
+      expect(wrapper.find('[data-vital="error-rate"] .vitals__value').text()).toBe('10.0%')
+      expect(wrapper.find('.brief__verdict').text()).toBe('Nothing is broken.')
     })
 
     it('fetches widget data only once the dashboard itself is shown', () => {

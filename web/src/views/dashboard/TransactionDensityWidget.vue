@@ -136,7 +136,6 @@ function cellColor(v: number): string {
 .db-heatmap__dlabel {
   font-size: 10px;
   color: var(--text-3);
-  opacity: 0.5;
   width: 28px;
   text-align: right;
   padding-right: 5px;
@@ -189,7 +188,6 @@ function cellColor(v: number): string {
   top: 0;
   font-size: 10px;
   color: var(--text-3);
-  opacity: 0.5;
   font-variant-numeric: tabular-nums;
 }
 
@@ -210,7 +208,6 @@ function cellColor(v: number): string {
 .db-heatmap__leg-lbl {
   font-size: 10px;
   color: var(--text-3);
-  opacity: 0.5;
 }
 
 </style>

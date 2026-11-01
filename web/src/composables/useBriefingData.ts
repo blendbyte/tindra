@@ -5,6 +5,7 @@ import { useInvestigationStore, RANGE_HOURS } from '@/stores/investigation'
 import type { CronMonitor, UptimeMonitor } from '@/api/types'
 import { useProjectScope } from '@/views/dashboard/shared'
 import { brokenMonitors, lastVisitSeen, type AttentionIssuesPage } from '@/views/dashboard/briefing'
+import type { PerformanceOverview } from '@/views/dashboard/overview'
 
 // Options for queries the app shell keeps open on every page. The page's
 // freshness polling skips them (see isPageQuery), so they refresh on their own
@@ -60,6 +61,21 @@ export function useAttentionQuery(lastVisitSource: MaybeRefOrGetter<number | nul
         ...(lastVisit.value === null ? {} : { last_visit: new Date(lastVisit.value).toISOString() }),
       })}`), { signal }),
     ...shellOptions,
+  })
+}
+
+// Per-project performance and its total for the investigation scope. It feeds
+// the vitals, the project table and the verdict, which all read one cache entry.
+export function usePerformanceOverview() {
+  const investigation = useInvestigationStore()
+  const { buildQs } = useProjectScope()
+  return useQuery({
+    queryKey: computed(() => ['project-performance', investigation.scopeKey]),
+    queryFn: ({ signal }) =>
+      apiFetch<PerformanceOverview>(investigation.request(`/api/projects/performance?${buildQs({
+        hours: String(RANGE_HOURS[investigation.range] ?? 2160),
+        ...(investigation.environment === 'All' ? {} : { env: investigation.environment }),
+      })}`), { signal }),
   })
 }
 

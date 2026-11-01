@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import type { CronMonitor, UptimeMonitor } from '@/api/types'
 import {
-  brokenMonitors, brokenTitle, formatSpan, healthyMonitorCount, isUnseen, joinParts,
+  brokenMonitors, brokenTitle, formatSpan, healthyMonitorCount, healthyMonitorCounts, isUnseen, joinParts,
   sinceVisitParts, splitTitle, takeLastVisit, touchVisit, verdict, VISIT_GAP_MS,
 } from '../briefing'
 
@@ -136,5 +136,24 @@ describe('last visit', () => {
     expect(isUnseen(ago(15), NOW - 10 * 60_000)).toBe(false)
     expect(isUnseen(ago(5), null)).toBe(false)
     expect(isUnseen(null, NOW)).toBe(false)
+  })
+})
+
+describe('healthyMonitorCounts', () => {
+  it('counts healthy monitors per project and skips paused, failing and unchecked ones', () => {
+    const uptime = [
+      { project_id: 'a', status: 'active', state: 'up' },
+      { project_id: 'a', status: 'active', state: 'down' },
+      { project_id: 'b', status: 'paused', state: 'up' },
+    ] as UptimeMonitor[]
+    const cron = [
+      { project_id: 'a', status: 'active', state: 'ok', last_checkin_at: '2026-11-01T00:00:00Z' },
+      { project_id: 'b', status: 'active', state: 'unknown', last_checkin_at: null },
+    ] as CronMonitor[]
+    expect([...healthyMonitorCounts(uptime, cron)]).toEqual([['a', 2]])
+  })
+
+  it('treats inputs that are not lists as empty', () => {
+    expect(healthyMonitorCounts(null as never, undefined).size).toBe(0)
   })
 })
