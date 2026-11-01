@@ -296,7 +296,7 @@ func TestHandleEnvelope_transactionItem(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(350 * time.Millisecond)
+	waitPersisted(t, txBuf.Stats, 1)
 
 	var count int
 	testPool.QueryRow(context.Background(),

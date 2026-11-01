@@ -104,7 +104,7 @@ func TestHandleEnvelope_validEvent(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(350 * time.Millisecond) // wait for 200ms ticker flush
+	waitPersisted(t, buf.Stats, 1)
 
 	var count int
 	if err := testPool.QueryRow(context.Background(),
@@ -227,7 +227,7 @@ func TestHandleEnvelope_gzip(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(350 * time.Millisecond)
+	waitPersisted(t, buf.Stats, 1)
 
 	var count int
 	testPool.QueryRow(context.Background(),
@@ -326,7 +326,11 @@ func TestHandleEnvelope_nonEventItemsIgnored(t *testing.T) {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
 
-	time.Sleep(350 * time.Millisecond)
+	// The session item is decided while handling the request: nothing may reach
+	// the buffer, so there is nothing to wait for.
+	if s := buf.Stats(); s.Accepted != 0 {
+		t.Errorf("session-only envelope queued %d items, want 0", s.Accepted)
+	}
 
 	var count int
 	testPool.QueryRow(context.Background(),
@@ -649,7 +653,7 @@ func TestHandleEnvelope_gzipLargeProfileItem(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(350 * time.Millisecond)
+	waitPersisted(t, txBuf.Stats, 1)
 
 	// The profile itself is still discarded, but the transaction must survive.
 	var count int
@@ -743,7 +747,7 @@ func TestHandleEnvelope_profileItems(t *testing.T) {
 				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 			}
 
-			time.Sleep(400 * time.Millisecond)
+			waitPersisted(t, profBuf.Stats, 1)
 
 			var format int16
 			var sampleCount int
@@ -787,7 +791,11 @@ func TestHandleEnvelope_malformedProfileIsDroppedAlone(t *testing.T) {
 		t.Fatalf("expected 200 for a malformed profile, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(300 * time.Millisecond)
+	// Parsing happens while handling the request, so a malformed profile is
+	// dropped before it could reach the buffer.
+	if s := profBuf.Stats(); s.Accepted != 0 || s.Dropped["invalid_record"] != 1 {
+		t.Errorf("malformed profile: accepted %d, dropped %v; want 0 accepted and one invalid_record", s.Accepted, s.Dropped)
+	}
 
 	var count int
 	if err := testPool.QueryRow(context.Background(),
@@ -825,7 +833,11 @@ func TestHandleEnvelope_profilingDisabledForProject(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	time.Sleep(300 * time.Millisecond)
+	// Profiling being off is checked while handling the request, so the
+	// profile never reaches the buffer.
+	if s := profBuf.Stats(); s.Accepted != 0 {
+		t.Errorf("profiling disabled: buffer accepted %d profiles, want 0", s.Accepted)
+	}
 
 	var count int
 	if err := testPool.QueryRow(context.Background(),
@@ -866,7 +878,7 @@ func TestHandleEnvelope_transactionCarriesProfileLink(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(400 * time.Millisecond)
+	waitPersisted(t, txBuf.Stats, 1)
 
 	var eventID, profilerID, threadID string
 	err = testPool.QueryRow(context.Background(), `
@@ -925,7 +937,8 @@ func TestHandleGetTransactionFlameGraph(t *testing.T) {
 		t.Fatalf("transaction ingest: %d %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	waitPersisted(t, profBuf.Stats, 1)
+	waitPersisted(t, txBuf.Stats, 1)
 
 	var txID string
 	if err := testPool.QueryRow(ctx, `
@@ -1085,7 +1098,7 @@ func TestHandleEnvelope_transactionWithMixedTypeTraceData(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	time.Sleep(400 * time.Millisecond)
+	waitPersisted(t, txBuf.Stats, 1)
 
 	var threadID *string
 	err := testPool.QueryRow(ctx, `
@@ -1121,7 +1134,7 @@ func TestHandleEnvelope_numericThreadIDInTraceData(t *testing.T) {
 	if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	time.Sleep(400 * time.Millisecond)
+	waitPersisted(t, txBuf.Stats, 1)
 
 	var threadID *string
 	if err := testPool.QueryRow(ctx, `
@@ -1186,7 +1199,7 @@ func TestHandleEnvelope_profileBufferFullDropsOnlyTheProfile(t *testing.T) {
 		t.Fatalf("expected 200 so the SDK does not resend the transaction, got %d", rec.Code)
 	}
 
-	time.Sleep(400 * time.Millisecond)
+	waitPersisted(t, txBuf.Stats, 1)
 
 	var txCount int
 	if err := testPool.QueryRow(ctx,
@@ -1279,7 +1292,7 @@ func TestHandleEnvelope_oddlyShapedTraceData(t *testing.T) {
 			if rec := postEnvelope(t, h, body); rec.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d", rec.Code)
 			}
-			time.Sleep(400 * time.Millisecond)
+			waitPersisted(t, txBuf.Stats, 1)
 
 			var count int
 			if err := testPool.QueryRow(ctx,
@@ -1426,5 +1439,23 @@ func TestHandleEnvelope_transactionWithNulBytes(t *testing.T) {
 	}
 	if description != "SELECT 1" || data["db.system"] != "postgres" {
 		t.Errorf("description=%q data=%v", description, data)
+	}
+}
+
+// waitPersisted waits until a buffer has committed n items. Persisted only
+// moves after the write commits, so the rows are visible once it returns. A
+// fixed sleep raced the 200ms flush on slow CI runners.
+func waitPersisted(t *testing.T, stats func() ingest.Stats, n uint64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s := stats()
+		if s.Persisted >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("buffer committed %d of %d items: %+v", s.Persisted, n, s)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
