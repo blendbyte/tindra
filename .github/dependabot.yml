@@ -1,24 +1,64 @@
 version: 2
-# Renovate owns routine version updates. A zero limit leaves Dependabot
-# security updates enabled without creating duplicate version update PRs.
+
+# Dependabot owns every dependency update. Minor and patch updates arrive as one
+# weekly pull request per ecosystem, majors on their own so each gets a look.
+# A cooldown skips releases younger than a week; security updates ignore it.
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: bun
     directory: /web
     schedule:
       interval: weekly
-    open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      web-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # vue-tsc has to support a new TypeScript major before the app can move.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      images-minor-and-patch:
+        update-types: [minor, patch]
