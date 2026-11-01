@@ -3,6 +3,7 @@ package retention_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -22,22 +23,20 @@ func seedProfileAgeBacklog(t *testing.T, expired, fresh int) {
 	require.NoError(t, err)
 }
 func TestWorkerProfileAgePassBudget(t *testing.T) {
-	seedProfileAgeBacklog(t, 200001, 7)
+	seedProfileAgeBacklog(t, 10001, 7)
 	ctx := context.Background()
-	trace := &capTrace{matchSQL: "DELETE FROM profile_chunks"}
-	worker := retention.NewWorker(capPool(t, trace), 0).WithProfileLimits(7, 0)
-	worker.RunOnce(ctx)
-	require.Len(t, trace.batches, 40)
-	for _, n := range trace.batches {
-		require.EqualValues(t, 5000, n)
-	}
+	clock := newStepClock()
+	trace := &capTrace{matchSQL: "DELETE FROM profile_chunks", afterBatch: func() { clock.Advance(600 * time.Millisecond) }}
+	worker := retention.NewWorker(capPool(t, trace), 0).WithProfileLimits(7, 0).WithClock(clock.Now, time.Second)
+	require.True(t, worker.RunOnce(ctx))
+	require.Equal(t, []int64{5000, 5000}, trace.batches)
 	require.Equal(t, 8, countProfiles(t))
 	var fresh int
 	require.NoError(t, testPool.QueryRow(ctx, "SELECT count(*) FROM profile_chunks WHERE received_at > NOW()-interval '1 day'").Scan(&fresh))
 	require.Equal(t, 7, fresh)
-	worker.RunOnce(ctx)
+	require.False(t, worker.RunOnce(ctx))
 	require.Equal(t, 7, countProfiles(t))
-	require.Equal(t, int64(1), trace.batches[40])
+	require.Equal(t, []int64{5000, 5000, 1}, trace.batches)
 }
 func TestWorkerProfileAgeCancellationResumes(t *testing.T) {
 	seedProfileAgeBacklog(t, 12000, 7)

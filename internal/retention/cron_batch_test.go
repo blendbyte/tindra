@@ -76,19 +76,17 @@ func TestCronRetentionCancellationResumes(t *testing.T) {
 }
 
 func TestCronRetentionBudgetAndDisabled(t *testing.T) {
-	seedCronBacklog(t, 205000)
+	seedCronBacklog(t, 12000)
 	ctx := t.Context()
 	// Other policies can enable the worker without enabling cron age cleanup.
 	require.False(t, retention.NewWorker(testPool, 0).WithRowLimits(1000000, 1000000).RunOnce(ctx))
-	require.Equal(t, 205003, capCount(t, "cron_checkins"))
-	trace := &capTrace{matchSQL: "DELETE FROM cron_checkins"}
-	w := retention.NewWorker(capPool(t, trace), 90)
-	require.True(t, w.RunOnce(ctx), "a capped pass must request an earlier follow-up")
-	require.Len(t, trace.batches, 40)
-	for _, n := range trace.batches {
-		require.EqualValues(t, 5000, n)
-	}
-	require.Equal(t, 5003, capCount(t, "cron_checkins"))
+	require.Equal(t, 12003, capCount(t, "cron_checkins"))
+	clock := newStepClock()
+	trace := &capTrace{matchSQL: "DELETE FROM cron_checkins", afterBatch: func() { clock.Advance(600 * time.Millisecond) }}
+	w := retention.NewWorker(capPool(t, trace), 90).WithClock(clock.Now, time.Second)
+	require.True(t, w.RunOnce(ctx), "a pass out of budget must request an earlier follow-up")
+	require.Equal(t, []int64{5000, 5000}, trace.batches)
+	require.Equal(t, 2003, capCount(t, "cron_checkins"))
 	require.False(t, w.RunOnce(ctx))
 	require.Equal(t, 3, capCount(t, "cron_checkins"))
 }

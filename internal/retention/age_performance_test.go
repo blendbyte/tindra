@@ -58,7 +58,7 @@ func TestAgePerformance(t *testing.T) {
 							total += d
 							longest = max(longest, d)
 						}
-						require.Equal(t, []int64{5000, 5000, 0}, trace.batches)
+						require.Equal(t, wantBatches(10000, ageBatch(table)), trace.batches)
 						pool.Close()
 					} else {
 						start := time.Now()

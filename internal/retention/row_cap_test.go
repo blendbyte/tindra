@@ -102,7 +102,7 @@ func TestWorkerRowCapBatchesAndTies(t *testing.T) {
 			}
 			trace := &capTrace{}
 			runCap(ctx, capPool(t, trace), table, 7)
-			require.Equal(t, []int64{5000, 5000, 2000}, trace.batches)
+			require.Equal(t, wantBatches(12000, ageBatch(table)), trace.batches)
 			var ids []string
 			rows, err := testPool.Query(ctx, "SELECT id::text FROM "+table+" ORDER BY id")
 			require.NoError(t, err)
@@ -134,24 +134,22 @@ func TestWorkerRowCapCancellationKeepsCommittedBatch(t *testing.T) {
 			defer cancel()
 			trace := &capTrace{cancel: cancel}
 			runCap(ctx, capPool(t, trace), table, 7)
-			require.Equal(t, []int64{5000}, trace.batches)
-			require.Equal(t, 7007, capCount(t, table))
+			require.Equal(t, []int64{ageBatch(table)}, trace.batches)
+			require.Equal(t, 12007-int(ageBatch(table)), capCount(t, table))
 			runCap(context.Background(), testPool, table, 7)
 			require.Equal(t, 7, capCount(t, table))
 		})
 	}
 }
 func TestWorkerRowCapPassBudget(t *testing.T) {
-	seedCapRows(t, "logs", 205007)
-	trace := &capTrace{}
-	p := capPool(t, trace)
-	runCap(context.Background(), p, "logs", 7)
-	require.Len(t, trace.batches, 40)
-	for _, n := range trace.batches {
-		require.EqualValues(t, 5000, n)
-	}
-	require.Equal(t, 5007, capCount(t, "logs"))
-	runCap(context.Background(), p, "logs", 7)
+	seedCapRows(t, "logs", 12007)
+	clock := newStepClock()
+	trace := &capTrace{afterBatch: func() { clock.Advance(600 * time.Millisecond) }}
+	w := retention.NewWorker(capPool(t, trace), 0).WithRowLimits(7, 0).WithClock(clock.Now, time.Second)
+	require.True(t, w.RunOnce(context.Background()))
+	require.Equal(t, []int64{5000, 5000}, trace.batches)
+	require.Equal(t, 2007, capCount(t, "logs"))
+	require.False(t, w.RunOnce(context.Background()))
 	require.Equal(t, 7, capCount(t, "logs"))
 }
 
@@ -171,7 +169,7 @@ func TestWorkerRowCapPreservesNewerArrivalsBetweenBatches(t *testing.T) {
 				require.NoError(t, err)
 			}
 			runCap(ctx, capPool(t, trace), table, 7)
-			require.Equal(t, []int64{5000, 5000, 2000}, trace.batches)
+			require.Equal(t, wantBatches(12000, ageBatch(table)), trace.batches)
 			require.Equal(t, 27, capCount(t, table))
 			column := "timestamp"
 			if table == "transactions" {
