@@ -32,7 +32,8 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
-vi.mock('@/utils/formatters', () => ({
+vi.mock('@/utils/formatters', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/formatters')>(),
   formatDuration: vi.fn((n: number) => `${n}ms`),
   formatRel: vi.fn(() => '2m ago'),
 }))

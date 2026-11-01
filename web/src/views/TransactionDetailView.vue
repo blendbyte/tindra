@@ -730,7 +730,7 @@ function traceErrorOffset(e: TraceError): string {
         </div>
         <div class="stat">
           <div class="stat__label">Status</div>
-          <div class="stat__value"><span class="tx-status" :class="`tx-status--${tx.status}`">{{ tx.status }}</span></div>
+          <div class="stat__value stat__value--md"><span class="tx-status" :class="`tx-status--${tx.status}`">{{ tx.status }}</span></div>
         </div>
         <div class="stat">
           <div class="stat__label">Started</div>
@@ -741,7 +741,7 @@ function traceErrorOffset(e: TraceError): string {
         </div>
         <div class="stat stat--copyable" v-tooltip="copiedTraceId ? 'Copied!' : 'Click to copy full trace ID'" v-clickable aria-label="Copy trace ID" @click="copyTraceId">
           <div class="stat__label">Trace ID</div>
-          <div class="stat__value stat__value--mono stat__value--sm">
+          <div class="stat__value stat__value--mono stat__value--md">
             {{ copiedTraceId ? 'Copied!' : tx.trace_id.slice(0, 16) + '…' }}
           </div>
         </div>
@@ -1021,7 +1021,7 @@ function traceErrorOffset(e: TraceError): string {
               class="timeline__tick-label"
               :style="{ left: toPct(v) }"
             >
-              {{ formatDuration(v) }}
+              {{ v === 0 ? '0' : formatDuration(v) }}
             </span>
           </template>
         </div>
@@ -1106,7 +1106,7 @@ function traceErrorOffset(e: TraceError): string {
       <FlameGraphView :graph="flameGraph" />
     </div>
 
-    <p v-if="tx && !flameGraph && !profileLoading" class="trace-logs" style="padding: 16px">
+    <p v-if="tx && !flameGraph && !profileLoading" class="trace-logs trace-noprofile">
       {{ profileError ? 'Could not load the profile.' : 'No profile available for this transaction.' }}
       <button v-if="profileError" class="btn" @click="refetchProfile()">Try again</button>
       <a class="btn" :href="`/setup?project_id=${tx.project_id}&check=profiles`">Check profiling setup</a>

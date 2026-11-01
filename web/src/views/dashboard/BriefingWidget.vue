@@ -369,7 +369,9 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   padding-block: 10px;
 }
 
-.brief-row--quiet .leveldot { justify-self: center; }
+/* The dot starts where the chips' text starts above it, so the label column
+   keeps one left edge down the page. */
+.brief-row--quiet .leveldot { justify-self: start; margin-left: 7px; }
 
 .brief-chip {
   justify-self: start;
@@ -476,7 +478,7 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
   }
   .brief-chip { grid-area: chip; }
   .brief-row--quiet { grid-template-columns: 8px minmax(0, 1fr) auto; grid-template-areas: "dot main age"; align-items: start; }
-  .brief-row--quiet .leveldot { grid-area: dot; margin-top: 6px; }
+  .brief-row--quiet .leveldot { grid-area: dot; margin: 6px 0 0; }
   .brief-row__main { grid-area: main; }
   .brief-row__age { grid-area: age; }
   .brief-row__viz { display: none; }

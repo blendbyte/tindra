@@ -1,21 +1,23 @@
 <script lang="ts">
 // The span pages share one table; each kind only changes labels, the endpoint
-// and whether the cache miss rate column is shown.
+// and whether the cache miss rate column is shown. The chart plots how many
+// spans fell in each bucket, so it is labelled with the noun (like the
+// transactions page's "Requests"), not with the per-minute rate of the table.
 const KINDS = {
   db: {
-    endpoint: 'db', queryKeyPrefix: 'span-db', rateLabel: 'QPM',
+    endpoint: 'db', queryKeyPrefix: 'span-db', rateLabel: 'QPM', chartLabel: 'Queries',
     filterLabel: 'Filter queries', noun: 'queries', dataNoun: 'query',
     emptyIcon: 'database', emptyTitle: 'No database spans in this window',
     emptyBody: 'Instrument your app using a Sentry SDK with database query tracking enabled.',
   },
   cache: {
-    endpoint: 'cache', queryKeyPrefix: 'span-cache', rateLabel: 'RPM',
+    endpoint: 'cache', queryKeyPrefix: 'span-cache', rateLabel: 'RPM', chartLabel: 'Cache operations',
     filterLabel: 'Filter keys', noun: 'keys', dataNoun: 'cache',
     emptyIcon: 'zap', emptyTitle: 'No cache spans in this window',
     emptyBody: 'Instrument your app with Sentry SDK cache instrumentation.',
   },
   jobs: {
-    endpoint: 'jobs', queryKeyPrefix: 'span-jobs', rateLabel: 'TPM',
+    endpoint: 'jobs', queryKeyPrefix: 'span-jobs', rateLabel: 'TPM', chartLabel: 'Jobs',
     filterLabel: 'Filter jobs', noun: 'jobs', dataNoun: 'job',
     emptyIcon: 'clock', emptyTitle: 'No job or queue spans in this window',
     emptyBody: 'Instrument your workers using a Sentry SDK with task/queue integration.',
@@ -64,10 +66,10 @@ const { perf, hours, timeseries, isLoading, isError, refetch, sortCol, toggleSor
 
     <div v-if="!isError && timeseries && timeseries.buckets.length > 0" class="txcharts">
       <div class="txchart-panel">
-        <div class="txchart-panel__label">{{ config.rateLabel }}</div>
+        <div class="txchart-panel__label">{{ config.chartLabel }}</div>
         <TimeseriesChart
           :times="timeseries.buckets.map(b => b.time)"
-          :series="[{ id: 'count', label: config.rateLabel, type: 'bar', values: timeseries.buckets.map(b => b.count) }]"
+          :series="[{ id: 'count', label: config.chartLabel, type: 'bar', values: timeseries.buckets.map(b => b.count) }]"
           :bucket-size="timeseries.bucket_size"
         />
       </div>

@@ -41,6 +41,8 @@ type TopTransaction struct {
 	P50Ms       int64
 	P95Ms       int64
 	P50PrevMs   int64
+	// P50PrevCount is how many requests the previous week's p50 rests on.
+	P50PrevCount int64
 }
 
 func issuesSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time) (IssuesSummary, error) {
@@ -107,6 +109,7 @@ func topTransactions(ctx context.Context, pool *pgxpool.Pool, projectIDs []strin
 		),
 		prev AS (
 			SELECT t.transaction,
+			       COUNT(*) AS cnt,
 			       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY t.duration_ms)::bigint AS p50
 			FROM transactions t
 			WHERE t.project_id = ANY($1)
@@ -115,7 +118,7 @@ func topTransactions(ctx context.Context, pool *pgxpool.Pool, projectIDs []strin
 			GROUP BY t.transaction
 		)
 		SELECT cur.transaction, cur.project_name, cur.cnt, cur.p50, cur.p95,
-		       COALESCE(prev.p50, 0) AS p50_prev
+		       COALESCE(prev.p50, 0) AS p50_prev, COALESCE(prev.cnt, 0) AS p50_prev_count
 		FROM cur
 		LEFT JOIN prev ON prev.transaction = cur.transaction
 	`, projectIDs, from, to, limit, prevFrom)
@@ -126,7 +129,7 @@ func topTransactions(ctx context.Context, pool *pgxpool.Pool, projectIDs []strin
 	var txns []TopTransaction
 	for rows.Next() {
 		var tx TopTransaction
-		if err := rows.Scan(&tx.Transaction, &tx.ProjectName, &tx.Count, &tx.P50Ms, &tx.P95Ms, &tx.P50PrevMs); err != nil {
+		if err := rows.Scan(&tx.Transaction, &tx.ProjectName, &tx.Count, &tx.P50Ms, &tx.P95Ms, &tx.P50PrevMs, &tx.P50PrevCount); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		txns = append(txns, tx)

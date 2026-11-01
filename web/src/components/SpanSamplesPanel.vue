@@ -6,7 +6,8 @@ import { apiFetch } from '@/api/client'
 import { useInvestigationStore } from '@/stores/investigation'
 import type { SpanSummary, SpanSample } from '@/api/types'
 import Icon from '@/components/Icon.vue'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, formatPct } from '@/utils/formatters'
+import { failureClass } from '@/views/performance/changes'
 import { useTimezone } from '@/composables/useTimezone'
 
 const props = defineProps<{
@@ -90,8 +91,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       </div>
       <div class="samples-panel__stat">
         <span class="samples-panel__stat-label">Error %</span>
-        <span class="samples-panel__stat-value" :class="row.error_rate > 0 ? 'tx-failure' : ''">
-          {{ row.error_rate.toFixed(1) }}%
+        <span class="samples-panel__stat-value" :class="failureClass(row.error_rate / 100)">
+          {{ formatPct(row.error_rate) }}
         </span>
       </div>
     </div>

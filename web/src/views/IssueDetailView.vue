@@ -300,7 +300,9 @@ onUnmounted(() => {
           <Icon name="chevron-right" :size="14" />
         </button>
       </div>
-      <div class="detail-breadcrumb__title"><span>{{ issue.id }}</span></div>
+      <!-- The title is right below; the bar names the issue by a short ID to
+           quote, with the full one on hover, and gives phones the room. -->
+      <div class="detail-breadcrumb__title detail-breadcrumb__title--id"><span class="mono" :title="issue.id">{{ issue.id.slice(0, 8) }}</span></div>
       <div class="detail-breadcrumb__actions">
         <template v-if="canManageIssues">
           <!-- Assign button -->
@@ -427,21 +429,8 @@ onUnmounted(() => {
           <span class="issue-meta__item">
             {{ (issue.user_count ?? 0).toLocaleString() }} {{ (issue.user_count ?? 0) === 1 ? 'user' : 'users' }}
           </span>
-          <span class="issue-meta__dot" />
-          <span class="issue-meta__item">
-            <span class="statuspill" :class="`statuspill--${issue.status}`">{{ issue.status }}</span>
-            <template v-if="issue.status === 'ignored' && issue.ignore_until">
-              <span class="issue-meta__k"> until {{ new Date(issue.ignore_until).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: tz }) }}</span>
-            </template>
-            <template v-else-if="issue.status === 'ignored' && issue.ignore_count_limit != null">
-              <span class="issue-meta__k"> · {{ Math.max(0, issue.ignore_count_limit - (issue.ignore_count ?? 0)) }} left</span>
-            </template>
-          </span>
-          <span class="issue-meta__dot" />
-          <span class="issue-meta__item">
-            <span class="issue-meta__k">{{ assigneeUser ? '' : 'Unassigned' }}</span>
-            <span v-if="assigneeUser">{{ assigneeUser.name || assigneeUser.email }}</span>
-          </span>
+          <!-- State, ignore terms and owner are in the sentence above and the
+               action bar, so the facts stop at the counts. -->
         </div>
 
         <!-- Frequency histogram -->

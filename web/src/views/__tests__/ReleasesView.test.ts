@@ -21,7 +21,8 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
-vi.mock('@/utils/formatters', () => ({
+vi.mock('@/utils/formatters', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/formatters')>(),
   formatDuration: vi.fn((n: number) => `${n}ms`),
   formatRel: vi.fn(() => '2m ago'),
 }))
@@ -217,8 +218,8 @@ describe('ReleasesView', () => {
   })
 
   describe('error rate styling', () => {
-    it('colours the error rate only once it is out of range: amber above 2%, red above 5%', () => {
-      for (const [rate, cls] of [[1.5, null], [2.5, 'tx-warn'], [6, 'tx-failure']] as const) {
+    it('colours the error rate like the performance tables: amber from 1%, red from 5%', () => {
+      for (const [rate, cls] of [[0.5, null], [1.5, 'tx-warn'], [6, 'tx-failure']] as const) {
         setupMocks([{ ...makeRelease('r1', 'v1.0.0'), tx_error_rate: rate }])
         const wrapper = mount(ReleasesView, { global: { stubs } })
         expect(wrapper.find('.tx-failure').exists()).toBe(cls === 'tx-failure')

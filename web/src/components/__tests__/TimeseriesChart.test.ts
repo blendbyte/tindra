@@ -123,6 +123,16 @@ describe('TimeseriesChart', () => {
     expect(labels.some(l => l.text().endsWith('ms'))).toBe(true)
   })
 
+  it('labels the baseline 0 even when the value formatter would not', () => {
+    const formatValue = (v: number) => v < 1 ? '<1ms' : `${v}ms`
+    const wrapper = mount(TimeseriesChart, {
+      props: { times, series: [barSeries], bucketSize: 'hour', formatValue },
+    })
+    const labels = wrapper.find('.chart__ylabels').findAll('text').map(l => l.text())
+    expect(labels).toContain('0')
+    expect(labels).not.toContain('<1ms')
+  })
+
   it('renders with an empty times array', () => {
     const wrapper = mount(TimeseriesChart, {
       props: { times: [], series: [{ ...barSeries, values: [] }], bucketSize: 'hour' },

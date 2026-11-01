@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blendbyte/tindra/internal/emailstyle"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -16,13 +17,13 @@ func TestAlertLevelColor(t *testing.T) {
 		level string
 		want  string
 	}{
-		{"fatal", "#ef4444"},
-		{"error", "#ef4444"},
-		{"warning", "#f59e0b"},
-		{"info", "#3b82f6"},
-		{"debug", "#9ca3af"},
-		{"", "#9ca3af"},
-		{"unknown", "#9ca3af"},
+		{"fatal", emailstyle.Danger},
+		{"error", emailstyle.Danger},
+		{"warning", emailstyle.Warning},
+		{"info", emailstyle.Info},
+		{"debug", emailstyle.Text3},
+		{"", emailstyle.Text3},
+		{"unknown", emailstyle.Text3},
 	}
 	for _, c := range cases {
 		t.Run(c.level, func(t *testing.T) {
@@ -81,7 +82,72 @@ func TestAlertTriggerLine_newOrRegressed_bothPresent(t *testing.T) {
 		"new_issue_count": 2, "regressed_count": 3,
 	}}
 	got := alertTriggerLine(p)
-	if !strings.Contains(got, "2 new issue(s)") || !strings.Contains(got, "3 regression(s)") {
+	if got != "2 new issues and 3 regressions since the last alert." {
+		t.Errorf("got %q", got)
+	}
+	one := alertTriggerLine(AlertPayload{Trigger: "new_or_regressed", Details: map[string]any{
+		"new_issue_count": 1, "regressed_count": 1,
+	}})
+	if one != "1 new issue and 1 regression since the last alert." {
+		t.Errorf("got %q", one)
+	}
+}
+
+// The headline leads with the news in the app's state colours: violet for
+// new, amber for a regression, red for something broken, green for a recovery.
+func TestAlertHeadline_colours(t *testing.T) {
+	colored := func(p AlertPayload) map[string]string {
+		m := map[string]string{}
+		for _, part := range alertHeadline(p) {
+			if part.Color != "" {
+				m[part.Text] = part.Color
+			}
+		}
+		return m
+	}
+	mixed := colored(AlertPayload{Trigger: "new_or_regressed", Details: map[string]any{"new_issue_count": 2, "regressed_count": 1}})
+	if mixed["2 new issues"] != emailstyle.Accent || mixed["1 regression"] != emailstyle.Warning {
+		t.Errorf("new_or_regressed parts = %v", mixed)
+	}
+	if got := colored(AlertPayload{Trigger: "uptime_down", Details: map[string]any{"down_count": 1}}); got["1 uptime monitor is down."] != emailstyle.Danger {
+		t.Errorf("uptime_down parts = %v", got)
+	}
+	if got := colored(AlertPayload{Trigger: "uptime_recovered", Details: map[string]any{"recovered_count": 2}}); got["2 uptime monitors have recovered."] != emailstyle.Success {
+		t.Errorf("uptime_recovered parts = %v", got)
+	}
+	if got := colored(AlertPayload{Details: map[string]any{"test": true}}); len(got) != 0 {
+		t.Errorf("a test alert should not be coloured, got %v", got)
+	}
+}
+
+func TestRenderAlertEmail_headlineAndRule(t *testing.T) {
+	payload := AlertPayload{
+		RuleName: "Checkout errors", Trigger: "regressed", FiredAt: time.Date(2026, 11, 1, 2, 15, 0, 0, time.UTC),
+		Details: map[string]any{"regressed_count": 2},
+	}
+	html, text, err := RenderAlertEmail(payload, "https://tindra.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, `<span style="color:`+emailstyle.Warning+`;">2 previously resolved issues regressed</span> since the last alert.`) {
+		t.Error("HTML headline does not lead with the regression in amber")
+	}
+	if !strings.Contains(html, "Checkout errors</strong> fired Sun, 1 Nov 2026 at 02:15 UTC") {
+		t.Error("HTML does not name the rule and when it fired")
+	}
+	if !strings.HasPrefix(text, "2 previously resolved issues regressed since the last alert.\n\nAlert rule: Checkout errors") {
+		t.Errorf("text does not lead with what happened:\n%s", text)
+	}
+	if strings.Contains(html, "ZgotmplZ") {
+		t.Error("HTML contains a sanitized style value")
+	}
+}
+
+func TestMoreLabel_newOrRegressed(t *testing.T) {
+	if got := moreLabel("new_or_regressed", 2); got != "issues" {
+		t.Errorf("got %q", got)
+	}
+	if got := moreLabel("new_or_regressed", 1); got != "issue" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -182,6 +248,10 @@ func TestAlertTriggerLine_logCount(t *testing.T) {
 	got := alertTriggerLine(p)
 	if !strings.Contains(got, "14 logs") || !strings.Contains(got, `"stripe"`) || !strings.Contains(got, "error+") {
 		t.Errorf("got %q", got)
+	}
+	parts := alertHeadline(p)
+	if parts[0].Text != "14 logs in the last 5 minutes" || parts[0].Color != emailstyle.Danger || parts[1].Color != "" {
+		t.Errorf("only the count and window should be red, got %+v", parts)
 	}
 }
 
@@ -630,12 +700,12 @@ func TestRenderAlertEmail_uptimeDown_historyAndDetails(t *testing.T) {
 	if !strings.Contains(html, "234ms") {
 		t.Error("HTML missing response time")
 	}
-	// history dots rendered as colored spans
-	if !strings.Contains(html, "#22c55e") {
-		t.Error("HTML missing green dot color")
+	// history ticks in the monitors page's colours
+	if !strings.Contains(html, "background:"+emailstyle.PassTick) {
+		t.Error("HTML missing passing tick colour")
 	}
-	if !strings.Contains(html, "#ef4444") {
-		t.Error("HTML missing red dot color")
+	if !strings.Contains(html, "background:"+emailstyle.Danger) {
+		t.Error("HTML missing failing tick colour")
 	}
 	// plain text history
 	if !strings.Contains(text, "++--") {
@@ -646,25 +716,6 @@ func TestRenderAlertEmail_uptimeDown_historyAndDetails(t *testing.T) {
 	}
 	if !strings.Contains(text, "Got: HTTP 503") {
 		t.Error("text missing received status")
-	}
-}
-
-func TestFormatDowntime(t *testing.T) {
-	cases := []struct {
-		d    time.Duration
-		want string
-	}{
-		{30 * time.Second, "less than a minute"},
-		{5 * time.Minute, "5m"},
-		{90 * time.Minute, "1h 30m"},
-		{2*time.Hour + 3*time.Minute, "2h 3m"},
-		{-time.Minute, "less than a minute"},
-	}
-	for _, c := range cases {
-		got := formatDowntime(c.d)
-		if got != c.want {
-			t.Errorf("formatDowntime(%v) = %q, want %q", c.d, got, c.want)
-		}
 	}
 }
 
@@ -700,7 +751,8 @@ func TestRenderAlertEmail_issueCard_html(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	for _, want := range []string{
-		"TypeError: Cannot read properties of undefined",
+		// The exception type leads in mono, like the issue list.
+		">TypeError</span>: Cannot read properties of undefined",
 		"27 May 2026, 14:30:00 UTC",
 		"POST",
 		"https://api.example.com/v1/orders/99",
@@ -964,5 +1016,41 @@ func TestRetriedPayload_logsViewURLKeepsProjects(t *testing.T) {
 	}
 	if got := alertTriggerLine(p); !strings.Contains(got, "3 logs") {
 		t.Errorf("trigger line = %q", got)
+	}
+}
+
+// Like the monitors page: "Down for 3h 2m", counted from when it went down.
+func TestRenderAlertEmail_uptimeDownFor(t *testing.T) {
+	fired := time.Date(2026, 11, 1, 2, 15, 0, 0, time.UTC)
+	went := fired.Add(-3*time.Hour - 2*time.Minute)
+	html, _, err := RenderAlertEmail(AlertPayload{
+		RuleName: "r", Trigger: "uptime_down", FiredAt: fired, Details: map[string]any{"down_count": 1},
+		UptimeMonitors: []*storage.UptimeMonitor{{Name: "Payment gateway", URL: "https://pay.example.com", WentDownAt: &went}},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, "Down for 3h 2m</strong>") {
+		t.Error("HTML missing how long the monitor has been down")
+	}
+}
+
+// Cron states read as words, in the monitors page's colours.
+func TestRenderAlertEmail_cronStateLabels(t *testing.T) {
+	html, text, err := RenderAlertEmail(AlertPayload{
+		RuleName: "r", Trigger: "cron_error", FiredAt: time.Now(), Details: map[string]any{"error_count": 2},
+		Monitors: []*storage.CronMonitor{{Name: "Email digest", Schedule: "0 8 * * *", State: "error"}, {Name: "Sync", Schedule: "* * * * *", State: "in_progress"}},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, `color:`+emailstyle.Danger+`;font-weight:600;">Error</strong>`) {
+		t.Error("HTML missing the red Error label")
+	}
+	if !strings.Contains(html, `color:`+emailstyle.Text2+`;font-weight:600;">Running</strong>`) {
+		t.Error("HTML missing the plain Running label")
+	}
+	if strings.Contains(html, "in_progress") || !strings.Contains(text, "RUNNING") {
+		t.Error("a raw state name leaked into the email")
 	}
 }

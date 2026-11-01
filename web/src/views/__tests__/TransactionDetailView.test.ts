@@ -134,6 +134,19 @@ describe('TransactionDetailView', () => {
       expect(wrapper.find('.timeline').exists()).toBe(true)
     })
 
+    it('starts the time axis at 0, not at a formatted "<1ms"', () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      expect(wrapper.find('.timeline__tick-label').text()).toBe('0')
+    })
+
+    it('shows the status at the size of the other figures in the strip', () => {
+      setupMocks()
+      const wrapper = mount(TransactionDetailView, { global: { stubs } })
+      const status = wrapper.findAll('.stat').find(s => s.find('.stat__label').text() === 'Status')!
+      expect(status.find('.stat__value').classes()).toContain('stat__value--md')
+    })
+
     it('renders a span search input', () => {
       setupMocks()
       const wrapper = mount(TransactionDetailView, { global: { stubs } })

@@ -392,7 +392,7 @@ const sortedPages = computed(() => {
                     </span>
                     <span
                       class="pass-bar__label"
-                      :class="`vital-pill--${pageStatus(page)}`"
+                      :class="`pass-bar__label--${pageStatus(page)}`"
                     >{{ formatPassRate(page.pass_rate) }}</span>
                   </span>
                 </td>

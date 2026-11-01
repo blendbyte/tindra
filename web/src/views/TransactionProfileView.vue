@@ -7,7 +7,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
 import { useInvestigationStore } from '@/stores/investigation'
 import type { TransactionSummary, TxTimeseries, TxListPage } from '@/api/types'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, formatRate, formatFraction } from '@/utils/formatters'
 import { useTimezone } from '@/composables/useTimezone'
 import { WINDOW_MAP } from '@/utils/time'
 import TimeseriesChart from '@/components/TimeseriesChart.vue'
@@ -164,17 +164,6 @@ const stats = computed(() => {
 })
 
 
-function formatTPM(tpm: number) {
-  if (tpm < 0.001) return '<0.001/min'
-  if (tpm < 0.01) return `${tpm.toFixed(4)}/min`
-  return `${tpm.toFixed(tpm >= 1 ? 2 : 4)}/min`
-}
-
-function formatFailureRate(rate: number) {
-  if (rate === 0) return '0%'
-  if (rate < 0.0001) return '<0.01%'
-  return `${(rate * 100).toFixed(2)}%`
-}
 
 function formatOkRate(rate: number) {
   return `${Math.round((1 - rate) * 100)}%`
@@ -227,7 +216,7 @@ function projectName(projectId: string) {
       </div>
       <div class="txstat">
         <span class="txstat__label">Throughput</span>
-        <span class="txstat__value">{{ formatTPM(stats.totalTpm) }}</span>
+        <span class="txstat__value">{{ formatRate(stats.totalTpm) }}</span>
       </div>
       <div class="txstat">
         <span class="txstat__label">Count</span>
@@ -243,7 +232,7 @@ function projectName(projectId: string) {
           <div class="txstat-breakdown__labels">
             <span>{{ formatOkRate(stats.failureRate) }} ok</span>
             <span v-if="stats.failureRate > 0" class="txstat-breakdown__err-label">
-              {{ formatFailureRate(stats.failureRate) }} err
+              {{ formatFraction(stats.failureRate) }} err
             </span>
           </div>
         </div>

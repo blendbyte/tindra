@@ -4,92 +4,94 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blendbyte/tindra/internal/emailstyle"
 )
 
+// Counts and durations read as they do in the app.
 func TestFormatCount(t *testing.T) {
-	cases := []struct {
-		n    int64
-		want string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{999, "999"},
-		{1000, "1.0k"},
-		{1500, "1.5k"},
-		{999999, "1000.0k"},
-		{1000000, "1.0m"},
-		{1500000, "1.5m"},
-	}
-	for _, c := range cases {
-		got := formatCount(c.n)
-		if got != c.want {
-			t.Errorf("formatCount(%d) = %q, want %q", c.n, got, c.want)
+	cases := map[int64]string{0: "0", 999: "999", 1000: "1.0k", 1500: "1.5k", 1000000: "1.0M", 1500000: "1.5M"}
+	for n, want := range cases {
+		if got := formatCount(n); got != want {
+			t.Errorf("formatCount(%d) = %q, want %q", n, got, want)
 		}
 	}
 }
 
 func TestFormatMs(t *testing.T) {
-	cases := []struct {
-		ms   int64
-		want string
-	}{
-		{0, "0ms"},
-		{1, "1ms"},
-		{500, "500ms"},
-		{999, "999ms"},
-		{1000, "1s"},
-		{1500, "1.5s"},
-		{2000, "2s"},
-		{10000, "10s"},
-	}
-	for _, c := range cases {
-		got := formatMs(c.ms)
-		if got != c.want {
-			t.Errorf("formatMs(%d) = %q, want %q", c.ms, got, c.want)
+	cases := map[int64]string{0: "<1ms", 1: "1ms", 999: "999ms", 1000: "1.00s", 1990: "1.99s", 10000: "10.0s", 127400: "127.4s"}
+	for ms, want := range cases {
+		if got := formatMs(ms); got != want {
+			t.Errorf("formatMs(%d) = %q, want %q", ms, got, want)
 		}
 	}
 }
 
 func TestTxDelta(t *testing.T) {
 	cases := []struct {
-		cur, prev    int64
-		wantLabel    string
-		wantNonEmpty bool
+		cur, prev int64
+		wantLabel string
 	}{
-		{100, 0, "", false},
-		{100, 100, "", false},
-		{104, 100, "", false},
-		{96, 100, "", false},
-		{120, 100, "↑20%", true},
-		{80, 100, "↓20%", true},
-		{106, 100, "↑6%", true},
-		{94, 100, "↓6%", true},
+		{100, 0, ""},
+		{100, 100, ""},
+		{104, 100, ""},
+		{96, 100, ""},
+		{120, 100, "↑20%"},
+		{80, 100, "↓20%"},
+		{106, 100, "↑6%"},
+		{94, 100, "↓6%"},
 	}
 	for _, c := range cases {
-		label, color := txDelta(c.cur, c.prev)
-		if c.wantNonEmpty {
-			if label != c.wantLabel {
-				t.Errorf("txDelta(%d,%d) label = %q, want %q", c.cur, c.prev, label, c.wantLabel)
-			}
-			if color == "" {
-				t.Errorf("txDelta(%d,%d) expected non-empty color", c.cur, c.prev)
-			}
-		} else {
-			if label != "" || color != "" {
-				t.Errorf("txDelta(%d,%d) = (%q,%q), want (\"\",\"\")", c.cur, c.prev, label, color)
-			}
+		label, color := txDelta(c.cur, c.prev, 100, 100)
+		if label != c.wantLabel {
+			t.Errorf("txDelta(%d,%d) label = %q, want %q", c.cur, c.prev, label, c.wantLabel)
+		}
+		if (label == "") != (color == "") {
+			t.Errorf("txDelta(%d,%d) = (%q,%q): label and colour disagree", c.cur, c.prev, label, color)
 		}
 	}
 }
 
-func TestTxDelta_positiveIsRed_negativeIsGreen(t *testing.T) {
-	_, redColor := txDelta(200, 100)
-	if redColor != "#ef4444" {
-		t.Errorf("increase color: got %q, want #ef4444", redColor)
+// Like the performance page: slower is amber, faster is quiet.
+func TestTxDelta_slowerIsAmber_fasterIsQuiet(t *testing.T) {
+	if _, c := txDelta(200, 100, 100, 100); c != emailstyle.Warning {
+		t.Errorf("increase color: got %q, want %q", c, emailstyle.Warning)
 	}
-	_, greenColor := txDelta(50, 100)
-	if greenColor != "#22c55e" {
-		t.Errorf("decrease color: got %q, want #22c55e", greenColor)
+	if _, c := txDelta(50, 100, 100, 100); c != emailstyle.Text3 {
+		t.Errorf("decrease color: got %q, want %q", c, emailstyle.Text3)
+	}
+}
+
+// A change needs 20 requests in both weeks, so a handful never shows as "↑157%".
+func TestTxDelta_needsEnoughRequestsInBothWeeks(t *testing.T) {
+	for _, counts := range [][2]int64{{19, 100}, {100, 19}, {6, 6}} {
+		if label, _ := txDelta(500, 100, counts[0], counts[1]); label != "" {
+			t.Errorf("txDelta with counts %v = %q, want no delta", counts, label)
+		}
+	}
+	if label, _ := txDelta(500, 100, 20, 20); label != "↑400%" {
+		t.Errorf("txDelta at the threshold = %q, want ↑400%%", label)
+	}
+}
+
+func TestIssuesVerdict(t *testing.T) {
+	cases := []struct {
+		s    IssuesSummary
+		want string
+	}{
+		{IssuesSummary{New: 6, Regressed: 1, Ongoing: 21}, "6\u00a0new issues</span> and <span style=\"color:" + emailstyle.Warning + ";font-weight:600;\">1\u00a0regression</span> this week. 21 more are ongoing."},
+		{IssuesSummary{New: 1}, "1\u00a0new issue</span> this week."},
+		{IssuesSummary{Regressed: 2, Ongoing: 1}, "2\u00a0regressions</span> this week. 1 more is ongoing."},
+		{IssuesSummary{Ongoing: 21}, "No new or regressed issues this week. 21 are ongoing."},
+		{IssuesSummary{}, "No new or regressed issues this week."},
+	}
+	for _, c := range cases {
+		if got := string(issuesVerdict(c.s)); !strings.HasSuffix(got, c.want) {
+			t.Errorf("issuesVerdict(%+v) = %q, want suffix %q", c.s, got, c.want)
+		}
+	}
+	if got := string(issuesVerdict(IssuesSummary{New: 2})); !strings.HasPrefix(got, `<span style="color:`+emailstyle.Accent) {
+		t.Errorf("new issues should lead in the accent colour, got %q", got)
 	}
 }
 
@@ -564,31 +566,32 @@ func TestBuildDigestPlaintext_noProjects(t *testing.T) {
 	}
 }
 
-func TestRenderBaseLayout_returnsValidHTML(t *testing.T) {
-	html, err := renderBaseLayout("Test Title", "<p>Hello</p>", "https://example.com/logo.png")
+// The digest reads like the app: issue types in mono, durations formatted the
+// same way, and no change shown without enough requests behind it.
+func TestRenderDigestEmail_appConventions(t *testing.T) {
+	r := sampleReport()
+	r.TopIssues = []TopIssue{{IssueID: "i1", Title: "ChunkLoadError: Loading chunk 482 failed.", ProjectName: "Storefront", Count: 133}}
+	r.TopTx = []TopTransaction{
+		{Transaction: "/checkout", ProjectName: "Storefront", Count: 540, P50Ms: 1990, P95Ms: 127_400, P50PrevMs: 1420, P50PrevCount: 480},
+		{Transaction: "settlement.export", ProjectName: "Payments", Count: 98, P50Ms: 5140, P95Ms: 7120, P50PrevMs: 2000, P50PrevCount: 6},
+	}
+	_, html, _, err := RenderDigestEmail(r)
 	if err != nil {
-		t.Fatalf("renderBaseLayout returned error: %v", err)
+		t.Fatal(err)
 	}
-	if !strings.Contains(html, "<!DOCTYPE html>") {
-		t.Error("expected DOCTYPE declaration")
+	for _, want := range []string{
+		">ChunkLoadError</span>: Loading chunk 482 failed.",
+		"1.99s", "127.4s",
+		`color:` + emailstyle.Warning + `;font-size:11px;">↑40%`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML missing %q", want)
+		}
 	}
-	if !strings.Contains(html, "Test Title") {
-		t.Error("expected title in output")
+	if strings.Contains(html, "↑157%") {
+		t.Error("a change from 6 requests is shown")
 	}
-	if !strings.Contains(html, "<p>Hello</p>") {
-		t.Error("expected body content in output")
-	}
-	if !strings.Contains(html, "https://example.com/logo.png") {
-		t.Error("expected logo src in output")
-	}
-}
-
-func TestRenderBaseLayout_containsTindraLink(t *testing.T) {
-	html, err := renderBaseLayout("T", "<p>body</p>", "logo.png")
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if !strings.Contains(html, "tindra.sh") {
-		t.Error("expected tindra.sh link in footer")
+	if strings.Contains(html, "ZgotmplZ") || strings.Contains(html, "e+02") {
+		t.Error("HTML contains a sanitized value or a number in exponent form")
 	}
 }

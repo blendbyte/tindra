@@ -6,6 +6,8 @@ import (
 	"html/template"
 	"strings"
 	"time"
+
+	"github.com/blendbyte/tindra/internal/emailstyle"
 )
 
 // Report is the full data payload for a weekly digest email.
@@ -36,24 +38,10 @@ func (r *Report) subject() string {
 	return fmt.Sprintf("Weekly update for %s - %s", name, r.dateRange())
 }
 
-// formatCount turns large numbers into compact form: 146000 → "146k"
-func formatCount(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fm", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1_000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
-}
+// formatCount and formatMs print counts and durations like the app does.
+func formatCount(n int64) string { return emailstyle.FormatCount(n) }
 
-func formatMs(ms int64) string {
-	if ms >= 1000 {
-		return fmt.Sprintf("%.2gs", float64(ms)/1000)
-	}
-	return fmt.Sprintf("%dms", ms)
-}
+func formatMs(ms int64) string { return emailstyle.FormatDuration(float64(ms)) }
 
 // barHeight returns a pixel height (max 40px) proportional to the value.
 func barHeights(stats []DayStat, maxPx int) []int {
@@ -80,14 +68,16 @@ func barHeights(stats []DayStat, maxPx int) []int {
 	return heights
 }
 
-// sf is substituted into the template as literal text before template.Parse,
-// so html/template's CSS sanitizer never sees it as a template action.
-const sf = `font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;`
+// minDeltaSamples is how many requests both weeks need before a p50 change is
+// shown, the same evidence the performance page asks for, so a "↑157%" from a
+// handful of requests never appears.
+const minDeltaSamples = 20
 
-// txDelta returns a formatted delta label and CSS color for a p50 change.
-// Returns ("", "") when there's no previous data or the change is < 5%.
-func txDelta(cur, prev int64) (string, string) {
-	if prev == 0 {
+// txDelta returns a formatted delta label and colour for a p50 change, in the
+// app's terms: slower is amber, faster is quiet. It returns ("", "") without
+// enough requests in either week or for a change under 5%.
+func txDelta(cur, prev, curCount, prevCount int64) (string, string) {
+	if prev == 0 || curCount < minDeltaSamples || prevCount < minDeltaSamples {
 		return "", ""
 	}
 	pct := float64(cur-prev) / float64(prev) * 100
@@ -95,189 +85,183 @@ func txDelta(cur, prev int64) (string, string) {
 		return "", ""
 	}
 	if pct > 0 {
-		return fmt.Sprintf("↑%.0f%%", pct), "#ef4444"
+		return fmt.Sprintf("↑%.0f%%", pct), emailstyle.Warning
 	}
-	return fmt.Sprintf("↓%.0f%%", -pct), "#22c55e"
+	return fmt.Sprintf("↓%.0f%%", -pct), emailstyle.Text3
 }
+
+// issuesVerdict is the sentence under the heading: what is new, what came
+// back, and how much is still open, with new in violet and regressions in
+// amber like the dashboard.
+func issuesVerdict(s IssuesSummary) template.HTML {
+	esc := template.HTMLEscapeString
+	colored := func(color, text string) string {
+		return `<span style="color:` + color + `;font-weight:600;">` + esc(text) + `</span>`
+	}
+	plural := func(n int, one, many string) string {
+		if n == 1 {
+			return "1\u00a0" + one
+		}
+		return fmt.Sprintf("%d\u00a0%s", n, many)
+	}
+	var lead string
+	switch {
+	case s.New > 0 && s.Regressed > 0:
+		lead = colored(emailstyle.Accent, plural(s.New, "new issue", "new issues")) + " and " + colored(emailstyle.Warning, plural(s.Regressed, "regression", "regressions")) + " this week."
+	case s.New > 0:
+		lead = colored(emailstyle.Accent, plural(s.New, "new issue", "new issues")) + " this week."
+	case s.Regressed > 0:
+		lead = colored(emailstyle.Warning, plural(s.Regressed, "regression", "regressions")) + " this week."
+	default:
+		lead = "No new or regressed issues this week."
+	}
+	// "21 more are ongoing" after news, "21 are ongoing" without any.
+	more := ""
+	if s.New > 0 || s.Regressed > 0 {
+		more = "more "
+	}
+	switch {
+	case s.Ongoing == 1:
+		lead += " 1 " + more + "is ongoing."
+	case s.Ongoing > 1:
+		lead += fmt.Sprintf(" %d %sare ongoing.", s.Ongoing, more)
+	}
+	return template.HTML(lead)
+}
+
+const (
+	sectionTitle = `margin:0 0 8px;font-size:14px;font-weight:600;color:__TEXT1__;__SANS__`
+	thStyle      = `padding:0 0 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:__TEXT3__;border-bottom:1px solid __HAIRLINE__;__SANS__`
+	tdStyle      = `padding:10px 0;border-bottom:1px solid __HAIRLINE__;vertical-align:top;`
+	numStyle     = `padding:10px 0 10px 16px;border-bottom:1px solid __HAIRLINE__;vertical-align:top;text-align:right;white-space:nowrap;font-size:13px;color:__TEXT2__;__MONO__`
+	subStyle     = `margin:3px 0 0;font-size:12px;color:__TEXT3__;__SANS__`
+)
 
 var digestBodyTmpl = template.Must(template.New("digest-body").Funcs(template.FuncMap{
 	"formatCount": formatCount,
 	"formatMs":    formatMs,
-	"txDeltaHTML": func(cur, prev int64) template.HTML {
-		label, color := txDelta(cur, prev)
+	"splitTitle": func(title string) []string {
+		typ, msg := emailstyle.SplitTitle(title)
+		return []string{typ, msg}
+	},
+	"txDeltaHTML": func(tx TopTransaction) template.HTML {
+		label, color := txDelta(tx.P50Ms, tx.P50PrevMs, tx.Count, tx.P50PrevCount)
 		if label == "" {
 			return ""
 		}
-		return template.HTML(fmt.Sprintf(` <span style="color:%s;font-weight:600;%s">%s</span>`, color, sf, label))
+		return template.HTML(fmt.Sprintf(` <span style="color:%s;font-size:11px;">%s</span>`, color, label))
 	},
-}).Parse(strings.ReplaceAll(`
-<!-- Header -->
-<p style="margin:0 0 4px;font-size:13px;color:#6b7280;__FF__">{{.DateRange}}</p>
-<h1 style="margin:0 0 24px;font-size:22px;font-weight:700;color:#111827;letter-spacing:-0.3px;line-height:1.3;__FF__">Weekly update{{if .UserName}} for {{.UserName}}{{end}}</h1>
+}).Parse(emailstyle.Expand(strings.NewReplacer(
+	"__SECTION__", sectionTitle, "__TH__", thStyle, "__TD__", tdStyle, "__NUM__", numStyle, "__SUBLINE__", subStyle,
+).Replace(`
+<h1 style="margin:0 0 4px;font-size:22px;font-weight:600;color:__TEXT1__;letter-spacing:-0.2px;line-height:1.3;__SANS__">Weekly update{{if .UserName}} for {{.UserName}}{{end}}</h1>
+<p style="margin:0 0 16px;font-size:13px;color:__TEXT3__;__SANS__">{{.DateRange}}</p>
+<p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:__TEXT1__;__SANS__">{{.Verdict}}</p>
 
-<!-- Stat cards: errors + transactions -->
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:24px;">
+<!-- Errors and transactions, each with a bar per day -->
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;border-top:1px solid __HAIRLINE__;">
   <tr>
-    <!-- Errors card -->
-    <td width="48%" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px 18px;vertical-align:top;">
-      <p style="margin:0 0 2px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:#9ca3af;__FF__">Total errors</p>
-      <p style="margin:0 0 12px;font-size:28px;font-weight:700;color:#111827;line-height:1.1;__FF__">{{formatCount .TotalErrors}}</p>
-      <!-- Bar chart -->
+    {{range $i, $c := .Charts}}
+    {{if $i}}<td width="8%">&nbsp;</td>{{end}}
+    <td width="46%" style="padding-top:16px;vertical-align:top;">
+      <p style="margin:0 0 2px;font-size:12px;color:__TEXT3__;__SANS__">{{$c.Label}}</p>
+      <p style="margin:0 0 12px;font-size:26px;font-weight:600;color:__TEXT1__;line-height:1.1;__SANS__">{{formatCount $c.Total}}</p>
       <table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;">
         <tr style="vertical-align:bottom;">
-          {{range $i, $bar := .ErrorBars}}
-          <td style="width:12%;text-align:center;vertical-align:bottom;padding:0 1px;">
-            <div style="width:100%;height:{{$bar}}px;background-color:#6366f1;border-radius:2px 2px 0 0;"></div>
+          {{range $c.Bars}}
+          <td style="width:14%;vertical-align:bottom;padding:0 1px;">
+            <div style="width:100%;height:{{.}}px;background-color:__ACCENT__;border-radius:2px 2px 0 0;"></div>
           </td>
           {{end}}
         </tr>
         <tr>
-          {{range .DayLabels}}
-          <td style="width:12%;text-align:center;padding-top:4px;font-size:9px;color:#9ca3af;__FF__">{{.}}</td>
+          {{range $.DayLabels}}
+          <td style="width:14%;text-align:center;padding-top:4px;font-size:10px;color:__TEXT3__;__SANS__">{{.}}</td>
           {{end}}
         </tr>
       </table>
     </td>
-    <td width="4%">&nbsp;</td>
-    <!-- Transactions card -->
-    <td width="48%" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px 18px;vertical-align:top;">
-      <p style="margin:0 0 2px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:#9ca3af;__FF__">Total transactions</p>
-      <p style="margin:0 0 12px;font-size:28px;font-weight:700;color:#111827;line-height:1.1;__FF__">{{formatCount .TotalTx}}</p>
-      <table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;">
-        <tr style="vertical-align:bottom;">
-          {{range $i, $bar := .TxBars}}
-          <td style="width:12%;text-align:center;vertical-align:bottom;padding:0 1px;">
-            <div style="width:100%;height:{{$bar}}px;background-color:#8b5cf6;border-radius:2px 2px 0 0;"></div>
-          </td>
-          {{end}}
-        </tr>
-        <tr>
-          {{range .DayLabels}}
-          <td style="width:12%;text-align:center;padding-top:4px;font-size:9px;color:#9ca3af;__FF__">{{.}}</td>
-          {{end}}
-        </tr>
-      </table>
-    </td>
+    {{end}}
   </tr>
 </table>
 
-<!-- Project breakdown table -->
 {{if .Projects}}
-<p style="margin:0 0 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:#9ca3af;__FF__">By project</p>
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:24px;border:1px solid #e5e7eb;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;">
-  <thead>
-    <tr style="background:#f3f4f6;">
-      <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">Project</th>
-      <th style="padding:8px 14px;text-align:right;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">Errors</th>
-      <th style="padding:8px 14px;text-align:right;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">Transactions</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Projects}}
-    <tr style="border-top:1px solid #f3f4f6;">
-      <td style="padding:10px 14px;font-size:13px;color:#111827;font-weight:500;__FF__">{{.ProjectName}}</td>
-      <td style="padding:10px 14px;text-align:right;font-size:13px;color:#6b7280;font-family:'Courier New',Courier,monospace;">{{formatCount .Errors}}</td>
-      <td style="padding:10px 14px;text-align:right;font-size:13px;color:#6b7280;font-family:'Courier New',Courier,monospace;">{{formatCount .Transactions}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
-{{end}}
-
-<!-- Issues breakdown -->
-<p style="margin:0 0 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:#9ca3af;__FF__">Issues breakdown</p>
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;">
+<p style="__SECTION__">By project</p>
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
   <tr>
-    {{if gt .Issues.New 0}}<td style="padding:0 8px 0 0;">
-      <div style="background:#f59e0b;border-radius:4px;padding:8px 12px;text-align:center;">
-        <p style="margin:0;font-size:18px;font-weight:700;color:#ffffff;line-height:1;__FF__">{{.Issues.New}}</p>
-        <p style="margin:4px 0 0;font-size:10px;color:rgba(255,255,255,0.85);__FF__">New</p>
-      </div>
-    </td>{{end}}
-    {{if gt .Issues.Regressed 0}}<td style="padding:0 8px 0 0;">
-      <div style="background:#ef4444;border-radius:4px;padding:8px 12px;text-align:center;">
-        <p style="margin:0;font-size:18px;font-weight:700;color:#ffffff;line-height:1;__FF__">{{.Issues.Regressed}}</p>
-        <p style="margin:4px 0 0;font-size:10px;color:rgba(255,255,255,0.85);__FF__">Regressed</p>
-      </div>
-    </td>{{end}}
-    {{if gt .Issues.Ongoing 0}}<td style="padding:0;">
-      <div style="background:#e5e7eb;border-radius:4px;padding:8px 12px;text-align:center;">
-        <p style="margin:0;font-size:18px;font-weight:700;color:#6b7280;line-height:1;__FF__">{{.Issues.Ongoing}}</p>
-        <p style="margin:4px 0 0;font-size:10px;color:#9ca3af;__FF__">Ongoing</p>
-      </div>
-    </td>{{end}}
+    <th align="left" style="__TH__">Project</th>
+    <th align="right" style="__TH__">Errors</th>
+    <th align="right" style="__TH__">Transactions</th>
   </tr>
+  {{range .Projects}}
+  <tr>
+    <td style="__TD__font-size:13px;color:__TEXT1__;__SANS__">{{.ProjectName}}</td>
+    <td style="__NUM__">{{formatCount .Errors}}</td>
+    <td style="__NUM__">{{formatCount .Transactions}}</td>
+  </tr>
+  {{end}}
 </table>
+{{end}}
 
-<!-- Top issues -->
 {{if .TopIssues}}
-<p style="margin:20px 0 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:#9ca3af;__FF__">Issues with the most errors</p>
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:24px;border:1px solid #e5e7eb;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;">
-  <thead>
-    <tr style="background:#f3f4f6;">
-      <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">Issue</th>
-      <th style="padding:8px 14px;text-align:right;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">Errors</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .TopIssues}}
-    <tr style="border-top:1px solid #f3f4f6;">
-      <td style="padding:10px 14px;">
-        <a href="{{$.IssueURL .IssueID}}" style="font-size:13px;font-weight:500;color:#6366f1;text-decoration:none;display:block;__FF__">{{.Title}}</a>
-        <p style="margin:3px 0 0;font-size:11px;color:#9ca3af;__FF__">{{.ProjectName}}</p>
-      </td>
-      <td style="padding:10px 14px;text-align:right;font-size:13px;color:#6b7280;vertical-align:top;font-family:'Courier New',Courier,monospace;">{{formatCount .Count}}</td>
-    </tr>
-    {{end}}
-  </tbody>
+<p style="__SECTION__">Issues with the most errors</p>
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
+  <tr>
+    <th align="left" style="__TH__">Issue</th>
+    <th align="right" style="__TH__">Errors</th>
+  </tr>
+  {{range .TopIssues}}{{$t := splitTitle .Title}}
+  <tr>
+    <td style="__TD__">
+      <a href="{{$.IssueURL .IssueID}}" style="display:block;font-size:13px;line-height:1.45;color:__TEXT1__;text-decoration:none;word-break:break-word;__SANS__">{{with index $t 0}}<span style="color:__ACCENT__;__MONO__">{{.}}</span>: {{end}}{{index $t 1}}</a>
+      <p style="__SUBLINE__">{{.ProjectName}}</p>
+    </td>
+    <td style="__NUM__">{{formatCount .Count}}</td>
+  </tr>
+  {{end}}
 </table>
 {{end}}
 
-<!-- Top transactions -->
 {{if .TopTx}}
-<p style="margin:0 0 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:#9ca3af;__FF__">Most frequent transactions</p>
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:24px;border:1px solid #e5e7eb;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;">
-  <thead>
-    <tr style="background:#f3f4f6;">
-      <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">Transaction</th>
-      <th style="padding:8px 14px;text-align:right;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">Count</th>
-      <th style="padding:8px 14px;text-align:right;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">p50</th>
-      <th style="padding:8px 14px;text-align:right;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9ca3af;__FF__">p95</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .TopTx}}
-    <tr style="border-top:1px solid #f3f4f6;">
-      <td style="padding:10px 14px;">
-        <span style="font-size:13px;font-weight:500;color:#111827;font-family:'Courier New',Courier,monospace;">{{.Transaction}}</span>
-        <p style="margin:3px 0 0;font-size:11px;color:#9ca3af;__FF__">{{.ProjectName}}</p>
-      </td>
-      <td style="padding:10px 14px;text-align:right;font-size:13px;color:#6b7280;vertical-align:top;font-family:'Courier New',Courier,monospace;">{{formatCount .Count}}</td>
-      <td style="padding:10px 14px;text-align:right;font-size:13px;color:#6b7280;vertical-align:top;white-space:nowrap;__FF__">{{formatMs .P50Ms}}{{txDeltaHTML .P50Ms .P50PrevMs}}</td>
-      <td style="padding:10px 14px;text-align:right;font-size:13px;color:#6b7280;vertical-align:top;white-space:nowrap;__FF__">{{formatMs .P95Ms}}</td>
-    </tr>
-    {{end}}
-  </tbody>
+<p style="__SECTION__">Most frequent transactions</p>
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
+  <tr>
+    <th align="left" style="__TH__">Transaction</th>
+    <th align="right" style="__TH__">Count</th>
+    <th align="right" style="__TH__">P50</th>
+    <th align="right" style="__TH__">P95</th>
+  </tr>
+  {{range .TopTx}}
+  <tr>
+    <td style="__TD__">
+      <span style="font-size:13px;color:__TEXT1__;word-break:break-all;__MONO__">{{.Transaction}}</span>
+      <p style="__SUBLINE__">{{.ProjectName}}</p>
+    </td>
+    <td style="__NUM__">{{formatCount .Count}}</td>
+    <td style="__NUM__">{{formatMs .P50Ms}}{{txDeltaHTML .}}</td>
+    <td style="__NUM__">{{formatMs .P95Ms}}</td>
+  </tr>
+  {{end}}
 </table>
 {{end}}
 
-<!-- Divider + footer -->
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:4px 0 20px;">
-  <tr><td style="border-top:1px solid #f3f4f6;font-size:0;">&nbsp;</td></tr>
-</table>
-<p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;__FF__">
+<p style="margin:0;padding-top:16px;border-top:1px solid __HAIRLINE__;font-size:12px;color:__TEXT3__;line-height:1.6;__SANS__">
   You&#39;re receiving this because weekly digests are enabled for your account.
-  <a href="{{.SettingsURL}}" style="color:#9ca3af;__FF__">Manage notification settings</a>.
+  <a href="{{.SettingsURL}}" style="color:__TEXT3__;">Manage notification settings</a>.
 </p>
-`, "__FF__", sf)))
+`))))
+
+type digestChart struct {
+	Label string
+	Total int64
+	Bars  []int
+}
 
 type digestTemplateData struct {
 	UserName    string
 	DateRange   string
-	TotalErrors int64
-	TotalTx     int64
-	ErrorBars   []int
-	TxBars      []int
+	Verdict     template.HTML
+	Charts      []digestChart
 	DayLabels   []string
 	Projects    []ProjectStat
 	Issues      IssuesSummary
@@ -318,18 +302,18 @@ func fillDailyStats(stats []DayStat, from, to time.Time) []DayStat {
 // RenderDigestEmail returns (subject, html, plaintext) for the weekly digest.
 func RenderDigestEmail(r *Report) (subject, html, text string, err error) {
 	base := strings.TrimRight(r.PublicURL, "/")
-	logoSrc := base + "/assets/email-logo.png"
 
 	dailyErrors := fillDailyStats(r.DailyErrors, r.From, r.To)
 	dailyTx := fillDailyStats(r.DailyTx, r.From, r.To)
 
 	data := &digestTemplateData{
-		UserName:    r.UserName,
-		DateRange:   r.dateRange(),
-		TotalErrors: r.TotalErrors,
-		TotalTx:     r.TotalTx,
-		ErrorBars:   barHeights(dailyErrors, 40),
-		TxBars:      barHeights(dailyTx, 40),
+		UserName:  r.UserName,
+		DateRange: r.dateRange(),
+		Verdict:   issuesVerdict(r.Issues),
+		Charts: []digestChart{
+			{Label: "Errors", Total: r.TotalErrors, Bars: barHeights(dailyErrors, 40)},
+			{Label: "Transactions", Total: r.TotalTx, Bars: barHeights(dailyTx, 40)},
+		},
 		DayLabels:   buildDayLabels(r.From),
 		Projects:    r.Projects,
 		Issues:      r.Issues,
@@ -345,7 +329,7 @@ func RenderDigestEmail(r *Report) (subject, html, text string, err error) {
 		return
 	}
 
-	html, err = renderBaseLayout(r.subject(), template.HTML(bodyBuf.String()), logoSrc)
+	html, err = emailstyle.Layout(r.subject(), template.HTML(bodyBuf.String()), base)
 	if err != nil {
 		return
 	}
@@ -397,49 +381,4 @@ func buildDigestPlaintext(r *Report, dateRange string) string {
 	base := strings.TrimRight(r.PublicURL, "/")
 	fmt.Fprintf(&b, "---\nManage notification settings: %s/settings/profile\n", base)
 	return b.String()
-}
-
-// renderBaseLayout is the shared email shell - duplicated here to avoid a
-// circular import with the alerts package.
-func renderBaseLayout(title string, body template.HTML, logoSrc string) (string, error) {
-	tmpl := template.Must(template.New("base").Parse(
-		`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Title}}</title>
-<style>
-  body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}
-  table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse}
-  img{border:0;height:auto;line-height:100%;outline:none;text-decoration:none}
-</style>
-</head>
-<body style="margin:0;padding:0;background-color:#f5f6f8;">
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#f5f6f8;">
-<tr><td align="center" style="padding:32px 16px;">
-  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;margin:0 auto;">
-    <tr><td style="background-color:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:32px 28px;">
-      <div style="text-align:center;margin-bottom:28px;">
-        <img src="{{.LogoSrc}}" width="160" alt="Tindra" style="border:0;display:inline-block;width:160px;height:auto;max-width:100%;">
-      </div>
-      {{.Body}}
-    </td></tr>
-    <tr><td style="padding-top:24px;text-align:center;font-size:12px;color:#9ca3af;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-      <a href="https://tindra.sh" style="color:#9ca3af;text-decoration:none;">tindra.sh</a>
-    </td></tr>
-  </table>
-</td></tr>
-</table>
-</body>
-</html>`))
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, struct {
-		Title   string
-		Body    template.HTML
-		LogoSrc string
-	}{title, body, logoSrc}); err != nil {
-		return "", fmt.Errorf("render base layout: %w", err)
-	}
-	return buf.String(), nil
 }

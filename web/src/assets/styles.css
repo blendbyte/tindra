@@ -1286,7 +1286,6 @@ a { color: inherit; text-decoration: none; }
   font-size: var(--text-sm);
   font-weight: 500;
   letter-spacing: -0.01em;
-  margin-right: 2px;
 }
 .issue__title-msg {
   color: var(--text-2);
@@ -1547,6 +1546,10 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+.detail-breadcrumb__title--id { color: var(--text-3); font-size: var(--text-xs); }
+@media (max-width: 640px) {
+  .detail-breadcrumb__title--id > span { visibility: hidden; }
 }
 .detail-breadcrumb__actions {
   display: flex;
@@ -2799,6 +2802,21 @@ a { color: inherit; text-decoration: none; }
 .optab:hover { color: var(--text-1); background: var(--surface-2); }
 .optab--active { color: var(--text-1); background: var(--surface-2); font-weight: 500; }
 
+/* Section tabs (a release's transactions and issues) look like every other tab
+   strip: underlined, not the filled pills of an op filter. */
+.optabs--underline { gap: 0; padding: 0; height: auto; }
+.optabs--underline .optab {
+  height: auto;
+  padding: 10px 14px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--text-3);
+}
+.optabs--underline .optab:hover { background: none; color: var(--text-1); }
+.optabs--underline .optab--active { background: none; color: var(--text-1); border-bottom-color: var(--accent); }
+.optabs--underline .optab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 .optab__dot {
   width: 6px;
   height: 6px;
@@ -3315,6 +3333,16 @@ a { color: inherit; text-decoration: none; }
   font-variant-numeric: tabular-nums;
 }
 .stat__value--md { font-size: var(--text-lg); }
+/* Figures keep their state colour: the value rules above set text-1 and are
+   declared after the shared .tx-failure/.tx-warn, so they would win. */
+.stat__value.tx-failure, .txstat__value.tx-failure { color: var(--danger); }
+.stat__value.tx-warn, .txstat__value.tx-warn { color: var(--warning); }
+.txstat__value.tx-apdex--good { color: var(--success); }
+.txstat__value.tx-apdex--fair { color: var(--warning); }
+.txstat__value.tx-apdex--poor { color: var(--danger); }
+/* A status inside a stat reads at the stat's size, like the figures beside it. */
+.stat__value .tx-status { font-size: inherit; font-weight: inherit; color: inherit; }
+.stat__value .tx-status::before { width: 7px; height: 7px; }
 .stat__value--sm { font-size: var(--text-sm); }
 .stat__value--mono { font-family: var(--mono); }
 .stat__sub {
@@ -5307,11 +5335,12 @@ a { color: inherit; text-decoration: none; }
 .rel-issue-row:hover { background: var(--surface); }
 
 .rel-issue-title {
-  color: var(--text-1);
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.rel-issue-title__sep { color: var(--text-3); }
 
 .rel-issue-count {
   color: var(--text-3);
@@ -7039,6 +7068,9 @@ select.field__input {
   white-space: nowrap;
   color: var(--text-2);
 }
+/* Figures are mono; their column headings stay in the UI face like every
+   other heading in the row. */
+th.perf-table__num { font-family: var(--ui); }
 
 /* Time % mini bar */
 .perf-timepct {
@@ -7268,11 +7300,16 @@ select.field__input {
 .pass-bar__fill--good             { background: var(--success); }
 .pass-bar__fill--needs-improvement { background: var(--warning); }
 .pass-bar__fill--poor             { background: var(--danger); }
+/* The bar already carries the rating; the figure beside it is coloured text,
+   not a second tinted pill. */
 .pass-bar__label {
   font-size: 12px;
   font-weight: 600;
   min-width: 34px;
 }
+.pass-bar__label--good             { color: var(--success); }
+.pass-bar__label--needs-improvement { color: var(--warning); }
+.pass-bar__label--poor             { color: var(--danger); }
 
 /* ── Logs view ────────────────────────────────────────────────────── */
 
@@ -7394,6 +7431,15 @@ select.field__input {
 /* Trace log panel (on transaction detail) */
 .trace-logs {
   margin-top: 24px;
+}
+.trace-noprofile {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 16px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
 }
 
 .trace-logs__head {

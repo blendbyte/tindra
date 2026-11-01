@@ -92,13 +92,7 @@ export function formatSpan(since: string | null, now = Date.now()): string {
   return `${Math.floor(h / 24)}d`
 }
 
-// "TypeError: Cannot read…" splits into the exception type and the message.
-// Titles without a type prefix, or with a colon inside a long sentence, stay whole.
-export function splitTitle(title: string): { type: string; message: string } {
-  const i = title.indexOf(':')
-  if (i <= 0 || i > 80 || /\s/.test(title.slice(0, i))) return { type: '', message: title }
-  return { type: title.slice(0, i), message: title.slice(i + 1).trim() }
-}
+export { splitTitle } from '@/utils/issueTitle'
 
 // Like plural, but keeps the count on the same line as its noun.
 function pluralKept(n: number, one: string, many: string): string {
