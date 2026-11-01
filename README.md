@@ -27,7 +27,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="dashboard-dark.png">
-    <img src="dashboard-light.png" alt="Tindra dashboard showing error and latency metrics, transaction activity, monitors, issues, and release health">
+    <img src="dashboard-light.png" alt="Tindra dashboard leading with failing monitors and new or regressed issues, beside vitals, release health, and recent alerts">
   </picture>
 </p>
 
