@@ -22,7 +22,13 @@ describe('issueVerdict', () => {
   it('leads a regression with when and where it came back, then the owner', () => {
     const v = issueVerdict({ ...base, status: 'regressed', regressed_at: '2026-10-31T10:30:00Z' }, { ...opts, owner: 'Jonas Becker' })
     expect(v.tone).toBe('regressed')
-    expect(sentence(v)).toBe('Regressed <10:30> in 3.8.0 after it was resolved. Jonas Becker is on it.')
+    expect(sentence(v)).toBe('Regressed <10:30>. Last seen in 3.8.0. Jonas Becker is on it.')
+  })
+
+  it('does not claim a regression followed a resolve, since ignores and snoozes end in one too', () => {
+    const v = issueVerdict({ ...base, status: 'regressed', regressed_at: '2026-10-31T10:30:00Z', release: null }, opts)
+    expect(sentence(v)).toBe('Regressed <10:30>. Nobody is assigned yet.')
+    expect(sentence(v)).not.toContain('resolved')
   })
 
   it('calls an open issue first seen in the window new, with its first release', () => {

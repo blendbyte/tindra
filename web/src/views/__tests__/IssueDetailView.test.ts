@@ -1384,8 +1384,8 @@ describe('IssueDetailView', () => {
       setupQueries({ ...baseIssue, status: 'regressed', regressed_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), release: '3.8.0', assignee_id: 'u-9', assignee_email: 'jonas@example.com' })
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       const verdict = wrapper.find('.issue-verdict')
-      expect(verdict.find('.issue-verdict__lead--regressed').text()).toMatch(/^Regressed .+ ago in 3.8.0$/)
-      expect(verdict.text()).toContain('after it was resolved. jonas@example.com is on it.')
+      expect(verdict.find('.issue-verdict__lead--regressed').text()).toMatch(/^Regressed .+ ago\.$/)
+      expect(verdict.text()).toContain('Last seen in 3.8.0. jonas@example.com is on it.')
     })
 
     it('says an ongoing issue has nobody assigned', () => {

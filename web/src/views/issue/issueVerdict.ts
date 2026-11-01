@@ -19,9 +19,12 @@ export function issueVerdict(
   const owner = opts.owner ? `${opts.owner} is on it.` : 'Nobody is assigned yet.'
   switch (issue.status) {
     case 'regressed': {
+      // An issue regresses when it was resolved, when an ignore runs out and
+      // when a snooze ends, so the sentence doesn't say which. The release is
+      // the latest event's, which need not be the one it came back in.
       const at = issue.regressed_at ?? issue.last_seen
-      const release = issue.release ? ` in ${issue.release}` : ''
-      return { lead: `Regressed ${opts.rel(at)}${release}`, tone: 'regressed', rest: `after it was resolved. ${owner}` }
+      const release = issue.release ? `Last seen in ${issue.release}. ` : ''
+      return { lead: `Regressed ${opts.rel(at)}.`, tone: 'regressed', rest: `${release}${owner}` }
     }
     case 'resolved':
       return { lead: 'Resolved', tone: 'quiet', rest: `and last seen ${opts.rel(issue.last_seen)}.` }
