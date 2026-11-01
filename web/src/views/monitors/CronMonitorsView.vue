@@ -338,7 +338,8 @@ function cancelCreate() {
             />
           </div>
           <span class="monrow__time">{{ m.last_checkin_at ? formatRel(m.last_checkin_at) : '–' }}</span>
-          <span class="monrow__time">{{ m.next_expected_at ? formatRel(m.next_expected_at) : '–' }}</span>
+          <!-- A paused monitor expects no check-in, whatever next_expected_at still says. -->
+          <span class="monrow__time">{{ m.status !== 'paused' && m.next_expected_at ? formatRel(m.next_expected_at) : '–' }}</span>
           <span class="monrow__chevron">
             <Icon :name="selectedMonitorId === m.id ? 'chevron-up' : 'chevron-down'" :size="12" />
           </span>

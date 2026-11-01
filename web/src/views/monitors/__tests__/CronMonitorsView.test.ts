@@ -647,6 +647,19 @@ describe('CronMonitorsView', () => {
   })
 
   describe('null timestamps', () => {
+    // A paused monitor keeps its old next_expected_at, but expects no check-in.
+    it('shows the next expected check-in only while the monitor is active', () => {
+      setupMocks([
+        makeMonitor('m1', 'Daily backup'),
+        { ...makeMonitor('m2', 'Weekly report'), status: 'paused' },
+      ])
+      const wrapper = mount(CronMonitorsView, { global: { stubs } })
+      const nextCell = (name: string) =>
+        wrapper.findAll('.monrow').find(r => r.text().includes(name))!.findAll('.monrow__time')[1]!.text()
+      expect(nextCell('Daily backup')).toBe('2m ago')
+      expect(nextCell('Weekly report')).toBe('–')
+    })
+
     it('shows "–" when last_checkin_at is null', () => {
       const monNoCheckin = { ...makeMonitor('m1', 'Daily backup'), last_checkin_at: null }
       setupMocks([monNoCheckin])

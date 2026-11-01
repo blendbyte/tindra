@@ -235,6 +235,20 @@ describe('UptimeMonitorsView', () => {
       const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
       expect(wrapper.find('.monrow__time').text()).toBe('–')
     })
+
+    // A paused monitor keeps its old next_check_at, but nothing will check it.
+    it('shows the next check only while the monitor is active', async () => {
+      const next = '2024-01-01T00:05:00Z'
+      setupUptimeMocks([
+        { ...makeUptimeMonitor('u1', 'Homepage'), next_check_at: next },
+        { ...makeUptimeMonitor('u2', 'Staging'), next_check_at: next, status: 'paused' },
+      ])
+      const wrapper = mount(UptimeMonitorsView, { global: { stubs } })
+      const nextCell = (name: string) =>
+        wrapper.findAll('.uprow').find(r => r.text().includes(name))!.findAll('.monrow__time')[1]!.text()
+      expect(nextCell('Homepage')).toBe('2m ago')
+      expect(nextCell('Staging')).toBe('–')
+    })
   })
 
   describe('state labels', () => {

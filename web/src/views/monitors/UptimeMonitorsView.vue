@@ -374,7 +374,8 @@ async function confirmDeleteUptime(m: UptimeMonitor) {
             />
           </div>
           <span class="monrow__time">{{ m.last_checked_at ? formatRel(m.last_checked_at) : '–' }}</span>
-          <span class="monrow__time">{{ m.next_check_at ? formatRel(m.next_check_at) : '–' }}</span>
+          <!-- A paused monitor is not checked, whatever next_check_at still says. -->
+          <span class="monrow__time">{{ m.status !== 'paused' && m.next_check_at ? formatRel(m.next_check_at) : '–' }}</span>
           <span class="monrow__chevron">
             <Icon :name="selectedUptimeId === m.id ? 'chevron-up' : 'chevron-down'" :size="12" />
           </span>
