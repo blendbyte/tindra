@@ -49,6 +49,78 @@ func TestInvestigationBoundsAcrossTelemetry(t *testing.T) {
 	require.Len(t, samples, 2)
 }
 
+// N+1 issues record occurrences in perf_events, never in events, and the
+// windowed list has to find them the same way the unwindowed count does.
+func TestInvestigationIssuesIncludePerformanceIssues(t *testing.T) {
+	p := setupProjectForTxns(t)
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	bg := context.Background()
+	issue, _, _, err := storage.UpsertIssue(bg, testPool, p.ID, "n1", "N+1 Query: insert in App\\Jobs\\ProbeNetwork", "performance", "n1_query", "production", "", from.Add(time.Hour))
+	require.NoError(t, err)
+	for _, at := range []time.Time{from.Add(-time.Microsecond), from, from.Add(time.Hour), to} {
+		tx := seedTransaction(t, p.ID, "App\\Jobs\\ProbeNetwork", 10, at)
+		_, err = testPool.Exec(bg, "UPDATE transactions SET environment='production' WHERE id=$1", tx.ID)
+		require.NoError(t, err)
+		require.NoError(t, storage.InsertPerfEvent(bg, testPool, issue.ID, tx.ID, 6, 60))
+		_, err = testPool.Exec(bg, "UPDATE perf_events SET created_at=$1 WHERE transaction_id=$2", at, tx.ID)
+		require.NoError(t, err)
+	}
+
+	ctx := storage.WithTimeRange(bg, storage.TimeRange{From: from, To: to})
+	open := storage.IssueFilter{Status: "open", ProjectIDs: []string{p.ID}, Priority: true}
+	count, err := storage.CountAllIssues(ctx, testPool, open)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	issues, err := storage.ListAllIssues(ctx, testPool, open)
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+	got := issues[0]
+	require.Equal(t, issue.ID, got.ID)
+	require.Equal(t, "n1_query", got.Kind)
+	require.EqualValues(t, 2, got.EventCount, "only occurrences inside the window count")
+	require.EqualValues(t, 0, got.UserCount, "a transaction names no user")
+	require.Equal(t, "production", *got.Environment)
+	require.True(t, from.Add(time.Hour).Equal(got.LastSeen))
+	total := 0
+	for _, n := range got.Sparkline {
+		total += n
+	}
+	require.Equal(t, 2, total)
+	require.Len(t, got.Sparkline, 24)
+
+	allTime := storage.WithTimeRange(bg, storage.TimeRange{To: to, AllTime: true})
+	issues, err = storage.ListAllIssues(allTime, testPool, open)
+	require.NoError(t, err)
+	require.Len(t, issues, 1, "the All range reaches performance issues too")
+	require.EqualValues(t, 3, issues[0].EventCount)
+
+	hidden := map[string]struct {
+		ctx    context.Context
+		filter storage.IssueFilter
+	}{
+		"before the first occurrence": {storage.WithTimeRange(bg, storage.TimeRange{From: from.Add(-2 * time.Hour), To: from.Add(-time.Hour)}), open},
+		"another environment":         {ctx, storage.IssueFilter{Status: "open", ProjectIDs: []string{p.ID}, Environment: "staging"}},
+		"another project":             {ctx, storage.IssueFilter{Status: "open", ProjectIDs: []string{"00000000-0000-0000-0000-000000000001"}}},
+		"another kind":                {ctx, storage.IssueFilter{Status: "open", ProjectIDs: []string{p.ID}, Kind: "error"}},
+		"a user lens":                 {ctx, storage.IssueFilter{Status: "open", ProjectIDs: []string{p.ID}, UserIdentity: "user-1"}},
+		"resolved only":               {ctx, storage.IssueFilter{Status: "resolved", ProjectIDs: []string{p.ID}}},
+	}
+	for name, tc := range hidden {
+		count, err := storage.CountAllIssues(tc.ctx, testPool, tc.filter)
+		require.NoError(t, err, name)
+		require.Zero(t, count, name)
+		issues, err := storage.ListAllIssues(tc.ctx, testPool, tc.filter)
+		require.NoError(t, err, name)
+		require.Empty(t, issues, name)
+	}
+	production := open
+	production.Environment = "production"
+	issues, err = storage.ListAllIssues(ctx, testPool, production)
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+}
+
 func TestInvestigationIssuesUseMatchingEvents(t *testing.T) {
 	p := setupProjectForTxns(t)
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
