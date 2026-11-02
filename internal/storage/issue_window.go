@@ -12,22 +12,37 @@ type issueWindowQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// Only event predicates belong in this CTE. Issue lifecycle state stays outside
-// so an occurrence after the requested interval cannot hide a historical issue.
+// Only occurrence predicates belong in this CTE. Issue lifecycle state stays
+// outside so an occurrence after the requested interval cannot hide a historical
+// issue. Error issues occur in events and performance issues in perf_events.
+// The latter starts from those issues to read perf_events_issue, the only way
+// into perf_events by time, and a transaction names no user, so a user lens
+// leaves them out.
 func windowIssueCTE(filter IssueFilter, bounds TimeRange) (string, []any) {
 	args := []any{bounds.From, bounds.To}
 	where := "timestamp >= $1 AND timestamp < $2 AND issue_id IS NOT NULL"
+	perfWhere := "n.kind <> 'error' AND pe.created_at >= $1 AND pe.created_at < $2"
 	if len(filter.ProjectIDs) > 0 {
 		args = append(args, filter.ProjectIDs)
 		where += fmt.Sprintf(" AND project_id = ANY($%d::uuid[])", len(args))
+		perfWhere += fmt.Sprintf(" AND n.project_id = ANY($%d::uuid[])", len(args))
 	}
 	if filter.Environment != "" {
 		args = append(args, filter.Environment)
 		where += fmt.Sprintf(" AND environment = $%d", len(args))
+		perfWhere += fmt.Sprintf(" AND t.environment = $%d", len(args))
 	}
+	perfOccurrences := `
+ UNION ALL
+ SELECT pe.issue_id, pe.created_at, t.environment, NULL::text
+ FROM issues n
+ JOIN perf_events pe ON pe.issue_id = n.id
+ JOIN transactions t ON t.id = pe.transaction_id
+ WHERE ` + perfWhere
 	if filter.UserIdentity != "" {
 		args = append(args, filter.UserIdentity)
 		where += fmt.Sprintf(" AND app_user_identity_hash(user_identity) = app_user_identity_hash($%[1]d::text) AND user_identity = $%[1]d", len(args))
+		perfOccurrences = ""
 	}
 	origin := "$1::timestamptz"
 	if bounds.AllTime {
@@ -35,7 +50,7 @@ func windowIssueCTE(filter IssueFilter, bounds TimeRange) (string, []any) {
 	}
 	return `WITH matching AS MATERIALIZED (
  SELECT issue_id, timestamp, environment, user_identity AS identity
- FROM events WHERE ` + where + `), scoped AS (
+ FROM events WHERE ` + where + perfOccurrences + `), scoped AS (
  SELECT issue_id, count(*) AS window_count, count(DISTINCT identity) AS window_users,
  max(timestamp) AS window_last,
  CASE WHEN count(DISTINCT environment)=1 THEN max(environment) END AS window_environment
