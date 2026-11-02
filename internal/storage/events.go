@@ -292,8 +292,9 @@ type HistogramResult struct {
 	BucketSize string            `json:"bucket_size"` // "hour" | "day" | "week"
 }
 
-// GetIssueHistogram returns a complete time-series of event counts for an issue,
-// with auto-selected bucket granularity based on issue age.
+// GetIssueHistogram returns a complete time-series of occurrence counts for an
+// issue, with auto-selected bucket granularity based on issue age. Error issues
+// occur in events and performance issues in perf_events.
 func GetIssueHistogram(ctx context.Context, pool *pgxpool.Pool, issueID string, firstSeen time.Time) (*HistogramResult, error) {
 	age := time.Since(firstSeen)
 
@@ -312,9 +313,12 @@ func GetIssueHistogram(ctx context.Context, pool *pgxpool.Pool, issueID string, 
 
 	// Fetch sparse counts from the DB.
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
-		SELECT date_trunc('%s', received_at) AS bucket, count(*)
-		FROM events
-		WHERE issue_id = $1
+		SELECT date_trunc('%s', occurred_at) AS bucket, count(*)
+		FROM (
+			SELECT received_at AS occurred_at FROM events WHERE issue_id = $1
+			UNION ALL
+			SELECT created_at FROM perf_events WHERE issue_id = $1
+		) occurrences
 		GROUP BY 1
 		ORDER BY 1
 	`, truncFunc), issueID)

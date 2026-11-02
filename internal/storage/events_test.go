@@ -316,6 +316,45 @@ func TestGetIssueHistogram(t *testing.T) {
 	}
 }
 
+func TestGetIssueHistogram_performanceIssue(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	firstSeen := now.AddDate(0, 0, -10)
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-hist-n1", "N+1 Query", "performance", "n1_query", "", "", firstSeen)
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+	for _, at := range []time.Time{now, now, now.AddDate(0, 0, -3)} {
+		tx := seedTransaction(t, project.ID, "App\\Jobs\\ProbeNetwork", 10, at)
+		if err := storage.InsertPerfEvent(ctx, testPool, issue.ID, tx.ID, 6, 60); err != nil {
+			t.Fatalf("insert perf event: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, "UPDATE perf_events SET created_at=$1 WHERE transaction_id=$2", at, tx.ID); err != nil {
+			t.Fatalf("date perf event: %v", err)
+		}
+	}
+
+	result, err := storage.GetIssueHistogram(ctx, testPool, issue.ID, firstSeen)
+	if err != nil {
+		t.Fatalf("histogram: %v", err)
+	}
+	if result.BucketSize != "day" {
+		t.Errorf("bucket_size: got %q, want day", result.BucketSize)
+	}
+	var total int64
+	for _, b := range result.Buckets {
+		total += b.Count
+	}
+	if total != 3 {
+		t.Errorf("total: got %d, want 3 (buckets %v)", total, result.Buckets)
+	}
+	if last := result.Buckets[len(result.Buckets)-1].Count; last != 2 {
+		t.Errorf("today's bucket: got %d, want 2", last)
+	}
+}
+
 func TestGetIssueHistogram_dayBuckets(t *testing.T) {
 	project, _ := setupProjectAndEvent(t)
 	ctx := context.Background()
