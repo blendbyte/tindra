@@ -836,6 +836,12 @@ describe('virtual row rendering', () => {
     expect(wrapper.find('.kindbadge').text()).toBe('N+1')
   })
 
+  it('shows a sparkline for n1_query issues like any other', () => {
+    setupWithVirtualRow({ ...virtualIssue, kind: 'n1_query' })
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.find('.events-cell__spark .spark-stub').exists()).toBe(true)
+  })
+
   it('applies regressed class for regressed status', () => {
     setupWithVirtualRow({ ...virtualIssue, status: 'regressed' })
     const wrapper = mount(IssueListView, { global: { stubs } })

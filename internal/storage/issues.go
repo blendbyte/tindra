@@ -1107,9 +1107,11 @@ func UpdateIssueAssignee(ctx context.Context, pool *pgxpool.Pool, id string, ass
 
 const sparklineDays = 14
 
-// GetIssueSparklines returns a 14-day daily event count histogram for each of the given issue IDs.
+// GetIssueSparklines returns a 14-day daily occurrence histogram for each of the given issue IDs.
 // The slice is ordered oldest→newest; index 0 = 13 days ago, index 13 = today.
-// Missing issue IDs get an all-zero slice. Requires the events_issue_timestamp index.
+// Missing issue IDs get an all-zero slice. Error issues occur in events and
+// performance issues in perf_events, read through events_issue_timestamp and
+// perf_events_issue.
 func GetIssueSparklines(ctx context.Context, pool *pgxpool.Pool, issueIDs []string) (map[string][]int, error) {
 	result := make(map[string][]int, len(issueIDs))
 	if len(issueIDs) == 0 {
@@ -1125,11 +1127,15 @@ func GetIssueSparklines(ctx context.Context, pool *pgxpool.Pool, issueIDs []stri
 
 	rows, err := pool.Query(ctx, `
 		SELECT issue_id::text,
-		       date_trunc('day', timestamp AT TIME ZONE 'UTC') AS day,
+		       date_trunc('day', occurred_at AT TIME ZONE 'UTC') AS day,
 		       COUNT(*)::int
-		FROM events
-		WHERE issue_id = ANY($1::uuid[])
-		  AND timestamp >= $2
+		FROM (
+			SELECT issue_id, timestamp AS occurred_at FROM events
+			WHERE issue_id = ANY($1::uuid[]) AND timestamp >= $2
+			UNION ALL
+			SELECT issue_id, created_at FROM perf_events
+			WHERE issue_id = ANY($1::uuid[]) AND created_at >= $2
+		) occurrences
 		GROUP BY issue_id, day
 	`, issueIDs, start)
 	if err != nil {

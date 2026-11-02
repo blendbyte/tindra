@@ -790,7 +790,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
             </div>
           </a>
           <div class="events-cell">
-            <span v-if="sorted[vRow.index]?.kind !== 'n1_query'" class="events-cell__spark" :style="{ color: levelColor(sorted[vRow.index]?.level) }">
+            <span class="events-cell__spark" :style="{ color: levelColor(sorted[vRow.index]?.level) }">
               <Sparkline :data="sorted[vRow.index]?.sparkline ?? []" :width="36" :height="14" :color="sparkColor(sorted[vRow.index])" />
             </span>
             <span class="events-cell__num" :title="sorted[vRow.index]?.event_count.toLocaleString()">{{ sorted[vRow.index]?.event_count.toLocaleString() }}</span>

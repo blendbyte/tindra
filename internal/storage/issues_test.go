@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -1041,6 +1042,36 @@ func TestGetIssueSparklines(t *testing.T) {
 	}
 	if total < 1 {
 		t.Error("expected at least one event in sparkline")
+	}
+}
+
+func TestGetIssueSparklines_performanceIssue(t *testing.T) {
+	project, _ := setupProjectAndEvent(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	issue, _, _, err := storage.UpsertIssue(ctx, testPool, project.ID, "fp-spark-n1", "N+1 Query", "performance", "n1_query", "", "", now)
+	if err != nil {
+		t.Fatalf("upsert issue: %v", err)
+	}
+	for _, at := range []time.Time{now, now, now.AddDate(0, 0, -3), now.AddDate(0, 0, -20)} {
+		tx := seedTransaction(t, project.ID, "App\\Jobs\\ProbeNetwork", 10, at)
+		if err := storage.InsertPerfEvent(ctx, testPool, issue.ID, tx.ID, 6, 60); err != nil {
+			t.Fatalf("insert perf event: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, "UPDATE perf_events SET created_at=$1 WHERE transaction_id=$2", at, tx.ID); err != nil {
+			t.Fatalf("date perf event: %v", err)
+		}
+	}
+
+	sparklines, err := storage.GetIssueSparklines(ctx, testPool, []string{issue.ID})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := make([]int, 14)
+	want[13], want[10] = 2, 1
+	if got := sparklines[issue.ID]; !slices.Equal(got, want) {
+		t.Errorf("sparkline = %v, want %v", got, want)
 	}
 }
 
