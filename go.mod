@@ -1,26 +1,26 @@
 module github.com/blendbyte/tindra
 
-go 1.27.3
+go 1.27.4
 
 require (
-	github.com/andybalholm/brotli v1.2.7
+	github.com/andybalholm/brotli v1.3.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/compress v1.20.4
 	github.com/pquerna/otp v1.5.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	github.com/testcontainers/testcontainers-go v0.44.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	github.com/testcontainers/testcontainers-go v0.45.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/ua-parser/uap-go v0.0.0-20261028195011-4cb30e998c4c
 	golang.org/x/crypto v0.58.0
-	golang.org/x/oauth2 v0.37.0
-	golang.org/x/term v0.47.0
+	golang.org/x/oauth2 v0.38.0
+	golang.org/x/term v0.48.0
 )
 
 require (
@@ -79,6 +79,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )

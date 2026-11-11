@@ -12,7 +12,7 @@ COPY web/ ./
 RUN bunx vite build
 
 # Stage 2: Compile Go binary (cross-compile on build host)
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
