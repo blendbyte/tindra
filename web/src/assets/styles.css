@@ -275,6 +275,59 @@ input {
   border: 0;
 }
 
+/* Checkboxes are drawn from tokens to match the filter popover check (a 14px
+   hairline box that fills violet). The native control ignores the theme and
+   stays a white box on dark surfaces. */
+input[type="checkbox"] {
+  --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5l3 3 7-7'/%3E%3C/svg%3E");
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+  vertical-align: middle;
+  border: 1px solid var(--text-3);
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+input[type="checkbox"]::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  background: var(--on-accent);
+  -webkit-mask: var(--check-mark) center / contain no-repeat;
+  mask: var(--check-mark) center / contain no-repeat;
+  transform: scale(0);
+  transition: transform 120ms ease;
+}
+input[type="checkbox"]:indeterminate {
+  --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M4 8h8'/%3E%3C/svg%3E");
+}
+input[type="checkbox"]:hover:not(:disabled) { border-color: var(--text-2); }
+input[type="checkbox"]:checked,
+input[type="checkbox"]:indeterminate {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type="checkbox"]:checked:hover:not(:disabled),
+input[type="checkbox"]:indeterminate:hover:not(:disabled) {
+  background: var(--accent-hi);
+  border-color: var(--accent-hi);
+}
+input[type="checkbox"]:checked::before,
+input[type="checkbox"]:indeterminate::before { transform: scale(1); }
+input[type="checkbox"]:disabled { cursor: default; opacity: 0.4; }
+
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"],
+  input[type="checkbox"]::before { transition: none; }
+}
+
 a { color: inherit; text-decoration: none; }
 
 .mono { font-family: var(--mono); font-feature-settings: 'zero', 'ss01'; }
@@ -1177,16 +1230,12 @@ a { color: inherit; text-decoration: none; }
 .issuerow--checked:hover { background: oklch(from var(--accent) l c h / 0.09); }
 .issuerow--checked.issuerow--selected { background: var(--accent-soft); }
 
-.row-check {
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  accent-color: var(--accent);
+/* input.row-check: outranks the base input[type="checkbox"] transition. */
+input.row-check {
   opacity: 0;
-  transition: opacity 120ms;
-  flex-shrink: 0;
+  transition: opacity 120ms, background-color 120ms ease, border-color 120ms ease;
 }
-.row-check--header { opacity: 1; }
+.row-check.row-check--header { opacity: 1; }
 .issuerow:hover .row-check,
 .issuerow--checked .row-check { opacity: 1; }
 
@@ -4555,13 +4604,6 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--border);
   border-radius: 4px;
 }
-.perm-check {
-  width: 15px;
-  height: 15px;
-  cursor: pointer;
-  accent-color: var(--accent);
-}
-.perm-check:disabled { cursor: default; opacity: 0.4; }
 
 /* ---------- Command palette ---------- */
 
@@ -5879,12 +5921,22 @@ a { color: inherit; text-decoration: none; }
   user-select: none;
 }
 
-.privacy-check input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
+/* Inline checkbox labels: the drawn checkbox has no native margin, so the
+   gap to the label text comes from here. */
+.checkbox-label,
+.rule__project-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--text-1);
   cursor: pointer;
-  flex-shrink: 0;
+  user-select: none;
+}
+.rule__project-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
 }
 
 .privacy-fields {
