@@ -41,6 +41,10 @@ func TestFailedEventBatchRecordsRejectionWithoutReceipt(t *testing.T) {
 }
 
 func TestSetupDiagnosticsFollowAtomicWriteOutcome(t *testing.T) {
+	// This test asserts the observation lands, not how fast. The production
+	// 200ms budget is covered by TestFailedEventBatchRecordsRejectionWithoutReceipt.
+	defer func(d time.Duration) { setupDiagnosticsTimeout = d }(setupDiagnosticsTimeout)
+	setupDiagnosticsTimeout = 10 * time.Second
 	ctx := t.Context()
 	pool, cleanup := testutil.SetupDB(ctx)
 	defer cleanup()

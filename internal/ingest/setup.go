@@ -10,10 +10,15 @@ import (
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
+// setupDiagnosticsTimeout bounds the best-effort diagnostics write so a failing
+// database cannot stall ingest. Tests that assert the write lands raise it,
+// since a slow CI runner can exceed 200ms on its own.
+var setupDiagnosticsTimeout = 200 * time.Millisecond
+
 // Diagnostics are best effort when the database itself is failing. A queued
 // observation must never be promoted to a storage receipt by the application.
 func recordSetupWriteFailure(ctx context.Context, pool *pgxpool.Pool, kind string, projectIDs []string, writeErr error) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), setupDiagnosticsTimeout)
 	defer cancel()
 	recordSetupFailures(ctx, kind, projectIDs, writeErr, func(ctx context.Context, id string, observations []storage.SetupObservation) error {
 		return storage.RecordSetupObservations(ctx, pool, id, observations)
