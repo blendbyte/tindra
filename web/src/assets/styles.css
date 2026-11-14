@@ -1237,7 +1237,39 @@ input.row-check {
 }
 .row-check.row-check--header { opacity: 1; }
 .issuerow:hover .row-check,
-.issuerow--checked .row-check { opacity: 1; }
+.issuerow--checked .row-check,
+.issuelist--selecting .row-check { opacity: 1; }
+/* Touch screens have no hover to reveal the checkboxes. */
+@media (hover: none) {
+  input.row-check { opacity: 1; }
+}
+
+/* Select mode toggle in the issue column header; shown on phones (768px rules)
+   and whenever select mode is on, so it can always be turned off. */
+.select-toggle {
+  display: none;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  cursor: pointer;
+}
+/* Touch browsers keep :hover on the last tapped element. */
+@media (hover: hover) {
+  .select-toggle:hover { background: var(--surface-2); }
+}
+.select-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.issuelist--selecting .select-toggle { display: inline-flex; }
 
 /* Bulk action bar */
 .bulkbar {
@@ -1255,6 +1287,10 @@ input.row-check {
   box-shadow: 0 4px 24px -4px oklch(0 0 0 / 0.25), 0 0 0 1px var(--border);
   z-index: 200;
   white-space: nowrap;
+  /* Wraps only if a narrow tablet cannot fit every action. */
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100vw - 24px);
 }
 .bulkbar__count {
   font-size: var(--text-sm);
@@ -1278,6 +1314,51 @@ input.row-check {
 .bulkbar-enter-from, .bulkbar-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(6px);
+}
+.bulkbar__merge-text { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+/* Overflow menu for Unignore and Merge; phones only (640px rules). */
+.bulkbar__more { display: none; position: relative; }
+.bulkbar__more-btn { padding: 0 10px; }
+.bulkbar__more-menu { top: auto; bottom: calc(100% + 6px); min-width: 160px; }
+/* Room under the list so the bar never hides the last rows. */
+.page--bulkbar { padding-bottom: 88px; }
+
+/* Phones: the bar docks to the bottom edge as one row, the count on the left
+   and the actions on the right. */
+@media (max-width: 640px) {
+  .bulkbar {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    max-width: none;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 0;
+    box-shadow: 0 -4px 16px -8px oklch(0 0 0 / 0.2);
+  }
+  .bulkbar-enter-from, .bulkbar-leave-to { transform: translateY(100%); }
+  .bulkbar__count { margin-right: auto; padding-right: 0; border-right: 0; }
+  .bulkbar__note { white-space: normal; }
+  .bulkbar .bulkbar__wide { display: none; }
+  .bulkbar__more { display: inline-flex; }
+  .bulkbar__merge-text { flex: 1; flex-direction: column; align-items: flex-start; gap: 0; }
+  .bulkbar__merge-text .bulkbar__count { margin-right: 0; }
+  .bulkbar__merge-primary { max-width: 100%; }
+  .page--bulkbar { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+}
+/* Narrow phones: the count alone, its label kept for screen readers. */
+@media (max-width: 374px) {
+  .bulkbar__count-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .leveldot {
@@ -6707,6 +6788,12 @@ select.field__input {
   .issuerow > :nth-child(1),
   .issuerow > :nth-child(4),
   .issuerow > :nth-child(6) { display: none; }
+  /* Select mode brings the checkbox column back. */
+  .select-toggle { display: inline-flex; }
+  .issuelist--selecting .issuerow {
+    grid-template-columns: 16px 14px minmax(0, 1fr) 80px 16px;
+  }
+  .issuelist--selecting .issuerow > :nth-child(1) { display: inline-grid; }
   .ghost-row > :nth-child(1),
   .ghost-row > :nth-child(4),
   .ghost-row > :nth-child(5),
@@ -6817,15 +6904,6 @@ select.field__input {
   .nav__icon-btn, .nav__btn, .nav__hamburger { min-width: 44px; height: 44px; }
   .nav__projects-trigger { min-width: 44px; height: 44px; }
   .nav__btn { justify-content: center; }
-
-  /* Bulk action bar: wrap on very small screens */
-  .bulkbar {
-    flex-wrap: wrap;
-    justify-content: center;
-    width: min(600px, calc(100vw - 24px));
-    bottom: 16px;
-  }
-  .bulkbar__count { border-right: 0; padding-right: 0; margin-right: 0; }
 
   /* Span samples panel: full-width on small phones */
   .samples-panel { width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); }

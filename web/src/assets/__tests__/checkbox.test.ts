@@ -43,4 +43,31 @@ describe('checkbox styling', () => {
     expect(rule('input.row-check')).toContain('opacity: 0')
     expect(css).toContain('.row-check.row-check--header { opacity: 1; }')
   })
+
+  it('shows issue row checkboxes on touch screens and in select mode', () => {
+    expect(css).toMatch(/@media \(hover: none\) \{\s*input\.row-check \{ opacity: 1; \}/)
+    expect(css).toContain('.issuelist--selecting .row-check { opacity: 1; }')
+  })
+
+  it('brings the checkbox column back on phones in select mode', () => {
+    const phone = css.slice(css.indexOf('@media (max-width: 768px)'))
+    expect(phone).toContain('.select-toggle { display: inline-flex; }')
+    expect(phone).toMatch(/\.issuelist--selecting \.issuerow \{\s*grid-template-columns: 16px 14px minmax\(0, 1fr\) 80px 16px;/)
+    expect(phone).toContain('.issuelist--selecting .issuerow > :nth-child(1) { display: inline-grid; }')
+  })
+
+  it('docks the bulk action bar to the bottom edge on phones', () => {
+    const phone = css.slice(css.indexOf('/* Phones: the bar docks'))
+    const block = phone.slice(0, phone.indexOf('/* Narrow phones'))
+    expect(block).toMatch(/\.bulkbar \{[^}]*left: 0;[^}]*right: 0;[^}]*bottom: 0;[^}]*flex-wrap: nowrap;/)
+    expect(block).toContain('env(safe-area-inset-bottom)')
+    expect(block).toContain('.bulkbar .bulkbar__wide { display: none; }')
+    expect(block).toContain('.bulkbar__more { display: inline-flex; }')
+    expect(rule('.bulkbar__more')).toContain('display: none')
+  })
+
+  it('keeps the old tablet wrap rules out of the 1199px block', () => {
+    const tablet = css.slice(css.indexOf('@media (max-width: 1199px)'))
+    expect(tablet.slice(0, tablet.indexOf('\n}\n'))).not.toContain('.bulkbar')
+  })
 })

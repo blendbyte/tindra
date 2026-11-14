@@ -342,6 +342,20 @@ function toggleAll() {
   }
 }
 
+// Select mode: touch screens have no hover to reveal the checkboxes, so a
+// header toggle shows them and turns row taps into selection.
+const selecting = ref(false)
+
+function toggleSelecting() {
+  if (selecting.value) {
+    selecting.value = false
+    selectedIds.clear()
+    mergeConfirm.value = false
+  } else {
+    selecting.value = true
+  }
+}
+
 watch([statusFilter, levelFilter, envFilter, sinceFilter, assigneeFilter, search], () => { selectedIds.clear(); mergeConfirm.value = false })
 
 const { mutate: bulkUpdate } = useMutation({
@@ -350,6 +364,7 @@ const { mutate: bulkUpdate } = useMutation({
   onSuccess: () => {
     qc.invalidateQueries({ queryKey: ['issues'] })
     selectedIds.clear()
+    selecting.value = false
   },
 })
 
@@ -389,6 +404,14 @@ const canMerge = computed(() => {
   return selectedIssues.value.every((iss) => iss.project_id === pid)
 })
 
+// Unignore only means something when the selection holds an ignored issue.
+const canUnignore = computed(() => selectedIssues.value.some((iss) => iss.status === 'ignored'))
+
+// Phones fold the rarer bulk actions (Unignore, Merge) into one menu.
+const bulkMoreOpen = ref(false)
+const bulkMoreEl = ref<HTMLElement | null>(null)
+watch(() => selectedIds.size, (n) => { if (n === 0) bulkMoreOpen.value = false })
+
 const primaryIssue = computed(() =>
   [...selectedIssues.value].sort((a, b) => b.event_count - a.event_count)[0],
 )
@@ -404,6 +427,7 @@ const { mutate: mergeIssues, isPending: merging } = useMutation({
     qc.invalidateQueries({ queryKey: ['issues'] })
     selectedIds.clear()
     mergeConfirm.value = false
+    selecting.value = false
     showToast('Issues merged')
   },
 })
@@ -441,6 +465,13 @@ function navigateIssue(e: MouseEvent, idx: number, id: string) {
   // Let modified clicks (new tab, middle-click) use the href natively.
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
   e.preventDefault()
+  if (selecting.value) { toggleSelect(id); return }
+  selectedIdx.value = idx
+  openIssue(id)
+}
+
+function onRowClick(idx: number, id: string) {
+  if (selecting.value) { toggleSelect(id); return }
   selectedIdx.value = idx
   openIssue(id)
 }
@@ -485,6 +516,7 @@ function onKey(e: KeyboardEvent) {
 
 function onMouseDownGlobal(e: MouseEvent) {
   if (assigneeEl.value && !assigneeEl.value.contains(e.target as Node)) assigneeOpen.value = false
+  if (bulkMoreEl.value && !bulkMoreEl.value.contains(e.target as Node)) bulkMoreOpen.value = false
 }
 
 onMounted(() => {
@@ -579,7 +611,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'page--bulkbar': selectedIds.size > 0 }">
     <p v-if="investigation.range === 'All'" class="range-note">All retained events, with counts and sparklines filtered by the selected environment.</p>
     <!-- Filter bar: moves into the shared investigation bar when it is on the
          page, so the list adds no second row of filters. -->
@@ -698,7 +730,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
     </div>
 
     <!-- Keep successful results visible when a background refresh fails. -->
-    <div v-else-if="firstPage && (filtered.length > 0 || isFiltered)" class="issuelist">
+    <div v-else-if="firstPage && (filtered.length > 0 || isFiltered)" class="issuelist" :class="{ 'issuelist--selecting': selecting }">
       <div class="issuerow issuerow--header">
         <input
           type="checkbox"
@@ -715,6 +747,11 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
             Issue <span v-if="sortCol === 'title'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span>
           </button>
           <span v-if="sortCol === 'priority'" class="col-sort__hint">Regressed and new first</span>
+          <button
+            class="select-toggle"
+            :aria-pressed="selecting"
+            @click="toggleSelecting"
+          >{{ selecting ? 'Done' : 'Select' }}</button>
         </span>
         <button class="col-sort" :class="{ 'col-sort--active': sortCol === 'event_count' }" style="justify-content: flex-end" @click="toggleSort('event_count')">
           <span v-if="sortCol === 'event_count'" class="col-sort__icon" :data-dir="sortDir"><Icon :name="sortDir === 'desc' ? 'arrow-down' : 'arrow-up'" :size="10" /></span> Events
@@ -757,7 +794,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           :style="{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vRow.start - rowVirtualizer.options.scrollMargin}px)` }"
           role="row"
           tabindex="0"
-          @click="selectedIdx = vRow.index; openIssue(sorted[vRow.index].id)"
+          @click="onRowClick(vRow.index, sorted[vRow.index].id)"
         >
           <input
             type="checkbox"
@@ -912,21 +949,42 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
     <Transition name="bulkbar">
       <div v-if="selectedIds.size > 0" class="bulkbar">
         <template v-if="mergeConfirm">
-          <span class="bulkbar__count">Merge {{ selectedIds.size }} issues into:</span>
-          <span class="bulkbar__merge-primary" :title="primaryIssue?.title">{{ primaryIssue?.title.split(':')[0] }}</span>
+          <span class="bulkbar__merge-text">
+            <span class="bulkbar__count">Merge {{ selectedIds.size }} issues into:</span>
+            <span class="bulkbar__merge-primary" :title="primaryIssue?.title">{{ primaryIssue?.title.split(':')[0] }}</span>
+          </span>
           <button class="btn btn--primary" :disabled="merging" @click="confirmMerge">Confirm</button>
           <button class="btn btn--ghost" @click="mergeConfirm = false">Cancel</button>
         </template>
         <template v-else>
-          <span class="bulkbar__count">{{ selectedIds.size }} selected</span>
+          <span class="bulkbar__count">{{ selectedIds.size }}<span class="bulkbar__count-label"> selected</span></span>
           <template v-if="canManageIssues">
             <button class="btn btn--primary" @click="bulkResolve">Resolve</button>
             <IgnoreButton @ignore="bulkIgnore" />
-            <button class="btn" @click="bulkUnignore">Unignore</button>
-            <button v-if="canMerge" class="btn" @click="mergeConfirm = true">Merge</button>
+            <button v-if="canUnignore" class="btn bulkbar__wide" @click="bulkUnignore">Unignore</button>
+            <button v-if="canMerge" class="btn bulkbar__wide" @click="mergeConfirm = true">Merge</button>
+            <div v-if="canUnignore || canMerge" ref="bulkMoreEl" class="bulkbar__more">
+              <button
+                class="btn bulkbar__more-btn"
+                :class="{ 'btn--active': bulkMoreOpen }"
+                aria-label="More actions"
+                aria-haspopup="true"
+                :aria-expanded="bulkMoreOpen"
+                @click="bulkMoreOpen = !bulkMoreOpen"
+              >
+                <Icon name="more-horizontal" :size="14" />
+              </button>
+              <div v-if="bulkMoreOpen" class="popover bulkbar__more-menu">
+                <div class="popover__list">
+                  <div v-if="canUnignore" v-clickable class="popover__item" @click="bulkMoreOpen = false; bulkUnignore()">Unignore</div>
+                  <div v-if="canMerge" v-clickable class="popover__item" @click="bulkMoreOpen = false; mergeConfirm = true">Merge</div>
+                </div>
+              </div>
+            </div>
           </template>
-          <span v-else class="bulkbar__count">You need the manage issues permission to change them.</span>
-          <button class="btn btn--ghost" @click="selectedIds.clear()">Clear</button>
+          <span v-else class="bulkbar__count bulkbar__note">You need the manage issues permission to change them.</span>
+          <!-- In select mode the header's Done clears the selection. -->
+          <button v-if="!selecting" class="btn btn--ghost" @click="selectedIds.clear()">Clear</button>
         </template>
       </div>
     </Transition>

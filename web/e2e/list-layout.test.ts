@@ -33,7 +33,7 @@ test.beforeEach(async ({ page }) => {
     if (!path.startsWith('/api/')) return route.fallback()
     let body: unknown = []
     if (path === '/api/me') body = { id: 'u1', name: 'Alex', email: 'alex@example.com', mfa_enabled: true,
-      timezone: 'UTC', permissions: { manage_projects: true, manage_users: true, manage_alerts: true } }
+      timezone: 'UTC', permissions: { manage_projects: true, manage_users: true, manage_alerts: true, manage_issues: true } }
     else if (path === '/api/config') body = { require_mfa: false }
     else if (path === '/api/tokens') body = [{ id: 'token1', name: longName, project_id: 'p2', writable: true, created_at: timestamp }]
     else if (path === '/api/users') body = [{ id: 'user2', name: longName, email: longName + '@example.com', created_at: timestamp, permissions: {}, mfa_enabled: true }]
@@ -180,3 +180,75 @@ for (const list of lists) {
     }
   })
 }
+
+// Phones hide the checkbox column, so the header's Select toggle brings it back
+// and row taps select instead of opening the issue.
+test('phones select issues from the list header toggle', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/issues')
+  const rows = page.locator('.issuerow[role="row"]')
+  const check = rows.first().locator('.row-check')
+  await expect(rows.first()).toBeVisible()
+  await expect(check).toBeHidden()
+
+  const toggle = page.locator('.issuerow--header .select-toggle')
+  await expect(toggle).toHaveText('Select')
+  await toggle.click()
+  await expect(toggle).toHaveText('Done')
+  await expect(check).toBeVisible()
+  await expect(page.locator('.row-check--header')).toBeVisible()
+  await expectContainedRows(page.locator('.issuerow'))
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+
+  await rows.first().click()
+  await expect(page).toHaveURL(/\/issues(\?|$)/)
+  await expect(check).toBeChecked()
+  await expect(page.locator('.bulkbar')).toContainText('1 selected')
+
+  // The bar docks to the bottom edge as one row, at every phone width.
+  const bar = page.locator('.bulkbar')
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 })
+    await expect.poll(async () => { const b = await bar.boundingBox(); return b && Math.round(b.y + b.height) }).toBe(844)
+    const box = (await bar.boundingBox())!
+    expect(box.x).toBe(0)
+    expect(box.width).toBe(width)
+    const centers = await bar.locator(':scope > :visible').evaluateAll(els => els.map(el => {
+      const r = el.getBoundingClientRect()
+      return r.top + r.height / 2
+    }))
+    expect(Math.max(...centers) - Math.min(...centers), `bar wraps at ${width}px`).toBeLessThanOrEqual(2)
+    // Narrow phones show the count alone; the label stays for screen readers.
+    const label = (await bar.locator('.bulkbar__count-label').boundingBox())!
+    expect(label.width > 1).toBe(width > 374)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+  // The last row scrolls clear of the bar.
+  await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight))
+  const lastRow = (await rows.last().boundingBox())!
+  expect(lastRow.y + lastRow.height).toBeLessThanOrEqual((await bar.boundingBox())!.y)
+  await page.setViewportSize({ width: 390, height: 844 })
+
+  await toggle.click()
+  await expect(toggle).toHaveText('Select')
+  await expect(page.locator('.bulkbar')).toHaveCount(0)
+  await expect(check).toBeHidden()
+})
+
+// Phones keep Unignore and Merge in the overflow menu, never in the bar itself.
+test('phones fold the rarer bulk actions into the more menu', async ({ page }) => {
+  const twin = { ...issue, id: 'i2', status: 'ignored' }
+  await page.route('**/api/issues?**', route => route.fulfill({ json: { issues: [issue, twin], total: 2, has_more: false } }))
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/issues?status=All')
+  await page.locator('.issuerow--header .select-toggle').click()
+  await page.locator('.row-check--header').click()
+
+  const bar = page.locator('.bulkbar')
+  await expect(bar.locator('.btn:visible')).toHaveText(['Resolve', 'Ignore', '', ''])
+  await bar.getByRole('button', { name: 'More actions' }).click()
+  await expect(bar.locator('.bulkbar__more-menu .popover__item')).toHaveText(['Unignore', 'Merge'])
+
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await expect(bar.locator('.btn:visible')).toHaveText(['Resolve', 'Ignore', '', 'Unignore', 'Merge'])
+})

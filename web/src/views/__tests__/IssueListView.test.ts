@@ -954,6 +954,150 @@ describe('virtual row rendering', () => {
   })
 })
 
+describe('bulk action bar layout', () => {
+  const bulkButtons = (w: ReturnType<typeof mount>) => w.findAll('.bulkbar .btn').map(b => b.text())
+
+  it('offers Unignore only when the selection holds an ignored issue', async () => {
+    setupWithVirtualRow()
+    const open = mount(IssueListView, { global: { stubs } })
+    await open.find('.row-check--header').trigger('change')
+    expect(bulkButtons(open)).not.toContain('Unignore')
+    expect(open.find('.bulkbar__more').exists()).toBe(false)
+
+    setupWithVirtualRow({ ...virtualIssue, status: 'ignored' })
+    const ignored = mount(IssueListView, { global: { stubs } })
+    await ignored.find('.row-check--header').trigger('change')
+    expect(bulkButtons(ignored)).toContain('Unignore')
+    expect(ignored.find('.bulkbar__more').exists()).toBe(true)
+  })
+
+  it('folds Unignore and Merge into the more menu', async () => {
+    const ignored = { ...virtualIssue, status: 'ignored' as const }
+    setupWithVirtualRow(ignored, [{ ...ignored, id: 'iss-v2', event_count: 10 }])
+    const before = vi.mocked(useMutation).mock.results.length
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    await wrapper.find('.row-check--header').trigger('change')
+    const more = wrapper.find('.bulkbar__more-btn')
+    expect(more.attributes('aria-expanded')).toBe('false')
+    await more.trigger('click')
+    expect(more.attributes('aria-expanded')).toBe('true')
+    const items = wrapper.findAll('.bulkbar__more-menu .popover__item')
+    expect(items.map(i => i.text())).toEqual(['Unignore', 'Merge'])
+
+    // bulkUpdate is the component's first mutation.
+    const mutate = vi.mocked(useMutation).mock.results[before].value.mutate as ReturnType<typeof vi.fn>
+    await items[0].trigger('click')
+    expect(mutate).toHaveBeenCalledWith({ ids: ['iss-v1', 'iss-v2'], status: 'open' }, expect.anything())
+    expect(wrapper.find('.bulkbar__more-menu').exists()).toBe(false)
+
+    await more.trigger('click')
+    await wrapper.findAll('.bulkbar__more-menu .popover__item')[1].trigger('click')
+    expect(wrapper.find('.bulkbar').text()).toContain('Merge 2 issues into:')
+  })
+
+  it('closes the more menu on a tap outside it', async () => {
+    setupWithVirtualRow({ ...virtualIssue, status: 'ignored' })
+    const wrapper = mount(IssueListView, { global: { stubs }, attachTo: document.body })
+    await wrapper.find('.row-check--header').trigger('change')
+    await wrapper.find('.bulkbar__more-btn').trigger('click')
+    expect(wrapper.find('.bulkbar__more-menu').exists()).toBe(true)
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.bulkbar__more-menu').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('leaves Clear to the header Done button in select mode', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    await wrapper.find('.row-check--header').trigger('change')
+    expect(bulkButtons(wrapper)).toContain('Clear')
+    await wrapper.find('.select-toggle').trigger('click')
+    expect(bulkButtons(wrapper)).not.toContain('Clear')
+  })
+
+  it('keeps the selected count as text with its label', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    await wrapper.find('.row-check--header').trigger('change')
+    const count = wrapper.find('.bulkbar__count')
+    expect(count.text()).toBe('1 selected')
+    expect(count.find('.bulkbar__count-label').text()).toBe('selected')
+  })
+
+  it('makes room under the list while the bar is shown', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.find('.page').classes()).not.toContain('page--bulkbar')
+    await wrapper.find('.row-check--header').trigger('change')
+    expect(wrapper.find('.page').classes()).toContain('page--bulkbar')
+  })
+})
+
+describe('select mode', () => {
+  it('offers a Select toggle in the list header that turns select mode on', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    const toggle = wrapper.find('.issuerow--header .select-toggle')
+    expect(toggle.text()).toBe('Select')
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+    await toggle.trigger('click')
+    expect(wrapper.find('.issuelist').classes()).toContain('issuelist--selecting')
+    expect(toggle.text()).toBe('Done')
+    expect(toggle.attributes('aria-pressed')).toBe('true')
+  })
+
+  it('toggles the selection on row tap instead of opening the issue', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    await wrapper.find('.select-toggle').trigger('click')
+    const row = wrapper.find('[role="row"]')
+    await row.trigger('click')
+    expect(pushMock).not.toHaveBeenCalled()
+    expect(wrapper.find('.issuerow--checked').exists()).toBe(true)
+    expect(wrapper.find('.bulkbar').text()).toContain('1 selected')
+    await row.trigger('click')
+    expect(wrapper.find('.issuerow--checked').exists()).toBe(false)
+  })
+
+  it('toggles the selection on title tap instead of opening the issue', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    await wrapper.find('.select-toggle').trigger('click')
+    await wrapper.find('.issue__title').trigger('click')
+    expect(pushMock).not.toHaveBeenCalled()
+    expect(wrapper.find('.issuerow--checked').exists()).toBe(true)
+  })
+
+  it('Done clears the selection and row taps open issues again', async () => {
+    setupWithVirtualRow()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    const toggle = wrapper.find('.select-toggle')
+    await toggle.trigger('click')
+    await wrapper.find('[role="row"]').trigger('click')
+    await toggle.trigger('click')
+    expect(wrapper.find('.issuelist').classes()).not.toContain('issuelist--selecting')
+    expect(wrapper.find('.issuerow--checked').exists()).toBe(false)
+    expect(wrapper.find('.bulkbar').exists()).toBe(false)
+    await wrapper.find('[role="row"]').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith('/issues/iss-v1')
+  })
+
+  it('leaves select mode once a bulk change succeeds', async () => {
+    setupWithVirtualRow()
+    const before = vi.mocked(useMutation).mock.calls.length
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    await wrapper.find('.select-toggle').trigger('click')
+    await wrapper.find('[role="row"]').trigger('click')
+    // bulkUpdate is the component's first mutation.
+    const options = vi.mocked(useMutation).mock.calls[before][0] as { onSuccess: () => void }
+    options.onSuccess()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.issuelist').classes()).not.toContain('issuelist--selecting')
+    expect(wrapper.find('.bulkbar').exists()).toBe(false)
+  })
+})
+
 describe('bulk action bar', () => {
   it('shows bulk action bar when items are selected', async () => {
     setupWithVirtualRow()
@@ -972,7 +1116,7 @@ describe('bulk action bar', () => {
   })
 
   it('calls bulkUnignore when Unignore button is clicked', async () => {
-    setupWithVirtualRow()
+    setupWithVirtualRow({ ...virtualIssue, status: 'ignored' })
     const wrapper = mount(IssueListView, { global: { stubs } })
     await wrapper.find('.row-check--header').trigger('change')
     const unignoreBtn = wrapper.findAll('.bulkbar .btn').find(b => b.text() === 'Unignore')!
