@@ -897,3 +897,74 @@ describe('AlertsTab', () => {
     })
   })
 })
+
+describe('AlertsTab push channel', () => {
+  const people = [
+    { ...adminUser },
+    { ...adminUser, id: 'user-2', name: '', email: 'ops@example.com' },
+  ]
+
+  it('creating a push rule defaults to yourself and sends recipient_ids', async () => {
+    mockQueries({ users: people })
+    const muts = recordMutations()
+    const wrapper = mountTab()
+    await openNewRule(wrapper)
+    await selectWith(wrapper, 'Push notification').setValue('push')
+    expect(wrapper.find('input[type="url"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="email"]').exists()).toBe(false)
+    const boxes = wrapper.findAll('.alert-create input[type="checkbox"]').filter(b => ['user-1', 'user-2'].includes((b.element as HTMLInputElement).value))
+    expect(boxes.map(b => (b.element as HTMLInputElement).checked)).toEqual([true, false])
+    expect(wrapper.text()).toContain('ops@example.com')
+    await boxes[1]!.setValue(true)
+    muts[M.createAlertRule].opts.mutationFn()
+    const body = requestBody('/api/alert-rules')
+    expect(body.channel).toBe('push')
+    expect(body.recipient_ids).toEqual(['user-1', 'user-2'])
+    expect(body).not.toHaveProperty('webhook_url')
+    expect(body).not.toHaveProperty('email_to')
+  })
+
+  it('refuses a push rule without recipients', async () => {
+    mockQueries({ users: people })
+    const muts = recordMutations()
+    const wrapper = mountTab()
+    await openNewRule(wrapper)
+    await selectWith(wrapper, 'Push notification').setValue('push')
+    const mine = wrapper.findAll('.alert-create input[type="checkbox"]').find(b => (b.element as HTMLInputElement).value === 'user-1')!
+    await mine.setValue(false)
+    expect(() => muts[M.createAlertRule].opts.mutationFn()).toThrow('Pick at least one person to notify')
+  })
+
+  it('edits a push rule keeping its recipients and shows them on the channel icon', async () => {
+    const pushRule = { ...baseRule, channel: 'push' as const, webhook_url: null, recipient_ids: ['user-2'] }
+    mockQueries({ 'alert-rules': [pushRule], users: people })
+    runMutations()
+    const wrapper = mountTab()
+    expect(wrapper.find('.rule__chan').attributes('title')).toBe('ops@example.com')
+    await editRule(wrapper)
+    const checked = wrapper.findAll('input[type="checkbox"]').filter(b => (b.element as HTMLInputElement).checked).map(b => (b.element as HTMLInputElement).value)
+    expect(checked).toContain('user-2')
+    expect(checked).not.toContain('user-1')
+    await clickSave(wrapper)
+    const body = requestBody('/api/alert-rules/r1')
+    expect(body).toMatchObject({ channel: 'push', recipient_ids: ['user-2'] })
+    expect(body).not.toHaveProperty('webhook_url')
+  })
+})
+
+describe('AlertsTab users query', () => {
+  it('only loads users once a push rule exists or push is picked', async () => {
+    mockQueries()
+    const wrapper = mountTab()
+    expect(isEnabled(queryOptions('users'))).toBe(false)
+    await openNewRule(wrapper)
+    await selectWith(wrapper, 'Push notification').setValue('push')
+    expect(isEnabled(queryOptions('users'))).toBe(true)
+  })
+
+  it('loads users when a listed rule uses push', () => {
+    mockQueries({ 'alert-rules': [{ ...baseRule, channel: 'push' as const, recipient_ids: ['user-1'] }] })
+    mountTab()
+    expect(isEnabled(queryOptions('users'))).toBe(true)
+  })
+})

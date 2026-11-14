@@ -26,7 +26,7 @@ var validTriggers = map[string]bool{
 	"uptime_down":      true,
 	"uptime_recovered": true,
 }
-var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "teams": true, "email": true}
+var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "teams": true, "email": true, "push": true}
 var validLevels = map[string]bool{"fatal": true, "error": true, "warning": true, "info": true, "debug": true}
 var validLogCountLevels = map[string]bool{"fatal": true, "error": true, "warning": true}
 
@@ -82,13 +82,22 @@ func validateAlertRule(r *storage.AlertRule) string {
 		}
 	}
 	if !validChannels[r.Channel] {
-		return "channel must be webhook, slack, discord, teams, or email"
+		return "channel must be webhook, slack, discord, teams, email, or push"
 	}
 	if (r.Channel == "webhook" || r.Channel == "slack" || r.Channel == "discord" || r.Channel == "teams") && (r.WebhookURL == nil || *r.WebhookURL == "") {
 		return "webhook_url required for " + r.Channel + " channel"
 	}
 	if r.Channel == "email" && (r.EmailTo == nil || *r.EmailTo == "") {
 		return "email_to required for email channel"
+	}
+	if r.Channel == "push" {
+		if nonemptyProjectCount(r.RecipientIDs) == 0 {
+			return "recipient_ids required for push channel"
+		}
+	} else {
+		// Recipients only mean something for push; drop them so a rule that
+		// switched channels does not keep stale ones.
+		r.RecipientIDs = nil
 	}
 	if r.FilterLevel != nil && r.Trigger != "log_count" && !validLevels[*r.FilterLevel] {
 		return "filter_level must be fatal, error, warning, info, or debug"
@@ -100,6 +109,22 @@ func validateAlertRule(r *storage.AlertRule) string {
 		r.CooldownMins = 60
 	}
 	return ""
+}
+
+// checkPushRecipients makes sure a push rule names at least one existing
+// user. It returns a client-facing message, or "" when the rule is fine.
+func (ro *router) checkPushRecipients(ctx context.Context, r *storage.AlertRule) (string, error) {
+	if r.Channel != "push" {
+		return "", nil
+	}
+	found, err := storage.ExistingUserIDs(ctx, ro.pool, r.RecipientIDs)
+	if err != nil {
+		return "", err
+	}
+	if len(found) == 0 {
+		return "recipient_ids must name existing users", nil
+	}
+	return "", nil
 }
 
 func nonemptyProjectCount(ids []string) int {
@@ -129,6 +154,14 @@ func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+	}
+	if msg, err := ro.checkPushRecipients(r.Context(), &rule); err != nil {
+		slog.Error("check push recipients", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else if msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
 	}
 
 	created, err := storage.CreateAlertRule(r.Context(), ro.pool, &rule)
@@ -261,12 +294,14 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		MinOccurrences    *int     `json:"min_occurrences"`
 		FilterSearch      *string  `json:"filter_search"`
 		ProjectIDs        []string `json:"project_ids"`
+		RecipientIDs      []string `json:"recipient_ids"`
 		// Explicit nulls: sending null clears the field.
 		ClearFilterLevel       bool `json:"-"`
 		ClearFilterEnvironment bool `json:"-"`
 		ClearMinOccurrences    bool `json:"-"`
 		ClearFilterSearch      bool `json:"-"`
 		HasProjectIDs          bool `json:"-"`
+		HasRecipientIDs        bool `json:"-"`
 	}
 	// Use a raw map to detect explicit nulls vs omitted fields.
 	var raw map[string]json.RawMessage
@@ -322,6 +357,9 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		case "project_ids":
 			parseErr = json.Unmarshal(v, &patch.ProjectIDs)
 			patch.HasProjectIDs = true
+		case "recipient_ids":
+			parseErr = json.Unmarshal(v, &patch.RecipientIDs)
+			patch.HasRecipientIDs = true
 		}
 		if parseErr != nil {
 			break
@@ -383,6 +421,9 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 	if patch.HasProjectIDs {
 		existing.ProjectIDs = patch.ProjectIDs
 	}
+	if patch.HasRecipientIDs {
+		existing.RecipientIDs = patch.RecipientIDs
+	}
 
 	if msg := validateAlertRule(existing); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
@@ -393,6 +434,14 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+	}
+	if msg, err := ro.checkPushRecipients(r.Context(), existing); err != nil {
+		slog.Error("check push recipients", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else if msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
 	}
 
 	updated, err := storage.UpdateAlertRule(r.Context(), ro.pool, existing)

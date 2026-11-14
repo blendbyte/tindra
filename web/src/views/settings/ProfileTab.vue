@@ -6,6 +6,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { apiFetch } from '@/api/client'
 import type { User } from '@/api/types'
 import Icon from '@/components/Icon.vue'
+import PushDevices from './PushDevices.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useMe } from '@/composables/useMe'
 
@@ -207,6 +208,7 @@ function cancelMFASetup() {
           <span class="toggle__knob" />
         </button>
       </label>
+      <PushDevices />
     </div>
   </div>
 

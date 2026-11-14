@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,15 +18,17 @@ type AlertRule struct {
 	// IsGlobal is true for rules saved without projects (they cover every
 	// project). A non-global rule whose projects were all deleted matches
 	// nothing and is never evaluated.
-	IsGlobal          bool       `json:"is_global"`
-	Name              string     `json:"name"`
-	Enabled           bool       `json:"enabled"`
-	Trigger           string     `json:"trigger"`
-	Threshold         *int       `json:"threshold,omitempty"`
-	WindowMins        *int       `json:"window_mins,omitempty"`
-	Channel           string     `json:"channel"`
-	WebhookURL        *string    `json:"webhook_url,omitempty"`
-	EmailTo           *string    `json:"email_to,omitempty"`
+	IsGlobal   bool    `json:"is_global"`
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	Trigger    string  `json:"trigger"`
+	Threshold  *int    `json:"threshold,omitempty"`
+	WindowMins *int    `json:"window_mins,omitempty"`
+	Channel    string  `json:"channel"`
+	WebhookURL *string `json:"webhook_url,omitempty"`
+	EmailTo    *string `json:"email_to,omitempty"`
+	// RecipientIDs are the users a push rule notifies on all their devices.
+	RecipientIDs      []string   `json:"recipient_ids"`
 	CooldownMins      int        `json:"cooldown_mins"`
 	FilterLevel       *string    `json:"filter_level,omitempty"`
 	FilterEnvironment *string    `json:"filter_environment,omitempty"`
@@ -42,7 +45,8 @@ const alertRuleQuery = `
 	       ar.channel, ar.webhook_url, ar.email_to, ar.cooldown_mins,
 	       ar.filter_level, ar.filter_environment, ar.min_occurrences, ar.filter_search,
 	       ar.last_fired_at, ar.created_at, ar.is_global,
-	       COALESCE(array_agg(arp.project_id::text) FILTER (WHERE arp.project_id IS NOT NULL), '{}') AS project_ids
+	       COALESCE(array_agg(arp.project_id::text) FILTER (WHERE arp.project_id IS NOT NULL), '{}') AS project_ids,
+	       ARRAY(SELECT rr.user_id::text FROM alert_rule_recipients rr WHERE rr.rule_id = ar.id ORDER BY rr.user_id) AS recipient_ids
 	FROM alert_rules ar
 	LEFT JOIN alert_rule_projects arp ON arp.rule_id = ar.id`
 
@@ -55,13 +59,16 @@ func scanAlertRule(scan func(...any) error) (*AlertRule, error) {
 		&r.CooldownMins,
 		&r.FilterLevel, &r.FilterEnvironment, &r.MinOccurrences, &r.FilterSearch,
 		&r.LastFiredAt, &r.CreatedAt, &r.IsGlobal,
-		&r.ProjectIDs,
+		&r.ProjectIDs, &r.RecipientIDs,
 	)
 	if err != nil {
 		return nil, err
 	}
 	if r.ProjectIDs == nil {
 		r.ProjectIDs = []string{}
+	}
+	if r.RecipientIDs == nil {
+		r.RecipientIDs = []string{}
 	}
 	return &r, nil
 }
@@ -104,6 +111,9 @@ func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		return nil, err
 	}
 	created.ProjectIDs = normaliseProjectIDs(r.ProjectIDs)
+	if created.RecipientIDs, err = setAlertRuleRecipients(ctx, tx, created.ID, r.RecipientIDs); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -240,6 +250,9 @@ func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		return nil, err
 	}
 	updated.ProjectIDs = normaliseProjectIDs(r.ProjectIDs)
+	if updated.RecipientIDs, err = setAlertRuleRecipients(ctx, tx, updated.ID, r.RecipientIDs); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -280,6 +293,33 @@ func setAlertRuleProjects(ctx context.Context, tx pgx.Tx, ruleID string, project
 		}
 	}
 	return nil
+}
+
+// setAlertRuleRecipients replaces a rule's push recipients within an existing
+// transaction. IDs that are not existing users are dropped, so a stale or
+// malformed ID cannot fail the save. It returns the stored IDs, sorted.
+func setAlertRuleRecipients(ctx context.Context, tx pgx.Tx, ruleID string, userIDs []string) ([]string, error) {
+	if _, err := tx.Exec(ctx, `DELETE FROM alert_rule_recipients WHERE rule_id = $1`, ruleID); err != nil {
+		return nil, fmt.Errorf("clear recipients: %w", err)
+	}
+	stored := []string{}
+	if len(userIDs) == 0 {
+		return stored, nil
+	}
+	rows, err := tx.Query(ctx, `
+		INSERT INTO alert_rule_recipients (rule_id, user_id)
+		SELECT $1, u.id FROM users u WHERE u.id::text = ANY($2::text[])
+		ON CONFLICT DO NOTHING
+		RETURNING user_id::text`, ruleID, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("insert recipients: %w", err)
+	}
+	stored, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("insert recipients: %w", err)
+	}
+	slices.Sort(stored)
+	return stored, nil
 }
 
 func normaliseProjectIDs(ids []string) []string {

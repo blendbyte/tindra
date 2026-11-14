@@ -21,6 +21,8 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('@/api/client', () => ({ apiFetch: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: vi.fn() }))
 vi.mock('@/utils/formatters', () => ({ formatRel: vi.fn(() => '2m ago') }))
+// PushDevices has its own tests; here it only has to be placed.
+vi.mock('../PushDevices.vue', () => ({ default: { name: 'PushDevices', template: '<div data-testid="push-devices" />' } }))
 
 import ProfileTab from '../ProfileTab.vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
@@ -92,6 +94,12 @@ describe('ProfileTab', () => {
       const wrapper = mountTab()
       expect(wrapper.text()).toContain('Notifications')
       expect(wrapper.text()).toContain('Weekly digest')
+    })
+
+    it('places push device settings in the Notifications section', () => {
+      const wrapper = mountTab()
+      const section = wrapper.findAll('.profile-section').find(s => s.text().includes('Weekly digest'))!
+      expect(section.find('[data-testid="push-devices"]').exists()).toBe(true)
     })
 
     it('renders Two-factor authentication section', () => {

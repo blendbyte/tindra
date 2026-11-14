@@ -30,6 +30,8 @@ func init() {
 		".css":   "text/css; charset=utf-8",
 		".woff2": "font/woff2",
 		".svg":   "image/svg+xml",
+		// Browsers ignore a web app manifest served with another type.
+		".webmanifest": "application/manifest+json",
 	} {
 		if err := mime.AddExtensionType(ext, typ); err != nil {
 			panic(err)
@@ -358,6 +360,14 @@ func NewRouter(cfg Config) *Handle {
 		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/setup", ro.handleMFASetup)
 		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/confirm", ro.handleMFAConfirm)
 		r.With(authBody).Delete("/api/auth/mfa", ro.handleMFADisable)
+
+		// Web Push devices belong to a person, so bearer tokens cannot manage them.
+		r.Get("/api/push/config", ro.handleGetPushConfig)
+		r.Get("/api/push/subscriptions", ro.handleListPushSubscriptions)
+		r.Post("/api/push/subscriptions", ro.handleCreatePushSubscription)
+		r.Post("/api/push/subscriptions/unsubscribe", ro.handleUnsubscribePush)
+		r.Delete("/api/push/subscriptions/{subscriptionID}", ro.handleDeletePushSubscription)
+		r.Post("/api/push/subscriptions/{subscriptionID}/test", ro.handleTestPushSubscription)
 	})
 
 	// Alert rules - session or Bearer, top-level (not scoped to a single project).

@@ -353,7 +353,7 @@ export interface CronCheckin {
   finished_at: string | null
   received_at: string
 }
-export type AlertChannel = 'webhook' | 'slack' | 'discord' | 'teams' | 'email'
+export type AlertChannel = 'webhook' | 'slack' | 'discord' | 'teams' | 'email' | 'push'
 
 export interface AlertRule {
   id: string
@@ -368,6 +368,8 @@ export interface AlertRule {
   channel: AlertChannel
   webhook_url: string | null
   email_to: string | null
+  /** Users a push rule notifies on all their registered devices. */
+  recipient_ids?: string[]
   cooldown_mins: number
   filter_level: string | null
   filter_environment: string | null
@@ -622,4 +624,19 @@ export interface FlameGraph {
   thread_id?: string
   thread_name?: string
   root: FlameNode
+}
+
+export interface PushConfig {
+  enabled: boolean
+  public_key: string
+}
+
+/** A browser or installed app registered for Web Push. */
+export interface PushSubscriptionInfo {
+  id: string
+  endpoint: string
+  label: string
+  failure_count: number
+  last_success_at: string | null
+  created_at: string
 }

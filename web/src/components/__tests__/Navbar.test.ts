@@ -26,6 +26,10 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('@/composables/usePushNotifications', () => ({
+  forgetPushOnThisDevice: vi.fn(() => Promise.resolve()),
+}))
+
 vi.mock('@/stores/ui', () => ({
   useUiStore: vi.fn(),
 }))
@@ -45,6 +49,7 @@ import Navbar from '../Navbar.vue'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { forgetPushOnThisDevice } from '@/composables/usePushNotifications'
 
 function makeProject(id: string, name: string, slug = id): Project {
   return {
@@ -623,8 +628,9 @@ describe('responsive navigation interactions', () => {
     await wrapper.find('.nav__hamburger').trigger('click')
     const button = [...document.querySelectorAll<HTMLButtonElement>('.nav__mobile-utility')].find(button => button.textContent?.includes('Log out'))!
     button.click()
-    await nextTick()
-    expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' })
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' }))
+    expect(forgetPushOnThisDevice).toHaveBeenCalled()
+    expect(vi.mocked(forgetPushOnThisDevice).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(apiFetch).mock.invocationCallOrder.at(-1)!)
     expect(window.location.href).toBe('/login')
   })
 

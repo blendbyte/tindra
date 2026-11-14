@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { forgetPushOnThisDevice } from '@/composables/usePushNotifications'
 import Icon from './Icon.vue'
 import { badgeCount, useAttentionCounts } from '@/composables/useBriefingData'
 import logoLight from '@/assets/logo.png'
@@ -95,6 +96,8 @@ function toggleProject(id: string) {
 }
 
 async function logout() {
+  // Stop this device getting the signed-out user's alerts.
+  await forgetPushOnThisDevice()
   await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
   window.location.href = '/login'
 }

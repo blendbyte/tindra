@@ -513,9 +513,10 @@ func mcpToolList() []map[string]any {
 				"properties": map[string]any{
 					"name":               prop("string", "Rule name."),
 					"trigger":            prop("string", "Trigger: new_issue, regressed, new_or_regressed, event_count, log_count, cron_missed, cron_error, uptime_down, or uptime_recovered."),
-					"channel":            prop("string", "Notification channel: webhook, slack, discord, teams, or email."),
+					"channel":            prop("string", "Notification channel: webhook, slack, discord, teams, email, or push."),
 					"webhook_url":        prop("string", "Webhook/Slack/Discord/Teams URL (required for those channels)."),
 					"email_to":           prop("string", "Email address (required for email channel)."),
+					"recipient_ids":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "User IDs notified on their registered devices (required for push channel)."},
 					"threshold":          prop("integer", "Count threshold (required for event_count and log_count)."),
 					"window_mins":        prop("integer", "Window in minutes for event_count and log_count (log_count max 60)."),
 					"filter_level":       prop("string", "Minimum severity: fatal, error, warning, info, or debug. Required for log_count (fatal, error, or warning)."),
@@ -1240,6 +1241,13 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 	if v := mcpArgString(args, "email_to"); v != "" {
 		rule.EmailTo = &v
 	}
+	if ids, ok := args["recipient_ids"].([]any); ok {
+		for _, id := range ids {
+			if s, ok := id.(string); ok {
+				rule.RecipientIDs = append(rule.RecipientIDs, s)
+			}
+		}
+	}
 	if v := mcpArgInt(args, "threshold", 0); v > 0 {
 		rule.Threshold = &v
 	}
@@ -1263,6 +1271,11 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 		if err := alerts.ValidateWebhookURL(ctx, *rule.WebhookURL, ro.webhookAllowPrivateIPs); err != nil {
 			return "", mcpToolError{err.Error()}
 		}
+	}
+	if msg, err := ro.checkPushRecipients(ctx, rule); err != nil {
+		return "", err
+	} else if msg != "" {
+		return "", mcpToolError{msg}
 	}
 
 	created, err := storage.CreateAlertRule(ctx, ro.pool, rule)

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/blendbyte/tindra/internal/storage"
+	"github.com/blendbyte/tindra/internal/webpush"
 )
 
 const logCountQueryTimeout = 2 * time.Second
@@ -32,6 +33,7 @@ type Evaluator struct {
 	client    *http.Client
 	email     EmailSender // nil when EMAIL_PROVIDER is not configured
 	publicURL string
+	push      *webpush.Sender // nil until SetPushSender
 }
 
 func NewEvaluator(pool *pgxpool.Pool, email EmailSender, publicURL string, allowPrivateIPs bool) *Evaluator {
@@ -706,6 +708,8 @@ func (e *Evaluator) deliver(ctx context.Context, rule *storage.AlertRule, payloa
 		return e.fireTeams(ctx, rule, payload)
 	case "email":
 		return nil, e.fireEmail(ctx, rule, payload)
+	case "push":
+		return nil, e.firePush(ctx, rule, payload)
 	}
 	return nil, fmt.Errorf("unknown channel: %s", rule.Channel)
 }

@@ -354,6 +354,11 @@ func serveCmd(cfg config, env *dotenv) *cobra.Command {
 				return fmt.Errorf("email sender: %w", err)
 			}
 			evaluator := alerts.NewEvaluator(pool, emailSender, cfg.publicURL, cfg.webhookAllowPrivateIPs)
+			pushSender, err := alerts.LoadPushSender(ctx, pool, cfg.publicURL, cfg.webhookAllowPrivateIPs)
+			if err != nil {
+				return fmt.Errorf("web push: %w", err)
+			}
+			evaluator.SetPushSender(pushSender)
 
 			api.AppEmailSender = emailSender
 

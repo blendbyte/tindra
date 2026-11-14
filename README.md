@@ -44,6 +44,7 @@ Tindra runs as one Go binary with one Postgres database and uses Sentry SDKs wit
 - **Uptime monitors** with HTTP/HTTPS probing, configurable intervals and timeouts, expected status codes and body assertions, 24h/7d/30d uptime stats, and down/recovery alerts
 - **Releases** linked to issues and regressions
 - **Alerts** via email, Slack, Discord, Microsoft Teams, and webhooks, with filters, log-volume thresholds, and cooldowns
+- **Installable app with push notifications**: add Tindra to your phone's home screen or desktop and get alerts as native notifications through Web Push, with no relay service and no setup. Needs HTTPS; on iPhone and iPad (iOS 16.4+), push works once Tindra is added to the Home Screen
 - **Source maps** resolved server-side, no client exposure
 - **Guided project setup** with test-event confirmation, ingestion diagnostics, and source map verification against real stack frames
 - **Ingestion monitoring** with authenticated Prometheus metrics for queue depth, retries, rejected data, and ingestion health

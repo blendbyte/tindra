@@ -13,6 +13,7 @@ import { createQueryClient } from './api/queryClient'
 import { router } from './router'
 import { installInvestigationRouter } from './router/investigation'
 import { vTooltip } from './directives/tooltip'
+import { registerServiceWorker } from './pwa/registerServiceWorker'
 import './assets/styles.css'
 
 const app = createApp(App)
@@ -23,3 +24,4 @@ app.use(router)
 app.use(VueQueryPlugin, { queryClient: createQueryClient() })
 app.directive('tooltip', vTooltip)
 app.mount('#app')
+registerServiceWorker(router)
