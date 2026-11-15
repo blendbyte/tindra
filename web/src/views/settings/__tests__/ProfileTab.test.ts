@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 
 vi.mock('vue-router', () => ({
   useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn() })),
@@ -21,6 +21,14 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('@/api/client', () => ({ apiFetch: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: vi.fn() }))
 vi.mock('@/utils/formatters', () => ({ formatRel: vi.fn(() => '2m ago') }))
+// PushDevices has its own tests; here it only has to be placed.
+// Each mount gets a new data-mounted value, so a remount is visible.
+let pushDevicesMounts = 0
+vi.mock('../PushDevices.vue', () => ({
+  default: { name: 'PushDevices', data: () => ({ n: ++pushDevicesMounts }), template: '<div data-testid="push-devices" :data-mounted="n" />' },
+}))
+const { pushEndpointOnThisDevice } = vi.hoisted(() => ({ pushEndpointOnThisDevice: vi.fn(async (): Promise<string | null> => null) }))
+vi.mock('@/composables/usePushNotifications', () => ({ pushEndpointOnThisDevice }))
 
 import ProfileTab from '../ProfileTab.vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
@@ -92,6 +100,12 @@ describe('ProfileTab', () => {
       const wrapper = mountTab()
       expect(wrapper.text()).toContain('Notifications')
       expect(wrapper.text()).toContain('Weekly digest')
+    })
+
+    it('places push device settings in the Notifications section', () => {
+      const wrapper = mountTab()
+      const section = wrapper.findAll('.profile-section').find(s => s.text().includes('Weekly digest'))!
+      expect(section.find('[data-testid="push-devices"]').exists()).toBe(true)
     })
 
     it('renders Two-factor authentication section', () => {
@@ -246,7 +260,30 @@ describe('ProfileTab', () => {
       const values = wrapper.findAll<HTMLInputElement>('input[type="password"]').map(i => i.element.value)
       expect(values).toEqual(['', '', ''])
       expect(wrapper.find('.profile-error').exists()).toBe(false)
-      expect(showToast).toHaveBeenCalledWith('Password changed')
+      expect(showToast).toHaveBeenCalledWith('Password changed. Other devices are signed out and no longer get push notifications.')
+    })
+
+    it('keeps push on this device when the password changes and reloads the device list', async () => {
+      const recorded = recordMutations()
+      mockQueries({ me: { ...adminUser, has_password: true } })
+      const wrapper = mountTab()
+      const pw = recorded[M.changePassword]
+
+      pushEndpointOnThisDevice.mockResolvedValueOnce('https://fcm.googleapis.com/fcm/send/here')
+      await pw.opts.mutationFn({ current_password: 'old-password-123', new_password: 'new-password-123' })
+      expect(JSON.parse((vi.mocked(apiFetch).mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+        current_password: 'old-password-123', new_password: 'new-password-123',
+        keep_push_endpoint: 'https://fcm.googleapis.com/fcm/send/here',
+      })
+
+      // No push on this browser: nothing extra is sent.
+      await pw.opts.mutationFn({ current_password: 'old-password-123', new_password: 'new-password-123' })
+      expect(JSON.parse((vi.mocked(apiFetch).mock.calls[1]![1] as RequestInit).body as string)).not.toHaveProperty('keep_push_endpoint')
+
+      const before = wrapper.find('[data-testid="push-devices"]').attributes('data-mounted')
+      pw.opts.onSuccess()
+      await nextTick()
+      expect(wrapper.find('[data-testid="push-devices"]').attributes('data-mounted')).not.toBe(before)
     })
 
     it('calls changePassword onError sets pwError', async () => {

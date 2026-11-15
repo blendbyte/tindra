@@ -14,11 +14,40 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/blendbyte/tindra/internal/storage"
+	"github.com/blendbyte/tindra/internal/webpush"
 )
 
 const logCountQueryTimeout = 2 * time.Second
 
 const maxDeliveryAttempts = 3
+
+// Delivery errors can carry marks that steer the firing log. Marking keeps
+// the message as it is, for the firing log and rule tests.
+var (
+	// errNotRetryable: a retry cannot fix it, so the firing ends at once.
+	errNotRetryable = errors.New("not retryable")
+	// errPartlyDelivered: the alert reached some of its targets, so once
+	// the retries are used up the firing counts as delivered, with the
+	// error kept as a note.
+	errPartlyDelivered = errors.New("partly delivered")
+)
+
+func notRetryable(err error) error    { return markedError{err, errNotRetryable} }
+func partlyDelivered(err error) error { return markedError{err, errPartlyDelivered} }
+
+type markedError struct{ err, mark error }
+
+func (e markedError) Error() string        { return e.err.Error() }
+func (e markedError) Unwrap() error        { return e.err }
+func (e markedError) Is(target error) bool { return target == e.mark }
+
+// finalStatus is the status of a firing whose delivery ended with err.
+func finalStatus(err error) string {
+	if errors.Is(err, errPartlyDelivered) {
+		return "success"
+	}
+	return "failed"
+}
 
 // retryDelays[i] is the wait before attempt i+2 (after attempt i+1 fails).
 var retryDelays = []time.Duration{
@@ -32,6 +61,7 @@ type Evaluator struct {
 	client    *http.Client
 	email     EmailSender // nil when EMAIL_PROVIDER is not configured
 	publicURL string
+	push      *webpush.Sender // nil until SetPushSender
 }
 
 func NewEvaluator(pool *pgxpool.Pool, email EmailSender, publicURL string, allowPrivateIPs bool) *Evaluator {
@@ -695,6 +725,12 @@ func (e *Evaluator) fire(ctx context.Context, rule *storage.AlertRule, details m
 // deliver dispatches the payload to the configured channel and returns the HTTP
 // status code (nil for email or network errors) along with any error.
 func (e *Evaluator) deliver(ctx context.Context, rule *storage.AlertRule, payload AlertPayload) (*int, error) {
+	// A retry stored while the rule was a push rule may still name devices;
+	// that is internal and goes to no other channel.
+	if rule.Channel != "push" {
+		delete(payload.Details, pushRetryDevicesKey)
+		delete(payload.Details, pushPartlyDeliveredKey)
+	}
 	switch rule.Channel {
 	case "webhook":
 		return e.fireWebhook(ctx, rule, payload)
@@ -706,6 +742,8 @@ func (e *Evaluator) deliver(ctx context.Context, rule *storage.AlertRule, payloa
 		return e.fireTeams(ctx, rule, payload)
 	case "email":
 		return nil, e.fireEmail(ctx, rule, payload)
+	case "push":
+		return nil, e.firePush(ctx, rule, payload)
 	}
 	return nil, fmt.Errorf("unknown channel: %s", rule.Channel)
 }
@@ -747,13 +785,13 @@ func (e *Evaluator) logFiring(ctx context.Context, ruleID, channel string, paylo
 	} else {
 		errStr := deliveryErr.Error()
 		f.Error = &errStr
-		if attempt < maxDeliveryAttempts {
+		if attempt < maxDeliveryAttempts && !errors.Is(deliveryErr, errNotRetryable) {
 			f.Status = "pending"
 			t := time.Now().Add(retryDelays[attempt-1])
 			f.NextRetryAt = &t
 			f.Payload, _ = json.Marshal(payload)
 		} else {
-			f.Status = "failed"
+			f.Status = finalStatus(deliveryErr)
 		}
 	}
 
@@ -814,8 +852,8 @@ func (e *Evaluator) retryFiring(ctx context.Context, f *storage.AlertFiring) {
 		return
 	}
 	errStr := deliveryErr.Error()
-	if attempt >= maxDeliveryAttempts {
-		resolve("failed", attempt, statusCode, &errStr)
+	if attempt >= maxDeliveryAttempts || errors.Is(deliveryErr, errNotRetryable) {
+		resolve(finalStatus(deliveryErr), attempt, statusCode, &errStr)
 		return
 	}
 	nextRetry := time.Now().Add(retryDelays[attempt-1])
@@ -1549,9 +1587,5 @@ func singleIssueTitle(p AlertPayload) string {
 	if len(p.Issues) == 0 {
 		return ""
 	}
-	t := p.Issues[0].Title
-	if len([]rune(t)) > 120 {
-		t = string([]rune(t)[:117]) + "..."
-	}
-	return t
+	return truncateRunes(p.Issues[0].Title, 120)
 }

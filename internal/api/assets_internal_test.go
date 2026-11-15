@@ -169,3 +169,31 @@ func TestMissingAndUnreadableAssetBundles(t *testing.T) {
 		t.Fatalf("response=%+v", rec)
 	}
 }
+
+// The PWA files must keep stable URLs and revalidate on every load: a stale
+// service worker or manifest would outlive deploys.
+func TestPWAAssetDelivery(t *testing.T) {
+	handler := newAssetHandler(fstest.MapFS{
+		"index.html":                 {Data: []byte("<html>Tindra</html>")},
+		"sw.js":                      {Data: []byte("self.addEventListener('push', () => {})")},
+		"manifest.webmanifest":       {Data: []byte(`{"name":"Tindra"}`)},
+		"icons/apple-touch-icon.png": {Data: []byte("\x89PNG\r\n\x1a\n")},
+	})
+	for path, wantType := range map[string]string{
+		"/sw.js":                      "text/javascript; charset=utf-8",
+		"/manifest.webmanifest":       "application/manifest+json",
+		"/icons/apple-touch-icon.png": "image/png",
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, w.Code)
+		}
+		if got := w.Header().Get("Content-Type"); got != wantType {
+			t.Errorf("%s: content type %q, want %q", path, got, wantType)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("%s: cache control %q, want no-cache", path, got)
+		}
+	}
+}

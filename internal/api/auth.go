@@ -101,13 +101,30 @@ func (ro *router) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (ro *router) handleLogout(w http.ResponseWriter, r *http.Request) {
 	clearMFAChallengeCookie(w, ro.cookieSecure)
+	// The app names this browser's push endpoint, so signing out also stops
+	// its alerts, even if the browser never gets to unsubscribe.
+	var body struct {
+		PushEndpoint string `json:"push_endpoint"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
 	cookie, err := r.Cookie("tindra_session")
 	if err == nil {
-		userID, _ := storage.DeleteSessionReturningUserID(r.Context(), ro.pool, cookie.Value)
-		if userID != "" {
+		out, err := storage.EndSession(r.Context(), ro.pool, cookie.Value, body.PushEndpoint)
+		if err != nil {
+			slog.Error("logout", "err", err)
+		}
+		if out.Ended {
 			storage.WriteAuditLog(ro.pool, storage.AuditEntry{
 				EventType: "auth.logout",
-				ActorID:   &userID,
+				ActorID:   &out.UserID,
+				IP:        r.RemoteAddr,
+			})
+		}
+		if out.DeviceID != "" {
+			storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+				EventType: "push_device.removed",
+				ActorID:   &out.UserID,
+				TargetID:  &out.DeviceID,
 				IP:        r.RemoteAddr,
 			})
 		}

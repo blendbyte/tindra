@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -26,7 +27,7 @@ var validTriggers = map[string]bool{
 	"uptime_down":      true,
 	"uptime_recovered": true,
 }
-var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "teams": true, "email": true}
+var validChannels = map[string]bool{"webhook": true, "slack": true, "discord": true, "teams": true, "email": true, "push": true}
 var validLevels = map[string]bool{"fatal": true, "error": true, "warning": true, "info": true, "debug": true}
 var validLogCountLevels = map[string]bool{"fatal": true, "error": true, "warning": true}
 
@@ -48,7 +49,7 @@ func validateAlertRule(r *storage.AlertRule) string {
 		}
 	}
 	if r.Trigger == "log_count" {
-		if nonemptyProjectCount(r.ProjectIDs) == 0 {
+		if nonemptyCount(r.ProjectIDs) == 0 {
 			return "project_ids required for log_count trigger"
 		}
 		if r.Threshold == nil || r.WindowMins == nil {
@@ -82,13 +83,24 @@ func validateAlertRule(r *storage.AlertRule) string {
 		}
 	}
 	if !validChannels[r.Channel] {
-		return "channel must be webhook, slack, discord, teams, or email"
+		return "channel must be webhook, slack, discord, teams, email, or push"
 	}
 	if (r.Channel == "webhook" || r.Channel == "slack" || r.Channel == "discord" || r.Channel == "teams") && (r.WebhookURL == nil || *r.WebhookURL == "") {
 		return "webhook_url required for " + r.Channel + " channel"
 	}
 	if r.Channel == "email" && (r.EmailTo == nil || *r.EmailTo == "") {
 		return "email_to required for email channel"
+	}
+	if r.Channel == "push" {
+		// A paused rule may have none, so one whose last recipient was
+		// deleted can still be paused or edited.
+		if r.Enabled && nonemptyCount(r.RecipientIDs) == 0 {
+			return "recipient_ids required for an enabled push rule"
+		}
+	} else {
+		// Recipients only mean something for push; drop them so a rule that
+		// switched channels does not keep stale ones.
+		r.RecipientIDs = nil
 	}
 	if r.FilterLevel != nil && r.Trigger != "log_count" && !validLevels[*r.FilterLevel] {
 		return "filter_level must be fatal, error, warning, info, or debug"
@@ -102,7 +114,7 @@ func validateAlertRule(r *storage.AlertRule) string {
 	return ""
 }
 
-func nonemptyProjectCount(ids []string) int {
+func nonemptyCount(ids []string) int {
 	n := 0
 	for _, id := range ids {
 		if strings.TrimSpace(id) != "" {
@@ -130,8 +142,11 @@ func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-
 	created, err := storage.CreateAlertRule(r.Context(), ro.pool, &rule)
+	if errors.Is(err, storage.ErrNoPushRecipients) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		slog.Error("create alert rule", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -159,6 +174,11 @@ func (ro *router) handleListAlertRules(w http.ResponseWriter, r *http.Request) {
 	if !canManageAlerts(r.Context()) {
 		for _, rule := range rules {
 			redactRuleWebhook(rule)
+		}
+	}
+	if actorFromContext(r.Context()) == nil {
+		for _, rule := range rules {
+			redactRuleRecipients(rule)
 		}
 	}
 
@@ -189,6 +209,13 @@ func redactWebhookURL(raw string) string {
 	return u.Scheme + "://" + u.Host + "/…" + tail
 }
 
+// redactRuleRecipients hides who a push rule notifies from callers without a
+// session (API tokens, the MCP tools): user IDs are not theirs to see, just
+// as /api/users is not.
+func redactRuleRecipients(rule *storage.AlertRule) {
+	rule.RecipientIDs = []string{}
+}
+
 // redactRuleWebhook replaces the rule's webhook URL with its redacted form.
 func redactRuleWebhook(rule *storage.AlertRule) {
 	if rule.WebhookURL != nil && *rule.WebhookURL != "" {
@@ -214,6 +241,9 @@ func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canManageAlerts(r.Context()) {
 		redactRuleWebhook(rule)
+	}
+	if actorFromContext(r.Context()) == nil {
+		redactRuleRecipients(rule)
 	}
 
 	writeJSON(w, rule)
@@ -261,12 +291,14 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		MinOccurrences    *int     `json:"min_occurrences"`
 		FilterSearch      *string  `json:"filter_search"`
 		ProjectIDs        []string `json:"project_ids"`
+		RecipientIDs      []string `json:"recipient_ids"`
 		// Explicit nulls: sending null clears the field.
 		ClearFilterLevel       bool `json:"-"`
 		ClearFilterEnvironment bool `json:"-"`
 		ClearMinOccurrences    bool `json:"-"`
 		ClearFilterSearch      bool `json:"-"`
 		HasProjectIDs          bool `json:"-"`
+		HasRecipientIDs        bool `json:"-"`
 	}
 	// Use a raw map to detect explicit nulls vs omitted fields.
 	var raw map[string]json.RawMessage
@@ -322,6 +354,9 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		case "project_ids":
 			parseErr = json.Unmarshal(v, &patch.ProjectIDs)
 			patch.HasProjectIDs = true
+		case "recipient_ids":
+			parseErr = json.Unmarshal(v, &patch.RecipientIDs)
+			patch.HasRecipientIDs = true
 		}
 		if parseErr != nil {
 			break
@@ -383,6 +418,9 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 	if patch.HasProjectIDs {
 		existing.ProjectIDs = patch.ProjectIDs
 	}
+	if patch.HasRecipientIDs {
+		existing.RecipientIDs = patch.RecipientIDs
+	}
 
 	if msg := validateAlertRule(existing); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
@@ -394,8 +432,11 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-
 	updated, err := storage.UpdateAlertRule(r.Context(), ro.pool, existing)
+	if errors.Is(err, storage.ErrNoPushRecipients) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		slog.Error("update alert rule", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

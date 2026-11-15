@@ -513,7 +513,7 @@ func mcpToolList() []map[string]any {
 				"properties": map[string]any{
 					"name":               prop("string", "Rule name."),
 					"trigger":            prop("string", "Trigger: new_issue, regressed, new_or_regressed, event_count, log_count, cron_missed, cron_error, uptime_down, or uptime_recovered."),
-					"channel":            prop("string", "Notification channel: webhook, slack, discord, teams, or email."),
+					"channel":            prop("string", "Notification channel: webhook, slack, discord, teams, or email. Push rules are created in the web UI, which knows the people to notify."),
 					"webhook_url":        prop("string", "Webhook/Slack/Discord/Teams URL (required for those channels)."),
 					"email_to":           prop("string", "Email address (required for email channel)."),
 					"threshold":          prop("integer", "Count threshold (required for event_count and log_count)."),
@@ -886,9 +886,11 @@ func (ro *router) mcpListAlerts(ctx context.Context, args map[string]any) (strin
 	if rules == nil {
 		rules = []*storage.AlertRule{}
 	}
-	// Webhook URLs are credentials; never hand them to an LLM context.
+	// Webhook URLs are credentials and recipients are people; never hand
+	// either to an LLM context.
 	for _, rule := range rules {
 		redactRuleWebhook(rule)
+		redactRuleRecipients(rule)
 	}
 	b, _ := json.MarshalIndent(rules, "", "  ")
 	return string(b), nil
@@ -1219,6 +1221,10 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 	if name == "" || trigger == "" || channel == "" {
 		return "", mcpToolError{"name, trigger, and channel are required"}
 	}
+	if channel == "push" {
+		// Recipients are people, and tokens cannot list users.
+		return "", mcpToolError{"push rules are created in the web UI"}
+	}
 
 	rule := &storage.AlertRule{
 		Name:         name,
@@ -1264,7 +1270,6 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 			return "", mcpToolError{err.Error()}
 		}
 	}
-
 	created, err := storage.CreateAlertRule(ctx, ro.pool, rule)
 	if err != nil {
 		return "", fmt.Errorf("create alert rule: %w", err)

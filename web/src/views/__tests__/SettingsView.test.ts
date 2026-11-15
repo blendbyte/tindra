@@ -69,7 +69,7 @@ import AlertsTab from '../settings/AlertsTab.vue'
 import AuditTab from '../settings/AuditTab.vue'
 import ProfileTab from '../settings/ProfileTab.vue'
 import { useQuery, useMutation } from '@tanstack/vue-query'
-import { adminUser, mockQueries, queryName, stubs } from '../settings/__tests__/harness'
+import { adminUser, isEnabled, mockQueries, queryName, stubs } from '../settings/__tests__/harness'
 
 function setupMocks(meData: unknown = adminUser) {
   mockQueries({ me: meData })
@@ -353,7 +353,8 @@ describe('switching between Settings and the dedicated Alerts page', () => {
   it('updates the page and the rendered tab when the route props change', async () => {
     setupMocks()
     const wrapper = mountView()
-    const queried = () => vi.mocked(useQuery).mock.calls.map(([options]) => queryName(options))
+    // Queries that would fetch; a disabled query (e.g. users before any push rule exists) does not.
+    const queried = () => vi.mocked(useQuery).mock.calls.filter(([options]) => isEnabled(options)).map(([options]) => queryName(options))
     expect(wrapper.find('h1').text()).toBe('Settings')
     expect(wrapper.findComponent(OverviewTab).exists()).toBe(true)
     for (const key of ['users', 'settings']) expect(queried()).toContain(key)

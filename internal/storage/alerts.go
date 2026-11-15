@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,15 +19,17 @@ type AlertRule struct {
 	// IsGlobal is true for rules saved without projects (they cover every
 	// project). A non-global rule whose projects were all deleted matches
 	// nothing and is never evaluated.
-	IsGlobal          bool       `json:"is_global"`
-	Name              string     `json:"name"`
-	Enabled           bool       `json:"enabled"`
-	Trigger           string     `json:"trigger"`
-	Threshold         *int       `json:"threshold,omitempty"`
-	WindowMins        *int       `json:"window_mins,omitempty"`
-	Channel           string     `json:"channel"`
-	WebhookURL        *string    `json:"webhook_url,omitempty"`
-	EmailTo           *string    `json:"email_to,omitempty"`
+	IsGlobal   bool    `json:"is_global"`
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	Trigger    string  `json:"trigger"`
+	Threshold  *int    `json:"threshold,omitempty"`
+	WindowMins *int    `json:"window_mins,omitempty"`
+	Channel    string  `json:"channel"`
+	WebhookURL *string `json:"webhook_url,omitempty"`
+	EmailTo    *string `json:"email_to,omitempty"`
+	// RecipientIDs are the users a push rule notifies on all their devices.
+	RecipientIDs      []string   `json:"recipient_ids"`
 	CooldownMins      int        `json:"cooldown_mins"`
 	FilterLevel       *string    `json:"filter_level,omitempty"`
 	FilterEnvironment *string    `json:"filter_environment,omitempty"`
@@ -35,16 +39,26 @@ type AlertRule struct {
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
-// alertRuleQuery is the base SELECT with LEFT JOIN to pick up project associations.
-// All callers must append a WHERE clause and GROUP BY ar.id.
-const alertRuleQuery = `
+// alertRuleSelect is the base SELECT with LEFT JOIN to pick up project
+// associations; %s is the recipient_ids column. All callers must append a
+// WHERE clause and GROUP BY ar.id.
+const alertRuleSelect = `
 	SELECT ar.id, ar.name, ar.enabled, ar.trigger, ar.threshold, ar.window_mins,
 	       ar.channel, ar.webhook_url, ar.email_to, ar.cooldown_mins,
 	       ar.filter_level, ar.filter_environment, ar.min_occurrences, ar.filter_search,
 	       ar.last_fired_at, ar.created_at, ar.is_global,
-	       COALESCE(array_agg(arp.project_id::text) FILTER (WHERE arp.project_id IS NOT NULL), '{}') AS project_ids
+	       COALESCE(array_agg(arp.project_id::text) FILTER (WHERE arp.project_id IS NOT NULL), '{}') AS project_ids,
+	       %s AS recipient_ids
 	FROM alert_rules ar
 	LEFT JOIN alert_rule_projects arp ON arp.rule_id = ar.id`
+
+// alertRuleQuery reads rules with their push recipients, for the API.
+var alertRuleQuery = fmt.Sprintf(alertRuleSelect,
+	`ARRAY(SELECT rr.user_id::text FROM alert_rule_recipients rr WHERE rr.rule_id = ar.id ORDER BY rr.user_id)`)
+
+// evaluatorRuleQuery leaves recipients out: the evaluator reads them with
+// the devices when a push rule fires, and runs this every 15 seconds.
+var evaluatorRuleQuery = fmt.Sprintf(alertRuleSelect, `'{}'::text[]`)
 
 func scanAlertRule(scan func(...any) error) (*AlertRule, error) {
 	var r AlertRule
@@ -55,13 +69,16 @@ func scanAlertRule(scan func(...any) error) (*AlertRule, error) {
 		&r.CooldownMins,
 		&r.FilterLevel, &r.FilterEnvironment, &r.MinOccurrences, &r.FilterSearch,
 		&r.LastFiredAt, &r.CreatedAt, &r.IsGlobal,
-		&r.ProjectIDs,
+		&r.ProjectIDs, &r.RecipientIDs,
 	)
 	if err != nil {
 		return nil, err
 	}
 	if r.ProjectIDs == nil {
 		r.ProjectIDs = []string{}
+	}
+	if r.RecipientIDs == nil {
+		r.RecipientIDs = []string{}
 	}
 	return &r, nil
 }
@@ -72,6 +89,9 @@ func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	if err := lockRecipientUsers(ctx, tx, r.RecipientIDs); err != nil {
+		return nil, err
+	}
 
 	var created AlertRule
 	err = tx.QueryRow(ctx, `
@@ -104,6 +124,12 @@ func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		return nil, err
 	}
 	created.ProjectIDs = normaliseProjectIDs(r.ProjectIDs)
+	if created.RecipientIDs, err = setAlertRuleRecipients(ctx, tx, created.ID, r.RecipientIDs); err != nil {
+		return nil, err
+	}
+	if r.Channel == "push" && r.Enabled && len(created.RecipientIDs) == 0 {
+		return nil, ErrNoPushRecipients
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -153,9 +179,10 @@ func ListAlertRules(ctx context.Context, pool *pgxpool.Pool, projectID string) (
 // remaining project: their projects were deleted, so they must not fire.
 const ruleHasScope = `(ar.is_global OR EXISTS (SELECT 1 FROM alert_rule_projects WHERE rule_id = ar.id))`
 
+// RecipientIDs is not filled in.
 func ListDueAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, error) {
 	rows, err := pool.Query(ctx,
-		alertRuleQuery+`
+		evaluatorRuleQuery+`
 		WHERE ar.enabled = TRUE
 		  AND (ar.last_fired_at IS NULL
 		       OR ar.last_fired_at + make_interval(mins => ar.cooldown_mins) <= NOW())
@@ -179,9 +206,10 @@ func ListDueAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, e
 
 // ListEnabledAlertRules returns all enabled alert rules regardless of cooldown.
 // Used for one-shot notifications that bypass the normal evaluation cycle.
+// RecipientIDs is not filled in.
 func ListEnabledAlertRules(ctx context.Context, pool *pgxpool.Pool) ([]*AlertRule, error) {
 	rows, err := pool.Query(ctx,
-		alertRuleQuery+` WHERE ar.enabled = TRUE AND `+ruleHasScope+` GROUP BY ar.id`)
+		evaluatorRuleQuery+` WHERE ar.enabled = TRUE AND `+ruleHasScope+` GROUP BY ar.id`)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -204,6 +232,9 @@ func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	if err := lockRecipientUsers(ctx, tx, r.RecipientIDs); err != nil {
+		return nil, err
+	}
 
 	var updated AlertRule
 	err = tx.QueryRow(ctx, `
@@ -240,6 +271,12 @@ func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		return nil, err
 	}
 	updated.ProjectIDs = normaliseProjectIDs(r.ProjectIDs)
+	if updated.RecipientIDs, err = setAlertRuleRecipients(ctx, tx, updated.ID, r.RecipientIDs); err != nil {
+		return nil, err
+	}
+	if r.Channel == "push" && r.Enabled && len(updated.RecipientIDs) == 0 {
+		return nil, ErrNoPushRecipients
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -280,6 +317,70 @@ func setAlertRuleProjects(ctx context.Context, tx pgx.Tx, ruleID string, project
 		}
 	}
 	return nil
+}
+
+// lockRecipientUsers takes the recipients' users rows before anything else
+// in the transaction. Deleting a user locks that row first and then reaches
+// alert_rule_recipients through its cascade, so taking the rows first here
+// keeps the two in the same order and they wait for each other instead of
+// deadlocking. It also keeps the users from being deleted until the
+// recipients are written, so their foreign keys always hold.
+func lockRecipientUsers(ctx context.Context, tx pgx.Tx, userIDs []string) error {
+	ids := validUUIDs(userIDs)
+	if len(ids) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id = ANY($1::uuid[]) ORDER BY id FOR KEY SHARE`, ids); err != nil {
+		return fmt.Errorf("lock recipients: %w", err)
+	}
+	return nil
+}
+
+// validUUIDs drops IDs that are not UUIDs, so a malformed one is ignored
+// like an unknown one, and the rest can use the users primary key.
+func validUUIDs(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		// Only the plain form: uuid.Parse also takes "urn:uuid:..." and
+		// braces, which Postgres would reject.
+		if u, err := uuid.Parse(id); err == nil && u.String() == strings.ToLower(id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// ErrNoPushRecipients is returned when an enabled push rule would be saved
+// without a recipient, because none of its recipient IDs is an existing
+// user. A disabled one may have none, so a rule whose last recipient was
+// deleted can still be paused.
+var ErrNoPushRecipients = errors.New("recipient_ids must name existing users")
+
+// setAlertRuleRecipients replaces a rule's push recipients within an existing
+// transaction. IDs that are not existing users are dropped, so a stale or
+// malformed ID cannot fail the save. It returns the stored IDs, sorted.
+func setAlertRuleRecipients(ctx context.Context, tx pgx.Tx, ruleID string, userIDs []string) ([]string, error) {
+	if _, err := tx.Exec(ctx, `DELETE FROM alert_rule_recipients WHERE rule_id = $1`, ruleID); err != nil {
+		return nil, fmt.Errorf("clear recipients: %w", err)
+	}
+	stored := []string{}
+	if len(userIDs) == 0 {
+		return stored, nil
+	}
+	rows, err := tx.Query(ctx, `
+		INSERT INTO alert_rule_recipients (rule_id, user_id)
+		SELECT $1, u.id FROM users u WHERE u.id = ANY($2::uuid[])
+		ON CONFLICT DO NOTHING
+		RETURNING user_id::text`, ruleID, validUUIDs(userIDs))
+	if err != nil {
+		return nil, fmt.Errorf("insert recipients: %w", err)
+	}
+	stored, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("insert recipients: %w", err)
+	}
+	slices.Sort(stored)
+	return stored, nil
 }
 
 func normaliseProjectIDs(ids []string) []string {

@@ -35,10 +35,11 @@ export function useProjectByID(projects: Ref<Project[]>) {
   })
 }
 
-export function useUsers() {
+export function useUsers(enabled: Ref<boolean> | boolean = true) {
   const { data: usersData } = useQuery({
     queryKey: ['users'],
     queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
+    enabled,
   })
   const users = computed(() => usersData.value ?? [])
   return { users }

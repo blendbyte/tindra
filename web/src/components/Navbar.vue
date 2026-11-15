@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
+import { forgetPushOnThisDevice, pushEndpointOnThisDevice } from '@/composables/usePushNotifications'
 import Icon from './Icon.vue'
 import { badgeCount, useAttentionCounts } from '@/composables/useBriefingData'
 import logoLight from '@/assets/logo.png'
@@ -95,7 +96,15 @@ function toggleProject(id: string) {
 }
 
 async function logout() {
-  await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+  // Stop this device getting the signed-out user's alerts: the server
+  // removes its push device with the session, then the browser drops the
+  // subscription. Both are capped, so signing out never hangs.
+  const endpoint = await pushEndpointOnThisDevice()
+  await apiFetch('/api/auth/logout', {
+    method: 'POST',
+    body: JSON.stringify(endpoint ? { push_endpoint: endpoint } : {}),
+  }).catch(() => {})
+  await forgetPushOnThisDevice()
   window.location.href = '/login'
 }
 </script>

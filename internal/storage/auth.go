@@ -267,7 +267,10 @@ var ErrLastUserManager = errors.New("at least one user must keep the manage user
 // demotions of the last two managers wait for each other instead of both
 // passing the check.
 func guardLastUserManager(ctx context.Context, tx pgx.Tx, id string) error {
-	rows, err := tx.Query(ctx, `SELECT id FROM users WHERE perm_manage_users FOR UPDATE`)
+	// In id order, and FOR NO KEY UPDATE: two guards still wait for each
+	// other, but a rule save's FOR KEY SHARE on its recipients does not
+	// conflict, so the two cannot deadlock.
+	rows, err := tx.Query(ctx, `SELECT id FROM users WHERE perm_manage_users ORDER BY id FOR NO KEY UPDATE`)
 	if err != nil {
 		return fmt.Errorf("lock user managers: %w", err)
 	}
@@ -290,9 +293,30 @@ func DeleteUser(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error
 	if err := guardLastUserManager(ctx, tx, id); err != nil {
 		return false, err
 	}
+	// Lock order shared with saving a rule: the user, then the rules, then
+	// (through the cascade) the recipients. Saving a rule takes its users
+	// rows first too, so the two wait for each other instead of deadlocking.
+	// The managers locked above do not conflict with a save (see
+	// guardLastUserManager). The rules are only locked against other
+	// updates, so the evaluator can still record firings for them.
+	if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, id); err != nil {
+		return false, fmt.Errorf("lock user: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT id FROM alert_rules
+		WHERE id IN (SELECT rule_id FROM alert_rule_recipients WHERE user_id = $1)
+		ORDER BY id FOR NO KEY UPDATE`, id); err != nil {
+		return false, fmt.Errorf("lock push rules: %w", err)
+	}
 	tag, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete: %w", err)
+	}
+	// Push rules that notified only this user would fire at nobody: pause
+	// them, so the rule list shows they need a new recipient.
+	if _, err := tx.Exec(ctx, `UPDATE alert_rules ar SET enabled = FALSE
+		WHERE ar.channel = 'push' AND ar.enabled
+		  AND NOT EXISTS (SELECT 1 FROM alert_rule_recipients rr WHERE rr.rule_id = ar.id)`); err != nil {
+		return false, fmt.Errorf("pause push rules without recipients: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit: %w", err)
@@ -383,15 +407,17 @@ func VerifyUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, passwor
 // ErrEmailTaken means another user already has the requested email address.
 var ErrEmailTaken = errors.New("email already in use")
 
-// ChangeUserPasswordWithSession rotates the requesting session in the same transaction.
-func ChangeUserPasswordWithSession(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword, currentSession string) (*Session, error) {
+// ChangeUserPasswordWithSession rotates the requesting session in the same
+// transaction. Every other session ends, and every push device but the one
+// at keepPushEndpoint (the browser making the change; "" for none) goes.
+func ChangeUserPasswordWithSession(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword, currentSession, keepPushEndpoint string) (*Session, error) {
 	if currentSession == "" {
 		return nil, ErrInvalidPassword
 	}
-	return changeUserPassword(ctx, pool, userID, currentPassword, newPassword, currentSession)
+	return changeUserPassword(ctx, pool, userID, currentPassword, newPassword, currentSession, keepPushEndpoint)
 }
 
-func changeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword, currentSession string) (*Session, error) {
+func changeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword, currentSession, keepPushEndpoint string) (*Session, error) {
 	if len(newPassword) < minPasswordLen {
 		return nil, fmt.Errorf("password must be at least %d characters", minPasswordLen)
 	}
@@ -440,7 +466,7 @@ func changeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, current
 	if err != nil {
 		return nil, fmt.Errorf("update: %w", err)
 	}
-	if err := revokeCredentialArtifacts(ctx, tx, userID); err != nil {
+	if err := revokeCredentialArtifacts(ctx, tx, userID, keepPushEndpoint); err != nil {
 		return nil, err
 	}
 	var session *Session

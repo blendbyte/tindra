@@ -30,6 +30,8 @@ func init() {
 		".css":   "text/css; charset=utf-8",
 		".woff2": "font/woff2",
 		".svg":   "image/svg+xml",
+		// Browsers ignore a web app manifest served with another type.
+		".webmanifest": "application/manifest+json",
 	} {
 		if err := mime.AddExtensionType(ext, typ); err != nil {
 			panic(err)
@@ -177,6 +179,7 @@ func NewRouter(cfg Config) *Handle {
 
 	loginRL := newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
 	resetRL := newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
+	pushRotateRL := newRateLimiter(30, 15*time.Minute)
 	ro.forwarder = ingest.NewForwarder(ro.passthroughClient, passthroughWorkers, passthroughQueueSize)
 	ro.projectKeys = newProjectKeyCache(10_000)
 	ro.monthlyCount = &monthlyCountCache{}
@@ -221,6 +224,13 @@ func NewRouter(cfg Config) *Handle {
 	// Password reset - public, no auth required.
 	r.With(authBody, resetRL.limitByIP()).Get("/api/auth/password-reset/{token}", ro.handleGetPasswordReset)
 	r.With(authBody, resetRL.limitByIP()).Post("/api/auth/password-reset/{token}", ro.handleDoPasswordReset)
+
+	// Web Push subscription rotation, sent by the service worker without a
+	// session; the old subscription's auth secret authenticates it.
+	// Two endpoints of up to 2048 bytes each do not fit the 4 KB auth limit.
+	r.With(limitBody(16<<10, authBodyReadTimeout), pushRotateRL.limitByIP()).Post("/api/push/rotate", ro.handleRotatePushSubscription)
+	// The VAPID public key is public by design; the worker needs it then too.
+	r.Get("/api/push/config", ro.handleGetPushConfig)
 
 	// Public config (no auth needed).
 	r.Get("/api/config", ro.handleGetConfig)
@@ -358,6 +368,14 @@ func NewRouter(cfg Config) *Handle {
 		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/setup", ro.handleMFASetup)
 		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/confirm", ro.handleMFAConfirm)
 		r.With(authBody).Delete("/api/auth/mfa", ro.handleMFADisable)
+
+		// Web Push devices belong to a person, so bearer tokens cannot manage them.
+		r.Get("/api/push/subscriptions", ro.handleListPushSubscriptions)
+		r.Post("/api/push/subscriptions", ro.handleCreatePushSubscription)
+		r.Post("/api/push/subscriptions/unsubscribe", ro.handleUnsubscribePush)
+		pushDevice := r.With(requireUUIDParams("subscriptionID"))
+		pushDevice.Delete("/api/push/subscriptions/{subscriptionID}", ro.handleDeletePushSubscription)
+		pushDevice.Post("/api/push/subscriptions/{subscriptionID}/test", ro.handleTestPushSubscription)
 	})
 
 	// Alert rules - session or Bearer, top-level (not scoped to a single project).
