@@ -230,7 +230,7 @@ describe('service worker', () => {
     expect(JSON.parse(w.fetchMock.mock.calls[1]![1].body)).toEqual({
       endpoint: 'https://push.example.com/c', replaces: 'https://push.example.com/a', replaces_auth: 'secret-a',
     })
-    expect([...w.stored.keys()]).toEqual(['/__tindra/pending-push-rotation/x'], 'the joined one is done, the unrelated one stays')
+    expect([...w.stored.keys()], 'the joined one is done, the unrelated one stays').toEqual(['/__tindra/pending-push-rotation/x'])
   })
 
   it('falls back to the newer endpoint when the parked move had reached the server', async () => {
