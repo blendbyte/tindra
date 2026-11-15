@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -124,13 +125,69 @@ type Message struct {
 	Topic string
 }
 
+// DefaultHosts are the push services of the browsers that support Web Push:
+// Chrome and other Chromium browsers (FCM), Firefox (Mozilla autopush), Safari
+// (Apple) and Edge (Windows Push Notification Services). A leading "*."
+// matches any subdomain.
+var DefaultHosts = []string{
+	"fcm.googleapis.com",
+	"android.googleapis.com",
+	"*.push.services.mozilla.com",
+	"*.push.apple.com",
+	"*.notify.windows.com",
+}
+
 // Sender delivers messages with one VAPID identity.
 type Sender struct {
 	Keys    *Keys
 	Subject string // mailto: or https: contact for the push service operator
 	Client  *http.Client
-	now     func() time.Time
-	random  io.Reader
+	// Hosts limits which push services endpoints may point at, in the form
+	// of DefaultHosts. Empty allows any host.
+	Hosts  []string
+	now    func() time.Time
+	random io.Reader
+
+	mu     sync.Mutex
+	tokens map[string]vapidCacheEntry // by audience
+}
+
+type vapidCacheEntry struct {
+	token string
+	exp   time.Time
+}
+
+// AllowsEndpoint reports whether endpoint is on one of the sender's hosts.
+func (s *Sender) AllowsEndpoint(endpoint string) bool {
+	if len(s.Hosts) == 0 {
+		return true
+	}
+	return s.ServiceFor(endpoint) != ""
+}
+
+// ServiceFor names the push service an endpoint belongs to: the entry of
+// Hosts it matches (so "*.notify.windows.com" for every WNS node), or the
+// endpoint's host when Hosts is empty. It returns "" when nothing matches.
+func (s *Sender) ServiceFor(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if len(s.Hosts) == 0 {
+		return strings.ToLower(u.Host)
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, h := range s.Hosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if suffix, ok := strings.CutPrefix(h, "*."); ok {
+			if strings.HasSuffix(host, "."+suffix) {
+				return h
+			}
+		} else if h != "" && host == h {
+			return h
+		}
+	}
+	return ""
 }
 
 // Result is the push service's answer.
@@ -139,13 +196,23 @@ type Result struct {
 	// Gone is true when the subscription no longer exists (404 or 410) and
 	// should be deleted.
 	Gone bool
+	// Detail is the start of the response body of a failed request. It is
+	// for logs only: it is whatever the endpoint's host chose to send.
+	Detail string
 }
 
+// ErrHostNotAllowed is returned for endpoints outside Sender.Hosts.
+var ErrHostNotAllowed = errors.New("endpoint is not a known push service")
+
 // Send encrypts and posts one message. A non-2xx answer is returned as an
-// error together with the Result so callers can still inspect Gone.
+// error together with the Result so callers can still inspect Gone. The
+// error never contains the response body; see Result.Detail.
 func (s *Sender) Send(ctx context.Context, sub Subscription, msg Message) (Result, error) {
 	if len(msg.Payload) > MaxPayload {
 		return Result{}, fmt.Errorf("payload is %d bytes, limit is %d", len(msg.Payload), MaxPayload)
+	}
+	if !s.AllowsEndpoint(sub.Endpoint) {
+		return Result{}, ErrHostNotAllowed
 	}
 	endpoint, err := url.Parse(sub.Endpoint)
 	if err != nil {
@@ -177,7 +244,7 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, msg Message) (Resul
 		return Result{}, err
 	}
 
-	token, err := s.vapidToken(endpoint.Scheme + "://" + endpoint.Host)
+	token, err := s.cachedVapidToken(endpoint.Scheme + "://" + endpoint.Host)
 	if err != nil {
 		return Result{}, err
 	}
@@ -197,32 +264,30 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, msg Message) (Resul
 		req.Header.Set("Topic", msg.Topic)
 	}
 
-	client := s.Client
-	if client == nil {
-		client = http.DefaultClient
+	client := http.DefaultClient
+	if s.Client != nil {
+		client = s.Client
 	}
-	resp, err := client.Do(req)
+	// A redirect would re-send the message to a host Hosts never allowed,
+	// and push services do not redirect, so a 3xx is returned as an error.
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := noRedirect.Do(req)
 	if err != nil {
 		return Result{}, err
 	}
 	defer resp.Body.Close()
 	detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	// Read the rest too (up to a point), so the connection can be reused
+	// for the next device on the same push service.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 
 	res := Result{StatusCode: resp.StatusCode, Gone: resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		msg := fmt.Sprintf("push service returned %d", resp.StatusCode)
-		if t := bytes.TrimSpace(detail); len(t) > 0 {
-			msg += ": " + string(t)
-		}
-		return res, errors.New(msg)
+		res.Detail = strings.ToValidUTF8(string(bytes.TrimSpace(detail)), "")
+		return res, fmt.Errorf("push service returned %d", resp.StatusCode)
 	}
 	return res, nil
-}
-
-// TopicFor turns any identifier into a valid Topic header value.
-func TopicFor(id string) string {
-	sum := sha256.Sum256([]byte(id))
-	return b64.EncodeToString(sum[:18]) // 24 characters
 }
 
 // encrypt builds an aes128gcm body with a single record (RFC 8291 section 3.4).
@@ -271,6 +336,34 @@ func encrypt(plaintext []byte, asPrivate *ecdh.PrivateKey, uaPublicRaw, authSecr
 	return gcm.Seal(header, nonce, padded, nil), nil
 }
 
+// cachedVapidToken returns a token for audience, signing a new one only when
+// the cached one has less than an hour left. An alert to many devices on one
+// push service then signs once, not once per device.
+func (s *Sender) cachedVapidToken(audience string) (string, error) {
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.tokens[audience]; ok && now().Before(c.exp.Add(-time.Hour)) {
+		return c.token, nil
+	}
+	token, err := s.vapidToken(audience)
+	if err != nil {
+		return "", err
+	}
+	if s.tokens == nil {
+		s.tokens = map[string]vapidCacheEntry{}
+	}
+	s.tokens[audience] = vapidCacheEntry{token: token, exp: now().Add(vapidTokenLifetime)}
+	return token, nil
+}
+
+// vapidTokenLifetime is how long a VAPID token is valid. Push services cap
+// it at 24 hours; 12 hours leaves room for clock skew.
+const vapidTokenLifetime = 12 * time.Hour
+
 // vapidToken signs the ES256 JWT for one push service origin. Push services
 // cap expiry at 24 hours; 12 hours leaves room for clock skew.
 func (s *Sender) vapidToken(audience string) (string, error) {
@@ -284,7 +377,7 @@ func (s *Sender) vapidToken(audience string) (string, error) {
 	header := b64.EncodeToString([]byte(`{"typ":"JWT","alg":"ES256"}`))
 	claims, err := json.Marshal(map[string]any{
 		"aud": audience,
-		"exp": now().Add(12 * time.Hour).Unix(),
+		"exp": now().Add(vapidTokenLifetime).Unix(),
 		"sub": s.Subject,
 	})
 	if err != nil {

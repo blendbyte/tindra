@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -137,7 +138,7 @@ func TestSendPostsEncryptedSignedMessage(t *testing.T) {
 	sender := &Sender{Keys: keys, Subject: "mailto:ops@example.com", Client: srv.Client(), now: func() time.Time { return fixed }}
 	res, err := sender.Send(context.Background(),
 		Subscription{Endpoint: srv.URL + "/push/xyz", P256dh: sub.P256dh(), Auth: sub.Auth()},
-		Message{Payload: []byte(`{"title":"hi"}`), TTL: time.Hour, Urgency: "high", Topic: TopicFor("rule-1")})
+		Message{Payload: []byte(`{"title":"hi"}`), TTL: time.Hour, Urgency: "high", Topic: "rule-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestSendPostsEncryptedSignedMessage(t *testing.T) {
 	}
 
 	if got.Header.Get("Content-Encoding") != "aes128gcm" || got.Header.Get("TTL") != "3600" ||
-		got.Header.Get("Urgency") != "high" || got.Header.Get("Topic") != TopicFor("rule-1") {
+		got.Header.Get("Urgency") != "high" || got.Header.Get("Topic") != "rule-1" {
 		t.Fatalf("headers %v", got.Header)
 	}
 	plain, err := sub.Decrypt(body)
@@ -213,12 +214,112 @@ func TestSendReportsGoneAndErrors(t *testing.T) {
 		sender := &Sender{Keys: keys, Subject: "mailto:a@b.c", Client: srv.Client()}
 		res, err := sender.Send(context.Background(), Subscription{Endpoint: srv.URL, P256dh: sub.P256dh(), Auth: sub.Auth()}, Message{Payload: []byte("x")})
 		srv.Close()
-		if err == nil || !strings.Contains(err.Error(), "nope") {
+		// The body is for logs only: endpoints are user supplied, so their
+		// answers must not travel back to the user in the error.
+		if err == nil || strings.Contains(err.Error(), "nope") {
 			t.Errorf("%d: err = %v", tc.status, err)
 		}
-		if res.Gone != tc.gone || res.StatusCode != tc.status {
+		if res.Gone != tc.gone || res.StatusCode != tc.status || res.Detail != "nope" {
 			t.Errorf("%d: result %+v", tc.status, res)
 		}
+	}
+}
+
+func TestAllowsEndpoint(t *testing.T) {
+	s := &Sender{Hosts: DefaultHosts}
+	for endpoint, want := range map[string]bool{
+		"https://fcm.googleapis.com/fcm/send/abc":                true,
+		"https://updates.push.services.mozilla.com/wpush/v2/abc": true,
+		"https://web.push.apple.com/QGx":                         true,
+		"https://wns2-par02p.notify.windows.com/w/?token=x":      true,
+		"https://FCM.googleapis.com/fcm/send/abc":                true,
+		"https://push.apple.com/abc":                             false, // "*." needs a subdomain
+		"https://evilpush.apple.com.example.com/abc":             false,
+		"https://example.com/fcm.googleapis.com":                 false,
+		"https://internal-service/admin":                         false,
+		"://bad":                                                 false,
+	} {
+		if got := s.AllowsEndpoint(endpoint); got != want {
+			t.Errorf("%s: got %v, want %v", endpoint, got, want)
+		}
+	}
+	if !(&Sender{}).AllowsEndpoint("https://anything.example.com") {
+		t.Error("no hosts configured allows any host")
+	}
+	custom := &Sender{Hosts: []string{" Push.Example.com ", "*.autopush.example.org"}}
+	if !custom.AllowsEndpoint("https://push.example.com/x") || !custom.AllowsEndpoint("https://eu.autopush.example.org/x") {
+		t.Error("custom hosts not matched")
+	}
+}
+
+func TestSendRejectsHostOutsideAllowlist(t *testing.T) {
+	keys, _ := GenerateKeys()
+	sub := webpushtest.NewSubscriber()
+	hit := false
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer srv.Close()
+	sender := &Sender{Keys: keys, Subject: "mailto:a@b.c", Client: srv.Client(), Hosts: DefaultHosts}
+	_, err := sender.Send(context.Background(), Subscription{Endpoint: srv.URL, P256dh: sub.P256dh(), Auth: sub.Auth()}, Message{Payload: []byte("x")})
+	if !errors.Is(err, ErrHostNotAllowed) || hit {
+		t.Fatalf("err = %v, request sent = %v", err, hit)
+	}
+}
+
+func TestSendDoesNotFollowRedirects(t *testing.T) {
+	keys, _ := GenerateKeys()
+	sub := webpushtest.NewSubscriber()
+	elsewhere := false
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { elsewhere = true }))
+	defer target.Close()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/collect", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	client := srv.Client()
+	sender := &Sender{Keys: keys, Subject: "mailto:a@b.c", Client: client}
+	res, err := sender.Send(context.Background(), Subscription{Endpoint: srv.URL, P256dh: sub.P256dh(), Auth: sub.Auth()}, Message{Payload: []byte("x")})
+	if err == nil || res.StatusCode != http.StatusTemporaryRedirect || elsewhere {
+		t.Fatalf("err = %v, status = %d, followed = %v", err, res.StatusCode, elsewhere)
+	}
+	if client.CheckRedirect != nil {
+		t.Fatal("the caller's client must not be modified")
+	}
+}
+
+func TestVapidTokenIsCachedPerAudience(t *testing.T) {
+	keys, _ := GenerateKeys()
+	clock := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	s := &Sender{Keys: keys, Subject: "mailto:a@b.c", now: func() time.Time { return clock }}
+	a1, err := s.cachedVapidToken("https://fcm.googleapis.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a2, _ := s.cachedVapidToken("https://fcm.googleapis.com"); a2 != a1 {
+		t.Fatal("token re-signed for the same audience")
+	}
+	if b, _ := s.cachedVapidToken("https://web.push.apple.com"); b == a1 {
+		t.Fatal("audiences share a token")
+	}
+	clock = clock.Add(vapidTokenLifetime - 59*time.Minute)
+	if a3, _ := s.cachedVapidToken("https://fcm.googleapis.com"); a3 == a1 {
+		t.Fatal("token not renewed within an hour of expiry")
+	}
+}
+
+func TestServiceFor(t *testing.T) {
+	s := &Sender{Hosts: DefaultHosts}
+	for endpoint, want := range map[string]string{
+		"https://wns2-par02p.notify.windows.com/w/?token=x": "*.notify.windows.com",
+		"https://db5p.notify.windows.com/w/?token=y":        "*.notify.windows.com",
+		"https://fcm.googleapis.com/fcm/send/abc":           "fcm.googleapis.com",
+		"https://example.com/x":                             "",
+	} {
+		if got := s.ServiceFor(endpoint); got != want {
+			t.Errorf("%s: got %q, want %q", endpoint, got, want)
+		}
+	}
+	if got := (&Sender{}).ServiceFor("https://127.0.0.1:8443/x"); got != "127.0.0.1:8443" {
+		t.Errorf("without hosts the endpoint host is the service, got %q", got)
 	}
 }
 
@@ -250,15 +351,5 @@ func TestMaxPayloadFitsOneRecord(t *testing.T) {
 	}
 	if size != recordSize {
 		t.Fatalf("body is %d bytes, want %d", size, recordSize)
-	}
-}
-
-func TestTopicFor(t *testing.T) {
-	topic := TopicFor("3f1c2a52-8a7e-4c7b-9a51-2b1f9d0e7c11")
-	if len(topic) > 32 || strings.ContainsAny(topic, "+/=") {
-		t.Fatalf("invalid topic %q", topic)
-	}
-	if TopicFor("a") == TopicFor("b") {
-		t.Fatal("topics collide")
 	}
 }

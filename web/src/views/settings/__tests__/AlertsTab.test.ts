@@ -950,6 +950,32 @@ describe('AlertsTab push channel', () => {
     expect(body).toMatchObject({ channel: 'push', recipient_ids: ['user-2'] })
     expect(body).not.toHaveProperty('webhook_url')
   })
+
+  it('lists who a push rule notifies in its details, not an email address', async () => {
+    const pushRule = { ...baseRule, channel: 'push' as const, webhook_url: null, recipient_ids: ['user-1', 'user-2'] }
+    mockQueries({ 'alert-rules': [pushRule], users: people })
+    const wrapper = mountTab()
+    await expandRule(wrapper)
+    const details = wrapper.find('.rule__detail-grid').text()
+    expect(details).toContain('Notifies')
+    expect(details).toContain('ops@example.com')
+    expect(details).not.toContain('Email to')
+  })
+
+  it('opening a paused push rule without recipients adds nobody and can be saved', async () => {
+    // Its only recipient was deleted, so the server paused it. The edit form
+    // starts out as a webhook form, so opening it switches the form to push:
+    // that must not quietly make the editor a recipient.
+    const orphan = { ...baseRule, channel: 'push' as const, webhook_url: null, recipient_ids: [], enabled: false }
+    mockQueries({ 'alert-rules': [orphan], users: people })
+    runMutations()
+    const wrapper = mountTab()
+    await editRule(wrapper)
+    const checked = wrapper.findAll('input[type="checkbox"]').filter(b => (b.element as HTMLInputElement).checked).map(b => (b.element as HTMLInputElement).value)
+    expect(checked).not.toContain('user-1')
+    await clickSave(wrapper)
+    expect(requestBody('/api/alert-rules/r1')).toMatchObject({ channel: 'push', recipient_ids: [] })
+  })
 })
 
 describe('AlertsTab users query', () => {

@@ -137,7 +137,10 @@ func TestResetRevokesConcurrentLogin(t *testing.T) {
 			// Observe the reset waiting on the user lock before allowing issuance.
 			require.Eventually(t, func() bool {
 				var waiting bool
-				err := testPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%UPDATE users SET password_hash%')`).Scan(&waiting)
+				// AdminSetPassword waits on the users row, first in its
+				// SELECT ... FOR UPDATE (or its UPDATE, should that change).
+				err := testPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'
+					AND (query LIKE '%UPDATE users SET password_hash%' OR query LIKE '%FROM users WHERE id = $1 FOR UPDATE%'))`).Scan(&waiting)
 				return err == nil && waiting
 			}, 5*time.Second, 10*time.Millisecond)
 			close(pause.release)

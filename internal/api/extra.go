@@ -249,6 +249,9 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
+		// The push endpoint of the browser making the change, which keeps
+		// its notifications while every other device loses them.
+		KeepPushEndpoint string `json:"keep_push_endpoint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CurrentPassword == "" || req.NewPassword == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -259,7 +262,7 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusUnauthorized)
 		return
 	}
-	session, err := storage.ChangeUserPasswordWithSession(r.Context(), ro.pool, userID, req.CurrentPassword, req.NewPassword, cookie.Value)
+	session, err := storage.ChangeUserPasswordWithSession(r.Context(), ro.pool, userID, req.CurrentPassword, req.NewPassword, cookie.Value, req.KeepPushEndpoint)
 	if err != nil {
 		if errors.Is(err, storage.ErrInvalidPassword) {
 			http.Error(w, "current password is incorrect", http.StatusUnauthorized)

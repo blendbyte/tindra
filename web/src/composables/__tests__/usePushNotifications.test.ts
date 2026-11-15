@@ -3,7 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('@/api/client', () => ({ apiFetch: vi.fn() }))
 
 import { apiFetch } from '@/api/client'
-import { usePushNotifications, forgetPushOnThisDevice, urlBase64ToUint8Array } from '../usePushNotifications'
+import {
+  usePushNotifications, forgetPushOnThisDevice, pushEndpointOnThisDevice, sendPendingRotation, urlBase64ToUint8Array,
+  SEND_PENDING_ROTATIONS, SERVICE_WORKER_TIMEOUT_MS,
+} from '../usePushNotifications'
 
 // A 65-byte key, base64url, like a VAPID public key.
 const KEY = 'BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8'
@@ -98,15 +101,69 @@ describe('usePushNotifications', () => {
     expect(push.busy.value).toBe(false)
   })
 
-  it('replaces a subscription made with an old key', async () => {
-    mockServer()
+  it('replaces a subscription made with an old key, on the server too', async () => {
+    mockServer({ devices: [saved('https://push.example.com/old', 'dev-old')] })
     const stale = fakeSubscription('https://push.example.com/old', OTHER_KEY)
     current = stale
     const push = usePushNotifications()
+    await push.refresh()
     await push.enable()
+    expect(vi.mocked(apiFetch)).toHaveBeenCalledWith('/api/push/subscriptions/unsubscribe', {
+      method: 'POST', body: JSON.stringify({ endpoint: 'https://push.example.com/old' }),
+    })
     expect(stale.unsubscribe).toHaveBeenCalled()
     expect(pushManager.subscribe).toHaveBeenCalled()
     expect(push.currentEndpoint.value).toBe('https://push.example.com/new')
+    expect(push.devices.value.map(d => d.endpoint)).toEqual(['https://push.example.com/new'])
+  })
+
+  it('asks for permission before any network request, while the click still counts', async () => {
+    mockServer()
+    const order: string[] = []
+    vi.mocked(apiFetch).mockImplementation((async (path: string) => {
+      order.push(path)
+      return path === '/api/push/config' ? { enabled: true, public_key: KEY } : saved('https://push.example.com/new', 'dev-new')
+    }) as any)
+    ;(window as any).Notification.requestPermission = vi.fn(async () => { order.push('permission'); return 'granted' })
+    await usePushNotifications().enable()
+    expect(order[0]).toBe('permission')
+  })
+
+  it('fails clearly when the session ended during registration', async () => {
+    mockServer()
+    vi.mocked(apiFetch).mockImplementation((async (path: string) =>
+      path === '/api/push/config' ? { enabled: true, public_key: KEY } : undefined) as any)
+    const push = usePushNotifications()
+    await expect(push.enable()).rejects.toThrow('Sign in again')
+    expect(push.busy.value).toBe(false)
+  })
+
+  it('gives up when the service worker never starts', async () => {
+    vi.useFakeTimers()
+    try {
+      mockServer()
+      Object.defineProperty(navigator, 'serviceWorker', {
+        value: { ready: new Promise(() => {}), getRegistration: vi.fn(() => Promise.resolve(undefined)) },
+        configurable: true,
+      })
+      const push = usePushNotifications()
+      const pending = push.enable()
+      const failed = expect(pending).rejects.toThrow('did not start')
+      await vi.advanceTimersByTimeAsync(SERVICE_WORKER_TIMEOUT_MS)
+      await failed
+      expect(push.busy.value).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows a subscription made with an old key as off, even when the server lists it', async () => {
+    mockServer({ devices: [saved('https://push.example.com/stale', 'dev-stale')] })
+    current = fakeSubscription('https://push.example.com/stale', OTHER_KEY)
+    const push = usePushNotifications()
+    await push.refresh()
+    expect(push.currentEndpoint.value).toBeNull()
+    expect(push.enabledHere.value).toBe(false)
   })
 
   it('reuses a subscription made with the current key', async () => {
@@ -134,13 +191,21 @@ describe('usePushNotifications', () => {
     expect(await off.enable()).toBeNull()
   })
 
-  it('re-registers a subscribed browser the server forgot', async () => {
+  it('never re-registers a browser subscription the server does not list', async () => {
+    // Removed from another device, or subscribed while someone else was
+    // signed in: it shows as off until the user turns it on here.
     mockServer({ devices: [] })
     permission = 'granted'
-    current = fakeSubscription('https://push.example.com/lost')
+    current = fakeSubscription('https://push.example.com/removed-elsewhere')
     const push = usePushNotifications()
     await push.refresh()
-    expect(push.devices.value.map(d => d.endpoint)).toEqual(['https://push.example.com/lost'])
+    expect(vi.mocked(apiFetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+    expect(push.devices.value).toEqual([])
+    expect(push.enabledHere.value).toBe(false)
+
+    // Turning it on reuses the browser's subscription.
+    await push.enable()
+    expect(pushManager.subscribe).not.toHaveBeenCalled()
     expect(push.enabledHere.value).toBe(true)
   })
 
@@ -199,15 +264,31 @@ describe('usePushNotifications', () => {
 })
 
 describe('forgetPushOnThisDevice', () => {
-  it('unsubscribes on the server and in the browser', async () => {
+  it('drops the browser subscription; the server side goes with the logout', async () => {
     mockServer()
     current = fakeSubscription('https://push.example.com/bye')
     const bye = current
     await forgetPushOnThisDevice()
-    expect(vi.mocked(apiFetch)).toHaveBeenCalledWith('/api/push/subscriptions/unsubscribe', {
-      method: 'POST', body: JSON.stringify({ endpoint: 'https://push.example.com/bye' }),
-    })
     expect(bye.unsubscribe).toHaveBeenCalled()
+    expect(vi.mocked(apiFetch)).not.toHaveBeenCalled()
+  })
+
+  it('does not hold up sign-out when the push service stalls', async () => {
+    vi.useFakeTimers()
+    try {
+      current = fakeSubscription('https://push.example.com/here')
+      current.unsubscribe = vi.fn(() => new Promise<boolean>(() => {}))
+      vi.mocked(apiFetch).mockResolvedValue(undefined)
+      let done = false
+      const p = forgetPushOnThisDevice(3000).then(() => { done = true })
+      await vi.advanceTimersByTimeAsync(2999)
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await p
+      expect(done).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('never throws', async () => {
@@ -218,5 +299,60 @@ describe('forgetPushOnThisDevice', () => {
 
     delete (navigator as any).serviceWorker
     await expect(forgetPushOnThisDevice()).resolves.toBeUndefined()
+  })
+})
+
+describe('pushEndpointOnThisDevice', () => {
+  it('gives up when the browser does not answer', async () => {
+    vi.useFakeTimers()
+    try {
+      pushManager.getSubscription.mockReturnValueOnce(new Promise(() => {}))
+      const p = pushEndpointOnThisDevice(2000)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(await p).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('returns the endpoint, or null without one or on errors', async () => {
+    expect(await pushEndpointOnThisDevice()).toBeNull()
+    current = fakeSubscription('https://push.example.com/here')
+    expect(await pushEndpointOnThisDevice()).toBe('https://push.example.com/here')
+    pushManager.getSubscription.mockRejectedValueOnce(new Error('boom'))
+    expect(await pushEndpointOnThisDevice()).toBeNull()
+  })
+})
+
+describe('sendPendingRotation', () => {
+  it('asks the service worker to send what it parked', async () => {
+    const postMessage = vi.fn()
+    ;(navigator.serviceWorker.getRegistration as any).mockResolvedValueOnce({ active: { postMessage } })
+    await sendPendingRotation()
+    expect(postMessage).toHaveBeenCalledWith({ type: SEND_PENDING_ROTATIONS })
+  })
+
+  it('does nothing without a worker, and never throws', async () => {
+    ;(navigator.serviceWorker.getRegistration as any).mockResolvedValueOnce(undefined)
+    await expect(sendPendingRotation()).resolves.toBeUndefined()
+    ;(navigator.serviceWorker.getRegistration as any).mockRejectedValueOnce(new Error('x'))
+    await expect(sendPendingRotation()).resolves.toBeUndefined()
+  })
+})
+
+describe('device label', () => {
+  it('names an iPad, which reports itself as a Mac', async () => {
+    mockServer()
+    setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15')
+    Object.defineProperty(navigator, 'maxTouchPoints', { value: 5, configurable: true })
+    try {
+      ;(window as any).matchMedia = () => ({ matches: true })
+      await usePushNotifications().enable()
+      const post = vi.mocked(apiFetch).mock.calls.find(([p, i]) => p === '/api/push/subscriptions' && i?.method === 'POST')!
+      expect(JSON.parse(String(post[1]!.body)).label).toBe('Safari on iPadOS')
+    } finally {
+      delete (navigator as any).maxTouchPoints
+      delete (window as any).matchMedia
+    }
   })
 })

@@ -142,7 +142,7 @@ func TestCredentialChangesRevokeAccess(t *testing.T) {
 func TestCredentialChangesRollbackOnFailure(t *testing.T) {
 	pool := oauthDB(t)
 	for _, kind := range []string{"change", "admin", "recovery"} {
-		stages := []string{"begin", "UPDATE users SET password_hash", "DELETE FROM sessions", "DELETE FROM mfa_challenges", "DELETE FROM password_reset_tokens", "INSERT INTO sessions", "commit"}
+		stages := []string{"begin", "UPDATE users SET password_hash", "DELETE FROM sessions", "DELETE FROM mfa_challenges", "DELETE FROM password_reset_tokens", "DELETE FROM push_subscriptions", "INSERT INTO sessions", "commit"}
 		if kind == "change" {
 			stages = append(stages, "SELECT password_hash", "SELECT EXISTS(SELECT 1 FROM sessions")
 		}
@@ -163,7 +163,7 @@ func TestCredentialChangesRollbackOnFailure(t *testing.T) {
 				defer failing.Close()
 				switch kind {
 				case "change":
-					_, err = storage.ChangeUserPasswordWithSession(t.Context(), failing, f.user.ID, "original-password", "replacement-password", f.sessions[0].Token)
+					_, err = storage.ChangeUserPasswordWithSession(t.Context(), failing, f.user.ID, "original-password", "replacement-password", f.sessions[0].Token, "")
 				case "admin":
 					err = storage.AdminSetPassword(t.Context(), failing, f.user.ID, "replacement-password")
 				case "recovery":
@@ -235,7 +235,7 @@ func TestPasswordChangeCannotRotateRevokedSession(t *testing.T) {
 	pool := oauthDB(t)
 	f := seedRecovery(t, pool)
 	require.NoError(t, storage.DeleteSession(t.Context(), pool, f.sessions[0].Token))
-	session, err := storage.ChangeUserPasswordWithSession(t.Context(), pool, f.user.ID, "original-password", "replacement-password", f.sessions[0].Token)
+	session, err := storage.ChangeUserPasswordWithSession(t.Context(), pool, f.user.ID, "original-password", "replacement-password", f.sessions[0].Token, "")
 	require.ErrorIs(t, err, storage.ErrInvalidPassword)
 	require.Nil(t, session)
 	user, err := storage.GetUserByID(t.Context(), pool, f.user.ID)
@@ -277,7 +277,7 @@ func TestRecoveryRejectsCredentialsRevokedDuringRequest(t *testing.T) {
 func TestCredentialChangeValidation(t *testing.T) {
 	pool := oauthDB(t)
 	f := seedRecovery(t, pool)
-	session, err := storage.ChangeUserPasswordWithSession(t.Context(), pool, f.user.ID, "original-password", "replacement-password", "")
+	session, err := storage.ChangeUserPasswordWithSession(t.Context(), pool, f.user.ID, "original-password", "replacement-password", "", "")
 	require.ErrorIs(t, err, storage.ErrInvalidPassword)
 	require.Nil(t, session)
 	_, _, err = storage.UsePasswordResetTokenWithSession(t.Context(), pool, f.resets[0], strings.Repeat("x", 73))
@@ -287,7 +287,7 @@ func TestCredentialChangeValidation(t *testing.T) {
 	previous := storage.BcryptCost
 	storage.BcryptCost = 32
 	t.Cleanup(func() { storage.BcryptCost = previous })
-	_, err = storage.ChangeUserPasswordWithSession(t.Context(), pool, f.user.ID, "original-password", "replacement-password", f.sessions[0].Token)
+	_, err = storage.ChangeUserPasswordWithSession(t.Context(), pool, f.user.ID, "original-password", "replacement-password", f.sessions[0].Token, "")
 	require.ErrorContains(t, err, "hash password")
 	_, _, err = storage.UsePasswordResetTokenWithSession(t.Context(), pool, f.resets[0], "replacement-password")
 	require.ErrorContains(t, err, "hash password")

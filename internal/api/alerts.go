@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -48,7 +49,7 @@ func validateAlertRule(r *storage.AlertRule) string {
 		}
 	}
 	if r.Trigger == "log_count" {
-		if nonemptyProjectCount(r.ProjectIDs) == 0 {
+		if nonemptyCount(r.ProjectIDs) == 0 {
 			return "project_ids required for log_count trigger"
 		}
 		if r.Threshold == nil || r.WindowMins == nil {
@@ -91,8 +92,10 @@ func validateAlertRule(r *storage.AlertRule) string {
 		return "email_to required for email channel"
 	}
 	if r.Channel == "push" {
-		if nonemptyProjectCount(r.RecipientIDs) == 0 {
-			return "recipient_ids required for push channel"
+		// A paused rule may have none, so one whose last recipient was
+		// deleted can still be paused or edited.
+		if r.Enabled && nonemptyCount(r.RecipientIDs) == 0 {
+			return "recipient_ids required for an enabled push rule"
 		}
 	} else {
 		// Recipients only mean something for push; drop them so a rule that
@@ -111,23 +114,7 @@ func validateAlertRule(r *storage.AlertRule) string {
 	return ""
 }
 
-// checkPushRecipients makes sure a push rule names at least one existing
-// user. It returns a client-facing message, or "" when the rule is fine.
-func (ro *router) checkPushRecipients(ctx context.Context, r *storage.AlertRule) (string, error) {
-	if r.Channel != "push" {
-		return "", nil
-	}
-	found, err := storage.ExistingUserIDs(ctx, ro.pool, r.RecipientIDs)
-	if err != nil {
-		return "", err
-	}
-	if len(found) == 0 {
-		return "recipient_ids must name existing users", nil
-	}
-	return "", nil
-}
-
-func nonemptyProjectCount(ids []string) int {
+func nonemptyCount(ids []string) int {
 	n := 0
 	for _, id := range ids {
 		if strings.TrimSpace(id) != "" {
@@ -155,16 +142,11 @@ func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if msg, err := ro.checkPushRecipients(r.Context(), &rule); err != nil {
-		slog.Error("check push recipients", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	} else if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
+	created, err := storage.CreateAlertRule(r.Context(), ro.pool, &rule)
+	if errors.Is(err, storage.ErrNoPushRecipients) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	created, err := storage.CreateAlertRule(r.Context(), ro.pool, &rule)
 	if err != nil {
 		slog.Error("create alert rule", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -192,6 +174,11 @@ func (ro *router) handleListAlertRules(w http.ResponseWriter, r *http.Request) {
 	if !canManageAlerts(r.Context()) {
 		for _, rule := range rules {
 			redactRuleWebhook(rule)
+		}
+	}
+	if actorFromContext(r.Context()) == nil {
+		for _, rule := range rules {
+			redactRuleRecipients(rule)
 		}
 	}
 
@@ -222,6 +209,13 @@ func redactWebhookURL(raw string) string {
 	return u.Scheme + "://" + u.Host + "/…" + tail
 }
 
+// redactRuleRecipients hides who a push rule notifies from callers without a
+// session (API tokens, the MCP tools): user IDs are not theirs to see, just
+// as /api/users is not.
+func redactRuleRecipients(rule *storage.AlertRule) {
+	rule.RecipientIDs = []string{}
+}
+
 // redactRuleWebhook replaces the rule's webhook URL with its redacted form.
 func redactRuleWebhook(rule *storage.AlertRule) {
 	if rule.WebhookURL != nil && *rule.WebhookURL != "" {
@@ -247,6 +241,9 @@ func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canManageAlerts(r.Context()) {
 		redactRuleWebhook(rule)
+	}
+	if actorFromContext(r.Context()) == nil {
+		redactRuleRecipients(rule)
 	}
 
 	writeJSON(w, rule)
@@ -435,16 +432,11 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if msg, err := ro.checkPushRecipients(r.Context(), existing); err != nil {
-		slog.Error("check push recipients", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	} else if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
+	updated, err := storage.UpdateAlertRule(r.Context(), ro.pool, existing)
+	if errors.Is(err, storage.ErrNoPushRecipients) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	updated, err := storage.UpdateAlertRule(r.Context(), ro.pool, existing)
 	if err != nil {
 		slog.Error("update alert rule", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

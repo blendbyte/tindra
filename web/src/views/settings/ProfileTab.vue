@@ -7,6 +7,7 @@ import { apiFetch } from '@/api/client'
 import type { User } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import PushDevices from './PushDevices.vue'
+import { pushEndpointOnThisDevice } from '@/composables/usePushNotifications'
 import { useAuthStore } from '@/stores/auth'
 import { useMe } from '@/composables/useMe'
 
@@ -70,15 +71,26 @@ const pwNew = ref('')
 const pwConfirm = ref('')
 const pwError = ref<string | null>(null)
 
+// A password change signs every other device out, push included. Remounting
+// the device list shows what is left.
+const pushDevicesKey = ref(0)
+
 const { mutate: changePassword, isPending: changingPw } = useMutation({
-  mutationFn: ({ current_password, new_password }: { current_password: string; new_password: string }) =>
-    apiFetch('/api/me/password', { method: 'PATCH', body: JSON.stringify({ current_password, new_password }) }),
+  mutationFn: async ({ current_password, new_password }: { current_password: string; new_password: string }) => {
+    // This browser keeps its push notifications; the others lose them.
+    const keep_push_endpoint = await pushEndpointOnThisDevice()
+    return apiFetch('/api/me/password', {
+      method: 'PATCH',
+      body: JSON.stringify({ current_password, new_password, ...(keep_push_endpoint ? { keep_push_endpoint } : {}) }),
+    })
+  },
   onSuccess: () => {
     pwCurrent.value = ''
     pwNew.value = ''
     pwConfirm.value = ''
     pwError.value = null
-    showToast('Password changed')
+    pushDevicesKey.value++
+    showToast('Password changed. Other devices are signed out and no longer get push notifications.')
   },
   onError: (e) => { pwError.value = e instanceof Error ? e.message : 'Failed to change password' },
 })
@@ -208,7 +220,7 @@ function cancelMFASetup() {
           <span class="toggle__knob" />
         </button>
       </label>
-      <PushDevices />
+      <PushDevices :key="pushDevicesKey" />
     </div>
   </div>
 

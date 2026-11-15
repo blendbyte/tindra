@@ -14,6 +14,7 @@ import { router } from './router'
 import { installInvestigationRouter } from './router/investigation'
 import { vTooltip } from './directives/tooltip'
 import { registerServiceWorker } from './pwa/registerServiceWorker'
+import { sendPendingRotation } from './composables/usePushNotifications'
 import './assets/styles.css'
 
 const app = createApp(App)
@@ -25,3 +26,5 @@ app.use(VueQueryPlugin, { queryClient: createQueryClient() })
 app.directive('tooltip', vTooltip)
 app.mount('#app')
 registerServiceWorker(router)
+// A push subscription rotation the worker could not send waits for the app.
+void sendPendingRotation()

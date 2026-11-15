@@ -28,6 +28,7 @@ vi.mock('@/api/client', () => ({
 
 vi.mock('@/composables/usePushNotifications', () => ({
   forgetPushOnThisDevice: vi.fn(() => Promise.resolve()),
+  pushEndpointOnThisDevice: vi.fn(() => Promise.resolve(null)),
 }))
 
 vi.mock('@/stores/ui', () => ({
@@ -49,7 +50,7 @@ import Navbar from '../Navbar.vue'
 import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { apiFetch } from '@/api/client'
-import { forgetPushOnThisDevice } from '@/composables/usePushNotifications'
+import { forgetPushOnThisDevice, pushEndpointOnThisDevice } from '@/composables/usePushNotifications'
 
 function makeProject(id: string, name: string, slug = id): Project {
   return {
@@ -263,7 +264,20 @@ describe('Navbar', () => {
       await logoutBtn.trigger('click')
       await nextTick()
 
-      expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' })
+      expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST', body: '{}' })
+    })
+
+    it('tells the server which push device to remove with the session', async () => {
+      Object.defineProperty(window, 'location', { writable: true, value: { href: '' } })
+      vi.mocked(pushEndpointOnThisDevice).mockResolvedValueOnce('https://fcm.googleapis.com/fcm/send/here')
+      const wrapper = makeWrapper()
+      await wrapper.findAll('.nav__icon-btn').find(b => b.attributes('title') === 'Log out')!.trigger('click')
+      await vi.waitFor(() => expect(window.location.href).toBe('/login'))
+      expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', {
+        method: 'POST', body: JSON.stringify({ push_endpoint: 'https://fcm.googleapis.com/fcm/send/here' }),
+      })
+      // The browser drops its subscription after the server call.
+      expect(vi.mocked(forgetPushOnThisDevice).mock.invocationCallOrder.at(-1)!).toBeGreaterThan(vi.mocked(apiFetch).mock.invocationCallOrder.at(-1)!)
     })
   })
 
@@ -624,14 +638,14 @@ describe('responsive navigation interactions', () => {
   })
 
   it('logs out through the phone menu', async () => {
+    Object.defineProperty(window, 'location', { writable: true, value: { href: '' } })
     const wrapper = makeWrapper()
     await wrapper.find('.nav__hamburger').trigger('click')
     const button = [...document.querySelectorAll<HTMLButtonElement>('.nav__mobile-utility')].find(button => button.textContent?.includes('Log out'))!
     button.click()
-    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' }))
+    await vi.waitFor(() => expect(window.location.href).toBe('/login'))
+    expect(apiFetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST', body: '{}' })
     expect(forgetPushOnThisDevice).toHaveBeenCalled()
-    expect(vi.mocked(forgetPushOnThisDevice).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(apiFetch).mock.invocationCallOrder.at(-1)!)
-    expect(window.location.href).toBe('/login')
   })
 
   it('removes global listeners when the navigation is unmounted', () => {

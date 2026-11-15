@@ -111,7 +111,7 @@ func usePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 	if err != nil {
 		return nil, nil, fmt.Errorf("reset password: %w", err)
 	}
-	if err := revokeCredentialArtifacts(ctx, tx, userID); err != nil {
+	if err := revokeCredentialArtifacts(ctx, tx, userID, ""); err != nil {
 		return nil, nil, err
 	}
 	var session *Session
@@ -128,8 +128,20 @@ func usePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 	return &u, session, nil
 }
 
-// revokeCredentialArtifacts runs after locking/updating the user in the caller's transaction.
-func revokeCredentialArtifacts(ctx context.Context, tx pgx.Tx, userID string) error {
+// revokeCredentialArtifacts runs after locking the users row FOR UPDATE in
+// the caller's transaction. Push devices go with the sessions: a lost or
+// shared browser that is signed out by this must not keep showing the
+// user's alerts. keepPushEndpoint spares the device of a session the caller
+// keeps; "" removes them all.
+//
+// Lock order, shared with device registration, rotation and logout: the
+// users row, then the user's devices (lockPushUser), then sessions and
+// devices. Registration waits here, so one in flight cannot commit a device
+// after this.
+func revokeCredentialArtifacts(ctx context.Context, tx pgx.Tx, userID, keepPushEndpoint string) error {
+	if err := lockPushUser(ctx, tx, userID); err != nil {
+		return fmt.Errorf("revoke credentials: %w", err)
+	}
 	for _, query := range []string{
 		`DELETE FROM sessions WHERE user_id=$1`,
 		`DELETE FROM mfa_challenges WHERE user_id=$1`,
@@ -138,6 +150,9 @@ func revokeCredentialArtifacts(ctx context.Context, tx pgx.Tx, userID string) er
 		if _, err := tx.Exec(ctx, query, userID); err != nil {
 			return fmt.Errorf("revoke credentials: %w", err)
 		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint <> $2`, userID, keepPushEndpoint); err != nil {
+		return fmt.Errorf("revoke credentials: %w", err)
 	}
 	return nil
 }
@@ -159,6 +174,11 @@ func AdminSetPassword(ctx context.Context, pool *pgxpool.Pool, userID, newPasswo
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// Like the other password paths, hold the users row first (see
+	// revokeCredentialArtifacts for the lock order).
+	if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, userID); err != nil {
+		return fmt.Errorf("lock user: %w", err)
+	}
 	tag, err := tx.Exec(ctx,
 		`UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL, mfa_pending_secret = NULL, mfa_pending_expires_at = NULL WHERE id = $2`,
 		string(hash), userID,
@@ -169,7 +189,7 @@ func AdminSetPassword(ctx context.Context, pool *pgxpool.Pool, userID, newPasswo
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("user not found")
 	}
-	if err := revokeCredentialArtifacts(ctx, tx, userID); err != nil {
+	if err := revokeCredentialArtifacts(ctx, tx, userID, ""); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

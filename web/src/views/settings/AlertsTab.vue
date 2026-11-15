@@ -9,6 +9,7 @@ import { apiFetch } from '@/api/client'
 import type { AlertRule, AlertFiring, AlertTrigger, AlertChannel } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import { usePermissions, useProjectByID, useProjects, useUsers } from './shared'
+import RecipientPicker from './RecipientPicker.vue'
 import { useMe } from '@/composables/useMe'
 import { alertVerdict } from './alertState'
 
@@ -46,11 +47,14 @@ function channelTarget(rule: AlertRule) {
   return rule.webhook_url ?? ''
 }
 
-/** Fields only the selected channel sends. */
-function channelFields(f: { channel: AlertChannel; email_to: string; webhook_url: string; recipientIDs: string[] }) {
+/**
+ * Fields only the selected channel sends. A paused push rule may have no
+ * recipients (its last one was deleted), so it can still be edited.
+ */
+function channelFields(f: { channel: AlertChannel; email_to: string; webhook_url: string; recipientIDs: string[] }, enabled = true) {
   if (f.channel === 'email') return { email_to: f.email_to }
   if (f.channel === 'push') {
-    if (f.recipientIDs.length === 0) throw new Error('Pick at least one person to notify')
+    if (enabled && f.recipientIDs.length === 0) throw new Error('Pick at least one person to notify')
     return { recipient_ids: f.recipientIDs }
   }
   return { webhook_url: f.webhook_url }
@@ -301,11 +305,10 @@ const needsUsers = computed(() =>
   newRule.channel === 'push' || editRule.channel === 'push' || alertRules.value.some(r => r.channel === 'push'))
 const { users } = useUsers(needsUsers)
 
-// Switching a rule to push starts with yourself as the recipient.
-for (const form of [newRule, editRule]) {
-  watch(() => form.channel, (c) => {
-    if (c === 'push' && form.recipientIDs.length === 0 && me.value?.id) form.recipientIDs = [me.value.id]
-  })
+// Picking push in a form starts with yourself as the recipient. Only a pick
+// in the select does this: opening a saved rule must not add anyone.
+function onChannelPicked(form: { recipientIDs: string[] }, channel: string) {
+  if (channel === 'push' && form.recipientIDs.length === 0 && me.value?.id) form.recipientIDs = [me.value.id]
 }
 
 function cancelEditRule() {
@@ -331,7 +334,7 @@ const { mutate: saveAlertRule, isPending: savingRule } = useMutation({
       body.threshold = Number(editRule.threshold)
       body.window_mins = Number(editRule.window_mins)
     }
-    Object.assign(body, channelFields(editRule))
+    Object.assign(body, channelFields(editRule, alertRules.value.find(r => r.id === id)?.enabled ?? true))
     body.filter_search = editRule.trigger === 'log_count' ? (editRule.filter_search.trim() || null) : null
     return apiFetch(`/api/alert-rules/${id}`, {
       method: 'PATCH',
@@ -435,7 +438,7 @@ const { data: logPreview } = useQuery({
       </template>
       <div class="field">
         <label class="field__label">Channel</label>
-        <select v-model="newRule.channel" class="field__input">
+        <select v-model="newRule.channel" class="field__input" @change="onChannelPicked(newRule, ($event.target as HTMLSelectElement).value)">
           <option value="webhook">Webhook</option>
           <option value="slack">Slack</option>
           <option value="discord">Discord</option>
@@ -448,15 +451,7 @@ const { data: logPreview } = useQuery({
         <label class="field__label">{{ newRule.channel === 'discord' ? 'Discord webhook URL' : newRule.channel === 'slack' ? 'Slack webhook URL' : newRule.channel === 'teams' ? 'Teams webhook URL' : 'Webhook URL' }}</label>
         <input v-model="newRule.webhook_url" class="field__input" type="url" :placeholder="newRule.channel === 'discord' ? 'https://discord.com/api/webhooks/...' : newRule.channel === 'slack' ? 'https://hooks.slack.com/services/...' : newRule.channel === 'teams' ? 'https://outlook.office.com/webhook/...' : 'https://hooks.example.com/...'" />
       </div>
-      <div v-else-if="newRule.channel === 'push'" class="field" style="grid-column: 1 / -1">
-        <label class="field__label">Notify <span style="font-weight: normal; color: var(--text-2)">(on every device they turned push on for, in Profile)</span></label>
-        <div class="rule__project-checks">
-          <label v-for="u in users" :key="u.id" class="rule__project-check">
-            <input type="checkbox" :value="u.id" v-model="newRule.recipientIDs" />
-            {{ u.name || u.email }}
-          </label>
-        </div>
-      </div>
+      <RecipientPicker v-else-if="newRule.channel === 'push'" v-model="newRule.recipientIDs" :users="users" />
       <div v-else class="field">
         <label class="field__label">Email to</label>
         <input v-model="newRule.email_to" class="field__input" type="email" placeholder="you@example.com" />
@@ -581,7 +576,7 @@ const { data: logPreview } = useQuery({
           </template>
           <div class="field">
             <label class="field__label">Channel</label>
-            <select v-model="editRule.channel" class="field__input">
+            <select v-model="editRule.channel" class="field__input" @change="onChannelPicked(editRule, ($event.target as HTMLSelectElement).value)">
               <option value="webhook">Webhook</option>
               <option value="slack">Slack</option>
               <option value="discord">Discord</option>
@@ -594,15 +589,7 @@ const { data: logPreview } = useQuery({
             <label class="field__label">{{ editRule.channel === 'discord' ? 'Discord webhook URL' : editRule.channel === 'slack' ? 'Slack webhook URL' : editRule.channel === 'teams' ? 'Teams webhook URL' : 'Webhook URL' }}</label>
             <input v-model="editRule.webhook_url" class="field__input" type="url" :placeholder="editRule.channel === 'discord' ? 'https://discord.com/api/webhooks/...' : editRule.channel === 'slack' ? 'https://hooks.slack.com/services/...' : editRule.channel === 'teams' ? 'https://outlook.office.com/webhook/...' : 'https://hooks.example.com/...'" />
           </div>
-          <div v-else-if="editRule.channel === 'push'" class="field" style="grid-column: 1 / -1">
-            <label class="field__label">Notify <span style="font-weight: normal; color: var(--text-2)">(on every device they turned push on for, in Profile)</span></label>
-            <div class="rule__project-checks">
-              <label v-for="u in users" :key="u.id" class="rule__project-check">
-                <input type="checkbox" :value="u.id" v-model="editRule.recipientIDs" />
-                {{ u.name || u.email }}
-              </label>
-            </div>
-          </div>
+          <RecipientPicker v-else-if="editRule.channel === 'push'" v-model="editRule.recipientIDs" :users="users" />
           <div v-else class="field">
             <label class="field__label">Email to</label>
             <input v-model="editRule.email_to" class="field__input" type="email" placeholder="you@example.com" />
@@ -676,6 +663,10 @@ const { data: logPreview } = useQuery({
           <template v-if="rule.channel === 'webhook' || rule.channel === 'slack' || rule.channel === 'discord' || rule.channel === 'teams'">
             <span class="rule__detail-k">URL</span>
             <span class="rule__detail-v mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ rule.webhook_url }}</span>
+          </template>
+          <template v-else-if="rule.channel === 'push'">
+            <span class="rule__detail-k">Notifies</span>
+            <span class="rule__detail-v">{{ recipientNames(rule) || 'Nobody (pick someone to turn it back on)' }}</span>
           </template>
           <template v-else>
             <span class="rule__detail-k">Email to</span>

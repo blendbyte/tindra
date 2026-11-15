@@ -60,7 +60,7 @@ func GetSession(ctx context.Context, pool *pgxpool.Pool, token string) (*Session
 
 // ChangeUserPassword changes credentials and revokes all existing authentication artifacts.
 func ChangeUserPassword(ctx context.Context, pool *pgxpool.Pool, userID, currentPassword, newPassword string) error {
-	_, err := changeUserPassword(ctx, pool, userID, currentPassword, newPassword, "")
+	_, err := changeUserPassword(ctx, pool, userID, currentPassword, newPassword, "", "")
 	return err
 }
 
