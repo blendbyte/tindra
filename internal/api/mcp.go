@@ -53,7 +53,8 @@ const (
 
 // mcpInstructions is offered to the model when a client connects.
 const mcpInstructions = "Tindra is a self-hosted error tracking and performance monitoring server. " +
-	"Start with get_overview, then use list_issues and get_issue to investigate errors, " +
+	"Start with get_overview, then use list_issues and get_issue to investigate errors " +
+	"(get_event_detail for the event sections get_issue leaves out), " +
 	"list_transactions and get_transaction for slow requests, and get_logs for log lines."
 
 // --- JSON-RPC 2.0 wire types ---
@@ -370,7 +371,7 @@ func mcpToolList() []map[string]any {
 		},
 		{
 			"name":        "get_issue",
-			"description": "Returns full details for a single issue plus the latest event payload: exception, stack trace, breadcrumbs, request, user, and contexts, matching the issue detail UI. Pass offset to inspect older occurrences (0 = newest).",
+			"description": "Returns a single issue plus a trimmed event: the exception with in-app and crashing frames (with source context), the newest 10 breadcrumbs, request URL and method, user, tags, and context names and versions. event.omitted lists the sections that were trimmed or left out; fetch them with get_event_detail. Pass offset to inspect older occurrences (0 = newest).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -378,6 +379,23 @@ func mcpToolList() []map[string]any {
 					"offset": prop("integer", "Event occurrence offset, newest first (0 = latest, default 0)."),
 				},
 				"required": []string{"id"},
+			},
+		},
+		{
+			"name":        "get_event_detail",
+			"description": "Returns event payload sections in full that get_issue trimmed or left out (see event.omitted), such as all stack frames with variables, all breadcrumbs, request headers and body, contexts, modules, or extra.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"issue_id": prop("string", "Issue ID."),
+					"offset":   prop("integer", "Event occurrence offset, newest first (0 = latest, default 0)."),
+					"sections": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Top-level payload sections to return, e.g. [\"breadcrumbs\", \"request\"]. Omit, or pass [\"all\"], for the full payload.",
+					},
+				},
+				"required": []string{"issue_id"},
 			},
 		},
 		{
@@ -441,7 +459,7 @@ func mcpToolList() []map[string]any {
 		},
 		{
 			"name":        "list_issue_events",
-			"description": "Lists recent event occurrences for an issue showing timestamps, environment, and release. Use get_issue with offset for the full payload including stack traces.",
+			"description": "Lists recent event occurrences for an issue showing timestamps, environment, and release. Use get_issue with offset for an occurrence's stack trace, and get_event_detail for its full payload.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -562,6 +580,8 @@ func (ro *router) mcpCallTool(ctx context.Context, id any, params json.RawMessag
 		text, err = ro.mcpListIssues(ctx, p.Arguments)
 	case "get_issue":
 		text, err = ro.mcpGetIssue(ctx, p.Arguments)
+	case "get_event_detail":
+		text, err = ro.mcpGetEventDetail(ctx, p.Arguments)
 	case "list_transactions":
 		text, err = ro.mcpListTransactions(ctx, p.Arguments)
 	case "list_monitors":
@@ -697,7 +717,7 @@ func (ro *router) mcpGetOverview(ctx context.Context, args map[string]any) (stri
 		result["transaction_error_rate"] = fmt.Sprintf("%.2f%%", total/float64(len(summaries))*100)
 	}
 
-	b, _ := json.MarshalIndent(result, "", "  ")
+	b, _ := json.Marshal(result)
 	return string(b), nil
 }
 
@@ -720,7 +740,7 @@ func (ro *router) mcpListIssues(ctx context.Context, args map[string]any) (strin
 	if issues == nil {
 		issues = []*storage.Issue{}
 	}
-	b, _ := json.MarshalIndent(issues, "", "  ")
+	b, _ := json.Marshal(issues)
 	return string(b), nil
 }
 
@@ -730,30 +750,15 @@ type mcpIssueEvent struct {
 	TraceID    *string         `json:"trace_id,omitempty"`
 	ReceivedAt time.Time       `json:"received_at"`
 	Payload    json.RawMessage `json:"payload"`
+	// Omitted names the payload sections trimmed or dropped; get_event_detail
+	// returns them in full.
+	Omitted []string `json:"omitted,omitempty"`
 }
 
 func (ro *router) mcpGetIssue(ctx context.Context, args map[string]any) (string, error) {
-	id := mcpArgString(args, "id")
-	if id == "" {
-		return "", mcpToolError{"id is required"}
-	}
-	issue, err := storage.GetIssue(ctx, ro.pool, id)
+	issue, err := ro.mcpIssueInScope(ctx, mcpArgString(args, "id"))
 	if err != nil {
-		return "", fmt.Errorf("get issue: %w", err)
-	}
-	if issue == nil {
-		return "", mcpToolError{"issue not found"}
-	}
-	// Enforce project scope for Bearer token requests.
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		if issue.ProjectID != tokenProjID {
-			return "", mcpToolError{"issue not found"}
-		}
-	}
-
-	offset := mcpArgInt(args, "offset", 0)
-	if offset < 0 {
-		offset = 0
+		return "", err
 	}
 
 	out := struct {
@@ -762,29 +767,23 @@ func (ro *router) mcpGetIssue(ctx context.Context, args map[string]any) (string,
 		PerfEvents *[]*storage.PerfEvent `json:"perf_events,omitempty"`
 	}{Issue: issue}
 
-	ev, err := storage.GetEventForIssueAtOffset(ctx, ro.pool, id, offset)
+	ev, payload, err := ro.mcpIssueEventAt(ctx, issue, mcpArgInt(args, "offset", 0))
 	if err != nil {
-		return "", fmt.Errorf("get event: %w", err)
+		return "", err
 	}
 	if ev != nil {
-		payload := ev.Payload
-		if ro.smStore != nil {
-			release := ""
-			if ev.Release != nil {
-				release = *ev.Release
-			}
-			payload = ro.smStore.ResolveEventPayload(ctx, issue.ProjectID, release, payload)
-		}
+		trimmed, omitted := mcpTrimEvent(payload)
 		out.Event = &mcpIssueEvent{
 			ID:         ev.ID,
 			TraceID:    ev.TraceID,
 			ReceivedAt: ev.ReceivedAt,
-			Payload:    payload,
+			Payload:    trimmed,
+			Omitted:    omitted,
 		}
 	}
 
 	if issue.Kind == "n1_query" {
-		perfEvents, err := storage.ListPerfEvents(ctx, ro.pool, id, 25)
+		perfEvents, err := storage.ListPerfEvents(ctx, ro.pool, issue.ID, 25)
 		if err != nil {
 			return "", fmt.Errorf("list perf events: %w", err)
 		}
@@ -794,7 +793,7 @@ func (ro *router) mcpGetIssue(ctx context.Context, args map[string]any) (string,
 		out.PerfEvents = &perfEvents
 	}
 
-	b, _ := json.MarshalIndent(out, "", "  ")
+	b, _ := json.Marshal(out)
 	return string(b), nil
 }
 
@@ -813,7 +812,7 @@ func (ro *router) mcpListTransactions(ctx context.Context, args map[string]any) 
 	if summaries == nil {
 		summaries = []*storage.TransactionSummary{}
 	}
-	b, _ := json.MarshalIndent(summaries, "", "  ")
+	b, _ := json.Marshal(summaries)
 	return string(b), nil
 }
 
@@ -825,7 +824,7 @@ func (ro *router) mcpListMonitors(ctx context.Context, args map[string]any) (str
 	if monitors == nil {
 		monitors = []*storage.CronMonitor{}
 	}
-	b, _ := json.MarshalIndent(monitors, "", "  ")
+	b, _ := json.Marshal(monitors)
 	return string(b), nil
 }
 
@@ -847,7 +846,7 @@ func (ro *router) mcpGetMonitor(ctx context.Context, args map[string]any) (strin
 			return "", mcpToolError{"monitor not found"}
 		}
 	}
-	b, _ := json.MarshalIndent(monitor, "", "  ")
+	b, _ := json.Marshal(monitor)
 	return string(b), nil
 }
 
@@ -862,7 +861,7 @@ func (ro *router) mcpListReleases(ctx context.Context, args map[string]any) (str
 	if releases == nil {
 		releases = []*storage.Release{}
 	}
-	b, _ := json.MarshalIndent(releases, "", "  ")
+	b, _ := json.Marshal(releases)
 	return string(b), nil
 }
 
@@ -892,7 +891,7 @@ func (ro *router) mcpListAlerts(ctx context.Context, args map[string]any) (strin
 		redactRuleWebhook(rule)
 		redactRuleRecipients(rule)
 	}
-	b, _ := json.MarshalIndent(rules, "", "  ")
+	b, _ := json.Marshal(rules)
 	return string(b), nil
 }
 
@@ -986,7 +985,7 @@ func (ro *router) mcpGetTransaction(ctx context.Context, args map[string]any) (s
 		})
 	}
 	result := map[string]any{"transaction": tx, "spans": spansOut}
-	b, _ := json.MarshalIndent(result, "", "  ")
+	b, _ := json.Marshal(result)
 	return string(b), nil
 }
 
@@ -1016,7 +1015,7 @@ func (ro *router) mcpListIssueEvents(ctx context.Context, args map[string]any) (
 	if events == nil {
 		events = []storage.EventSummary{}
 	}
-	b, _ := json.MarshalIndent(events, "", "  ")
+	b, _ := json.Marshal(events)
 	return string(b), nil
 }
 
@@ -1038,7 +1037,7 @@ func (ro *router) mcpListSpanSummaries(ctx context.Context, args map[string]any)
 	if summaries == nil {
 		summaries = []*storage.SpanSummary{}
 	}
-	b, _ := json.MarshalIndent(summaries, "", "  ")
+	b, _ := json.Marshal(summaries)
 	return string(b), nil
 }
 
@@ -1061,7 +1060,7 @@ func (ro *router) mcpGetLogs(ctx context.Context, args map[string]any) (string, 
 	if logs == nil {
 		logs = []*storage.Log{}
 	}
-	b, _ := json.MarshalIndent(logs, "", "  ")
+	b, _ := json.Marshal(logs)
 	return string(b), nil
 }
 
@@ -1151,7 +1150,7 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 			slog.Error("insert issue history (mcp assignee)", "err", err)
 		}
 	}
-	b, _ := json.MarshalIndent(updated, "", "  ")
+	b, _ := json.Marshal(updated)
 	return string(b), nil
 }
 
@@ -1206,7 +1205,7 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 	if err := storage.InsertIssueHistoryBatch(ctx, ro.pool, entries); err != nil {
 		slog.Error("insert bulk issue history (mcp)", "err", err)
 	}
-	b, _ := json.MarshalIndent(map[string]any{"updated": len(updated)}, "", "  ")
+	b, _ := json.Marshal(map[string]any{"updated": len(updated)})
 	return string(b), nil
 }
 
@@ -1280,6 +1279,6 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 		TargetID:  &created.ID,
 		Details:   map[string]any{"name": created.Name, "trigger": created.Trigger},
 	})
-	b, _ := json.MarshalIndent(created, "", "  ")
+	b, _ := json.Marshal(created)
 	return string(b), nil
 }

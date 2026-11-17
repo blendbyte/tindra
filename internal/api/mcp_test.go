@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -208,7 +209,7 @@ func TestMCP_toolsList(t *testing.T) {
 		t.Fatalf("tools is not an array: %T", resp.Result["tools"])
 	}
 	wantTools := []string{
-		"get_overview", "list_issues", "get_issue",
+		"get_overview", "list_issues", "get_issue", "get_event_detail",
 		"list_transactions", "list_monitors", "get_monitor",
 		"list_releases", "list_alerts", "get_logs",
 		"get_transaction", "list_issue_events", "list_span_summaries",
@@ -438,10 +439,14 @@ func TestMCP_getIssue_includesEventPayload(t *testing.T) {
 	}
 	st, _ := val["stacktrace"].(map[string]any)
 	frames, _ := st["frames"].([]any)
-	if len(frames) != 2 {
-		t.Fatalf("expected 2 stack frames, got %d", len(frames))
+	// The library frame above the in-app crash is trimmed.
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 stack frame, got %d", len(frames))
 	}
-	topApp, _ := frames[1].(map[string]any)
+	if st["frames_omitted"] != float64(1) {
+		t.Errorf("frames_omitted: got %v, want 1", st["frames_omitted"])
+	}
+	topApp, _ := frames[0].(map[string]any)
 	if topApp["function"] != "handleClick" || topApp["lineno"] != float64(42) {
 		t.Errorf("in-app frame: got %#v", topApp)
 	}
@@ -458,6 +463,91 @@ func TestMCP_getIssue_includesEventPayload(t *testing.T) {
 	user, _ := evPayload["user"].(map[string]any)
 	if user["email"] != "ada@example.com" {
 		t.Errorf("user email: got %v", user["email"])
+	}
+	omitted, _ := rawEvent["omitted"].([]any)
+	if fmt.Sprint(omitted) != "[exception]" {
+		t.Errorf("omitted: got %v, want [exception]", omitted)
+	}
+}
+
+func TestMCP_getEventDetail(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "mcp-detail-fp", "Detail Error")
+	payload := `{
+		"exception": {"values": [{"type": "Error", "stacktrace": {"frames": [
+			{"function": "lib", "in_app": false},
+			{"function": "app", "in_app": true, "vars": {"id": 7}}
+		]}}]},
+		"request": {"url": "https://example.com/a", "method": "GET", "headers": {"X-Trace": "1"}},
+		"modules": {"django": "5.2"}
+	}`
+	seedMCPIssueEvent(t, iss.ID, "mcp-detail-fp", `{"message":"older"}`, time.Now().UTC().Add(-time.Hour))
+	evID := seedMCPIssueEvent(t, iss.ID, "mcp-detail-fp", payload, time.Now().UTC())
+
+	decode := func(result map[string]any) map[string]any {
+		t.Helper()
+		if isErr, _ := result["isError"].(bool); isErr {
+			t.Fatalf("unexpected isError:true: %s", toolText(t, result))
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(toolText(t, result)), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return got
+	}
+
+	got := decode(toolCall(t, mcpHandler(), "get_event_detail", map[string]any{
+		"issue_id": iss.ID, "sections": []any{"request", "modules", "threads"},
+	}, authCookie()))
+	if got["event_id"] != evID {
+		t.Errorf("event_id: got %v, want %s", got["event_id"], evID)
+	}
+	sections, _ := got["sections"].(map[string]any)
+	req, _ := sections["request"].(map[string]any)
+	if headers, _ := req["headers"].(map[string]any); headers["X-Trace"] != "1" {
+		t.Errorf("request headers: got %v", req["headers"])
+	}
+	if mods, _ := sections["modules"].(map[string]any); mods["django"] != "5.2" {
+		t.Errorf("modules: got %v", sections["modules"])
+	}
+	if fmt.Sprint(got["missing"]) != "[threads]" {
+		t.Errorf("missing: got %v, want [threads]", got["missing"])
+	}
+	if _, ok := got["payload"]; ok {
+		t.Error("payload should be absent when sections are named")
+	}
+
+	// No sections: the full payload, untrimmed, frame vars included.
+	full := decode(toolCall(t, mcpHandler(), "get_event_detail", map[string]any{"issue_id": iss.ID}, authCookie()))
+	fullPayload, _ := full["payload"].(map[string]any)
+	exc, _ := fullPayload["exception"].(map[string]any)
+	values, _ := exc["values"].([]any)
+	val, _ := values[0].(map[string]any)
+	st, _ := val["stacktrace"].(map[string]any)
+	frames, _ := st["frames"].([]any)
+	if len(frames) != 2 {
+		t.Fatalf("full payload frames: got %d, want 2", len(frames))
+	}
+	if app, _ := frames[1].(map[string]any); app["vars"] == nil {
+		t.Error("full payload should keep frame vars")
+	}
+
+	older := decode(toolCall(t, mcpHandler(), "get_event_detail", map[string]any{
+		"issue_id": iss.ID, "offset": 1, "sections": []any{"all"},
+	}, authCookie()))
+	if p, _ := older["payload"].(map[string]any); p["message"] != "older" {
+		t.Errorf("offset 1 payload: got %v", older["payload"])
+	}
+
+	for name, args := range map[string]map[string]any{
+		"missing issue_id": {},
+		"unknown issue":    {"issue_id": "00000000-0000-0000-0000-000000000000"},
+		"offset past end":  {"issue_id": iss.ID, "offset": 5},
+	} {
+		result := toolCall(t, mcpHandler(), "get_event_detail", args, authCookie())
+		if isErr, _ := result["isError"].(bool); !isErr {
+			t.Errorf("%s: expected isError:true, got %v", name, result)
+		}
 	}
 }
 
@@ -736,24 +826,29 @@ func TestMCP_bearerToken_getIssue_crossProjectDenied(t *testing.T) {
 		t.Fatalf("create token: %v", err)
 	}
 
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/call",
-		"params":  map[string]any{"name": "get_issue", "arguments": map[string]any{"id": iss.ID}},
-	}
-	b, _ := json.Marshal(msg)
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+plaintext)
-	rec := httptest.NewRecorder()
-	mcpHandler().ServeHTTP(rec, req)
+	for tool, args := range map[string]map[string]any{
+		"get_issue":        {"id": iss.ID},
+		"get_event_detail": {"issue_id": iss.ID},
+	} {
+		msg := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params":  map[string]any{"name": tool, "arguments": args},
+		}
+		b, _ := json.Marshal(msg)
+		req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		mcpHandler().ServeHTTP(rec, req)
 
-	var resp rpcResp
-	json.NewDecoder(rec.Body).Decode(&resp)
-	isErr, _ := resp.Result["isError"].(bool)
-	if !isErr {
-		t.Errorf("expected isError:true when token project != issue project, got %v", resp.Result)
+		var resp rpcResp
+		json.NewDecoder(rec.Body).Decode(&resp)
+		isErr, _ := resp.Result["isError"].(bool)
+		if !isErr {
+			t.Errorf("%s: expected isError:true when token project != issue project, got %v", tool, resp.Result)
+		}
 	}
 }
 
