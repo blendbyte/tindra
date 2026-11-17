@@ -188,6 +188,103 @@ func TestHandleEnvelope_missingKey(t *testing.T) {
 	}
 }
 
+func tunneledEnvelope(dsn, eventID, payload string) string {
+	header := fmt.Sprintf(`{"event_id":%q,"dsn":%q,"sent_at":"2024-01-01T00:00:00Z"}`, eventID, dsn)
+	itemHeader := fmt.Sprintf(`{"type":"event","length":%d}`, len(payload))
+	return header + "\n" + itemHeader + "\n" + payload + "\n"
+}
+
+// A tunnel forwards the envelope as the browser sent it: no X-Sentry-Auth,
+// with the DSN in the envelope header.
+func TestHandleEnvelope_tunnelUsesEnvelopeDSN(t *testing.T) {
+	truncateEvents(t)
+
+	buf := ingest.NewBuffer(100)
+	go buf.Run(t.Context(), testPool)
+
+	dsn := "https://" + testProject.PublicKey + "@tindra.example.com/" + testProject.ID
+	payload := `{"timestamp":"2024-01-01T00:00:00Z","level":"error","message":"tunneled"}`
+	body := tunneledEnvelope(dsn, "770e8400e29b41d4a716446655440000", payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	newHandler(buf).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	waitPersisted(t, buf.Stats, 1)
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM events WHERE project_id = $1", testProject.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 event in DB, got %d", count)
+	}
+}
+
+func TestHandleEnvelope_tunnelRejected(t *testing.T) {
+	payload := `{"timestamp":"2024-01-01T00:00:00Z"}`
+	validDSN := "https://" + testProject.PublicKey + "@tindra.example.com/" + testProject.ID
+
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	_, _ = zw.Write([]byte(tunneledEnvelope(validDSN, "abc", payload)))
+	zw.Close()
+
+	cases := []struct {
+		name     string
+		body     []byte
+		encoding string
+	}{
+		{"unknown key", []byte(tunneledEnvelope("https://wrongkey@tindra.example.com/"+testProject.ID, "abc", payload)), ""},
+		{"dsn without key", []byte(tunneledEnvelope("https://tindra.example.com/"+testProject.ID, "abc", payload)), ""},
+		{"unparseable dsn", []byte(tunneledEnvelope("://bad", "abc", payload)), ""},
+		// Compressed bodies are not decoded before authentication.
+		{"compressed", gz.Bytes(), "gzip"},
+		// A header line past the pre-auth read bound is not parsed.
+		{"oversized header", []byte(`{"pad":"` + strings.Repeat("x", 20*1024) + `","dsn":"` + validDSN + "\"}\n"), ""},
+		{"not json", []byte("not json at all\n"), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+				bytes.NewReader(tc.body))
+			if tc.encoding != "" {
+				req.Header.Set("Content-Encoding", tc.encoding)
+			}
+			rec := httptest.NewRecorder()
+			newHandler(ingest.NewBuffer(100)).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// An auth header wins over the envelope DSN, so a proxy that adds its own
+// credential decides the project.
+func TestHandleEnvelope_authHeaderBeatsEnvelopeDSN(t *testing.T) {
+	body := tunneledEnvelope("https://"+testProject.PublicKey+"@tindra.example.com/"+testProject.ID,
+		"abc", `{"timestamp":"2024-01-01T00:00:00Z"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/"+testProject.ID+"/envelope/",
+		bytes.NewBufferString(body))
+	req.Header.Set("X-Sentry-Auth", sentryAuthHeader("wrongkey"))
+	rec := httptest.NewRecorder()
+	newHandler(ingest.NewBuffer(100)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
 func TestHandleEnvelope_malformedEnvelope(t *testing.T) {
 	buf := ingest.NewBuffer(100)
 

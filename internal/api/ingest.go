@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +92,18 @@ func (ro *router) handleEnvelopeCORS(w http.ResponseWriter, r *http.Request) {
 func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
+	// Bound how long a client may take to deliver the body, so slow senders
+	// cannot hold connections and buffers open indefinitely. Set before any
+	// body read, including the envelope header read for tunneled requests.
+	controller := http.NewResponseController(w)
+	if err := controller.SetReadDeadline(time.Now().Add(envelopeReadTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		slog.Error("set envelope read deadline", "err", err)
+	}
+
 	publicKey := extractSentryKey(r)
+	if publicKey == "" {
+		publicKey = keyFromEnvelopeHeader(r)
+	}
 	if publicKey == "" {
 		http.Error(w, "missing sentry key", http.StatusUnauthorized)
 		return
@@ -165,13 +178,6 @@ func (ro *router) handleEnvelope(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "event limit reached", http.StatusTooManyRequests)
 			return
 		}
-	}
-
-	// Bound how long a client may take to deliver the body, so slow senders
-	// cannot hold connections and buffers open indefinitely.
-	controller := http.NewResponseController(w)
-	if err := controller.SetReadDeadline(time.Now().Add(envelopeReadTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		slog.Error("set envelope read deadline", "err", err)
 	}
 
 	rawLimit := newLimitedReader(r.Body, maxBodyBytes)
@@ -383,6 +389,43 @@ func extractSentryKey(r *http.Request) string {
 		}
 	}
 	return r.URL.Query().Get("sentry_key")
+}
+
+// maxEnvelopeHeaderBytes bounds the envelope header line read before the
+// request is authenticated. Real headers are a few hundred bytes.
+const maxEnvelopeHeaderBytes = 16 * 1024
+
+// keyFromEnvelopeHeader returns the public key of the dsn in the envelope
+// header. Tunnels (the JS SDK's tunnel option, or any proxy that forwards
+// envelopes as received) send no X-Sentry-Auth, so the envelope's own dsn is
+// the credential, as in Sentry. Only uncompressed bodies are read: browser
+// SDKs do not compress tunneled envelopes. The bytes read are put back in
+// front of r.Body, so the envelope parser sees the body unchanged.
+func keyFromEnvelopeHeader(r *http.Request) string {
+	if enc := r.Header.Get("Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
+		return ""
+	}
+	br := bufio.NewReaderSize(r.Body, maxEnvelopeHeaderBytes)
+	line, err := br.ReadSlice('\n')
+	line = bytes.Clone(line)
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(line), br), r.Body}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return ""
+	}
+	var header struct {
+		DSN string `json:"dsn"`
+	}
+	if json.Unmarshal(bytes.TrimRight(line, "\r\n"), &header) != nil || header.DSN == "" {
+		return ""
+	}
+	u, err := url.Parse(header.DSN)
+	if err != nil || u.User == nil {
+		return ""
+	}
+	return u.User.Username()
 }
 
 // parseSentryAuthHeader parses "Sentry sentry_version=7, sentry_key=<key>, ..."
