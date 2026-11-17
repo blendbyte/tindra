@@ -522,7 +522,7 @@ func ListTransactionSummaries(ctx context.Context, pool *pgxpool.Pool, projectID
 		GROUP BY transaction, op, project_id
 		ORDER BY time_spent_ms DESC
 		LIMIT 1000
-	`, userQueryArgs(userIdentity, args)...)
+	`, rangeQueryArgs(userIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

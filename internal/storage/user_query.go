@@ -15,3 +15,13 @@ func userQueryArgs(value string, args []any) []any {
 	}
 	return append([]any{pgx.QueryExecModeSimpleProtocol}, args...)
 }
+
+// rangeQueryArgs plans an aggregate over a time range for that range on every
+// run. A cached statement switches to a generic plan after five runs, which
+// guesses a small range and sorts a month of transactions on disk.
+func rangeQueryArgs(userIdentity string, args []any) []any {
+	if userIdentity != "" {
+		return userQueryArgs(userIdentity, args)
+	}
+	return append([]any{pgx.QueryExecModeExec}, args...)
+}

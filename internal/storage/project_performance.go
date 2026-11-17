@@ -63,30 +63,42 @@ func GetPerformanceOverview(ctx context.Context, pool *pgxpool.Pool, projectIDs 
 
 	// $1 starts the previous window, $2 starts the current one, $3 ends it.
 	args := append([]any{previousFrom, window.From, window.To}, extra...)
+	// The histogram keeps both windows apart; GROUPING SETS adds the total's
+	// own histogram, so its percentiles are real percentiles.
+	cur := func(expr string) string { return `COALESCE(MAX(` + expr + `) FILTER (WHERE current), 0)` }
+	prev := func(expr string) string { return `COALESCE(MAX(` + expr + `) FILTER (WHERE NOT current), 0)` }
 	rows, err := pool.Query(ctx, `
+		WITH hist AS (
+			SELECT project_id, start_timestamp >= $2 AS current, duration_ms AS d, COUNT(*) AS c,
+				COUNT(*) FILTER (WHERE status IN (`+failedTransactionStatuses+`)) AS failed
+			FROM transactions
+			WHERE start_timestamp >= $1 AND start_timestamp < $3`+filter+`
+			GROUP BY 1, 2, 3
+		), merged AS (
+			SELECT project_id, current, d, SUM(c)::bigint AS c, SUM(failed)::bigint AS failed
+			FROM hist
+			GROUP BY GROUPING SETS ((project_id, current, d), (current, d))
+		), ranked AS (
+			SELECT *, `+histogramRanks("project_id, current")+` FROM merged
+		), windows AS (
+			SELECT
+				project_id,
+				current,
+				SUM(c)::bigint AS requests,
+				`+histogramPercentile("0.5")+` AS p50,
+				`+histogramPercentile("0.95")+` AS p95,
+				`+histogramApdex+` AS apdex,
+				SUM(failed)::float8 / SUM(c)::float8 AS failure_rate
+			FROM ranked
+			GROUP BY project_id, current
+		)
 		SELECT
 			project_id::text,
-			COUNT(*) FILTER (WHERE start_timestamp >= $2),
-			COALESCE(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE start_timestamp >= $2), 0),
-			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE start_timestamp >= $2), 0),
-			COALESCE((
-				COUNT(*) FILTER (WHERE start_timestamp >= $2 AND duration_ms <= 500)::float8 +
-				COUNT(*) FILTER (WHERE start_timestamp >= $2 AND duration_ms > 500 AND duration_ms <= 2000)::float8 * 0.5
-			) / NULLIF(COUNT(*) FILTER (WHERE start_timestamp >= $2), 0), 0),
-			COALESCE(
-				COUNT(*) FILTER (WHERE start_timestamp >= $2 AND status IN (`+failedTransactionStatuses+`))::float8
-				/ NULLIF(COUNT(*) FILTER (WHERE start_timestamp >= $2), 0),
-			0),
-			COUNT(*) FILTER (WHERE start_timestamp < $2),
-			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE start_timestamp < $2), 0),
-			COALESCE(
-				COUNT(*) FILTER (WHERE start_timestamp < $2 AND status IN (`+failedTransactionStatuses+`))::float8
-				/ NULLIF(COUNT(*) FILTER (WHERE start_timestamp < $2), 0),
-			0)
-		FROM transactions
-		WHERE start_timestamp >= $1 AND start_timestamp < $3`+filter+`
-		GROUP BY GROUPING SETS ((project_id), ())
-	`, userQueryArgs(userIdentity, args)...)
+			`+cur("requests")+`, `+cur("p50")+`, `+cur("p95")+`, `+cur("apdex")+`, `+cur("failure_rate")+`,
+			`+prev("requests")+`, `+prev("p95")+`, `+prev("failure_rate")+`
+		FROM windows
+		GROUP BY project_id
+	`, rangeQueryArgs(userIdentity, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -135,10 +147,13 @@ func fillPerformanceTrends(ctx context.Context, pool *pgxpool.Pool, byProject ma
 	}
 	args := append([]any{float64(PerformanceTrendBuckets) / seconds, window.From, window.To}, extra...)
 	rows, err := pool.Query(ctx, `
-		SELECT project_id::text, FLOOR(EXTRACT(EPOCH FROM start_timestamp - $2::timestamptz) * $1::float8)::int, COUNT(*)
-		FROM transactions
-		WHERE start_timestamp >= $2 AND start_timestamp < $3`+filter+`
-		GROUP BY 1, 2
+		SELECT project_id::text, bucket, COUNT(*)
+		FROM (
+			SELECT project_id, FLOOR(date_part('epoch', start_timestamp - $2::timestamptz) * $1::float8)::int AS bucket
+			FROM transactions
+			WHERE start_timestamp >= $2 AND start_timestamp < $3`+filter+`
+		) slices
+		GROUP BY project_id, bucket
 	`, userQueryArgs(userIdentity, args)...)
 	if err != nil {
 		return fmt.Errorf("trend query: %w", err)
@@ -163,3 +178,32 @@ func fillPerformanceTrends(ctx context.Context, pool *pgxpool.Pool, byProject ma
 	}
 	return rows.Err()
 }
+
+// Percentiles over many transactions are computed from a duration histogram:
+// one row per group and duration_ms with its count c, instead of sorting every
+// transaction. histogramRanks adds below, the group's rows with a shorter
+// duration, and last, the group's row count minus one. partition lists the
+// group's columns.
+func histogramRanks(partition string) string {
+	return `(SUM(c) OVER (PARTITION BY ` + partition + ` ORDER BY d) - c)::bigint AS below,
+		(SUM(c) OVER (PARTITION BY ` + partition + `) - 1)::float8 AS last`
+}
+
+// histogramPercentile aggregates histogramRanks rows into the same value as
+// PERCENTILE_CONT(p): it interpolates between the durations at rank
+// floor(p*last) and ceil(p*last), in the same float8 arithmetic.
+func histogramPercentile(p string) string {
+	at := func(rank string) string {
+		return `MIN(d) FILTER (WHERE below + c > ` + rank + `(` + p + `::float8 * last))`
+	}
+	lo, hi := at("FLOOR"), at("CEIL")
+	pos := p + `::float8 * MAX(last)`
+	return `COALESCE(` + lo + `::float8 + (` + pos + ` - FLOOR(` + pos + `)) * (` + hi + ` - ` + lo + `)::float8, 0)`
+}
+
+// histogramApdex aggregates histogram rows into the apdex score with a 500 ms
+// threshold.
+const histogramApdex = `COALESCE((
+		COALESCE(SUM(c) FILTER (WHERE d <= 500), 0)::float8 +
+		COALESCE(SUM(c) FILTER (WHERE d > 500 AND d <= 2000), 0)::float8 * 0.5
+	) / NULLIF(SUM(c), 0)::float8, 0)`
