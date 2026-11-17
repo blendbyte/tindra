@@ -470,7 +470,7 @@ describe('CommandPalette', () => {
       expect(pushMock).toHaveBeenCalledWith({ path: '/issues', query: { user: 'u-1' } })
     })
 
-    it('puts the issue a short ID names first, whatever its title', async () => {
+    it('puts the issue a short ID names first and opens it under its short ID', async () => {
       vi.useFakeTimers()
       const byShortId = { id: 'iss-42', short_id: 'BACKEND-42', title: 'Timeout', level: 'error', last_seen: '2024-01-01T00:00:00Z' }
       const other = { id: 'iss-7', short_id: 'BACKEND-7', title: 'BACKEND-42 mentioned', level: 'error', last_seen: '2024-01-01T00:00:00Z' }
@@ -486,6 +486,8 @@ describe('CommandPalette', () => {
       const labels = wrapper.findAll('.cmdk__item-text').map(i => i.text())
       expect(labels).toEqual(['Timeout', 'BACKEND-42 mentioned'])
       expect(wrapper.text()).toContain('BACKEND-42 · ')
+      await wrapper.findAll('.cmdk__item')[0].trigger('click')
+      expect(pushMock).toHaveBeenCalledWith('/issues/BACKEND-42')
     })
 
     it('clears people results when the search is too short', async () => {

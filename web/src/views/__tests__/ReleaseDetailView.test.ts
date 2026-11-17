@@ -188,6 +188,17 @@ describe('ReleaseDetailView', () => {
       expect(wrapper.text()).toContain('TypeError: foo')
     })
 
+    it('opens a new issue under its short ID when its row is clicked', async () => {
+      const issue = { id: 'iss-n2', short_id: 'BACKEND-9', title: 'New crash', level: 'error', category: 'new', event_count: 1, last_seen: '2024-01-01' }
+      setupMocks(baseRelease, false, false, [issue], [])
+      const wrapper = mount(ReleaseDetailView, { global: { stubs } })
+      const issuesTab = wrapper.findAll('.optab').find(t => t.text().includes('Issues'))!
+      await issuesTab.trigger('click')
+      const row = wrapper.findAll('.rel-issue-row').find(r => r.text().includes('New crash'))!
+      await row.trigger('click')
+      expect(pushMock).toHaveBeenCalledWith('/issues/BACKEND-9')
+    })
+
     it('back link navigates to /releases', async () => {
       setupMocks()
       const wrapper = mount(ReleaseDetailView, { global: { stubs } })

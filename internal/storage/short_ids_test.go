@@ -55,6 +55,16 @@ func shortIDIssue(t *testing.T, projectID, fingerprint string) *storage.Issue {
 	return iss
 }
 
+// Links name an issue by its short ID, or by its UUID when it has none.
+func TestIssueRef(t *testing.T) {
+	if got := (&storage.Issue{ID: "uuid-1", ShortID: "BACKEND-42"}).Ref(); got != "BACKEND-42" {
+		t.Errorf("with short ID: got %q", got)
+	}
+	if got := (&storage.Issue{ID: "uuid-1"}).Ref(); got != "uuid-1" {
+		t.Errorf("without short ID: got %q", got)
+	}
+}
+
 func TestShortIDs_numberedPerProject(t *testing.T) {
 	ctx := context.Background()
 	a := shortIDProject(t, "sid-alpha")
