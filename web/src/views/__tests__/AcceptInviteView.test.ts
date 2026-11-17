@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 
 const pushMock = vi.fn()
 const tokenParam = { token: 'test-token-123' }
-const authStoreMock = { ready: true as boolean }
+const authStoreMock = { ready: true as boolean, refresh: vi.fn() }
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(() => authStoreMock),

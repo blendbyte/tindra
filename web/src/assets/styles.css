@@ -4238,40 +4238,6 @@ input.row-check {
   width: 140px !important;
 }
 
-.mfa-gate__success {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  text-align: center;
-  padding: 12px 0;
-  width: 100%;
-}
-
-.mfa-gate__success-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: oklch(from var(--success) l c h / 0.14);
-  border: 1px solid oklch(from var(--success) l c h / 0.30);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--success);
-  margin-bottom: 4px;
-}
-
-[data-theme="light"] .mfa-gate__success-icon {
-  background: oklch(0.94 0.05 145 / 0.4);
-  border-color: oklch(0.65 0.15 145 / 0.4);
-}
-
-.mfa-gate__success-title {
-  font-size: var(--text-base);
-  font-weight: 600;
-  color: var(--text-1);
-}
-
 .mfa-gate__loading {
   display: flex;
   flex-direction: column;

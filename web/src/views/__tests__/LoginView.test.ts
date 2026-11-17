@@ -5,7 +5,7 @@ import { ref } from 'vue'
 const routeMock = { query: {} as Record<string, string> }
 const pushMock = vi.fn()
 const resetQueriesMock = vi.fn()
-const authStoreMock = { ready: true as boolean }
+const authStoreMock = { ready: true as boolean, refresh: vi.fn() }
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(() => authStoreMock),
@@ -45,6 +45,7 @@ beforeEach(() => {
   vi.mocked(apiFetch).mockReset()
   vi.mocked(useQuery).mockReset()
   authStoreMock.ready = true
+  authStoreMock.refresh.mockReset()
 })
 
 describe('LoginView', () => {
@@ -306,23 +307,28 @@ describe('LoginView', () => {
   })
 
   describe('auth store sync on successful login', () => {
-    it('resets auth.ready to false before navigating after password login', async () => {
+    it('keeps the app shown and reloads the user before navigating after password login', async () => {
       vi.mocked(apiFetch).mockResolvedValue({})
       const wrapper = mountLogin()
       await wrapper.find('#email').setValue('a@b.com')
       await wrapper.find('#password').setValue('pw')
 
       let readyAtNavigate: boolean | undefined
-      pushMock.mockImplementation(() => { readyAtNavigate = authStoreMock.ready })
+      let refreshedAtNavigate = false
+      pushMock.mockImplementation(() => {
+        readyAtNavigate = authStoreMock.ready
+        refreshedAtNavigate = authStoreMock.refresh.mock.calls.length > 0
+      })
 
       await wrapper.find('form').trigger('submit')
       await new Promise((r) => setTimeout(r, 0))
 
-      expect(readyAtNavigate).toBe(false)
+      expect(readyAtNavigate).toBe(true)
+      expect(refreshedAtNavigate).toBe(true)
       expect(pushMock).toHaveBeenCalledWith('/dashboard')
     })
 
-    it('resets auth.ready to false before navigating after MFA verification', async () => {
+    it('keeps the app shown and reloads the user before navigating after MFA verification', async () => {
       vi.mocked(apiFetch)
         .mockResolvedValueOnce({ mfa_required: true, mfa_token: 'tok-123' })
         .mockResolvedValueOnce(undefined)
@@ -333,13 +339,18 @@ describe('LoginView', () => {
       await new Promise((r) => setTimeout(r, 0))
 
       let readyAtNavigate: boolean | undefined
-      pushMock.mockImplementation(() => { readyAtNavigate = authStoreMock.ready })
+      let refreshedAtNavigate = false
+      pushMock.mockImplementation(() => {
+        readyAtNavigate = authStoreMock.ready
+        refreshedAtNavigate = authStoreMock.refresh.mock.calls.length > 0
+      })
 
       await wrapper.find('.login__mfa-code').setValue('123456')
       await wrapper.find('.login__submit').trigger('click')
       await new Promise((r) => setTimeout(r, 0))
 
-      expect(readyAtNavigate).toBe(false)
+      expect(readyAtNavigate).toBe(true)
+      expect(refreshedAtNavigate).toBe(true)
       expect(pushMock).toHaveBeenCalledWith('/dashboard')
     })
   })
@@ -386,7 +397,8 @@ describe('SSO MFA challenge', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/auth/mfa/verify', expect.objectContaining({
       method: 'POST', body: JSON.stringify({ mfa_token: '', code: '123456' }),
     }))
-    expect(authStoreMock.ready).toBe(false)
+    expect(authStoreMock.ready).toBe(true)
+    expect(authStoreMock.refresh).toHaveBeenCalled()
     expect(resetQueriesMock).toHaveBeenCalled()
     expect(pushMock).toHaveBeenCalledWith('/dashboard')
   })

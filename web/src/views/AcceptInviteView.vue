@@ -43,7 +43,7 @@ async function submit(e: Event) {
       method: 'POST',
       body: JSON.stringify({ password: password.value, name: name.value.trim() }),
     })
-    auth.ready = false
+    await auth.refresh()
     await router.push('/issues')
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Something went wrong. Try again.'

@@ -20,26 +20,32 @@ export const useAuthStore = defineStore('auth', () => {
 
   let inflightInit: Promise<void> | null = null
 
+  // refresh reloads the user after sign-in without clearing ready, which would
+  // hide the whole app until the next navigation and make the form flash.
+  async function refresh() {
+    try {
+      const [meRes, cfgRes] = await Promise.all([
+        fetch('/api/me', { credentials: 'include' }),
+        fetch('/api/config'),
+      ])
+      if (meRes.ok) user.value = await meRes.json()
+      if (cfgRes.ok) {
+        config.value = await cfgRes.json()
+        requireMfa.value = config.value?.require_mfa !== false
+      }
+    } catch { /* network error - treat as unauthenticated */ }
+  }
+
   async function init() {
     if (ready.value) return
     if (inflightInit) return inflightInit
     inflightInit = (async () => {
-      try {
-        const [meRes, cfgRes] = await Promise.all([
-          fetch('/api/me', { credentials: 'include' }),
-          fetch('/api/config'),
-        ])
-        if (meRes.ok) user.value = await meRes.json()
-        if (cfgRes.ok) {
-          config.value = await cfgRes.json()
-          requireMfa.value = config.value?.require_mfa !== false
-        }
-      } catch { /* network error - treat as unauthenticated */ }
+      await refresh()
       ready.value = true
       inflightInit = null
     })()
     return inflightInit
   }
 
-  return { user, ready, requireMfa, config, setUser, init }
+  return { user, ready, requireMfa, config, setUser, init, refresh }
 })

@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 
 const pushMock = vi.fn()
 const resetQueriesMock = vi.fn()
-const authStoreMock = { ready: true as boolean }
+const authStoreMock = { ready: true as boolean, refresh: vi.fn() }
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(() => authStoreMock),
@@ -22,6 +22,7 @@ vi.mock('@/api/client', () => ({
 }))
 
 import SetupMFAView from '../SetupMFAView.vue'
+import { useToast } from '@/composables/useToast'
 import { apiFetch } from '@/api/client'
 
 const stubs = { Icon: true }
@@ -36,6 +37,7 @@ beforeEach(() => {
   pushMock.mockReset()
   resetQueriesMock.mockReset()
   authStoreMock.ready = true
+  authStoreMock.refresh.mockReset()
   vi.mocked(apiFetch).mockReset()
 })
 
@@ -176,12 +178,13 @@ describe('SetupMFAView', () => {
       expect(apiFetch).toHaveBeenCalledTimes(1) // only the setup call
     })
 
-    it('resets auth.ready and invalidates queries on success', async () => {
+    it('reloads the user without hiding the app and invalidates queries on success', async () => {
       vi.mocked(apiFetch).mockResolvedValue({})
       const wrapper = await mountReady()
       await wrapper.find('input[maxlength="6"]').setValue('123456')
       await new Promise((r) => setTimeout(r, 0))
-      expect(authStoreMock.ready).toBe(false)
+      expect(authStoreMock.ready).toBe(true)
+      expect(authStoreMock.refresh).toHaveBeenCalled()
       expect(resetQueriesMock).toHaveBeenCalled()
     })
 
@@ -226,19 +229,10 @@ describe('SetupMFAView', () => {
       return wrapper
     }
 
-    it('shows success panel after successful confirmation', async () => {
-      const wrapper = await confirmSuccess()
-      expect(wrapper.find('.mfa-gate__success').exists()).toBe(true)
-    })
-
-    it('hides the setup form after successful confirmation', async () => {
-      const wrapper = await confirmSuccess()
-      expect(wrapper.find('.mfa-gate').exists()).toBe(false)
-    })
-
-    it('shows a "protected" success title', async () => {
-      const wrapper = await confirmSuccess()
-      expect(wrapper.find('.mfa-gate__success-title').text()).toBe("You're protected")
+    it('goes straight to the dashboard and confirms with a toast', async () => {
+      await confirmSuccess()
+      expect(pushMock).toHaveBeenCalledWith('/dashboard')
+      expect(useToast().toasts.value.map(t => t.message)).toContain('Two-factor authentication enabled')
     })
   })
 })

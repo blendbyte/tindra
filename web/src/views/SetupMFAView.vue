@@ -8,10 +8,12 @@ import Icon from '@/components/Icon.vue'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
 import { useClipboard } from '@/composables/useClipboard'
+import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const qc = useQueryClient()
 const auth = useAuthStore()
+const { show: showToast } = useToast()
 
 const setupData = ref<{ secret: string; uri: string; qr: string } | null>(null)
 const loadError = ref<string | null>(null)
@@ -21,7 +23,6 @@ const codeInput = ref<HTMLInputElement | null>(null)
 watch(codeInput, input => input?.focus(), { flush: 'post' })
 const confirmError = ref<string | null>(null)
 const confirming = ref(false)
-const done = ref(false)
 
 onMounted(async () => {
   try {
@@ -44,10 +45,10 @@ async function submit() {
       method: 'POST',
       body: JSON.stringify({ code: code.value }),
     })
-    done.value = true
-    auth.ready = false
     await qc.resetQueries()
-    setTimeout(() => router.push('/dashboard'), 1400)
+    await auth.refresh()
+    showToast('Two-factor authentication enabled')
+    await router.push('/dashboard')
   } catch (e) {
     confirmError.value = e instanceof Error ? e.message : "That code didn't work. Try again."
     code.value = ''
@@ -70,21 +71,8 @@ function copySecret() {
       <img :src="logoLight" alt="Tindra" class="login__logo login__logo--light" />
       <img :src="logoDark" alt="Tindra" class="login__logo login__logo--dark" />
 
-      <!-- Success state -->
-      <template v-if="done">
-        <div class="mfa-gate__success">
-          <div class="mfa-gate__success-icon">
-            <Icon name="shield-check" :size="26" />
-          </div>
-          <div class="mfa-gate__success-title">You're protected</div>
-          <div class="mfa-gate__hint" style="text-align: center">
-            Two-factor authentication is now active on your account.
-          </div>
-        </div>
-      </template>
-
       <!-- Setup flow -->
-      <template v-else-if="setupData">
+      <template v-if="setupData">
         <div class="mfa-gate">
           <div class="mfa-gate__header">
             <div class="mfa-gate__badge">

@@ -71,6 +71,14 @@ function mapError(raw: string): LoginError {
 
 const loginError = computed<LoginError | null>(() => error.value ? mapError(error.value) : null)
 
+// The form stays on screen with its busy button until the app has the new
+// user and the next page is ready to render.
+async function finishSignIn() {
+  await qc.resetQueries()
+  await auth.refresh()
+  await router.push(safeRedirect(route.query.redirect))
+}
+
 async function submit() {
   if (!email.value || !password.value) {
     error.value = 'required'
@@ -91,9 +99,7 @@ async function submit() {
       mfaCode.value = ''
       error.value = null
     } else {
-      await qc.resetQueries()
-      auth.ready = false
-      router.push(safeRedirect(route.query.redirect))
+      await finishSignIn()
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'invalid credentials'
@@ -111,9 +117,7 @@ async function submitMFA() {
       method: 'POST',
       body: JSON.stringify({ mfa_token: mfaToken.value ?? '', code: mfaCode.value }),
     })
-    await qc.resetQueries()
-    auth.ready = false
-    router.push(safeRedirect(route.query.redirect))
+    await finishSignIn()
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'invalid code'
     mfaCode.value = ''
@@ -244,7 +248,7 @@ function backToLogin() {
           </div>
 
           <button type="submit" class="btn btn--primary login__submit" :disabled="loading">
-            Sign in
+            {{ loading ? 'Signing in…' : 'Sign in' }}
             <span class="btn__kbd">↵</span>
           </button>
         </form>
