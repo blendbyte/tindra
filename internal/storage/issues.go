@@ -121,6 +121,15 @@ func pageAfter(q string, args []any, filter IssueFilter, rank, lastSeen string) 
 const issueUserCountSQL = `(SELECT count(DISTINCT user_identity) FROM events
 		WHERE issue_id = i.id AND user_identity IS NOT NULL)`
 
+// Ref names the issue in links to its page: by its short ID, or by its UUID
+// when it has none.
+func (i *Issue) Ref() string {
+	if i.ShortID != "" {
+		return i.ShortID
+	}
+	return i.ID
+}
+
 // shortIDSQL renders the short ID (BACKEND-42) of the issues row alias.
 // Prefixes never change, and the lookup is by primary key.
 func shortIDSQL(alias string) string {

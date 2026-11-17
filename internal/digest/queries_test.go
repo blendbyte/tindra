@@ -524,6 +524,11 @@ func TestTopIssues_returnsOrderedByCount(t *testing.T) {
 	if issues[0].Count != 3 {
 		t.Errorf("Issue Two count: got %d, want 3", issues[0].Count)
 	}
+	// The digest links each issue by its short ID: the upper-cased project
+	// slug and the issue's number in creation order.
+	if issues[0].ShortID != "TI-ORDER-2" || issues[1].ShortID != "TI-ORDER-1" {
+		t.Errorf("short IDs: got %q, %q, want TI-ORDER-2, TI-ORDER-1", issues[0].ShortID, issues[1].ShortID)
+	}
 }
 
 func TestTopIssues_respectsLimit(t *testing.T) {

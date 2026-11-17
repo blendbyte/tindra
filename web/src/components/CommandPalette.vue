@@ -5,7 +5,7 @@ import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { apiFetch } from '@/api/client'
-import { findIssueByShortId } from '@/utils/shortId'
+import { findIssueByShortId, issueRef } from '@/utils/shortId'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Issue, IssueListPage, AppUser } from '@/api/types'
 import { useAppUserStore, appUserLabel } from '@/stores/appUser'
@@ -116,8 +116,8 @@ const issueItems = computed<CmdItem[]>(() =>
     hint: iss.short_id ? `${iss.short_id} · ${formatRel(iss.last_seen)}` : formatRel(iss.last_seen),
     level: iss.level,
     action: () => {
-      navStore.set(issueResults.value.map((i) => i.id))
-      router.push(`/issues/${iss.id}`)
+      navStore.set(issueResults.value.map(issueRef))
+      router.push(`/issues/${issueRef(iss)}`)
     },
   }))
 )

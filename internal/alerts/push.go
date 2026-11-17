@@ -503,7 +503,7 @@ func pushTargetPath(p AlertPayload) string {
 		return logsViewURL("", p)
 	}
 	if len(p.Issues) == 1 {
-		return "/issues/" + p.Issues[0].ID
+		return "/issues/" + p.Issues[0].Ref()
 	}
 	return "/issues"
 }

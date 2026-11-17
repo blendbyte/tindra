@@ -82,7 +82,7 @@ const overviewOf = (total: Partial<ProjectPerformance> = {}, projects: ProjectPe
 })
 
 const issue = (id: string, event_count: number): DashboardIssue => ({
-  id, title: `Issue ${id}`, level: 'error', event_count, sparkline: [], project_id: 'p1',
+  id, short_id: `TEST-${id}`, title: `Issue ${id}`, level: 'error', event_count, sparkline: [], project_id: 'p1',
 })
 
 const release = (id: string, overrides = {}): DashboardRelease => ({

@@ -28,6 +28,7 @@ type IssuesSummary struct {
 
 type TopIssue struct {
 	IssueID     string
+	ShortID     string
 	Title       string
 	ProjectName string
 	Count       int64
@@ -65,14 +66,14 @@ func issuesSummary(ctx context.Context, pool *pgxpool.Pool, projectIDs []string,
 
 func topIssues(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, from, to time.Time, limit int) ([]TopIssue, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT i.id, i.title, p.name, COUNT(e.id) AS cnt, i.status
+		SELECT i.id, p.issue_prefix || '-' || i.short_number, i.title, p.name, COUNT(e.id) AS cnt, i.status
 		FROM events e
 		JOIN issues i ON i.id = e.issue_id
 		JOIN projects p ON p.id = i.project_id
 		WHERE e.project_id = ANY($1)
 		  AND e.received_at >= $2 AND e.received_at < $3
 		  AND e.issue_id IS NOT NULL
-		GROUP BY i.id, i.title, p.name, i.status
+		GROUP BY i.id, p.issue_prefix, i.title, p.name, i.status
 		ORDER BY cnt DESC
 		LIMIT $4
 	`, projectIDs, from, to, limit)
@@ -83,7 +84,7 @@ func topIssues(ctx context.Context, pool *pgxpool.Pool, projectIDs []string, fro
 	var issues []TopIssue
 	for rows.Next() {
 		var issue TopIssue
-		if err := rows.Scan(&issue.IssueID, &issue.Title, &issue.ProjectName, &issue.Count, &issue.Status); err != nil {
+		if err := rows.Scan(&issue.IssueID, &issue.ShortID, &issue.Title, &issue.ProjectName, &issue.Count, &issue.Status); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		issues = append(issues, issue)

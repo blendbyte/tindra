@@ -314,7 +314,7 @@ func sampleReport() *Report {
 		},
 		Issues: IssuesSummary{New: 3, Regressed: 1, Ongoing: 5},
 		TopIssues: []TopIssue{
-			{IssueID: "issue-1", Title: "Unhandled exception in handler", ProjectName: "My App", Count: 800, Status: "open"},
+			{IssueID: "issue-1", ShortID: "MY-APP-7", Title: "Unhandled exception in handler", ProjectName: "My App", Count: 800, Status: "open"},
 			{IssueID: "issue-2", Title: "Database connection timeout", ProjectName: "Other App", Count: 200, Status: "regressed"},
 		},
 		TopTx: []TopTransaction{
@@ -372,6 +372,19 @@ func TestRenderDigestEmail_htmlContainsIssueTitle(t *testing.T) {
 	}
 	if !strings.Contains(html, "Unhandled exception in handler") {
 		t.Error("HTML should contain issue title")
+	}
+}
+
+// Top issues link to their page by short ID, or by UUID when they have none.
+func TestRenderDigestEmail_linksIssuesByShortID(t *testing.T) {
+	_, html, _, err := RenderDigestEmail(sampleReport())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{`href="https://tindra.example.com/issues/MY-APP-7"`, `href="https://tindra.example.com/issues/issue-2"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML should contain %s", want)
+		}
 	}
 }
 

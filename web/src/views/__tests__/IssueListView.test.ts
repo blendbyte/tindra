@@ -784,7 +784,7 @@ describe('virtual row rendering', () => {
     await input.trigger('keydown', { key: 'Enter' })
     await flushPromises()
     expect(apiFetch).toHaveBeenCalledWith('/api/issues/backend-42', expect.anything())
-    expect(pushMock).toHaveBeenCalledWith('/issues/iss-42')
+    expect(pushMock).toHaveBeenCalledWith('/issues/BACKEND-42')
   })
 
   it('keeps a plain title search on Enter', async () => {

@@ -406,6 +406,9 @@ func TestGetReleaseIssues_categories(t *testing.T) {
 			if ri.Category != "new" {
 				t.Errorf("expected category 'new', got %q", ri.Category)
 			}
+			if ri.ShortID != newIssue.ShortID || ri.ShortID == "" {
+				t.Errorf("short ID: got %q, want %q", ri.ShortID, newIssue.ShortID)
+			}
 		}
 	}
 	if !found {

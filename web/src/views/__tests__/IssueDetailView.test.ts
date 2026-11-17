@@ -5,6 +5,7 @@ import { ref, toValue } from 'vue'
 const pushMock = vi.fn()
 const prefetchQuery = vi.fn()
 const replaceMock = vi.fn()
+const setQueryData = vi.fn()
 
 vi.mock('vue-router', () => ({
   useRoute: vi.fn(() => ({ params: { id: 'iss-123' } })),
@@ -15,7 +16,7 @@ vi.mock('vue-router', () => ({
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
   useMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: ref(false) })),
-  useQueryClient: vi.fn(() => ({ invalidateQueries: vi.fn(), prefetchQuery })),
+  useQueryClient: vi.fn(() => ({ invalidateQueries: vi.fn(), prefetchQuery, setQueryData })),
   keepPreviousData: undefined,
 }))
 
@@ -190,6 +191,22 @@ describe('IssueDetailView', () => {
       expect(button.text()).toBe('BACKEND-42')
       await button.trigger('click')
       expect(copyMock).toHaveBeenCalledWith('BACKEND-42', 'Copied BACKEND-42')
+    })
+
+    it('puts the short ID in the address when opened by UUID or an old short ID', () => {
+      replaceMock.mockClear()
+      setupQueries({ ...baseIssue, short_id: 'BACKEND-42' })
+      mount(IssueDetailView, { global: { stubs } })
+      expect(replaceMock).toHaveBeenCalledWith(expect.objectContaining({ name: 'issue-detail', params: { id: 'BACKEND-42' } }))
+      expect(setQueryData).toHaveBeenCalledWith(['issues', 'BACKEND-42'], expect.objectContaining({ id: 'iss-123' }))
+    })
+
+    it('keeps the address when it already names the issue by its short ID', () => {
+      replaceMock.mockClear()
+      vi.mocked(useRoute).mockReturnValueOnce({ params: { id: 'BACKEND-42' } } as any)
+      setupQueries({ ...baseIssue, short_id: 'BACKEND-42' })
+      mount(IssueDetailView, { global: { stubs } })
+      expect(replaceMock).not.toHaveBeenCalled()
     })
 
     it('leaves the short ID out when the issue has none', () => {

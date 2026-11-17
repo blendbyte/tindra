@@ -381,7 +381,7 @@ func buildIssueCards(issues []*storage.Issue, projectName string, projectNames m
 			RequestURL:    iss.AlertReqURL,
 			RequestMethod: iss.AlertReqMethod,
 			Message:       iss.AlertMessage,
-			URL:           base + "/issues/" + iss.ID,
+			URL:           base + "/issues/" + iss.Ref(),
 			StackFrames:   iss.TopFrames,
 		})
 	}

@@ -1011,7 +1011,7 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("• " + chatShortID(iss) + "<" + e.publicURL + "/issues/" + iss.ID + "|" + escapeSlack(iss.Title) + ">\n")
+				sb.WriteString("• " + chatShortID(iss) + "<" + e.publicURL + "/issues/" + iss.Ref() + "|" + escapeSlack(iss.Title) + ">\n")
 			} else {
 				sb.WriteString("• " + chatShortID(iss) + escapeSlack(iss.Title) + "\n")
 			}
@@ -1149,7 +1149,7 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("- " + chatShortID(iss) + "[" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
+				sb.WriteString("- " + chatShortID(iss) + "[" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.Ref() + ")\n")
 			} else {
 				sb.WriteString("- " + chatShortID(iss) + escapeMarkdown(iss.Title) + "\n")
 			}
@@ -1313,7 +1313,7 @@ func (e *Evaluator) fireTeams(ctx context.Context, rule *storage.AlertRule, payl
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("- " + chatShortID(iss) + "[" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
+				sb.WriteString("- " + chatShortID(iss) + "[" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.Ref() + ")\n")
 			} else {
 				sb.WriteString("- " + chatShortID(iss) + escapeMarkdown(iss.Title) + "\n")
 			}

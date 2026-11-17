@@ -107,7 +107,7 @@ export type IssueStatus = 'open' | 'resolved' | 'ignored' | 'regressed'
 export type IssueLevel = 'fatal' | 'error' | 'warning' | 'info'
 
 export interface DashboardIssuePage {
-  issues: Pick<Issue, 'id' | 'project_id' | 'title' | 'level' | 'event_count' | 'sparkline'>[]
+  issues: Pick<Issue, 'id' | 'short_id' | 'project_id' | 'title' | 'level' | 'event_count' | 'sparkline'>[]
   total: number
 }
 
@@ -255,6 +255,7 @@ export interface Release {
 
 export interface ReleaseIssue {
   id: string
+  short_id: string
   title: string
   status: string
   level: string

@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
 import { formatDuration, formatPct } from '@/utils/formatters'
 import { splitTitle } from '@/utils/issueTitle'
+import { issueRef } from '@/utils/shortId'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Release, ReleaseIssue, ReleaseTxSummary } from '@/api/types'
 import Icon from '@/components/Icon.vue'
@@ -255,7 +256,7 @@ function levelClass(level: string) {
                   class="rel-issue-row"
                   v-clickable
                   role="link"
-                  @click="router.push(`/issues/${issue.id}`)"
+                  @click="router.push(`/issues/${issueRef(issue)}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
                   <div class="rel-issue-title" :title="issue.title"><template v-if="splitTitle(issue.title).type"><span class="issue__title-type">{{ splitTitle(issue.title).type }}</span><span class="rel-issue-title__sep">: </span></template>{{ splitTitle(issue.title).message }}</div>
@@ -278,7 +279,7 @@ function levelClass(level: string) {
                   class="rel-issue-row"
                   v-clickable
                   role="link"
-                  @click="router.push(`/issues/${issue.id}`)"
+                  @click="router.push(`/issues/${issueRef(issue)}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
                   <div class="rel-issue-title" :title="issue.title"><template v-if="splitTitle(issue.title).type"><span class="issue__title-type">{{ splitTitle(issue.title).type }}</span><span class="rel-issue-title__sep">: </span></template>{{ splitTitle(issue.title).message }}</div>
@@ -301,7 +302,7 @@ function levelClass(level: string) {
                   class="rel-issue-row"
                   v-clickable
                   role="link"
-                  @click="router.push(`/issues/${issue.id}`)"
+                  @click="router.push(`/issues/${issueRef(issue)}`)"
                 >
                   <span class="leveldot" :class="levelClass(issue.level)" />
                   <div class="rel-issue-title" :title="issue.title"><template v-if="splitTitle(issue.title).type"><span class="issue__title-type">{{ splitTitle(issue.title).type }}</span><span class="rel-issue-title__sep">: </span></template>{{ splitTitle(issue.title).message }}</div>

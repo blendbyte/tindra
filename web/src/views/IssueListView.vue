@@ -22,7 +22,7 @@ import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 import { useMe } from '@/composables/useMe'
 import { useDebounced } from '@/composables/useDebounced'
 import { splitTitle } from '@/utils/issueTitle'
-import { findIssueByShortId } from '@/utils/shortId'
+import { findIssueByShortId, issueRef } from '@/utils/shortId'
 
 const router = useRouter()
 const route = useRoute()
@@ -71,7 +71,7 @@ const search = ref(qp('q', ''))
 async function openShortId() {
   try {
     const issue = await findIssueByShortId(search.value)
-    if (issue) router.push(`/issues/${issue.id}`)
+    if (issue) router.push(`/issues/${issueRef(issue)}`)
   } catch {
     // Not found or failed: the search stays a title search.
   }
@@ -467,24 +467,24 @@ function levelColor(level: string) {
   }
 }
 
-function openIssue(id: string) {
-  navStore.set(sorted.value.map(i => i.id))
-  router.push(`/issues/${id}`)
+function openIssue(issue: Issue) {
+  navStore.set(sorted.value.map(issueRef))
+  router.push(`/issues/${issueRef(issue)}`)
 }
 
-function navigateIssue(e: MouseEvent, idx: number, id: string) {
+function navigateIssue(e: MouseEvent, idx: number, issue: Issue) {
   // Let modified clicks (new tab, middle-click) use the href natively.
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
   e.preventDefault()
-  if (selecting.value) { toggleSelect(id); return }
+  if (selecting.value) { toggleSelect(issue.id); return }
   selectedIdx.value = idx
-  openIssue(id)
+  openIssue(issue)
 }
 
-function onRowClick(idx: number, id: string) {
-  if (selecting.value) { toggleSelect(id); return }
+function onRowClick(idx: number, issue: Issue) {
+  if (selecting.value) { toggleSelect(issue.id); return }
   selectedIdx.value = idx
-  openIssue(id)
+  openIssue(issue)
 }
 
 function resolveSelected() {
@@ -517,7 +517,7 @@ function onKey(e: KeyboardEvent) {
   if (e.key === '/') { e.preventDefault(); searchInput.value?.focus(); return }
   if (e.key.toLowerCase() === 'j') { e.preventDefault(); selectedIdx.value = Math.min(sorted.value.length - 1, selectedIdx.value < 0 ? 0 : selectedIdx.value + 1) }
   else if (e.key.toLowerCase() === 'k') { e.preventDefault(); selectedIdx.value = Math.max(0, selectedIdx.value < 0 ? 0 : selectedIdx.value - 1) }
-  else if (e.key === 'Enter') { const cur = sorted.value[selectedIdx.value]; if (cur) openIssue(cur.id) }
+  else if (e.key === 'Enter') { const cur = sorted.value[selectedIdx.value]; if (cur) openIssue(cur) }
   else if (e.key.toLowerCase() === 'x') { const cur = sorted.value[selectedIdx.value]; if (cur) toggleSelect(cur.id) }
   else if (!canManageIssues.value) return
   else if (e.key.toLowerCase() === 'e') { if (selectedIds.size > 0) bulkResolve(); else resolveSelected() }
@@ -806,7 +806,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
           :style="{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vRow.start - rowVirtualizer.options.scrollMargin}px)` }"
           role="row"
           tabindex="0"
-          @click="onRowClick(vRow.index, sorted[vRow.index].id)"
+          @click="onRowClick(vRow.index, sorted[vRow.index])"
         >
           <input
             type="checkbox"
@@ -817,7 +817,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
             @change="toggleSelect(sorted[vRow.index].id)"
           />
           <span class="leveldot" :class="sorted[vRow.index]?.kind === 'n1_query' ? 'leveldot--n1' : `leveldot--${sorted[vRow.index]?.level}`" />
-          <a :href="investigation.link(`/issues/${sorted[vRow.index]?.id}`)" class="issue__title" @click.stop="navigateIssue($event, vRow.index, sorted[vRow.index].id)">
+          <a :href="investigation.link(`/issues/${issueRef(sorted[vRow.index])}`)" class="issue__title" @click.stop="navigateIssue($event, vRow.index, sorted[vRow.index])">
             <div style="min-width: 0; flex: 1">
               <div class="issue__title-text">
                 <template v-if="splitTitle(sorted[vRow.index]?.title ?? '').type">

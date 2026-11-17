@@ -26,6 +26,7 @@ type Release struct {
 // ReleaseIssue is a minimal issue summary used on the release detail page.
 type ReleaseIssue struct {
 	ID         string    `json:"id"`
+	ShortID    string    `json:"short_id"`
 	Title      string    `json:"title"`
 	Status     string    `json:"status"`
 	Level      string    `json:"level"`
@@ -276,7 +277,7 @@ func GetReleaseIssues(ctx context.Context, pool *pgxpool.Pool, releaseID string)
 
 	rows, err := pool.Query(ctx, `
 		SELECT
-			i.id, i.title, i.status, i.level, i.first_seen, i.last_seen, i.event_count,
+			i.id, `+shortIDSQL("i")+`, i.title, i.status, i.level, i.first_seen, i.last_seen, i.event_count,
 			CASE
 				WHEN i.status = 'regressed' AND i.regressed_release = $2 THEN 'regressed'
 				WHEN i.first_release = $2 THEN 'new'
@@ -304,7 +305,7 @@ func GetReleaseIssues(ctx context.Context, pool *pgxpool.Pool, releaseID string)
 	var issues []*ReleaseIssue
 	for rows.Next() {
 		var ri ReleaseIssue
-		if err := rows.Scan(&ri.ID, &ri.Title, &ri.Status, &ri.Level, &ri.FirstSeen, &ri.LastSeen, &ri.EventCount, &ri.Category); err != nil {
+		if err := rows.Scan(&ri.ID, &ri.ShortID, &ri.Title, &ri.Status, &ri.Level, &ri.FirstSeen, &ri.LastSeen, &ri.EventCount, &ri.Category); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		issues = append(issues, &ri)

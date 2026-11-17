@@ -66,6 +66,15 @@ const { data: issue, isError: issueError, refetch: refetchIssue } = useQuery({
   queryFn: ({ signal }) => apiFetch<Issue>(`/api/issues/${issueId.value}`, { signal }),
 })
 
+// The address names the issue by its short ID, which the API takes in place of
+// the UUID. A UUID, another spelling or the short ID of an issue merged into
+// this one still opens it and is swapped for the current short ID.
+watch(issue, (iss) => {
+  if (!iss?.short_id || iss.short_id === issueId.value) return
+  qc.setQueryData(['issues', iss.short_id], iss)
+  router.replace({ name: 'issue-detail', params: { id: iss.short_id }, query: route.query, hash: route.hash })
+}, { immediate: true })
+
 // The hero names the project, falling back to its ID until projects load.
 const projectName = computed(() =>
   projectsStore.projects?.find(p => p.id === issue.value?.project_id)?.name ?? issue.value?.project_id ?? '')

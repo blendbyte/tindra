@@ -13,6 +13,12 @@ export function isShortId(s: string): boolean {
   return !UUID.test(v) && SHORT_ID.test(v)
 }
 
+// issueRef is how an issue's address names it: by its short ID, or by its
+// UUID when it was loaded without one, which the issue page then swaps out.
+export function issueRef(issue: { id: string; short_id?: string }): string {
+  return issue.short_id || issue.id
+}
+
 // findIssueByShortId loads the issue a short ID names, following merges, or
 // returns null when no issue has it.
 export async function findIssueByShortId(s: string, signal?: AbortSignal): Promise<Issue | null> {

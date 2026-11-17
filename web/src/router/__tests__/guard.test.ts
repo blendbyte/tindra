@@ -3,13 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { defineComponent } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import type { User } from '@/api/types'
-import { authGuard, safeRedirect, shortIdGuard } from '../guard'
-import { findIssueByShortId } from '@/utils/shortId'
-
-vi.mock('@/utils/shortId', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/utils/shortId')>()),
-  findIssueByShortId: vi.fn(),
-}))
+import { authGuard, safeRedirect } from '../guard'
 
 const mockUser: User = {
   id: '1',
@@ -203,46 +197,5 @@ describe('safeRedirect', () => {
     for (const value of [undefined, '', 'https://evil.example', '//evil.example', '/\\evil.example', 'issues', ['/issues'], '/login', '/login?redirect=/x']) {
       expect(safeRedirect(value)).toBe('/dashboard')
     }
-  })
-})
-
-describe('short ID guard', () => {
-  const uuid = '550e8400-e29b-41d4-a716-446655440000'
-
-  function buildShortIdRouter() {
-    const r = createRouter({
-      history: createWebHistory(),
-      routes: [
-        { path: '/', component: defineComponent({ template: '<div />' }) },
-        { path: '/issues/:id', name: 'issue-detail', component: defineComponent({ template: '<div />' }) },
-      ],
-    })
-    r.beforeEach(shortIdGuard)
-    return r
-  }
-
-  beforeEach(() => { vi.mocked(findIssueByShortId).mockReset() })
-
-  it('opens the issue a short ID names under its own URL, keeping query and hash', async () => {
-    vi.mocked(findIssueByShortId).mockResolvedValue({ id: uuid } as any)
-    const router = buildShortIdRouter()
-    await router.push('/issues/BACKEND-42?event_id=e1#stack')
-    expect(findIssueByShortId).toHaveBeenCalledWith('BACKEND-42')
-    expect(router.currentRoute.value.fullPath).toBe(`/issues/${uuid}?event_id=e1#stack`)
-  })
-
-  it('leaves UUIDs, unknown short IDs and failed lookups alone', async () => {
-    const router = buildShortIdRouter()
-    await router.push(`/issues/${uuid}`)
-    expect(findIssueByShortId).not.toHaveBeenCalled()
-    expect(router.currentRoute.value.path).toBe(`/issues/${uuid}`)
-
-    vi.mocked(findIssueByShortId).mockResolvedValue(null)
-    await router.push('/issues/BACKEND-999')
-    expect(router.currentRoute.value.path).toBe('/issues/BACKEND-999')
-
-    vi.mocked(findIssueByShortId).mockRejectedValue(new Error('offline'))
-    await router.push('/issues/BACKEND-7')
-    expect(router.currentRoute.value.path).toBe('/issues/BACKEND-7')
   })
 })

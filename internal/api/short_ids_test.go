@@ -63,6 +63,42 @@ func TestGetIssue_byShortID(t *testing.T) {
 	}
 }
 
+// The issue page requests its sections and changes by the short ID in its
+// address, so every /api/issues/{id} route takes one.
+func TestIssueSubroutes_byShortID(t *testing.T) {
+	truncateIssues(t)
+	iss := seedIssue(t, "short-id-subroutes", "Subroute Error")
+
+	status := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		mcpHandler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, sub := range []string{"/comments", "/history", "/tags", "/events/histogram"} {
+		if code := status("/api/issues/" + iss.ShortID + sub); code != http.StatusOK {
+			t.Errorf("%s: expected 200, got %d", sub, code)
+		}
+		if code := status("/api/issues/TEST-PROJECT-999999" + sub); code != http.StatusNotFound {
+			t.Errorf("unknown short ID %s: expected 404, got %d", sub, code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/issues/"+strings.ToLower(iss.ShortID), strings.NewReader(`{"status":"resolved"}`))
+	req.AddCookie(authCookie())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mcpHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH by short ID: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := storage.GetIssue(context.Background(), testPool, iss.ID)
+	if err != nil || got.Status != "resolved" {
+		t.Errorf("PATCH by short ID: status %v, err %v", got, err)
+	}
+}
+
 // A short ID does not get a token past its project scope.
 func TestGetIssue_byShortIDTokenScoped(t *testing.T) {
 	truncateIssues(t)

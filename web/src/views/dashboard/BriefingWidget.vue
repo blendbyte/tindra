@@ -10,6 +10,7 @@ import CheckHistory from './CheckHistory.vue'
 import { useWindowLabel } from './shared'
 import { degradedVitals, type PerformanceOverview } from './overview'
 import { plural } from '@/utils/plural'
+import { issueRef } from '@/utils/shortId'
 import { useNow } from '@/composables/useNow'
 import { useAttentionQuery, useMonitorQueries } from '@/composables/useBriefingData'
 import {
@@ -206,7 +207,7 @@ const monitorLink = (b: BrokenMonitor) => investigation.link(b.kind === 'uptime'
       <ul class="brief__rows">
         <li v-for="issue in [...regressed, ...fresh]" :key="issue.id">
           <RouterLink
-            :to="investigation.link(`/issues/${issue.id}`)"
+            :to="investigation.link(`/issues/${issueRef(issue)}`)"
             class="brief-row"
             :class="{ 'brief-row--unseen': isUnseen(issue.status === 'regressed' ? issue.regressed_at : issue.first_seen, lastVisit) }"
           >

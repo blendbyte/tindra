@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { authGuard, shortIdGuard } from './guard'
+import { authGuard } from './guard'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -188,4 +188,3 @@ router.afterEach((to) => {
 })
 
 router.beforeEach(authGuard)
-router.beforeEach(shortIdGuard)

@@ -4,6 +4,7 @@ import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
 import { splitTitle } from './briefing'
 import { fmt, type DashboardIssue } from './shared'
+import { issueRef } from '@/utils/shortId'
 
 defineProps<{
   issues: DashboardIssue[]
@@ -21,7 +22,7 @@ const investigation = useInvestigationStore()
     </div>
     <ul class="busy">
       <li v-for="issue in issues" :key="issue.id">
-        <RouterLink :to="investigation.link(`/issues/${issue.id}`)" class="busy__row">
+        <RouterLink :to="investigation.link(`/issues/${issueRef(issue)}`)" class="busy__row">
           <span :class="`leveldot leveldot--${issue.level}`" />
           <span class="busy__title">
             <span v-if="splitTitle(issue.title).type" class="busy__type mono">{{ splitTitle(issue.title).type }}</span><template v-if="splitTitle(issue.title).type">: </template>{{ splitTitle(issue.title).message }}

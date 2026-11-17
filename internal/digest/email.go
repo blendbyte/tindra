@@ -213,7 +213,7 @@ var digestBodyTmpl = template.Must(template.New("digest-body").Funcs(template.Fu
   {{range .TopIssues}}{{$t := splitTitle .Title}}
   <tr>
     <td style="__TD__">
-      <a href="{{$.IssueURL .IssueID}}" style="display:block;font-size:13px;line-height:1.45;color:__TEXT1__;text-decoration:none;word-break:break-word;__SANS__">{{with index $t 0}}<span style="color:__ACCENT__;__MONO__">{{.}}</span>: {{end}}{{index $t 1}}</a>
+      <a href="{{$.IssueURL (or .ShortID .IssueID)}}" style="display:block;font-size:13px;line-height:1.45;color:__TEXT1__;text-decoration:none;word-break:break-word;__SANS__">{{with index $t 0}}<span style="color:__ACCENT__;__MONO__">{{.}}</span>: {{end}}{{index $t 1}}</a>
       <p style="__SUBLINE__">{{.ProjectName}}</p>
     </td>
     <td style="__NUM__">{{formatCount .Count}}</td>
@@ -271,8 +271,8 @@ type digestTemplateData struct {
 	baseURL     string
 }
 
-func (d *digestTemplateData) IssueURL(issueID string) string {
-	return strings.TrimRight(d.baseURL, "/") + "/issues/" + issueID
+func (d *digestTemplateData) IssueURL(issueRef string) string {
+	return strings.TrimRight(d.baseURL, "/") + "/issues/" + issueRef
 }
 
 // buildDayLabels returns Mon/Tue/... labels for a 7-day window ending the day before `to`.
