@@ -66,7 +66,7 @@ const waitingLong = computed(() => !!data.value?.check && !confirmed.value && no
 const headline = computed(() => error.value ? 'Setup status unavailable' : expired.value ? 'Setup check expired' : confirmed.value ? 'Test event received' : checkId.value ? 'Waiting for your test event' : connected.value ? 'Your app is connected' : 'Waiting for your first event')
 const testExample = computed(() => data.value?.examples.test)
 const eventExample = computed(() => testExample.value ?? data.value?.examples.events)
-const eventLink = computed(() => eventExample.value?.issue_id ? `/issues/${eventExample.value.issue_id}?event_id=${eventExample.value.id}` : '')
+const eventLink = computed(() => eventExample.value?.issue_id ? `/issues/${eventExample.value.short_id || eventExample.value.issue_id}?event_id=${eventExample.value.id}` : '')
 const time = (value: string) => new Date(value).toLocaleString()
 
 const snippet = computed(() => {

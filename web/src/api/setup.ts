@@ -9,6 +9,7 @@ export interface SetupCheck {
 export interface SetupExample {
   id: string
   issue_id: string | null
+  short_id: string | null
   received_at: string
   environment: string
   sdk: string

@@ -587,6 +587,9 @@ func TestGetErrorsForTrace_withErrors(t *testing.T) {
 	if errs[0].IssueID != issue.ID {
 		t.Errorf("issue_id: got %q, want %q", errs[0].IssueID, issue.ID)
 	}
+	if errs[0].ShortID == "" || errs[0].ShortID != issue.ShortID {
+		t.Errorf("short_id: got %q, want %q", errs[0].ShortID, issue.ShortID)
+	}
 	if errs[0].Title != "Trace Error" {
 		t.Errorf("title: got %q", errs[0].Title)
 	}

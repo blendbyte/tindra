@@ -225,6 +225,7 @@ export interface TraceError {
   span_id: string
   timestamp: string
   issue_id: string
+  short_id: string
   title: string
   level: string
   status: string

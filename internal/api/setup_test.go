@@ -233,6 +233,39 @@ func TestSetupMixedEnvelopeReportsDroppedProfileAndQueuedError(t *testing.T) {
 	require.Empty(t, receipts, "queued is not stored")
 }
 
+// The setup page links the test event to its issue page by short ID.
+func TestSetupStatusExampleCarriesIssueShortID(t *testing.T) {
+	p := setupProject(t)
+	h := authHandler()
+	base := "/api/projects/" + p.Slug
+	res := setupRequest(t, h, "POST", base+"/setup-checks")
+	require.Equal(t, 201, res.Code, res.Body.String())
+	var check storage.SetupCheck
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &check))
+	issue, _, _, err := storage.UpsertIssue(t.Context(), testPool, p.ID, "setup-short", "Setup short", "error", "error", "", "", time.Now())
+	require.NoError(t, err)
+	require.NotEmpty(t, issue.ShortID)
+	_, err = testPool.Exec(t.Context(), `INSERT INTO events(project_id,issue_id,timestamp,payload) VALUES($1,$2,now(),$3)`,
+		p.ID, issue.ID, fmt.Sprintf(`{"tags":{"tindra_setup":%q}}`, check.ID))
+	require.NoError(t, err)
+
+	res = setupRequest(t, h, "GET", base+"/setup-status?check_id="+check.ID)
+	require.Equal(t, 200, res.Code, res.Body.String())
+	var status struct {
+		Examples map[string]struct {
+			IssueID *string `json:"issue_id"`
+			ShortID *string `json:"short_id"`
+		} `json:"examples"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &status))
+	for _, kind := range []string{"test", "events"} {
+		ex, ok := status.Examples[kind]
+		require.True(t, ok, kind)
+		require.NotNil(t, ex.ShortID, kind)
+		require.Equal(t, issue.ShortID, *ex.ShortID, kind)
+	}
+}
+
 func TestSetupSourceMapsVerifyRealFramesAndExactEventLink(t *testing.T) {
 	p, other := setupProject(t), setupProject(t)
 	store := sourcemaps.NewStore(t.TempDir(), testPool)

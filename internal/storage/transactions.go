@@ -50,6 +50,7 @@ type TraceError struct {
 	SpanID    string    `json:"span_id,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 	IssueID   string    `json:"issue_id"`
+	ShortID   string    `json:"short_id"`
 	Title     string    `json:"title"`
 	Level     string    `json:"level"`
 	Status    string    `json:"status"`
@@ -604,7 +605,7 @@ func GetTransactionByTraceID(ctx context.Context, pool *pgxpool.Pool, traceID st
 // A non-nil projectIDs limits results to those projects.
 func GetErrorsForTrace(ctx context.Context, pool *pgxpool.Pool, traceID string, projectIDs []string) ([]*TraceError, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT e.id, COALESCE(e.span_id, ''), e.timestamp, i.id, i.title, COALESCE(e.level, 'error'), i.status
+		SELECT e.id, COALESCE(e.span_id, ''), e.timestamp, i.id, `+shortIDSQL("i")+`, i.title, COALESCE(e.level, 'error'), i.status
 		FROM events e
 		JOIN issues i ON i.id = e.issue_id
 		WHERE e.trace_id = $1 AND ($2::uuid[] IS NULL OR e.project_id = ANY($2::uuid[]))
@@ -619,7 +620,7 @@ func GetErrorsForTrace(ctx context.Context, pool *pgxpool.Pool, traceID string, 
 	var out []*TraceError
 	for rows.Next() {
 		var e TraceError
-		if err := rows.Scan(&e.EventID, &e.SpanID, &e.Timestamp, &e.IssueID, &e.Title, &e.Level, &e.Status); err != nil {
+		if err := rows.Scan(&e.EventID, &e.SpanID, &e.Timestamp, &e.IssueID, &e.ShortID, &e.Title, &e.Level, &e.Status); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		out = append(out, &e)

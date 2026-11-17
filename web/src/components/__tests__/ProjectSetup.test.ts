@@ -22,7 +22,7 @@ let check: SetupCheck
 let wrapper: VueWrapper | undefined
 let client: QueryClient
 function makeExample(id: string): SetupExample {
-  return { id, issue_id: null, received_at: status.checked_at, environment: '', sdk: '', release: '' }
+  return { id, issue_id: null, short_id: null, received_at: status.checked_at, environment: '', sdk: '', release: '' }
 }
 beforeEach(() => {
   vi.clearAllMocks()
@@ -71,11 +71,11 @@ describe('Project setup', () => {
     expect(wrapper!.find('h2').text()).toBe('Waiting for your test event')
     expect(wrapper!.text()).not.toContain('Test event received')
     status.check = { ...check, received_at: status.checked_at, event_id: 'matching-event' }
-    status.examples.test = { id: 'matching-event', issue_id: 'issue-one', received_at: status.checked_at, environment: 'staging', sdk: 'sentry.javascript.node 10', release: 'v1' }
+    status.examples.test = { id: 'matching-event', issue_id: 'issue-one', short_id: 'BACKEND-7', received_at: status.checked_at, environment: 'staging', sdk: 'sentry.javascript.node 10', release: 'v1' }
     await click('Check again')
     expect(wrapper!.find('h2').text()).toBe('Test event received')
     expect(wrapper!.text()).toContain('staging')
-    expect(wrapper!.find('a[href="/issues/issue-one?event_id=matching-event"]').exists()).toBe(true)
+    expect(wrapper!.find('a[href="/issues/BACKEND-7?event_id=matching-event"]').exists()).toBe(true)
     expect(wrapper!.emitted('continue')).toBeUndefined()
     await click('Continue to dashboard')
     expect(wrapper!.emitted('continue')).toHaveLength(1)

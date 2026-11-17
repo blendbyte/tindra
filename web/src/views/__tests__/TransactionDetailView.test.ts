@@ -202,6 +202,19 @@ describe('TransactionDetailView', () => {
       const wrapper = mount(TransactionDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('2 in this trace')
     })
+
+    it('links each error to its issue by short ID, or by UUID without one', () => {
+      const traceErrors = [
+        { event_id: 'ev1', issue_id: 'iss-1', short_id: 'BACKEND-42', level: 'error', title: 'Error A', timestamp: '2024-01-01T00:00:00.100Z', span_id: null },
+        { event_id: 'ev2', issue_id: 'iss-2', short_id: '', level: 'warning', title: 'Error B', timestamp: '2024-01-01T00:00:00.200Z', span_id: null },
+      ]
+      setupMocks(baseTx, [], false, false, undefined, traceErrors)
+      const wrapper = mount(TransactionDetailView, {
+        global: { stubs: { ...stubs, RouterLink: { props: ['to'], template: '<a :data-issue="to.params?.id"><slot /></a>' } } },
+      })
+      const ids = wrapper.findAll('.trace-log-row--link').map(a => a.attributes('data-issue'))
+      expect(ids).toEqual(['BACKEND-42', 'iss-2'])
+    })
   })
 
   describe('trace log correlation', () => {
