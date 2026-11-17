@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/blendbyte/tindra/internal/alerts"
+	"github.com/blendbyte/tindra/internal/ingest"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -32,6 +34,40 @@ var validLevels = map[string]bool{"fatal": true, "error": true, "warning": true,
 var validLogCountLevels = map[string]bool{"fatal": true, "error": true, "warning": true}
 
 const maxFilterSearchLen = 200
+
+// maxFilterEnvironments bounds how many environments one rule can match.
+const maxFilterEnvironments = 20
+
+// normalizeEnvironments trims names, drops blanks and repeats, and keeps the
+// order given. An empty result matches every environment.
+func normalizeEnvironments(envs []string) ([]string, string) {
+	out := make([]string, 0, len(envs))
+	for _, env := range envs {
+		env = strings.TrimSpace(env)
+		if env == "" || slices.Contains(out, env) {
+			continue
+		}
+		if len(env) > ingest.MaxIndexedFieldBytes {
+			return nil, fmt.Sprintf("filter_environments entries must be at most %d bytes", ingest.MaxIndexedFieldBytes)
+		}
+		// Checked per entry so a long list is refused before the repeat
+		// check above grows quadratic.
+		if len(out) == maxFilterEnvironments {
+			return nil, fmt.Sprintf("filter_environments can list at most %d environments", maxFilterEnvironments)
+		}
+		out = append(out, env)
+	}
+	return out, ""
+}
+
+// legacyEnvironments maps the single filter_environment field that came
+// before filter_environments, so API clients written for it keep working.
+func legacyEnvironments(env *string) []string {
+	if env == nil || strings.TrimSpace(*env) == "" {
+		return nil
+	}
+	return []string{*env}
+}
 
 func validateAlertRule(r *storage.AlertRule) string {
 	if r.Name == "" {
@@ -108,6 +144,11 @@ func validateAlertRule(r *storage.AlertRule) string {
 	if r.MinOccurrences != nil && *r.MinOccurrences < 1 {
 		return "min_occurrences must be at least 1"
 	}
+	envs, msg := normalizeEnvironments(r.FilterEnvironments)
+	if msg != "" {
+		return msg
+	}
+	r.FilterEnvironments = envs
 	if r.CooldownMins <= 0 {
 		r.CooldownMins = 60
 	}
@@ -125,10 +166,17 @@ func nonemptyCount(ids []string) int {
 }
 
 func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
-	var rule storage.AlertRule
-	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+	var body struct {
+		storage.AlertRule
+		LegacyEnvironment *string `json:"filter_environment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
+	}
+	rule := body.AlertRule
+	if rule.FilterEnvironments == nil {
+		rule.FilterEnvironments = legacyEnvironments(body.LegacyEnvironment)
 	}
 	rule.Enabled = true // default on creation; caller can override
 
@@ -277,28 +325,30 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 
 	// Decode patch - only provided fields overwrite the existing rule.
 	var patch struct {
-		Name              *string  `json:"name"`
-		Enabled           *bool    `json:"enabled"`
-		Trigger           *string  `json:"trigger"`
-		Threshold         *int     `json:"threshold"`
-		WindowMins        *int     `json:"window_mins"`
-		Channel           *string  `json:"channel"`
-		WebhookURL        *string  `json:"webhook_url"`
-		EmailTo           *string  `json:"email_to"`
-		CooldownMins      *int     `json:"cooldown_mins"`
-		FilterLevel       *string  `json:"filter_level"`
-		FilterEnvironment *string  `json:"filter_environment"`
-		MinOccurrences    *int     `json:"min_occurrences"`
-		FilterSearch      *string  `json:"filter_search"`
-		ProjectIDs        []string `json:"project_ids"`
-		RecipientIDs      []string `json:"recipient_ids"`
+		Name               *string  `json:"name"`
+		Enabled            *bool    `json:"enabled"`
+		Trigger            *string  `json:"trigger"`
+		Threshold          *int     `json:"threshold"`
+		WindowMins         *int     `json:"window_mins"`
+		Channel            *string  `json:"channel"`
+		WebhookURL         *string  `json:"webhook_url"`
+		EmailTo            *string  `json:"email_to"`
+		CooldownMins       *int     `json:"cooldown_mins"`
+		FilterLevel        *string  `json:"filter_level"`
+		FilterEnvironments []string `json:"filter_environments"`
+		LegacyEnvironment  *string  `json:"filter_environment"`
+		MinOccurrences     *int     `json:"min_occurrences"`
+		FilterSearch       *string  `json:"filter_search"`
+		ProjectIDs         []string `json:"project_ids"`
+		RecipientIDs       []string `json:"recipient_ids"`
 		// Explicit nulls: sending null clears the field.
-		ClearFilterLevel       bool `json:"-"`
-		ClearFilterEnvironment bool `json:"-"`
-		ClearMinOccurrences    bool `json:"-"`
-		ClearFilterSearch      bool `json:"-"`
-		HasProjectIDs          bool `json:"-"`
-		HasRecipientIDs        bool `json:"-"`
+		ClearFilterLevel      bool `json:"-"`
+		HasFilterEnvironments bool `json:"-"`
+		HasLegacyEnvironment  bool `json:"-"`
+		ClearMinOccurrences   bool `json:"-"`
+		ClearFilterSearch     bool `json:"-"`
+		HasProjectIDs         bool `json:"-"`
+		HasRecipientIDs       bool `json:"-"`
 	}
 	// Use a raw map to detect explicit nulls vs omitted fields.
 	var raw map[string]json.RawMessage
@@ -333,12 +383,13 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 			} else {
 				parseErr = json.Unmarshal(v, &patch.FilterLevel)
 			}
+		case "filter_environments":
+			// null clears the filter, like an empty list.
+			parseErr = json.Unmarshal(v, &patch.FilterEnvironments)
+			patch.HasFilterEnvironments = true
 		case "filter_environment":
-			if string(v) == "null" {
-				patch.ClearFilterEnvironment = true
-			} else {
-				parseErr = json.Unmarshal(v, &patch.FilterEnvironment)
-			}
+			parseErr = json.Unmarshal(v, &patch.LegacyEnvironment)
+			patch.HasLegacyEnvironment = true
 		case "min_occurrences":
 			if string(v) == "null" {
 				patch.ClearMinOccurrences = true
@@ -400,10 +451,10 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 	} else if patch.ClearFilterLevel {
 		existing.FilterLevel = nil
 	}
-	if patch.FilterEnvironment != nil {
-		existing.FilterEnvironment = patch.FilterEnvironment
-	} else if patch.ClearFilterEnvironment {
-		existing.FilterEnvironment = nil
+	if patch.HasFilterEnvironments {
+		existing.FilterEnvironments = patch.FilterEnvironments
+	} else if patch.HasLegacyEnvironment {
+		existing.FilterEnvironments = legacyEnvironments(patch.LegacyEnvironment)
 	}
 	if patch.MinOccurrences != nil {
 		existing.MinOccurrences = patch.MinOccurrences

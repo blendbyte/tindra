@@ -482,14 +482,14 @@ func TestUpdateAlertRule_clearFilters(t *testing.T) {
 	env := "production"
 	min := 3
 	rule, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
-		Name:              "clear-filter-rule-cov4",
-		Enabled:           true,
-		Trigger:           "new_issue",
-		Channel:           "email",
-		EmailTo:           &emailTo,
-		FilterLevel:       &level,
-		FilterEnvironment: &env,
-		MinOccurrences:    &min,
+		Name:               "clear-filter-rule-cov4",
+		Enabled:            true,
+		Trigger:            "new_issue",
+		Channel:            "email",
+		EmailTo:            &emailTo,
+		FilterLevel:        &level,
+		FilterEnvironments: []string{env},
+		MinOccurrences:     &min,
 	})
 	if err != nil {
 		t.Fatalf("create alert rule: %v", err)

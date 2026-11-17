@@ -41,15 +41,15 @@ func TestAppendIssueFilters_levelOnly(t *testing.T) {
 }
 
 func TestAppendIssueFilters_environmentOnly(t *testing.T) {
-	rule := &storage.AlertRule{FilterEnvironment: new("production")}
+	rule := &storage.AlertRule{FilterEnvironments: []string{"production", "staging"}}
 	where, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
 
-	expected := fmt.Sprintf("AND environment = $%d", len(args))
+	expected := fmt.Sprintf("AND environment = ANY($%d::text[])", len(args))
 	if !strings.Contains(where, expected) {
 		t.Errorf("environment clause missing: %q", where)
 	}
-	if args[len(args)-1] != "production" {
-		t.Errorf("environment arg: got %v", args[len(args)-1])
+	if got := fmt.Sprint(args[len(args)-1]); got != "[production staging]" {
+		t.Errorf("environment arg: got %v", got)
 	}
 }
 
@@ -68,9 +68,9 @@ func TestAppendIssueFilters_minOccurrencesOnly(t *testing.T) {
 
 func TestAppendIssueFilters_allThree(t *testing.T) {
 	rule := &storage.AlertRule{
-		FilterLevel:       new("error"),
-		FilterEnvironment: new("staging"),
-		MinOccurrences:    new(10),
+		FilterLevel:        new("error"),
+		FilterEnvironments: []string{"staging"},
+		MinOccurrences:     new(10),
 	}
 	where, args := appendIssueFilters(rule, "project_id = $1", []any{"proj-1"})
 
@@ -81,7 +81,7 @@ func TestAppendIssueFilters_allThree(t *testing.T) {
 	if !strings.Contains(where, "level = ANY($2::text[])") {
 		t.Errorf("level clause missing: %q", where)
 	}
-	if !strings.Contains(where, "environment = $3") {
+	if !strings.Contains(where, "environment = ANY($3::text[])") {
 		t.Errorf("environment clause missing: %q", where)
 	}
 	if !strings.Contains(where, "event_count >= $4") {

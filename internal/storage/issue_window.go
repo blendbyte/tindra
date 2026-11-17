@@ -64,6 +64,7 @@ func windowIssueCTE(filter IssueFilter, bounds TimeRange) (string, []any) {
 }
 func windowIssueFilters(q string, args []any, filter IssueFilter) (string, []any) {
 	filter.Environment = ""
+	filter.Environments = nil
 	filter.UserIdentity = ""
 	return addCommonFilters(q, args, filter)
 }

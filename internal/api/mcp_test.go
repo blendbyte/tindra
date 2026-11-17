@@ -1159,6 +1159,49 @@ func TestMCP_createAlertRule_logCount(t *testing.T) {
 	}
 }
 
+func TestMCP_createAlertRule_filterEnvironments(t *testing.T) {
+	truncateAlertRules(t)
+	result := toolCall(t, mcpHandler(), "create_alert_rule", map[string]any{
+		"name":                "MCP multi env",
+		"trigger":             "new_issue",
+		"channel":             "email",
+		"email_to":            "oncall@example.com",
+		"filter_environments": []any{"production", "staging"},
+	}, authCookie())
+	if isErr, _ := result["isError"].(bool); isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	var rule storage.AlertRule
+	if err := json.Unmarshal([]byte(toolText(t, result)), &rule); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if fmt.Sprint(rule.FilterEnvironments) != "[production staging]" {
+		t.Errorf("filter_environments: got %v", rule.FilterEnvironments)
+	}
+}
+
+// A model that sends one environment as a plain string still gets a filter.
+func TestMCP_createAlertRule_filterEnvironmentsAsString(t *testing.T) {
+	truncateAlertRules(t)
+	result := toolCall(t, mcpHandler(), "create_alert_rule", map[string]any{
+		"name":                "MCP string env",
+		"trigger":             "new_issue",
+		"channel":             "email",
+		"email_to":            "oncall@example.com",
+		"filter_environments": "production",
+	}, authCookie())
+	if isErr, _ := result["isError"].(bool); isErr {
+		t.Fatalf("unexpected isError: %s", toolText(t, result))
+	}
+	var rule storage.AlertRule
+	if err := json.Unmarshal([]byte(toolText(t, result)), &rule); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if fmt.Sprint(rule.FilterEnvironments) != "[production]" {
+		t.Errorf("filter_environments: got %v", rule.FilterEnvironments)
+	}
+}
+
 func TestMCP_createAlertRule_missingFields(t *testing.T) {
 	result := toolCall(t, mcpHandler(), "create_alert_rule", map[string]any{
 		"name":    "incomplete",

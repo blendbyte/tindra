@@ -27,7 +27,7 @@ func TestCombinedCountMatchesSeparateTriggers(t *testing.T) {
 			rule := &storage.AlertRule{ProjectIDs: ids, CreatedAt: since.Add(-time.Hour), LastFiredAt: &since}
 			if filtered {
 				rule.FilterLevel = &level
-				rule.FilterEnvironment = &environment
+				rule.FilterEnvironments = []string{environment}
 				rule.MinOccurrences = &min
 			}
 			expected := map[string]int{}

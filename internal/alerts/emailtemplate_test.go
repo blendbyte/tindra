@@ -243,7 +243,7 @@ func TestAlertTriggerLine_logCountNoQuery(t *testing.T) {
 func TestAlertTriggerLine_logCount(t *testing.T) {
 	p := AlertPayload{Trigger: "log_count", Details: map[string]any{
 		"log_count": 14, "threshold": 10, "window_mins": 5,
-		"filter_level": "error", "filter_search": "stripe", "filter_environment": "production",
+		"filter_level": "error", "filter_search": "stripe", "filter_environments": []string{"production"},
 	}}
 	got := alertTriggerLine(p)
 	if !strings.Contains(got, "14 logs") || !strings.Contains(got, `"stripe"`) || !strings.Contains(got, "error+") {

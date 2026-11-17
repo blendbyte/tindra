@@ -76,10 +76,16 @@ const newRule = reactive({
   recipientIDs: [] as string[],
   cooldown_mins: 60,
   filter_level: '',
-  filter_environment: '',
+  filter_environments: '',
   min_occurrences: 0,
   filter_search: '',
 })
+
+// splitEnvironments reads the comma-separated environments field. The server
+// trims names and drops blanks and repeats too.
+function splitEnvironments(text: string): string[] {
+  return [...new Set(text.split(',').map(e => e.trim()).filter(Boolean))]
+}
 
 function resetNewRule() {
   newRule.projectIDs = []
@@ -93,7 +99,7 @@ function resetNewRule() {
   newRule.recipientIDs = []
   newRule.cooldown_mins = 60
   newRule.filter_level = ''
-  newRule.filter_environment = ''
+  newRule.filter_environments = ''
   newRule.min_occurrences = 0
   newRule.filter_search = ''
 }
@@ -179,7 +185,7 @@ function applyAlertQueryPrefill() {
     applyLogCountDefaults()
     const level = queryParam(route.query.level)
     if (['fatal', 'error', 'warning'].includes(level)) newRule.filter_level = level
-    newRule.filter_environment = queryParam(route.query.environment)
+    newRule.filter_environments = queryParam(route.query.environment)
     newRule.filter_search = queryParam(route.query.search)
     const pids = queryParamList(route.query.project_id)
     if (pids.length) newRule.projectIDs = pids
@@ -208,7 +214,8 @@ const { mutate: createAlertRule, isPending: creatingRule } = useMutation({
     }
     Object.assign(body, channelFields(newRule))
     if (newRule.filter_level) body.filter_level = newRule.filter_level
-    if (newRule.filter_environment) body.filter_environment = newRule.filter_environment
+    const environments = splitEnvironments(newRule.filter_environments)
+    if (environments.length) body.filter_environments = environments
     if (newRule.min_occurrences > 0) body.min_occurrences = Number(newRule.min_occurrences)
     if (newRule.trigger === 'log_count') body.filter_search = newRule.filter_search.trim() || null
     return apiFetch<AlertRule>('/api/alert-rules', {
@@ -267,7 +274,7 @@ const editRule = reactive({
   recipientIDs: [] as string[],
   cooldown_mins: 60,
   filter_level: '',
-  filter_environment: '',
+  filter_environments: '',
   min_occurrences: 0,
   filter_search: '',
 })
@@ -285,7 +292,7 @@ function startEditRule(rule: AlertRule) {
   editRule.recipientIDs = [...(rule.recipient_ids ?? [])]
   editRule.cooldown_mins = rule.cooldown_mins
   editRule.filter_level = rule.filter_level ?? ''
-  editRule.filter_environment = rule.filter_environment ?? ''
+  editRule.filter_environments = (rule.filter_environments ?? []).join(', ')
   editRule.min_occurrences = rule.min_occurrences ?? 0
   editRule.filter_search = rule.filter_search ?? ''
 }
@@ -323,7 +330,7 @@ const { mutate: saveAlertRule, isPending: savingRule } = useMutation({
       channel: editRule.channel,
       cooldown_mins: Number(editRule.cooldown_mins),
       filter_level: editRule.filter_level || null,
-      filter_environment: editRule.filter_environment || null,
+      filter_environments: splitEnvironments(editRule.filter_environments),
       min_occurrences: editRule.min_occurrences > 0 ? Number(editRule.min_occurrences) : null,
       project_ids: editRule.projectIDs,
     }
@@ -364,7 +371,7 @@ const logPreviewSource = computed(() => {
   for (const id of rule.projectIDs) p.append('project_id', id)
   p.set('level', rule.filter_level)
   p.set('window_mins', String(rule.window_mins || 5))
-  if (rule.filter_environment) p.set('environment', rule.filter_environment)
+  for (const env of splitEnvironments(rule.filter_environments)) p.append('environment', env)
   if (rule.filter_search.trim()) p.set('search', rule.filter_search.trim())
   return p.toString()
 })
@@ -472,8 +479,8 @@ const { data: logPreview } = useQuery({
         </select>
       </div>
       <div class="field">
-        <label class="field__label">Environment</label>
-        <input v-model="newRule.filter_environment" class="field__input" placeholder="e.g. production" />
+        <label class="field__label">Environments</label>
+        <input v-model="newRule.filter_environments" class="field__input" placeholder="e.g. production, staging" title="Comma-separated. Leave blank for all environments." />
       </div>
       <div v-if="newRule.trigger === 'log_count'" class="field" style="grid-column: 1 / -1">
         <label class="field__label">Search</label>
@@ -610,8 +617,8 @@ const { data: logPreview } = useQuery({
             </select>
           </div>
           <div class="field">
-            <label class="field__label">Environment</label>
-            <input v-model="editRule.filter_environment" class="field__input" placeholder="e.g. production" />
+            <label class="field__label">Environments</label>
+            <input v-model="editRule.filter_environments" class="field__input" placeholder="e.g. production, staging" title="Comma-separated. Leave blank for all environments." />
           </div>
           <div v-if="editRule.trigger === 'log_count'" class="field" style="grid-column: 1 / -1">
             <label class="field__label">Search</label>
@@ -678,9 +685,9 @@ const { data: logPreview } = useQuery({
             <span class="rule__detail-k">Min. level</span>
             <span class="rule__detail-v">{{ rule.filter_level === 'performance' ? 'Performance issues only' : `${rule.filter_level} and above` }}</span>
           </template>
-          <template v-if="rule.filter_environment">
-            <span class="rule__detail-k">Environment</span>
-            <span class="rule__detail-v">{{ rule.filter_environment }}</span>
+          <template v-if="rule.filter_environments?.length">
+            <span class="rule__detail-k">{{ rule.filter_environments.length === 1 ? 'Environment' : 'Environments' }}</span>
+            <span class="rule__detail-v">{{ rule.filter_environments.join(', ') }}</span>
           </template>
           <template v-if="rule.min_occurrences">
             <span class="rule__detail-k">Min. occurrences</span>

@@ -29,14 +29,16 @@ type AlertRule struct {
 	WebhookURL *string `json:"webhook_url,omitempty"`
 	EmailTo    *string `json:"email_to,omitempty"`
 	// RecipientIDs are the users a push rule notifies on all their devices.
-	RecipientIDs      []string   `json:"recipient_ids"`
-	CooldownMins      int        `json:"cooldown_mins"`
-	FilterLevel       *string    `json:"filter_level,omitempty"`
-	FilterEnvironment *string    `json:"filter_environment,omitempty"`
-	MinOccurrences    *int       `json:"min_occurrences,omitempty"`
-	FilterSearch      *string    `json:"filter_search,omitempty"`
-	LastFiredAt       *time.Time `json:"last_fired_at"`
-	CreatedAt         time.Time  `json:"created_at"`
+	RecipientIDs []string `json:"recipient_ids"`
+	CooldownMins int      `json:"cooldown_mins"`
+	FilterLevel  *string  `json:"filter_level,omitempty"`
+	// FilterEnvironments limits the rule to these environments; empty
+	// matches all of them.
+	FilterEnvironments []string   `json:"filter_environments"`
+	MinOccurrences     *int       `json:"min_occurrences,omitempty"`
+	FilterSearch       *string    `json:"filter_search,omitempty"`
+	LastFiredAt        *time.Time `json:"last_fired_at"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 // alertRuleSelect is the base SELECT with LEFT JOIN to pick up project
@@ -45,7 +47,7 @@ type AlertRule struct {
 const alertRuleSelect = `
 	SELECT ar.id, ar.name, ar.enabled, ar.trigger, ar.threshold, ar.window_mins,
 	       ar.channel, ar.webhook_url, ar.email_to, ar.cooldown_mins,
-	       ar.filter_level, ar.filter_environment, ar.min_occurrences, ar.filter_search,
+	       ar.filter_level, ar.filter_environments, ar.min_occurrences, ar.filter_search,
 	       ar.last_fired_at, ar.created_at, ar.is_global,
 	       COALESCE(array_agg(arp.project_id::text) FILTER (WHERE arp.project_id IS NOT NULL), '{}') AS project_ids,
 	       %s AS recipient_ids
@@ -67,7 +69,7 @@ func scanAlertRule(scan func(...any) error) (*AlertRule, error) {
 		&r.Threshold, &r.WindowMins,
 		&r.Channel, &r.WebhookURL, &r.EmailTo,
 		&r.CooldownMins,
-		&r.FilterLevel, &r.FilterEnvironment, &r.MinOccurrences, &r.FilterSearch,
+		&r.FilterLevel, &r.FilterEnvironments, &r.MinOccurrences, &r.FilterSearch,
 		&r.LastFiredAt, &r.CreatedAt, &r.IsGlobal,
 		&r.ProjectIDs, &r.RecipientIDs,
 	)
@@ -80,7 +82,18 @@ func scanAlertRule(scan func(...any) error) (*AlertRule, error) {
 	if r.RecipientIDs == nil {
 		r.RecipientIDs = []string{}
 	}
+	if r.FilterEnvironments == nil {
+		r.FilterEnvironments = []string{}
+	}
 	return &r, nil
+}
+
+// nonNilStrings keeps a nil list from reaching a NOT NULL array column as NULL.
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }
 
 func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*AlertRule, error) {
@@ -98,22 +111,22 @@ func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		INSERT INTO alert_rules
 			(name, enabled, trigger, threshold, window_mins,
 			 channel, webhook_url, email_to, cooldown_mins,
-			 filter_level, filter_environment, min_occurrences, filter_search, is_global)
+			 filter_level, filter_environments, min_occurrences, filter_search, is_global)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING id, name, enabled, trigger, threshold, window_mins,
 		          channel, webhook_url, email_to, cooldown_mins,
-		          filter_level, filter_environment, min_occurrences, filter_search,
+		          filter_level, filter_environments, min_occurrences, filter_search,
 		          last_fired_at, created_at, is_global`,
 		r.Name, r.Enabled, r.Trigger, r.Threshold, r.WindowMins,
 		r.Channel, r.WebhookURL, r.EmailTo, r.CooldownMins,
-		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences, r.FilterSearch,
+		r.FilterLevel, nonNilStrings(r.FilterEnvironments), r.MinOccurrences, r.FilterSearch,
 		len(normaliseProjectIDs(r.ProjectIDs)) == 0,
 	).Scan(
 		&created.ID, &created.Name, &created.Enabled, &created.Trigger,
 		&created.Threshold, &created.WindowMins,
 		&created.Channel, &created.WebhookURL, &created.EmailTo,
 		&created.CooldownMins,
-		&created.FilterLevel, &created.FilterEnvironment, &created.MinOccurrences, &created.FilterSearch,
+		&created.FilterLevel, &created.FilterEnvironments, &created.MinOccurrences, &created.FilterSearch,
 		&created.LastFiredAt, &created.CreatedAt, &created.IsGlobal,
 	)
 	if err != nil {
@@ -241,23 +254,23 @@ func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 		UPDATE alert_rules SET
 			name=$2, enabled=$3, trigger=$4, threshold=$5, window_mins=$6,
 			channel=$7, webhook_url=$8, email_to=$9, cooldown_mins=$10,
-			filter_level=$11, filter_environment=$12, min_occurrences=$13,
+			filter_level=$11, filter_environments=$12, min_occurrences=$13,
 			filter_search=$14, is_global=$15
 		WHERE id=$1
 		RETURNING id, name, enabled, trigger, threshold, window_mins,
 		          channel, webhook_url, email_to, cooldown_mins,
-		          filter_level, filter_environment, min_occurrences, filter_search,
+		          filter_level, filter_environments, min_occurrences, filter_search,
 		          last_fired_at, created_at, is_global`,
 		r.ID, r.Name, r.Enabled, r.Trigger, r.Threshold, r.WindowMins,
 		r.Channel, r.WebhookURL, r.EmailTo, r.CooldownMins,
-		r.FilterLevel, r.FilterEnvironment, r.MinOccurrences, r.FilterSearch,
+		r.FilterLevel, nonNilStrings(r.FilterEnvironments), r.MinOccurrences, r.FilterSearch,
 		len(normaliseProjectIDs(r.ProjectIDs)) == 0,
 	).Scan(
 		&updated.ID, &updated.Name, &updated.Enabled, &updated.Trigger,
 		&updated.Threshold, &updated.WindowMins,
 		&updated.Channel, &updated.WebhookURL, &updated.EmailTo,
 		&updated.CooldownMins,
-		&updated.FilterLevel, &updated.FilterEnvironment, &updated.MinOccurrences, &updated.FilterSearch,
+		&updated.FilterLevel, &updated.FilterEnvironments, &updated.MinOccurrences, &updated.FilterSearch,
 		&updated.LastFiredAt, &updated.CreatedAt, &updated.IsGlobal,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

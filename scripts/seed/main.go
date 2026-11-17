@@ -3082,7 +3082,7 @@ func seedAlertRules(pool *pgxpool.Pool, projectID, prefix string) (failed int) {
 		emailTo      *string
 		cooldownMins int
 		filterLevel  *string
-		filterEnv    *string
+		filterEnvs   []string
 		filterSearch *string
 		lastFiredAgo *time.Duration
 		firings      []firingDef
@@ -3097,7 +3097,7 @@ func seedAlertRules(pool *pgxpool.Pool, projectID, prefix string) (failed int) {
 			name: "Error spike: production", enabled: false,
 			trigger: "event_count", threshold: ip(50), windowMins: ip(60),
 			channel: "email", emailTo: sp("alerts@example.com"),
-			cooldownMins: 60, filterEnv: sp("production"),
+			cooldownMins: 60, filterEnvs: []string{"production"},
 			lastFiredAgo: dp(45 * time.Minute),
 			firings: []firingDef{
 				{firedAgo: 45 * time.Minute, status: "success", statusCode: ip(200), itemCount: ip(67), attempt: 1},
@@ -3126,7 +3126,7 @@ func seedAlertRules(pool *pgxpool.Pool, projectID, prefix string) (failed int) {
 			name: "Production regression", enabled: false,
 			trigger: "regressed",
 			channel: "email", emailTo: sp("team@example.com"),
-			cooldownMins: 120, filterEnv: sp("production"),
+			cooldownMins: 120, filterEnvs: []string{"production"},
 			lastFiredAgo: dp(26 * time.Hour),
 			firings: []firingDef{
 				{firedAgo: 26 * time.Hour, status: "success", statusCode: ip(200), itemCount: ip(1), attempt: 1},
@@ -3160,7 +3160,7 @@ func seedAlertRules(pool *pgxpool.Pool, projectID, prefix string) (failed int) {
 			name: "Error logs: stripe", enabled: false,
 			trigger: "log_count", threshold: ip(10), windowMins: ip(5),
 			channel: "email", emailTo: sp("alerts@example.com"),
-			cooldownMins: 60, filterLevel: sp("error"), filterEnv: sp("production"),
+			cooldownMins: 60, filterLevel: sp("error"), filterEnvs: []string{"production", "staging"},
 			filterSearch: sp("stripe"),
 			lastFiredAgo: dp(12 * time.Minute),
 			firings: []firingDef{
@@ -3194,12 +3194,12 @@ func seedAlertRules(pool *pgxpool.Pool, projectID, prefix string) (failed int) {
 			INSERT INTO alert_rules
 				(name, enabled, trigger, threshold, window_mins,
 				 channel, webhook_url, email_to, cooldown_mins,
-				 filter_level, filter_environment, min_occurrences, filter_search, last_fired_at)
+				 filter_level, filter_environments, min_occurrences, filter_search, last_fired_at)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			RETURNING id`,
 			prefix+r.name, r.enabled, r.trigger, r.threshold, r.windowMins,
 			r.channel, r.webhookURL, r.emailTo, r.cooldownMins,
-			r.filterLevel, r.filterEnv, nil, r.filterSearch, lastFiredAt,
+			r.filterLevel, append([]string{}, r.filterEnvs...), nil, r.filterSearch, lastFiredAt,
 		).Scan(&id)
 		if err != nil {
 			failed++

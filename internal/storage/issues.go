@@ -58,6 +58,7 @@ type IssueFilter struct {
 	Levels         []string // non-empty = level = ANY(...); takes precedence over Level
 	Kind           string   // "error" | "n1_query" | "" (all)
 	Environment    string
+	Environments   []string // non-empty = environment = ANY(...); takes precedence over Environment; not applied by listWindowIssues
 	AssigneeID     string
 	TagKey         string
 	TagValue       string
@@ -410,7 +411,10 @@ func addCommonFilters(q string, args []any, filter IssueFilter) (string, []any) 
 		args = append(args, filter.Kind)
 		q += fmt.Sprintf(" AND kind = $%d", len(args))
 	}
-	if filter.Environment != "" {
+	if len(filter.Environments) > 0 {
+		args = append(args, filter.Environments)
+		q += fmt.Sprintf(" AND environment = ANY($%d::text[])", len(args))
+	} else if filter.Environment != "" {
 		args = append(args, filter.Environment)
 		q += fmt.Sprintf(" AND environment = $%d", len(args))
 	}

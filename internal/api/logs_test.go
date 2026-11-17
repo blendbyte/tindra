@@ -25,6 +25,43 @@ func truncateLogs(t *testing.T) {
 	}
 }
 
+// Repeated environment params count logs in any of them, matching how a
+// rule's filter_environments is evaluated.
+func TestHandleCountLogs_environments(t *testing.T) {
+	truncateLogs(t)
+	for _, env := range []string{"production", "staging", "development"} {
+		l := seedLog(t, "error", "boom in "+env)
+		if _, err := testPool.Exec(context.Background(), `UPDATE logs SET environment = $1 WHERE id = $2`, env, l.ID); err != nil {
+			t.Fatalf("set environment: %v", err)
+		}
+	}
+
+	for query, want := range map[string]int{
+		"":                        3,
+		"&environment=production": 1,
+		"&environment=production&environment=staging": 2,
+		"&environment=&environment=staging":           1,
+	} {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/logs/count?project_id="+testProject.ID+"&level=error"+query, nil)
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		logsHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%q: expected 200, got %d: %s", query, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Count int `json:"count"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.Count != want {
+			t.Errorf("%q: count %d, want %d", query, resp.Count, want)
+		}
+	}
+}
+
 func seedLog(t *testing.T, level, body string) *storage.Log {
 	t.Helper()
 	var l storage.Log

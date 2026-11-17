@@ -1254,8 +1254,8 @@ func TestUpdateAlertRule_clearFilterEnvironment(t *testing.T) {
 	created, _ := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "clear env", Enabled: true,
 		Trigger: "new_issue", Channel: "webhook",
-		WebhookURL:        new("https://example.com/wh"),
-		FilterEnvironment: &filterEnv, CooldownMins: 60,
+		WebhookURL:         new("https://example.com/wh"),
+		FilterEnvironments: []string{filterEnv}, CooldownMins: 60,
 	})
 
 	raw := []byte(`{"filter_environment": null}`)
@@ -1271,8 +1271,9 @@ func TestUpdateAlertRule_clearFilterEnvironment(t *testing.T) {
 	}
 	var got storage.AlertRule
 	json.NewDecoder(rec.Body).Decode(&got)
-	if got.FilterEnvironment != nil {
-		t.Errorf("expected nil filter_environment after clearing, got %q", *got.FilterEnvironment)
+	// The legacy single-environment field still clears the filter.
+	if len(got.FilterEnvironments) != 0 {
+		t.Errorf("expected no filter_environments after clearing, got %q", got.FilterEnvironments)
 	}
 }
 

@@ -314,22 +314,22 @@ func TestLogFilterFromRule_andDetails(t *testing.T) {
 	th, win := 10, 5
 	level, env, search := "error", "production", "stripe"
 	rule := &storage.AlertRule{
-		ProjectIDs:        []string{"p1"},
-		Threshold:         &th,
-		WindowMins:        &win,
-		FilterLevel:       &level,
-		FilterEnvironment: &env,
-		FilterSearch:      &search,
+		ProjectIDs:         []string{"p1"},
+		Threshold:          &th,
+		WindowMins:         &win,
+		FilterLevel:        &level,
+		FilterEnvironments: []string{env},
+		FilterSearch:       &search,
 	}
 	f := logFilterFromRule(rule)
-	if f.WindowMins != 5 || f.Environment != "production" || f.Search != "stripe" {
+	if f.WindowMins != 5 || fmt.Sprint(f.Environments) != "[production]" || f.Search != "stripe" {
 		t.Errorf("filter: %+v", f)
 	}
 	if len(f.Levels) == 0 || f.Levels[0] != "fatal" {
 		t.Errorf("levels: %v", f.Levels)
 	}
 	d := logCountDetails(rule, 12)
-	if d["log_count"] != 12 || d["filter_search"] != "stripe" || d["filter_environment"] != "production" {
+	if d["log_count"] != 12 || d["filter_search"] != "stripe" || fmt.Sprint(d["filter_environments"]) != "[production]" {
 		t.Errorf("details: %v", d)
 	}
 
@@ -424,8 +424,8 @@ func logCountSamplePayload() AlertPayload {
 		Details: map[string]any{
 			"log_count": 12, "threshold": 10, "window_mins": 5,
 			"filter_level": "error", "filter_search": "stripe",
-			"filter_environment": "production",
-			"project_ids":        []string{"p1"},
+			"filter_environments": []string{"production"},
+			"project_ids":         []string{"p1"},
 		},
 		Logs: []*storage.Log{
 			{Level: "error", Body: "stripe timeout", Environment: &env, Timestamp: time.Now().UTC()},
@@ -2122,7 +2122,7 @@ func TestLevelsAtOrAbove_unknown(t *testing.T) {
 	}
 }
 
-// --- conditionMet with FilterLevel / FilterEnvironment ---
+// --- conditionMet with FilterLevel / FilterEnvironments ---
 
 func TestConditionMet_eventCount_withFilterLevel(t *testing.T) {
 	testPool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", testProject.ID)
@@ -2155,31 +2155,42 @@ func TestConditionMet_eventCount_withFilterLevel(t *testing.T) {
 	}
 }
 
-func TestConditionMet_eventCount_withFilterEnvironment(t *testing.T) {
+func TestConditionMet_eventCount_withFilterEnvironments(t *testing.T) {
 	testPool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", testProject.ID)
 
-	threshold := 1
+	threshold := 2
 	window := 60
-	filterEnv := "production"
 	rule := &storage.AlertRule{
-		ProjectIDs:        []string{testProject.ID},
-		Trigger:           "event_count",
-		Threshold:         &threshold,
-		WindowMins:        &window,
-		FilterEnvironment: &filterEnv,
+		ProjectIDs:         []string{testProject.ID},
+		Trigger:            "event_count",
+		Threshold:          &threshold,
+		WindowMins:         &window,
+		FilterEnvironments: []string{"production", "staging"},
 	}
 
-	testPool.Exec(context.Background(), `
-		INSERT INTO events (project_id, timestamp, payload)
-		VALUES ($1, NOW(), '{"level":"error","environment":"production"}'::jsonb)
-	`, testProject.ID)
+	for _, env := range []string{"production", "staging", "development"} {
+		testPool.Exec(context.Background(), `
+			INSERT INTO events (project_id, timestamp, payload)
+			VALUES ($1, NOW(), jsonb_build_object('level', 'error', 'environment', $2::text))
+		`, testProject.ID, env)
+	}
 
 	met, _, err := testEvaluator(nil).conditionMet(context.Background(), rule)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !met {
-		t.Error("expected true when event environment matches FilterEnvironment")
+		t.Error("expected true: production and staging events reach the threshold of 2")
+	}
+
+	// development is not listed, so only two events count toward three.
+	threshold = 3
+	met, _, err = testEvaluator(nil).conditionMet(context.Background(), rule)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if met {
+		t.Error("expected false: the development event must not count")
 	}
 }
 
@@ -2858,10 +2869,10 @@ func TestEnrichPayload_newIssueAcrossRuleProjects(t *testing.T) {
 
 	env := "production"
 	rule := &storage.AlertRule{
-		ProjectIDs:        []string{testProject.ID, other.ID},
-		Trigger:           "new_issue",
-		FilterEnvironment: &env,
-		CreatedAt:         since,
+		ProjectIDs:         []string{testProject.ID, other.ID},
+		Trigger:            "new_issue",
+		FilterEnvironments: []string{env},
+		CreatedAt:          since,
 	}
 	payload := AlertPayload{Trigger: "new_issue", Details: map[string]any{}}
 	testEvaluator(nil).enrichPayload(ctx, &payload, rule)
@@ -2970,7 +2981,7 @@ func TestNotifyAutoResolved_appliesEnvironmentFilter(t *testing.T) {
 	env := "production"
 	if _, err := storage.CreateAlertRule(context.Background(), testPool, &storage.AlertRule{
 		ProjectIDs: []string{testProject.ID}, Name: "prod only", Enabled: true, Trigger: "new_issue",
-		Channel: "webhook", WebhookURL: &url, CooldownMins: 60, FilterEnvironment: &env,
+		Channel: "webhook", WebhookURL: &url, CooldownMins: 60, FilterEnvironments: []string{env},
 	}); err != nil {
 		t.Fatal(err)
 	}

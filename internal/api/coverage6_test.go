@@ -938,8 +938,9 @@ func TestCreateAlertRule_withAllFilterFields(t *testing.T) {
 	if rule.FilterLevel == nil || *rule.FilterLevel != "error" {
 		t.Errorf("filter_level: got %v, want error", rule.FilterLevel)
 	}
-	if rule.FilterEnvironment == nil || *rule.FilterEnvironment != "production" {
-		t.Errorf("filter_environment: got %v, want production", rule.FilterEnvironment)
+	// The legacy single-environment field becomes a one-entry list.
+	if fmt.Sprint(rule.FilterEnvironments) != "[production]" {
+		t.Errorf("filter_environments: got %v, want [production]", rule.FilterEnvironments)
 	}
 	if rule.MinOccurrences == nil || *rule.MinOccurrences != 2 {
 		t.Errorf("min_occurrences: got %v, want 2", rule.MinOccurrences)

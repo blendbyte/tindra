@@ -495,8 +495,8 @@ func moreLabel(trigger string, count int) string {
 
 func logCountQueryLabel(p AlertPayload) string {
 	var parts []string
-	if v, ok := p.Details["filter_environment"].(string); ok && v != "" {
-		parts = append(parts, v)
+	if envs := detailStrings(p.Details, "filter_environments"); len(envs) > 0 {
+		parts = append(parts, strings.Join(envs, ", "))
 	}
 	if v, ok := p.Details["filter_level"].(string); ok && v != "" {
 		if v == "fatal" {
@@ -548,8 +548,10 @@ func logsViewURL(base string, p AlertPayload) string {
 	if v, ok := p.Details["filter_level"].(string); ok && v != "" {
 		q.Set("min_level", v)
 	}
-	if v, ok := p.Details["filter_environment"].(string); ok && v != "" {
-		q.Set("environment", v)
+	// The logs view filters on one environment. With several, the link
+	// shows them all rather than only the first.
+	if envs := detailStrings(p.Details, "filter_environments"); len(envs) == 1 {
+		q.Set("environment", envs[0])
 	}
 	if v, ok := p.Details["filter_search"].(string); ok && v != "" {
 		q.Set("search", v)

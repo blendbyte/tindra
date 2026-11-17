@@ -32,8 +32,11 @@ type LogFilter struct {
 	Level      string
 	// Levels, when non-empty, matches any of the given levels (at-or-above
 	// queries). Takes precedence over Level. "warning" also matches "warn".
-	Levels       []string
-	Environment  string
+	Levels      []string
+	Environment string
+	// Environments, when non-empty, matches any of them. Takes precedence
+	// over Environment.
+	Environments []string
 	Search       string
 	TraceID      string
 	UserIdentity string
@@ -177,7 +180,10 @@ func appendLogWhere(filter LogFilter, where string, args []any) (string, []any) 
 			where += fmt.Sprintf(" AND l.level = $%d", len(args))
 		}
 	}
-	if filter.Environment != "" {
+	if len(filter.Environments) > 0 {
+		args = append(args, filter.Environments)
+		where += fmt.Sprintf(" AND l.environment = ANY($%d::text[])", len(args))
+	} else if filter.Environment != "" {
 		args = append(args, filter.Environment)
 		where += fmt.Sprintf(" AND l.environment = $%d", len(args))
 	}

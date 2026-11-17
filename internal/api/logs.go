@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -106,11 +107,13 @@ func (ro *router) handleCountLogs(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	count, err := storage.CountLogs(ctx, ro.pool, storage.LogFilter{
-		ProjectIDs:  projectIDs,
-		Levels:      alerts.LogLevelsAtOrAbove(level),
-		Environment: q.Get("environment"),
-		Search:      search,
-		WindowMins:  windowMins,
+		ProjectIDs: projectIDs,
+		Levels:     alerts.LogLevelsAtOrAbove(level),
+		// Repeated environment params match any of them, as a rule's
+		// filter_environments does.
+		Environments: slices.DeleteFunc(q["environment"], func(e string) bool { return e == "" }),
+		Search:       search,
+		WindowMins:   windowMins,
 	})
 	if err != nil {
 		if ctx.Err() != nil {

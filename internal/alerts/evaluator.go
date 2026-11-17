@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -146,9 +147,9 @@ func appendIssueFilters(rule *storage.AlertRule, where string, args []any) (stri
 		// (N+1, etc.) are a separate category and always pass through.
 		where += fmt.Sprintf(" AND (kind != 'error' OR level = ANY($%d::text[]))", len(args))
 	}
-	if rule.FilterEnvironment != nil {
-		args = append(args, *rule.FilterEnvironment)
-		where += fmt.Sprintf(" AND environment = $%d", len(args))
+	if len(rule.FilterEnvironments) > 0 {
+		args = append(args, rule.FilterEnvironments)
+		where += fmt.Sprintf(" AND environment = ANY($%d::text[])", len(args))
 	}
 	if rule.MinOccurrences != nil {
 		args = append(args, *rule.MinOccurrences)
@@ -254,9 +255,9 @@ func (e *Evaluator) conditionMet(ctx context.Context, rule *storage.AlertRule) (
 			args = append(args, levelsAtOrAbove(*rule.FilterLevel))
 			where += fmt.Sprintf(" AND level = ANY($%d::text[])", len(args))
 		}
-		if rule.FilterEnvironment != nil {
-			args = append(args, *rule.FilterEnvironment)
-			where += fmt.Sprintf(" AND environment = $%d", len(args))
+		if len(rule.FilterEnvironments) > 0 {
+			args = append(args, rule.FilterEnvironments)
+			where += fmt.Sprintf(" AND environment = ANY($%d::text[])", len(args))
 		}
 		var count int
 		if err := e.pool.QueryRow(ctx,
@@ -457,9 +458,7 @@ func logFilterFromRule(rule *storage.AlertRule) storage.LogFilter {
 	if rule.FilterLevel != nil && *rule.FilterLevel != "" {
 		f.Levels = levelsAtOrAbove(*rule.FilterLevel)
 	}
-	if rule.FilterEnvironment != nil {
-		f.Environment = *rule.FilterEnvironment
-	}
+	f.Environments = rule.FilterEnvironments
 	if rule.FilterSearch != nil {
 		f.Search = *rule.FilterSearch
 	}
@@ -480,8 +479,8 @@ func logCountDetails(rule *storage.AlertRule, count int) map[string]any {
 	if rule.FilterLevel != nil {
 		d["filter_level"] = *rule.FilterLevel
 	}
-	if rule.FilterEnvironment != nil {
-		d["filter_environment"] = *rule.FilterEnvironment
+	if len(rule.FilterEnvironments) > 0 {
+		d["filter_environments"] = rule.FilterEnvironments
 	}
 	if rule.FilterSearch != nil && *rule.FilterSearch != "" {
 		d["filter_search"] = *rule.FilterSearch
@@ -518,10 +517,6 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 	if rule.FilterLevel != nil {
 		filterLevel = *rule.FilterLevel
 	}
-	filterEnv := ""
-	if rule.FilterEnvironment != nil {
-		filterEnv = *rule.FilterEnvironment
-	}
 	// Use severity-range filter so enriched issues match what conditionMet counted.
 	var filterLevels []string
 	if filterLevel != "" {
@@ -539,7 +534,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			Limit:        5,
 			CreatedSince: &since,
 			Levels:       filterLevels,
-			Environment:  filterEnv,
+			Environments: rule.FilterEnvironments,
 		})
 		if err == nil {
 			payload.Issues = issues
@@ -555,7 +550,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			SinceRegressed: &since,
 			Limit:          5,
 			Levels:         filterLevels,
-			Environment:    filterEnv,
+			Environments:   rule.FilterEnvironments,
 		})
 		if err == nil {
 			payload.Issues = issues
@@ -570,7 +565,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			CreatedSince: &since,
 			Limit:        5,
 			Levels:       filterLevels,
-			Environment:  filterEnv,
+			Environments: rule.FilterEnvironments,
 		})
 		regIssues, _ := storage.ListIssues(ctx, e.pool, storage.IssueFilter{
 			ProjectIDs:     rule.ProjectIDs,
@@ -578,7 +573,7 @@ func (e *Evaluator) enrichPayload(ctx context.Context, payload *AlertPayload, ru
 			SinceRegressed: &since,
 			Limit:          5,
 			Levels:         filterLevels,
-			Environment:    filterEnv,
+			Environments:   rule.FilterEnvironments,
 		})
 		seen := map[string]bool{}
 		for _, iss := range append(newIssues, regIssues...) {
@@ -904,7 +899,7 @@ func (e *Evaluator) NotifyAutoResolved(ctx context.Context, issues []*storage.Is
 		// Apply the rule's own filters, as its regular firings do.
 		var ruleIssues []*storage.Issue
 		for _, iss := range candidates {
-			if rule.FilterEnvironment != nil && (iss.Environment == nil || *iss.Environment != *rule.FilterEnvironment) {
+			if len(rule.FilterEnvironments) > 0 && (iss.Environment == nil || !slices.Contains(rule.FilterEnvironments, *iss.Environment)) {
 				continue
 			}
 			if rule.MinOccurrences != nil && iss.EventCount < int64(*rule.MinOccurrences) {

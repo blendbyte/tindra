@@ -61,7 +61,7 @@ const makeRule = (id: string, name: string) => ({
   email_to: null,
   last_fired_at: null,
   filter_level: null,
-  filter_environment: null,
+  filter_environments: [] as string[],
   min_occurrences: 0,
 })
 
@@ -77,7 +77,7 @@ const baseRule = {
   id: 'r1', name: 'My Rule', trigger: 'new_issue' as const, threshold: 100,
   window_mins: 60, channel: 'webhook' as const, webhook_url: 'https://hook.example.com',
   email_to: '', cooldown_mins: 60, enabled: true, last_fired_at: null,
-  filter_level: null, filter_environment: null, min_occurrences: 0, project_ids: [] as string[],
+  filter_level: null, filter_environments: [] as string[], min_occurrences: 0, project_ids: [] as string[],
 }
 
 const logCountProj = { id: 'p1', name: 'App', slug: 'app', public_key: 'k', event_count: 0, event_limit: 0 }
@@ -291,6 +291,46 @@ describe('AlertsTab', () => {
     })
   })
 
+  describe('environment filter details', () => {
+    it('lists every environment of an expanded rule', async () => {
+      const rule = { ...makeRuleWithTrigger('new_issue'), filter_environments: ['production', 'staging'] }
+      mockQueries({ 'alert-rules': [rule] })
+      const wrapper = mountTab()
+      await expandRule(wrapper)
+      const details = wrapper.find('.rule__detail-grid').text()
+      expect(details).toContain('Environments')
+      expect(details).toContain('production, staging')
+    })
+
+    it('uses the singular label for one environment and hides an empty list', async () => {
+      const one = { ...makeRuleWithTrigger('new_issue'), filter_environments: ['production'] }
+      mockQueries({ 'alert-rules': [one] })
+      let wrapper = mountTab()
+      await expandRule(wrapper)
+      let details = wrapper.find('.rule__detail-grid').text()
+      expect(details).toContain('Environmentproduction')
+      expect(details).not.toContain('Environments')
+
+      mockQueries({ 'alert-rules': [makeRuleWithTrigger('new_issue')] })
+      wrapper = mountTab()
+      await expandRule(wrapper)
+      details = wrapper.find('.rule__detail-grid').text()
+      expect(details).not.toContain('Environment')
+    })
+
+    it('editing a rule shows its environments comma-separated', async () => {
+      const rule = { ...baseRule, filter_environments: ['production', 'staging'] }
+      mockQueries({ 'alert-rules': [rule] })
+      runMutations()
+      const wrapper = mountTab()
+      await editRule(wrapper)
+      expect(inputValue(wrapper.find('input[placeholder="e.g. production, staging"]'))).toBe('production, staging')
+      await wrapper.find('input[placeholder="e.g. production, staging"]').setValue('')
+      await clickSave(wrapper)
+      expect(requestBody('/api/alert-rules/r1').filter_environments).toEqual([])
+    })
+  })
+
   describe('cancelEditRule', () => {
     it('closes edit form when Cancel is clicked in expanded rule edit', async () => {
       mockQueries({ 'alert-rules': [makeRule('r1', 'My Rule')] })
@@ -440,7 +480,7 @@ describe('AlertsTab', () => {
       expect(wrapper.text()).toContain('Threshold (logs)')
       expect(inputValue(selectWith(wrapper, 'Fatal only'))).toBe('error')
       expect(inputValue(searchInput(wrapper))).toBe('stripe')
-      expect(inputValue(wrapper.find('input[placeholder="e.g. production"]'))).toBe('production')
+      expect(inputValue(wrapper.find('input[placeholder="e.g. production, staging"]'))).toBe('production')
       expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
       expect(replaceMock).toHaveBeenCalledWith({ name: 'alerts' })
     })
@@ -491,7 +531,7 @@ describe('AlertsTab', () => {
       expect(wrapper.text()).toContain('Threshold (logs)')
       expect(inputValue(searchInput(wrapper))).toBe('timeout')
       expect(inputValue(selectWith(wrapper, 'Fatal only'))).toBe('fatal')
-      expect(inputValue(wrapper.find('input[placeholder="e.g. production"]'))).toBe('staging')
+      expect(inputValue(wrapper.find('input[placeholder="e.g. production, staging"]'))).toBe('staging')
       expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
     })
 
@@ -548,7 +588,7 @@ describe('AlertsTab', () => {
       vi.mocked(apiFetch).mockResolvedValue({ id: 'r1' } as any)
       const rule = {
         ...baseRule, trigger: 'log_count' as const, threshold: 10, window_mins: 5,
-        filter_search: 'old', filter_level: 'error', filter_environment: 'production', project_ids: ['p1'],
+        filter_search: 'old', filter_level: 'error', filter_environments: ['production'], project_ids: ['p1'],
       }
       mockQueries({ 'alert-rules': [rule], projects: [logCountProj] })
       runMutations()
@@ -560,7 +600,7 @@ describe('AlertsTab', () => {
       expect(body.trigger).toBe('log_count')
       expect(body.filter_search).toBe('stripe')
       expect(body.window_mins).toBe(5)
-      expect(body.filter_environment).toBe('production')
+      expect(body.filter_environments).toEqual(['production'])
     })
 
     it('save mutation rejects log_count without a project', async () => {
@@ -610,6 +650,26 @@ describe('AlertsTab', () => {
       }
     })
 
+    it('log count preview counts every listed environment', async () => {
+      vi.useFakeTimers()
+      try {
+        mockQueries({ projects: [logCountProj], 'logs-count': { count: 2, window_mins: 5 } })
+        const wrapper = mountTab()
+        const options = queryOptions('logs-count')
+        await openNewRule(wrapper)
+        await selectWith(wrapper, 'Log count').setValue('log_count')
+        await wrapper.find('input[type="checkbox"]').setValue(true)
+        await wrapper.find('input[placeholder="e.g. production, staging"]').setValue('production, staging')
+        await searchInput(wrapper).setValue('stripe')
+        await vi.advanceTimersByTimeAsync(300)
+        expect(options.queryKey.value).toEqual(['logs-count',
+          'project_id=p1&level=error&window_mins=5&environment=production&environment=staging&search=stripe'])
+        wrapper.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('new rule form shows event_count fields when trigger changed', async () => {
       const muts = recordMutations()
       const wrapper = mountTab()
@@ -647,13 +707,13 @@ describe('AlertsTab', () => {
       const cooldown = wrapper.findAll('input[type="number"]').find(i => (i.element as HTMLInputElement).min === '1')!
       await cooldown.setValue('30')
       await selectWith(wrapper, 'Any level').setValue('error')
-      await wrapper.find('input[placeholder="e.g. production"]').setValue('production')
+      await wrapper.find('input[placeholder="e.g. production, staging"]').setValue(' production, staging,,production ')
       await wrapper.find('input[placeholder="Any"]').setValue('5')
       muts[M.createAlertRule].opts.mutationFn()
       const body = requestBody('/api/alert-rules')
       expect(body.cooldown_mins).toBe(30)
       expect(body.filter_level).toBe('error')
-      expect(body.filter_environment).toBe('production')
+      expect(body.filter_environments).toEqual(['production', 'staging'])
       expect(body.min_occurrences).toBe(5)
     })
 
@@ -677,7 +737,7 @@ describe('AlertsTab', () => {
       await channelSel.setValue('webhook')
       await wrapper.find('input[type="url"]').setValue('https://hooks.example.com/')
       await selectWith(wrapper, 'Any level').setValue('error')
-      await wrapper.find('input[placeholder="e.g. production"]').setValue('staging')
+      await wrapper.find('input[placeholder="e.g. production, staging"]').setValue('staging')
       await triggerSel.setValue('new_issue')
       await wrapper.find('input[placeholder="Any"]').setValue('3')
       await clickSave(wrapper)
@@ -689,7 +749,7 @@ describe('AlertsTab', () => {
         webhook_url: 'https://hooks.example.com/',
         cooldown_mins: 100,
         filter_level: 'error',
-        filter_environment: 'staging',
+        filter_environments: ['staging'],
         min_occurrences: 3,
         filter_search: null,
       })

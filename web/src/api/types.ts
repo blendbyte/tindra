@@ -372,7 +372,8 @@ export interface AlertRule {
   recipient_ids?: string[]
   cooldown_mins: number
   filter_level: string | null
-  filter_environment: string | null
+  /** Environments the rule matches; empty matches all of them. */
+  filter_environments: string[]
   min_occurrences: number | null
   filter_search?: string | null
   last_fired_at: string | null
