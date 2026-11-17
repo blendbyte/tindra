@@ -1443,6 +1443,14 @@ input.row-check {
   margin-top: 2px;
 }
 
+.shortid {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
 .projtag {
   display: inline-block;
   min-width: 0;
@@ -1805,6 +1813,15 @@ input.row-check {
 .detail-hero__unhandled { color: var(--danger); font-weight: 600; font-family: var(--sans); letter-spacing: 0.02em; }
 .detail-hero__sep { color: var(--border); }
 .detail-hero__project { color: var(--text-3); overflow-wrap: break-word; word-break: break-all; }
+.detail-hero__shortid {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-2);
+  cursor: copy;
+}
+.detail-hero__shortid:hover { color: var(--text-1); text-decoration: underline; }
 .detail-hero__env { color: var(--text-3); }
 /* Environments are categories, not health: production reads stronger, never green. */
 .detail-hero__env--prod { color: var(--text-2); }

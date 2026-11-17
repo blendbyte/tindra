@@ -83,7 +83,8 @@ func listWindowIssues(ctx context.Context, pool issueWindowQuerier, filter Issue
 	q := `SELECT i.id,i.project_id,i.fingerprint,i.title,i.level,i.kind,
  i.first_seen,s.window_last,s.window_count,i.status,i.assignee_id,s.window_environment,
  i.ignore_until,i.ignore_count_limit,i.ignore_count,s.window_users,
- ARRAY(SELECT COALESCE((h.buckets->>bucket::text)::int,0) FROM generate_series(0,23) bucket ORDER BY bucket)
+ ARRAY(SELECT COALESCE((h.buckets->>bucket::text)::int,0) FROM generate_series(0,23) bucket ORDER BY bucket),
+ ` + shortIDSQL("i") + `
  FROM issues i JOIN scoped s ON s.issue_id=i.id JOIN histograms h ON h.issue_id=i.id WHERE TRUE`
 	q, args = windowIssueFilters(q, args, filter)
 	order := "s.window_last DESC,i.id DESC"
@@ -117,7 +118,7 @@ func listWindowIssues(ctx context.Context, pool issueWindowQuerier, filter Issue
 		issue := new(Issue)
 		err = rows.Scan(&issue.ID, &issue.ProjectID, &issue.Fingerprint, &issue.Title, &issue.Level, &issue.Kind,
 			&issue.FirstSeen, &issue.LastSeen, &issue.EventCount, &issue.Status, &issue.AssigneeID, &issue.Environment,
-			&issue.IgnoreUntil, &issue.IgnoreCountLimit, &issue.IgnoreCount, &issue.UserCount, &issue.Sparkline)
+			&issue.IgnoreUntil, &issue.IgnoreCountLimit, &issue.IgnoreCount, &issue.UserCount, &issue.Sparkline, &issue.ShortID)
 		if err != nil {
 			return nil, err
 		}

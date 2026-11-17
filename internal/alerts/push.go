@@ -455,7 +455,11 @@ func buildPushNotification(p AlertPayload) PushNotification {
 	switch {
 	case len(p.Issues) > 0:
 		for _, iss := range p.Issues {
-			lines = append(lines, iss.Title)
+			if iss.ShortID != "" {
+				lines = append(lines, iss.ShortID+" "+iss.Title)
+			} else {
+				lines = append(lines, iss.Title)
+			}
 		}
 	case len(p.UptimeMonitors) > 0:
 		for _, m := range p.UptimeMonitors {

@@ -767,6 +767,38 @@ describe('virtual row rendering', () => {
     expect(pushMock).toHaveBeenCalledWith('/issues/iss-v1')
   })
 
+  it('shows the short ID in the row', () => {
+    setupWithVirtualRow({ ...virtualIssue, short_id: 'BACKEND-42' } as any)
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    expect(wrapper.find('.shortid').text()).toBe('BACKEND-42')
+  })
+
+  it('opens the issue a short ID names on Enter in the search', async () => {
+    // The mocked virtualizer always renders row 0, so keep that row matching
+    // the client-side title filter.
+    setupWithVirtualRow({ ...virtualIssue, title: 'backend-42 timeout' })
+    vi.mocked(apiFetch).mockResolvedValue({ id: 'iss-42', short_id: 'BACKEND-42' })
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    const input = wrapper.find('input[aria-label="Search issues"]')
+    await input.setValue('backend-42')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(apiFetch).toHaveBeenCalledWith('/api/issues/backend-42', expect.anything())
+    expect(pushMock).toHaveBeenCalledWith('/issues/iss-42')
+  })
+
+  it('keeps a plain title search on Enter', async () => {
+    setupWithVirtualRow()
+    vi.mocked(apiFetch).mockClear()
+    const wrapper = mount(IssueListView, { global: { stubs } })
+    const input = wrapper.find('input[aria-label="Search issues"]')
+    await input.setValue('TypeError')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(apiFetch).not.toHaveBeenCalledWith(expect.stringMatching(/^\/api\/issues\//), expect.anything())
+    expect(pushMock).not.toHaveBeenCalled()
+  })
+
   it('levelColor applies danger color for error level', () => {
     setupWithVirtualRow()
     const wrapper = mount(IssueListView, { global: { stubs } })

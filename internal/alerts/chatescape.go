@@ -1,6 +1,10 @@
 package alerts
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/blendbyte/tindra/internal/storage"
+)
 
 // Alert text such as issue titles and log bodies comes from SDK payloads sent
 // with a public DSN, so it is untrusted. Escape it before it is placed into
@@ -28,3 +32,13 @@ func codeSpan(s string) string { return strings.ReplaceAll(s, "`", "") }
 
 // slackCodeSpan is codeSpan for Slack, which still parses entities in code.
 func slackCodeSpan(s string) string { return escapeSlack(codeSpan(s)) }
+
+// chatShortID renders an issue's short ID as a code span to lead its line in
+// Slack, Discord and Teams. Short IDs are letters, digits and dashes, so they
+// need no escaping.
+func chatShortID(iss *storage.Issue) string {
+	if iss.ShortID == "" {
+		return ""
+	}
+	return "`" + iss.ShortID + "` "
+}

@@ -89,7 +89,16 @@ func (ro *router) handleGetIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id := chi.URLParam(r, "issueID")
+	id, found, err := ro.resolveIssueRef(r.Context(), chi.URLParam(r, "issueID"))
+	if err != nil {
+		slog.Error("resolve issue reference", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	issue, err := storage.GetIssue(r.Context(), ro.pool, id)
 	if err != nil {
 		slog.Error("get issue", "err", err)

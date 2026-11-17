@@ -16,6 +16,7 @@ import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import IgnoreButton from '@/components/IgnoreButton.vue'
 import type { IgnorePayload } from '@/components/IgnoreButton.vue'
 import { useMe } from '@/composables/useMe'
+import { useClipboard } from '@/composables/useClipboard'
 import { prefetchIssueSections } from './issue/sectionQueries'
 import IssuePerfTransactions from './issue/IssuePerfTransactions.vue'
 import IssueEventList from './issue/IssueEventList.vue'
@@ -37,6 +38,7 @@ type IssueUpdate = { status?: string; ignore_until?: string; ignore_count_limit?
 const route = useRoute()
 const router = useRouter()
 const { show: showToast } = useToast()
+const { copy } = useClipboard()
 const qc = useQueryClient()
 const navStore = useIssueNavStore()
 const projectsStore = useProjectsStore()
@@ -377,6 +379,15 @@ onUnmounted(() => {
     <div class="detail-body">
       <div class="detail-hero">
         <div class="detail-hero__eyebrow">
+          <template v-if="issue.short_id">
+            <button
+              type="button"
+              class="detail-hero__shortid"
+              :title="`Copy ${issue.short_id}`"
+              @click="copy(issue.short_id, `Copied ${issue.short_id}`)"
+            >{{ issue.short_id }}</button>
+            <span class="detail-hero__sep">·</span>
+          </template>
           <template v-if="issue.kind === 'n1_query'">
             <span class="kindbadge kindbadge--filled">N+1</span>
             <span class="detail-hero__level">performance</span>

@@ -13,8 +13,10 @@ import (
 )
 
 type Issue struct {
-	ID               string    `json:"id"`
-	ProjectID        string    `json:"project_id"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	// ShortID is the project prefix and issue number, such as BACKEND-42.
+	ShortID          string    `json:"short_id"`
 	Fingerprint      string    `json:"fingerprint"`
 	Title            string    `json:"title"`
 	Level            string    `json:"level"`
@@ -119,8 +121,14 @@ func pageAfter(q string, args []any, filter IssueFilter, rank, lastSeen string) 
 const issueUserCountSQL = `(SELECT count(DISTINCT user_identity) FROM events
 		WHERE issue_id = i.id AND user_identity IS NOT NULL)`
 
+// shortIDSQL renders the short ID (BACKEND-42) of the issues row alias.
+// Prefixes never change, and the lookup is by primary key.
+func shortIDSQL(alias string) string {
+	return `((SELECT p.issue_prefix FROM projects p WHERE p.id = ` + alias + `.project_id) || '-' || ` + alias + `.short_number)`
+}
+
 // issueSelectCols is the canonical SELECT column list for the issues table.
-const issueSelectCols = `id, project_id, fingerprint, title, level, kind, first_seen, last_seen, event_count, status, assignee_id, environment, ignore_until, ignore_count_limit, ignore_count, first_release`
+var issueSelectCols = `id, project_id, fingerprint, title, level, kind, first_seen, last_seen, event_count, status, assignee_id, environment, ignore_until, ignore_count_limit, ignore_count, first_release, ` + shortIDSQL("issues")
 
 func scanIssue(row pgx.Row, iss *Issue) error {
 	return row.Scan(
@@ -128,6 +136,7 @@ func scanIssue(row pgx.Row, iss *Issue) error {
 		&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
 		&iss.AssigneeID, &iss.Environment,
 		&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount, &iss.FirstRelease,
+		&iss.ShortID,
 	)
 }
 
@@ -242,7 +251,7 @@ func upsertIssueOnce(ctx context.Context, pool issueDB, projectID, fingerprint, 
 			&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
 			&iss.AssigneeID, &iss.Environment,
 			&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount, &iss.FirstRelease,
-			&wasRegressed,
+			&iss.ShortID, &wasRegressed,
 		)
 		if err != nil {
 			return nil, false, false, fmt.Errorf("update issue: %w", err)
@@ -498,7 +507,7 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 		i.first_seen, i.last_seen, i.event_count, i.status,
 		i.assignee_id, i.environment,
 		i.ignore_until, i.ignore_count_limit, i.ignore_count,
-		` + issueUserCountSQL + ` AS user_count
+		` + issueUserCountSQL + ` AS user_count, ` + shortIDSQL("i") + `
 	FROM issues i WHERE TRUE`
 	q, args := addCommonFilters(q, []any{}, filter)
 
@@ -527,7 +536,7 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 			&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
 			&iss.AssigneeID, &iss.Environment,
 			&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount,
-			&iss.UserCount,
+			&iss.UserCount, &iss.ShortID,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
@@ -540,6 +549,7 @@ func ListAllIssues(ctx context.Context, pool *pgxpool.Pool, filter IssueFilter) 
 type DashboardIssue struct {
 	ID         string `json:"id"`
 	ProjectID  string `json:"project_id"`
+	ShortID    string `json:"short_id"`
 	Title      string `json:"title"`
 	Level      string `json:"level"`
 	EventCount int64  `json:"event_count"`
@@ -549,9 +559,9 @@ type DashboardIssue struct {
 // ListDashboardIssues preserves the dashboard's stable client-side selection:
 // choose the five highest counts within the 50 most recently seen open issues.
 func ListDashboardIssues(ctx context.Context, pool *pgxpool.Pool, projectIDs []string) ([]DashboardIssue, error) {
-	page, args := addCommonFilters(`SELECT id,project_id,title,level,event_count,last_seen FROM issues WHERE TRUE`, nil, IssueFilter{Status: "open", ProjectIDs: projectIDs})
+	page, args := addCommonFilters(`SELECT id,project_id,title,level,event_count,last_seen,short_number FROM issues WHERE TRUE`, nil, IssueFilter{Status: "open", ProjectIDs: projectIDs})
 	page += " ORDER BY last_seen DESC,id DESC LIMIT 50"
-	rows, err := pool.Query(ctx, "WITH recent AS MATERIALIZED ("+page+`) SELECT id,project_id,title,level,event_count
+	rows, err := pool.Query(ctx, "WITH recent AS MATERIALIZED ("+page+`) SELECT id,project_id,title,level,event_count,`+shortIDSQL("recent")+`
  FROM recent ORDER BY event_count DESC,last_seen DESC,id DESC LIMIT 5`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard issues: %w", err)
@@ -560,7 +570,7 @@ func ListDashboardIssues(ctx context.Context, pool *pgxpool.Pool, projectIDs []s
 	result := []DashboardIssue{}
 	for rows.Next() {
 		var issue DashboardIssue
-		if err := rows.Scan(&issue.ID, &issue.ProjectID, &issue.Title, &issue.Level, &issue.EventCount); err != nil {
+		if err := rows.Scan(&issue.ID, &issue.ProjectID, &issue.Title, &issue.Level, &issue.EventCount, &issue.ShortID); err != nil {
 			return nil, fmt.Errorf("scan dashboard issue: %w", err)
 		}
 		result = append(result, issue)
@@ -574,6 +584,7 @@ func ListDashboardIssues(ctx context.Context, pool *pgxpool.Pool, projectIDs []s
 type AttentionIssue struct {
 	ID           string     `json:"id"`
 	ProjectID    string     `json:"project_id"`
+	ShortID      string     `json:"short_id"`
 	Title        string     `json:"title"`
 	Level        string     `json:"level"`
 	Status       string     `json:"status"`
@@ -600,9 +611,9 @@ type AttentionIssues struct {
 	UnseenNew       *int `json:"unseen_new,omitempty"`
 }
 
-const attentionIssueCols = `id, project_id, title, level, status, event_count, ` + issueUserCountSQL + `,
+var attentionIssueCols = `id, project_id, title, level, status, event_count, ` + issueUserCountSQL + `,
 	first_seen, last_seen, regressed_at, first_release,
-	(SELECT COALESCE(NULLIF(u.name, ''), u.email) FROM users u WHERE u.id = i.assignee_id)`
+	(SELECT COALESCE(NULLIF(u.name, ''), u.email) FROM users u WHERE u.id = i.assignee_id), ` + shortIDSQL("i")
 
 // ListAttentionIssues returns up to limit regressed issues seen since from,
 // most recently regressed first, and up to limit new issues first seen in
@@ -661,7 +672,7 @@ func queryAttentionIssues(ctx context.Context, pool *pgxpool.Pool, clause, onset
 	for rows.Next() {
 		var issue AttentionIssue
 		if err := rows.Scan(&issue.ID, &issue.ProjectID, &issue.Title, &issue.Level, &issue.Status, &issue.EventCount, &issue.UserCount,
-			&issue.FirstSeen, &issue.LastSeen, &issue.RegressedAt, &issue.FirstRelease, &issue.Assignee, total, &n); err != nil {
+			&issue.FirstSeen, &issue.LastSeen, &issue.RegressedAt, &issue.FirstRelease, &issue.Assignee, &issue.ShortID, total, &n); err != nil {
 			return nil, err
 		}
 		result = append(result, issue)
@@ -702,7 +713,7 @@ func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error
 		       i.assignee_id, i.environment,
 		       i.ignore_until, i.ignore_count_limit, i.ignore_count,
 		       e.release, r.id,
-		       u.cnt, i.first_release, i.regressed_at
+		       u.cnt, i.first_release, i.regressed_at, `+shortIDSQL("i")+`
 		FROM issues i
 		LEFT JOIN LATERAL (
 		    SELECT release FROM events
@@ -718,7 +729,7 @@ func GetIssue(ctx context.Context, pool *pgxpool.Pool, id string) (*Issue, error
 		&iss.AssigneeID, &iss.Environment,
 		&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount,
 		&iss.Release, &iss.ReleaseID,
-		&iss.UserCount, &iss.FirstRelease, &iss.RegressedAt,
+		&iss.UserCount, &iss.FirstRelease, &iss.RegressedAt, &iss.ShortID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -835,6 +846,21 @@ func MergeIssues(ctx context.Context, pool *pgxpool.Pool, primaryID string, merg
 		WHERE dst.id = $2
 	`, mergeIDs, primaryID); err != nil {
 		return nil, fmt.Errorf("aggregate stats: %w", err)
+	}
+
+	// Keep the merged issues' short IDs, and any they inherited from earlier
+	// merges, leading to the primary once they are deleted.
+	if _, err := tx.Exec(ctx, `
+		UPDATE issue_short_aliases SET issue_id = $1 WHERE issue_id = ANY($2::uuid[])
+	`, primaryID, mergeIDs); err != nil {
+		return nil, fmt.Errorf("move short ID aliases: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO issue_short_aliases (project_id, short_number, issue_id)
+		SELECT project_id, short_number, $1 FROM issues WHERE id = ANY($2::uuid[])
+		ON CONFLICT (project_id, short_number) DO UPDATE SET issue_id = EXCLUDED.issue_id
+	`, primaryID, mergeIDs); err != nil {
+		return nil, fmt.Errorf("alias merged short IDs: %w", err)
 	}
 
 	// Delete the now-empty merged issues.
@@ -1065,6 +1091,7 @@ func AutoResolvePerformanceIssues(ctx context.Context, pool *pgxpool.Pool, older
 			&iss.Level, &iss.Kind, &iss.FirstSeen, &iss.LastSeen, &iss.EventCount, &iss.Status,
 			&iss.AssigneeID, &iss.Environment,
 			&iss.IgnoreUntil, &iss.IgnoreCountLimit, &iss.IgnoreCount, &iss.FirstRelease,
+			&iss.ShortID,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}

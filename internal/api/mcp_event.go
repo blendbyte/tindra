@@ -231,9 +231,16 @@ func mcpPick(m map[string]any, keys []string) map[string]any {
 
 // mcpIssueInScope loads an issue, hiding issues outside a Bearer token's
 // project.
-func (ro *router) mcpIssueInScope(ctx context.Context, id string) (*storage.Issue, error) {
-	if id == "" {
+func (ro *router) mcpIssueInScope(ctx context.Context, ref string) (*storage.Issue, error) {
+	if ref == "" {
 		return nil, mcpToolError{"issue id is required"}
+	}
+	id, found, err := ro.resolveIssueRef(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, mcpToolError{"issue not found"}
 	}
 	issue, err := storage.GetIssue(ctx, ro.pool, id)
 	if err != nil {

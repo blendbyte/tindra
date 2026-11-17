@@ -9,6 +9,21 @@ export function safeRedirect(value: unknown): string {
   return value
 }
 
+// shortIdGuard turns /issues/BACKEND-42 into the issue's own URL, so links
+// built from a short ID open the issue and every request uses its UUID.
+export async function shortIdGuard(to: RouteLocationNormalized) {
+  if (to.name !== 'issue-detail') return
+  const ref = String(to.params.id ?? '')
+  const { isShortId, findIssueByShortId } = await import('@/utils/shortId')
+  if (!isShortId(ref)) return
+  try {
+    const issue = await findIssueByShortId(ref)
+    if (issue) return { name: 'issue-detail', params: { id: issue.id }, query: to.query, hash: to.hash, replace: true }
+  } catch {
+    // The detail view reports the failure when it loads the issue.
+  }
+}
+
 // authGuard sends signed-out users to the login page, remembering where they
 // were going, and users who still need MFA to its setup page.
 export async function authGuard(to: RouteLocationNormalized) {

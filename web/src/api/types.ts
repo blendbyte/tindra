@@ -125,6 +125,8 @@ export type IssueKind = 'error' | 'n1_query'
 export interface Issue {
   id: string
   project_id: string
+  /** Project prefix and issue number, such as BACKEND-42. */
+  short_id: string
   fingerprint: string
   title: string
   level: IssueLevel

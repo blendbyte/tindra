@@ -76,6 +76,11 @@ func TestExportIssues_csvWithAssignee(t *testing.T) {
 	if !strings.Contains(body, "CSV Assignee Cov5") {
 		t.Errorf("expected issue title in CSV body, got: %s", body)
 	}
+	// The short ID is the last column, so readers indexing by position keep working.
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	if !strings.HasSuffix(lines[0], ",last_seen,short_id") || !strings.HasSuffix(lines[1], ","+iss.ShortID) {
+		t.Errorf("expected short_id as the last column, got: %s", body)
+	}
 }
 
 // ---------------------------------------------------------------------------

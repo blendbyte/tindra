@@ -97,6 +97,7 @@ func RenderPasswordResetEmail(resetURL, publicURL string) (string, string, error
 
 type alertIssueData struct {
 	Title         string // the full title, for the plain-text part
+	ShortID       string // BACKEND-42
 	TitleType     string
 	TitleText     string
 	Level         string
@@ -182,7 +183,7 @@ var alertBodyTmpl = template.Must(template.Must(template.New("alert-body").Parse
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border-top:1px solid __HAIRLINE__;margin:0 0 {{if .MoreCount}}12{{else}}24{{end}}px;">
 {{range .Issues}}
   <tr><td style="__ROW__">
-    <p style="__META__"><span style="__DOT__background:{{.LevelColor}};"></span><strong style="color:__TEXT2__;font-weight:600;">{{.Level}}</strong>{{if .Environment}} &middot; {{.Environment}}{{end}}{{if .ProjectName}} &middot; {{.ProjectName}}{{end}}{{if .OccurredAt}} &middot; {{.OccurredAt}}{{end}}</p>
+    <p style="__META__"><span style="__DOT__background:{{.LevelColor}};"></span><strong style="color:__TEXT2__;font-weight:600;">{{.Level}}</strong>{{if .ShortID}} &middot; {{.ShortID}}{{end}}{{if .Environment}} &middot; {{.Environment}}{{end}}{{if .ProjectName}} &middot; {{.ProjectName}}{{end}}{{if .OccurredAt}} &middot; {{.OccurredAt}}{{end}}</p>
     <a href="{{.URL}}" style="__NAME__">{{if .TitleType}}<span style="color:__ACCENT__;font-size:14px;__MONO__">{{.TitleType}}</span>: {{end}}{{.TitleText}}</a>
     {{if .RequestURL}}<p style="__SUB__color:__TEXT2__;word-break:break-all;__MONO__">{{if .RequestMethod}}<strong style="color:__TEXT1__;font-weight:600;">{{.RequestMethod}}</strong> {{end}}{{.RequestURL}}</p>{{end}}
     {{if .Message}}<p style="margin:6px 0 0;font-size:13px;line-height:1.5;color:__TEXT2__;">{{.Message}}</p>{{end}}
@@ -369,6 +370,7 @@ func buildIssueCards(issues []*storage.Issue, projectName string, projectNames m
 		typ, text := emailstyle.SplitTitle(iss.Title)
 		cards = append(cards, alertIssueData{
 			Title:         iss.Title,
+			ShortID:       iss.ShortID,
 			TitleType:     typ,
 			TitleText:     text,
 			Level:         iss.Level,
@@ -705,6 +707,9 @@ func RenderAlertEmail(payload AlertPayload, publicURL string) (string, string, e
 	for _, iss := range data.Issues {
 		tb.WriteString("----------------------------------------\n")
 		meta := iss.Level
+		if iss.ShortID != "" {
+			meta += " · " + iss.ShortID
+		}
 		if iss.Environment != "" {
 			meta += " · " + iss.Environment
 		}

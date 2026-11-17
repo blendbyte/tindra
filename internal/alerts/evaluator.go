@@ -1011,9 +1011,9 @@ func (e *Evaluator) fireSlack(ctx context.Context, rule *storage.AlertRule, payl
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("• <" + e.publicURL + "/issues/" + iss.ID + "|" + escapeSlack(iss.Title) + ">\n")
+				sb.WriteString("• " + chatShortID(iss) + "<" + e.publicURL + "/issues/" + iss.ID + "|" + escapeSlack(iss.Title) + ">\n")
 			} else {
-				sb.WriteString("• " + escapeSlack(iss.Title) + "\n")
+				sb.WriteString("• " + chatShortID(iss) + escapeSlack(iss.Title) + "\n")
 			}
 		}
 		blocks = append(blocks, block{
@@ -1149,9 +1149,9 @@ func (e *Evaluator) fireDiscord(ctx context.Context, rule *storage.AlertRule, pa
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("- [" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
+				sb.WriteString("- " + chatShortID(iss) + "[" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
 			} else {
-				sb.WriteString("- " + escapeMarkdown(iss.Title) + "\n")
+				sb.WriteString("- " + chatShortID(iss) + escapeMarkdown(iss.Title) + "\n")
 			}
 		}
 		description = strings.TrimRight(sb.String(), "\n")
@@ -1313,9 +1313,9 @@ func (e *Evaluator) fireTeams(ctx context.Context, rule *storage.AlertRule, payl
 		var sb strings.Builder
 		for _, iss := range payload.Issues {
 			if e.publicURL != "" {
-				sb.WriteString("- [" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
+				sb.WriteString("- " + chatShortID(iss) + "[" + escapeMarkdown(iss.Title) + "](" + e.publicURL + "/issues/" + iss.ID + ")\n")
 			} else {
-				sb.WriteString("- " + escapeMarkdown(iss.Title) + "\n")
+				sb.WriteString("- " + chatShortID(iss) + escapeMarkdown(iss.Title) + "\n")
 			}
 		}
 		body = append(body, textBlock{Type: "TextBlock", Text: "**Issues:**\n" + strings.TrimRight(sb.String(), "\n"), Wrap: true})

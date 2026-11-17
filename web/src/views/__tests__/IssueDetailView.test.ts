@@ -34,6 +34,19 @@ vi.mock('@/api/client', () => ({
   apiFetch: vi.fn(),
 }))
 
+// Records what the view copies while the real clipboard code still runs.
+const copyMock = vi.fn()
+vi.mock('@/composables/useClipboard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useClipboard')>()
+  return {
+    ...actual,
+    useClipboard: () => {
+      const { copy } = actual.useClipboard()
+      return { copy: (text: string, message?: string) => { copyMock(text, message); return copy(text, message) } }
+    },
+  }
+})
+
 vi.mock('@/utils/formatters', () => ({
   formatRel: vi.fn(() => '2m ago'),
   formatTs: vi.fn(() => '12:34:56.789'),
@@ -168,6 +181,21 @@ describe('IssueDetailView', () => {
       }) as any)
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.find('.detail-hero__project').text()).toBe('Checkout API')
+    })
+
+    it('shows the short ID and copies it on click', async () => {
+      setupQueries({ ...baseIssue, short_id: 'BACKEND-42' })
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      const button = wrapper.find('.detail-hero__shortid')
+      expect(button.text()).toBe('BACKEND-42')
+      await button.trigger('click')
+      expect(copyMock).toHaveBeenCalledWith('BACKEND-42', 'Copied BACKEND-42')
+    })
+
+    it('leaves the short ID out when the issue has none', () => {
+      setupQueries()
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.find('.detail-hero__shortid').exists()).toBe(false)
     })
 
     it('falls back to the project ID until projects load', () => {

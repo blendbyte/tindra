@@ -22,6 +22,7 @@ import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
 import { useMe } from '@/composables/useMe'
 import { useDebounced } from '@/composables/useDebounced'
 import { splitTitle } from '@/utils/issueTitle'
+import { findIssueByShortId } from '@/utils/shortId'
 
 const router = useRouter()
 const route = useRoute()
@@ -65,6 +66,16 @@ const assigneeFilter = ref(qp('assignee', 'All', 'assignee'))
 const tagKey = ref(qp('tag_key', ''))
 const tagValue = ref(qp('tag_value', ''))
 const search = ref(qp('q', ''))
+// Enter on a short ID such as BACKEND-42 opens that issue, whatever the
+// filters show, as pasting one from a ticket or chat means to.
+async function openShortId() {
+  try {
+    const issue = await findIssueByShortId(search.value)
+    if (issue) router.push(`/issues/${issue.id}`)
+  } catch {
+    // Not found or failed: the search stays a title search.
+  }
+}
 // Server queries, the URL and exports follow the search after typing pauses;
 // filtering the rows already loaded stays instant.
 const serverSearch = useDebounced(search, 300)
@@ -710,8 +721,9 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         <input
           ref="searchInput"
           v-model="search"
-          placeholder="Search issues…"
+          placeholder="Search issues or BACKEND-42…"
           aria-label="Search issues"
+          @keydown.enter="openShortId"
         />
         <span class="nav__kbd">/</span>
       </div>
@@ -814,6 +826,7 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
                 <span class="issue__title-msg">{{ splitTitle(sorted[vRow.index]?.title ?? '').message }}</span>
               </div>
               <div class="issue__sub">
+                <span v-if="sorted[vRow.index]?.short_id" class="shortid">{{ sorted[vRow.index].short_id }}</span>
                 <span v-if="rowState(sorted[vRow.index])" class="statechip" :class="`statechip--${rowState(sorted[vRow.index])}`">{{ rowState(sorted[vRow.index]) }}</span>
                 <span v-if="sorted[vRow.index]?.kind === 'n1_query'" class="kindbadge">N+1</span>
                 <span class="projtag" :title="projectName(sorted[vRow.index]?.project_id)">{{ projectName(sorted[vRow.index]?.project_id) }}</span>

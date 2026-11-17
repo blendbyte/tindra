@@ -5,6 +5,7 @@ import { useUiStore } from '@/stores/ui'
 import { useProjectsStore } from '@/stores/projects'
 import { useIssueNavStore } from '@/stores/issueNav'
 import { apiFetch } from '@/api/client'
+import { findIssueByShortId } from '@/utils/shortId'
 import { useFormatters } from '@/composables/useFormatters'
 import type { Issue, IssueListPage, AppUser } from '@/api/types'
 import { useAppUserStore, appUserLabel } from '@/stores/appUser'
@@ -58,12 +59,15 @@ watch([q, () => [...projects.selectedIds].sort().join(','), () => ui.cmdOpen], (
       for (const id of projects.selectedIds) params.append('project_id', id)
       const userParams = new URLSearchParams({ q: trimmed })
       for (const id of projects.selectedIds) userParams.append('project_id', id)
-      const [data, people] = await Promise.all([
+      const [data, people, byShortId] = await Promise.all([
         apiFetch<IssueListPage>(`/api/issues?${params}`, { signal: controller.signal }),
         apiFetch<AppUser[]>(`/api/app-users?${userParams}`, { signal: controller.signal }),
+        // A short ID such as BACKEND-42 finds its issue whatever its title.
+        findIssueByShortId(trimmed, controller.signal).catch(() => null),
       ])
       if (controller.signal.aborted) return
-      issueResults.value = Array.isArray(data) ? data as Issue[] : (data.issues ?? [])
+      const found = Array.isArray(data) ? data as Issue[] : (data.issues ?? [])
+      issueResults.value = byShortId ? [byShortId, ...found.filter(i => i.id !== byShortId.id)] : found
       userResults.value = Array.isArray(people) ? people : []
     } catch {
       if (controller.signal.aborted) return
@@ -109,7 +113,7 @@ const issueItems = computed<CmdItem[]>(() =>
     id: 'issue:' + iss.id,
     group: 'Issues',
     label: iss.title,
-    hint: formatRel(iss.last_seen),
+    hint: iss.short_id ? `${iss.short_id} · ${formatRel(iss.last_seen)}` : formatRel(iss.last_seen),
     level: iss.level,
     action: () => {
       navStore.set(issueResults.value.map((i) => i.id))

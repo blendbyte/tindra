@@ -375,7 +375,7 @@ func mcpToolList() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"id":     prop("string", "Issue ID."),
+					"id":     prop("string", "Issue ID or short ID, such as BACKEND-42."),
 					"offset": prop("integer", "Event occurrence offset, newest first (0 = latest, default 0)."),
 				},
 				"required": []string{"id"},
@@ -387,7 +387,7 @@ func mcpToolList() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"issue_id": prop("string", "Issue ID."),
+					"issue_id": prop("string", "Issue ID or short ID, such as BACKEND-42."),
 					"offset":   prop("integer", "Event occurrence offset, newest first (0 = latest, default 0)."),
 					"sections": map[string]any{
 						"type":        "array",
@@ -1099,6 +1099,13 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 	id := mcpArgString(args, "id")
 	if id == "" {
 		return "", mcpToolError{"id is required"}
+	}
+	id, found, err := ro.resolveIssueRef(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", mcpToolError{"issue not found"}
 	}
 	issue, err := storage.GetIssueMetadata(ctx, ro.pool, id)
 	if err != nil {

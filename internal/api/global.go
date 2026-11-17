@@ -698,7 +698,7 @@ func (ro *router) handleExportIssues(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"id", "project_id", "title", "level", "status", "environment", "assignee", "event_count", "first_seen", "last_seen"})
+	_ = cw.Write([]string{"id", "project_id", "title", "level", "status", "environment", "assignee", "event_count", "first_seen", "last_seen", "short_id"})
 	for _, iss := range issues {
 		env := ""
 		if iss.Environment != nil {
@@ -719,6 +719,7 @@ func (ro *router) handleExportIssues(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("%d", iss.EventCount),
 			iss.FirstSeen.UTC().Format(time.RFC3339),
 			iss.LastSeen.UTC().Format(time.RFC3339),
+			iss.ShortID,
 		})
 	}
 	cw.Flush()
@@ -791,7 +792,16 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 
 // handleGetIssueGlobal fetches a single issue by ID without project scoping.
 func (ro *router) handleGetIssueGlobal(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "issueID")
+	id, found, err := ro.resolveIssueRef(r.Context(), chi.URLParam(r, "issueID"))
+	if err != nil {
+		slog.Error("resolve issue reference", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	issue, err := storage.GetIssue(r.Context(), ro.pool, id)
 	if err != nil {
 		slog.Error("get issue", "err", err)
