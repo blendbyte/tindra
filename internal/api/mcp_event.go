@@ -54,11 +54,14 @@ func mcpTrimEvent(raw json.RawMessage) (json.RawMessage, []string) {
 			out[key] = v
 		}
 	}
-	if exc, ok := data["exception"].(map[string]any); ok {
+	exc, hasExc := data["exception"].(map[string]any)
+	if hasExc {
 		out["exception"] = mcpTrimValues(exc, nil)
-	} else if threads, ok := data["threads"].(map[string]any); ok {
-		// Message events with attach_stacktrace, and some native SDKs, carry
-		// the stack only on the thread that crashed or was current.
+	}
+	// Message events with attach_stacktrace, and Cocoa and native crashes
+	// whose exception has no stack of its own, carry the stack only on the
+	// thread that crashed or was current.
+	if threads, ok := data["threads"].(map[string]any); ok && !mcpHasStacktrace(exc) {
 		out["threads"] = mcpTrimValues(threads, mcpCrashedThreads)
 	}
 	if crumbs, ok := mcpTrimBreadcrumbsOf(data["breadcrumbs"]); ok {
@@ -124,6 +127,18 @@ func mcpTrimValues(iface map[string]any, keep func([]any) []any) map[string]any 
 		trimmed = append(trimmed, copied)
 	}
 	return map[string]any{"values": trimmed}
+}
+
+// mcpHasStacktrace reports whether any value of an exception interface has
+// stack frames.
+func mcpHasStacktrace(iface map[string]any) bool {
+	values, _ := iface["values"].([]any)
+	return slices.ContainsFunc(values, func(v any) bool {
+		val, _ := v.(map[string]any)
+		st, _ := val["stacktrace"].(map[string]any)
+		frames, _ := st["frames"].([]any)
+		return len(frames) > 0
+	})
 }
 
 // mcpCrashedThreads keeps the threads marked crashed, else those marked
@@ -267,14 +282,7 @@ func (ro *router) mcpGetEventDetail(ctx context.Context, args map[string]any) (s
 		return "", mcpToolError{"issue has no event at this offset"}
 	}
 
-	var sections []string
-	if raw, ok := args["sections"].([]any); ok {
-		for _, s := range raw {
-			if name, ok := s.(string); ok && name != "" {
-				sections = append(sections, name)
-			}
-		}
-	}
+	sections := slices.DeleteFunc(mcpArgStrings(args, "sections"), func(s string) bool { return s == "" })
 	out := struct {
 		EventID string                     `json:"event_id"`
 		Payload json.RawMessage            `json:"payload,omitempty"`

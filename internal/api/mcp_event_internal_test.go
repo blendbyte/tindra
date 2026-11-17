@@ -212,8 +212,22 @@ func TestMCPTrimEvent_threadsWithoutException(t *testing.T) {
 		})
 	}
 
-	// With an exception, threads are left out entirely.
-	out, omitted := trimForTest(t, `{"exception":{"values":[{"type":"E"}]},"threads":{"values":[`+thread(1, "")+`]}}`)
+	// An exception without frames (Cocoa, native crashes) keeps the crashed
+	// thread's stack next to it.
+	out, omitted := trimForTest(t, `{"exception":{"values":[{"type":"EXC_BAD_ACCESS","thread_id":2}]},"threads":{"values":[`+
+		thread(1, "")+`,`+thread(2, `,"crashed":true`)+`]}}`)
+	if _, ok := out["exception"]; !ok {
+		t.Error("exception should be kept")
+	}
+	if st := firstStacktrace(t, out, "threads"); fmt.Sprint(frameFunctions(st)) != "[t2]" {
+		t.Errorf("crashed thread frames: got %v, want [t2]", frameFunctions(st))
+	}
+	if !slices.Equal(omitted, []string{"threads"}) {
+		t.Errorf("omitted: got %v, want [threads]", omitted)
+	}
+
+	// With an exception that has frames, threads are left out entirely.
+	out, omitted = trimForTest(t, `{"exception":{"values":[{"type":"E","stacktrace":{"frames":[{"function":"x","in_app":true}]}}]},"threads":{"values":[`+thread(1, "")+`]}}`)
 	if _, ok := out["threads"]; ok {
 		t.Error("threads should be dropped when an exception is present")
 	}
