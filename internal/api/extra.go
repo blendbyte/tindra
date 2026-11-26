@@ -186,6 +186,10 @@ func (ro *router) handleUpdateUserPermissions(w http.ResponseWriter, r *http.Req
 		http.Error(w, lastUserManagerMessage, http.StatusConflict)
 		return
 	}
+	if errors.Is(err, storage.ErrRestrictedUserPermissions) {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	if err != nil {
 		slog.Error("update user permissions", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -282,16 +286,47 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleListUsers returns all users (for assignee picker and team management).
+// handleListUsers returns the users for the assignee picker and team management.
+//
+// Repeated project_id parameters narrow the list to the users who see all of those
+// projects, which is who may be assigned an issue or notified about them, and
+// access=all to the users who see every project, which is who a rule covering all
+// projects may notify. A user
+// restricted to their teams' projects only gets their teammates and the users who
+// see every project, with just an id, a name and an email.
 func (ro *router) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	if actorFromContext(r.Context()) == nil {
+	actorID := actorFromContext(r.Context())
+	if actorID == nil {
 		http.Error(w, "session required", http.StatusForbidden)
 		return
 	}
-	users, err := storage.ListUsers(r.Context(), ro.pool)
+	filter := storage.UserFilter{ProjectIDs: r.URL.Query()["project_id"], AllAccessOnly: r.URL.Query().Get("access") == "all"}
+	if !validUUIDs(filter.ProjectIDs) {
+		http.Error(w, "project_id must be a project id", http.StatusBadRequest)
+		return
+	}
+	for _, id := range filter.ProjectIDs {
+		if !projectAllowed(r.Context(), id) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+	}
+	restricted := !accessFromContext(r.Context()).All
+	if restricted {
+		filter.TeammatesOf = *actorID
+	}
+	users, err := storage.ListUsersFiltered(r.Context(), ro.pool, filter)
 	if err != nil {
 		slog.Error("list users", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if restricted {
+		people := make([]map[string]string, len(users))
+		for i, u := range users {
+			people[i] = map[string]string{"id": u.ID, "name": u.Name, "email": u.Email}
+		}
+		writeJSON(w, people)
 		return
 	}
 	if users == nil {
@@ -326,6 +361,9 @@ func (ro *router) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusUnauthorized)
 		return
 	}
+	if !ro.enforceIssueProject(w, r, issueID) {
+		return
+	}
 	var req struct {
 		Body string `json:"body"`
 	}
@@ -358,6 +396,9 @@ func (ro *router) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	if comment == nil {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ro.enforceIssueProject(w, r, comment.IssueID) {
 		return
 	}
 	if comment.UserID != *actorID {
@@ -398,6 +439,9 @@ func (ro *router) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	if !ro.enforceIssueProject(w, r, comment.IssueID) {
+		return
+	}
 	// Allow if author, or if actor has manage_issues permission.
 	if comment.UserID != *actorID {
 		actor, _ := storage.GetUserByID(r.Context(), ro.pool, *actorID)
@@ -417,7 +461,7 @@ func (ro *router) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 // handleListReleaseMetadata supplies the same first-page identities for pickers.
 func (ro *router) handleListReleaseMetadata(w http.ResponseWriter, r *http.Request) {
 	releases, err := storage.ListReleaseMetadata(r.Context(), ro.pool, storage.ReleaseFilter{
-		ProjectIDs: bearerProjectIDs(r, r.URL.Query()["project_id"]),
+		ProjectIDs: scopedProjectIDs(r, r.URL.Query()["project_id"]),
 		Limit:      50,
 	})
 	if err != nil {
@@ -429,7 +473,7 @@ func (ro *router) handleListReleaseMetadata(w http.ResponseWriter, r *http.Reque
 }
 
 func (ro *router) handleRecentReleaseHealth(w http.ResponseWriter, r *http.Request) {
-	releases, err := storage.ListRecentReleaseHealth(r.Context(), ro.pool, bearerProjectIDs(r, r.URL.Query()["project_id"]))
+	releases, err := storage.ListRecentReleaseHealth(r.Context(), ro.pool, scopedProjectIDs(r, r.URL.Query()["project_id"]))
 	if err != nil {
 		slog.Error("release health", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -443,7 +487,7 @@ func (ro *router) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	const pageSize = 50
 
 	filter := storage.ReleaseFilter{
-		ProjectIDs: bearerProjectIDs(r, r.URL.Query()["project_id"]),
+		ProjectIDs: scopedProjectIDs(r, r.URL.Query()["project_id"]),
 		Limit:      pageSize,
 	}
 	if ct := r.URL.Query().Get("cursor_time"); ct != "" {
@@ -500,7 +544,7 @@ func (ro *router) handleGetRelease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, rel.ProjectID) {
+	if !enforceProjectAccess(w, r, rel.ProjectID) {
 		return
 	}
 	writeJSON(w, rel)
@@ -509,17 +553,8 @@ func (ro *router) handleGetRelease(w http.ResponseWriter, r *http.Request) {
 // handleGetReleaseTransactions returns per-transaction performance summaries for a release.
 func (ro *router) handleGetReleaseTransactions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "releaseID")
-	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		rel, err := storage.GetRelease(r.Context(), ro.pool, id)
-		if err != nil {
-			slog.Error("get release for scope check", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if rel == nil || rel.ProjectID != tokenProjID {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
+	if !ro.enforceReleaseProject(w, r, id) {
+		return
 	}
 	txns, err := storage.GetReleaseTransactions(r.Context(), ro.pool, id)
 	if err != nil {
@@ -536,17 +571,8 @@ func (ro *router) handleGetReleaseTransactions(w http.ResponseWriter, r *http.Re
 // handleGetReleaseIssues returns issues that have events tagged with this release.
 func (ro *router) handleGetReleaseIssues(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "releaseID")
-	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		rel, err := storage.GetRelease(r.Context(), ro.pool, id)
-		if err != nil {
-			slog.Error("get release for scope check", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if rel == nil || rel.ProjectID != tokenProjID {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
+	if !ro.enforceReleaseProject(w, r, id) {
+		return
 	}
 	issues, err := storage.GetReleaseIssues(r.Context(), ro.pool, id)
 	if err != nil {

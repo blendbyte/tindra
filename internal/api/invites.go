@@ -23,10 +23,21 @@ func (ro *router) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email string `json:"email"`
 		Name  string `json:"name"`
+		// ProjectAccess is "all" (the default) or "teams", and TeamIDs the teams the person
+		// joins when they accept. Access to teams only needs at least one team.
+		ProjectAccess string   `json:"project_access"`
+		TeamIDs       []string `json:"team_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
 		http.Error(w, "email is required", http.StatusBadRequest)
 		return
+	}
+	if !validUUIDs(req.TeamIDs) {
+		http.Error(w, "team_ids must be an array of team ids", http.StatusBadRequest)
+		return
+	}
+	if req.ProjectAccess == "" {
+		req.ProjectAccess = storage.AccessAll
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
@@ -60,7 +71,15 @@ func (ro *router) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		inviterID = *actorID
 	}
 
-	token, err := storage.CreateInvite(r.Context(), ro.pool, inviterID, req.Email, req.Name)
+	token, err := storage.CreateInviteForTeams(r.Context(), ro.pool, inviterID, req.Email, req.Name, req.ProjectAccess, req.TeamIDs)
+	if errors.Is(err, storage.ErrInvalidAccess) || errors.Is(err, storage.ErrInviteNeedsTeam) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, storage.ErrUnknownReference) {
+		http.Error(w, "unknown team", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		slog.Error("create invite", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -84,7 +103,7 @@ func (ro *router) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		EventType: "auth.user.invited",
 		ActorID:   actorID,
 		IP:        r.RemoteAddr,
-		Details:   map[string]any{"email": req.Email},
+		Details:   inviteAuditDetails(req.Email, req.ProjectAccess, req.TeamIDs),
 	})
 
 	writeJSONStatus(w, http.StatusCreated, map[string]any{
@@ -93,6 +112,14 @@ func (ro *router) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		"email_configured": emailConfigured,
 		"email_error":      emailError,
 	})
+}
+
+func inviteAuditDetails(email, projectAccess string, teamIDs []string) map[string]any {
+	details := map[string]any{"email": email, "project_access": projectAccess}
+	if len(teamIDs) > 0 {
+		details["teams"] = len(uniqueStrings(teamIDs))
+	}
+	return details
 }
 
 func (ro *router) handleListInvites(w http.ResponseWriter, r *http.Request) {

@@ -221,3 +221,43 @@ func sendPasswordResetEmail(ctx context.Context, sender alerts.EmailSender, to, 
 		HTML:    html,
 	})
 }
+
+// handleUpdateUserAccess sets which projects a user sees: all of them, or only those of
+// their teams. A user who holds manage_users or manage_projects cannot be restricted,
+// since those permissions administer the whole instance. Requires manage_users.
+func (ro *router) handleUpdateUserAccess(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	var req struct {
+		ProjectAccess string `json:"project_access"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	u, err := storage.SetUserProjectAccess(r.Context(), ro.pool, userID, req.ProjectAccess)
+	if errors.Is(err, storage.ErrInvalidAccess) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, storage.ErrRestrictedUserPermissions) {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		slog.Error("update user project access", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if u == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+		EventType: "user.access_changed",
+		ActorID:   actorFromContext(r.Context()),
+		TargetID:  &userID,
+		IP:        r.RemoteAddr,
+		Details:   map[string]any{"project_access": u.ProjectAccess},
+	})
+	writeJSON(w, u)
+}
