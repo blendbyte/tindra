@@ -384,7 +384,12 @@ func SetUserProjectAccess(ctx context.Context, pool *pgxpool.Pool, id, access st
 	if access != AccessAll && access != AccessTeams {
 		return nil, ErrInvalidAccess
 	}
-	tag, err := pool.Exec(ctx, `UPDATE users SET project_access = $2 WHERE id = $1`, id, access)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	tag, err := tx.Exec(ctx, `UPDATE users SET project_access = $2 WHERE id = $1`, id, access)
 	if isCheckViolation(err) {
 		return nil, ErrRestrictedUserPermissions
 	}
@@ -393,6 +398,13 @@ func SetUserProjectAccess(ctx context.Context, pool *pgxpool.Pool, id, access st
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, nil
+	}
+	// A user limited to their teams may no longer see what their alert rules cover.
+	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return GetUserByID(ctx, pool, id)
 }

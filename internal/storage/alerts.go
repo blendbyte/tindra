@@ -390,6 +390,39 @@ const recipientCannotSeeRule = `(u.project_access <> 'all' AND (
 			SELECT 1 FROM project_teams pt JOIN team_members m ON m.team_id = pt.team_id
 			WHERE m.user_id = u.id AND pt.project_id = arp.project_id))))`
 
+// recipientCannotSeeItsRule is recipientCannotSeeRule for every rule at once, with
+// r an alias of alert_rule_recipients.
+var recipientCannotSeeItsRule = strings.ReplaceAll(recipientCannotSeeRule, "$1::uuid", "r.rule_id")
+
+// purgeIneligibleRecipients drops the recipients who can no longer see all the
+// projects of their rule, and pauses the push rules left without any recipient, as
+// deleting their last recipient's account does. It runs in the transaction of
+// whatever took the access away (a team's members or projects, a team's deletion, a
+// user limited to their teams), so the rule list never shows someone who gets no
+// notification. Nobody is told: the change that caused it is in the audit log, and
+// the pushes were already filtered when they are sent.
+func purgeIneligibleRecipients(ctx context.Context, tx pgx.Tx) error {
+	// Same lock order as saving a rule: the rules, then (through the delete) the
+	// recipients. The rules are only locked against other updates, so the evaluator
+	// can still record firings for them.
+	if _, err := tx.Exec(ctx, `SELECT id FROM alert_rules WHERE id IN (
+			SELECT r.rule_id FROM alert_rule_recipients r JOIN users u ON u.id = r.user_id
+			WHERE `+recipientCannotSeeItsRule+`)
+		ORDER BY id FOR NO KEY UPDATE`); err != nil {
+		return fmt.Errorf("lock rules: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM alert_rule_recipients r USING users u
+		WHERE u.id = r.user_id AND `+recipientCannotSeeItsRule); err != nil {
+		return fmt.Errorf("purge recipients: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE alert_rules ar SET enabled = FALSE
+		WHERE ar.channel = 'push' AND ar.enabled
+		  AND NOT EXISTS (SELECT 1 FROM alert_rule_recipients rr WHERE rr.rule_id = ar.id)`); err != nil {
+		return fmt.Errorf("pause push rules without recipients: %w", err)
+	}
+	return nil
+}
+
 // requireRecipientsSeeRule checks, once the rule's projects and recipients are
 // stored in tx, that every recipient may see all of the rule's projects. Running it
 // after both are written means a change to the projects alone re-checks the

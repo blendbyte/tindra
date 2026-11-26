@@ -559,7 +559,8 @@ func TestAlertRuleRecipients_mustSeeEveryProjectOfTheRule(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrRecipientCannotSeeRule, "widening the projects re-checks the recipients")
 }
 
-// A recipient who lost access after the rule was saved stops receiving its pushes.
+// A recipient who lost access after the rule was saved stops receiving its pushes,
+// even if nothing purged them from the rule.
 func TestListPushSubscriptionsForRule_skipsRecipientsWhoLostAccess(t *testing.T) {
 	ctx := context.Background()
 	member := accessUser(t, storage.AccessTeams)
@@ -579,10 +580,101 @@ func TestListPushSubscriptionsForRule_skipsRecipientsWhoLostAccess(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, subs, 2)
 
-	_, err = storage.SetTeamMembers(ctx, testPool, team.ID, nil)
+	// Straight to the table: SetTeamMembers would also purge the recipient, and this
+	// checks the filter applied when pushes go out, which covers any other way
+	// access can change.
+	_, err = testPool.Exec(ctx, `DELETE FROM team_members WHERE team_id = $1`, team.ID)
 	require.NoError(t, err)
 	subs, err = storage.ListPushSubscriptionsForRule(ctx, testPool, rule.ID, nil)
 	require.NoError(t, err)
 	require.Len(t, subs, 1)
 	require.Equal(t, everything.ID, subs[0].UserID)
+}
+
+func ruleRecipients(t *testing.T, id string) []string {
+	t.Helper()
+	r, err := storage.GetAlertRule(context.Background(), testPool, id)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	return r.RecipientIDs
+}
+
+// Taking access away from a recipient, by any of the four ways, removes them from
+// the rules they could no longer see. Someone who still sees every project stays.
+func TestAlertRuleRecipients_areDroppedWhenAccessIsTakenAway(t *testing.T) {
+	ctx := context.Background()
+	everything := accessUser(t, storage.AccessAll)
+
+	cases := map[string]func(t *testing.T, member *storage.User, team *storage.Team, p *storage.Project){
+		"the member leaves the team": func(t *testing.T, _ *storage.User, team *storage.Team, _ *storage.Project) {
+			_, err := storage.SetTeamMembers(ctx, testPool, team.ID, nil)
+			require.NoError(t, err)
+		},
+		"the project leaves the team": func(t *testing.T, _ *storage.User, _ *storage.Team, p *storage.Project) {
+			_, err := storage.SetProjectTeams(ctx, testPool, p.ID, nil)
+			require.NoError(t, err)
+		},
+		"the team is deleted": func(t *testing.T, _ *storage.User, team *storage.Team, _ *storage.Project) {
+			deleted, err := storage.DeleteTeam(ctx, testPool, team.ID)
+			require.NoError(t, err)
+			require.True(t, deleted)
+		},
+	}
+	for name, takeAway := range cases {
+		t.Run(name, func(t *testing.T) {
+			member := accessUser(t, storage.AccessTeams)
+			team := accessTeam(t, member)
+			p := teamProject(t, team)
+			rule, err := storage.CreateAlertRule(ctx, testPool, recipientRule([]string{p.ID}, member.ID, everything.ID))
+			require.NoError(t, err)
+
+			takeAway(t, member, team, p)
+
+			require.Equal(t, []string{everything.ID}, ruleRecipients(t, rule.ID))
+		})
+	}
+}
+
+// A rule whose only recipient loses access is paused, like one whose only recipient
+// is deleted, so the rule list shows it needs a recipient.
+func TestAlertRuleRecipients_ruleWithoutRecipientsIsPaused(t *testing.T) {
+	ctx := context.Background()
+	member := accessUser(t, storage.AccessTeams)
+	team := accessTeam(t, member)
+	p := teamProject(t, team)
+	rule, err := storage.CreateAlertRule(ctx, testPool, recipientRule([]string{p.ID}, member.ID))
+	require.NoError(t, err)
+
+	_, err = storage.SetTeamMembers(ctx, testPool, team.ID, nil)
+	require.NoError(t, err)
+
+	got, err := storage.GetAlertRule(ctx, testPool, rule.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.RecipientIDs)
+	require.False(t, got.Enabled)
+}
+
+// Limiting a user to their teams drops them from the rules that cover all projects,
+// and from the ones that cover a project none of their teams has.
+func TestAlertRuleRecipients_areDroppedWhenAUserIsLimitedToTheirTeams(t *testing.T) {
+	ctx := context.Background()
+	user := accessUser(t, storage.AccessAll)
+	other := accessUser(t, storage.AccessAll)
+	team := accessTeam(t, user)
+	mine := teamProject(t, team)
+	elsewhere := accessProject(t)
+
+	global, err := storage.CreateAlertRule(ctx, testPool, recipientRule(nil, user.ID, other.ID))
+	require.NoError(t, err)
+	covered, err := storage.CreateAlertRule(ctx, testPool, recipientRule([]string{mine.ID}, user.ID, other.ID))
+	require.NoError(t, err)
+	uncovered, err := storage.CreateAlertRule(ctx, testPool, recipientRule([]string{mine.ID, elsewhere.ID}, user.ID, other.ID))
+	require.NoError(t, err)
+
+	_, err = storage.SetUserProjectAccess(ctx, testPool, user.ID, storage.AccessTeams)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{other.ID}, ruleRecipients(t, global.ID))
+	require.ElementsMatch(t, []string{user.ID, other.ID}, ruleRecipients(t, covered.ID))
+	require.Equal(t, []string{other.ID}, ruleRecipients(t, uncovered.ID))
 }

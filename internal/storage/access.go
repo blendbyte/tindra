@@ -158,16 +158,29 @@ func RenameTeam(ctx context.Context, pool *pgxpool.Pool, id, name string) (*Team
 	return GetTeam(ctx, pool, id)
 }
 
-// DeleteTeam removes a team. Its members and project links cascade.
+// DeleteTeam removes a team. Its members and project links cascade, and the alert
+// recipients who only saw a rule's projects through it are dropped.
 func DeleteTeam(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error) {
-	tag, err := pool.Exec(ctx, `DELETE FROM teams WHERE id = $1`, id)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	tag, err := tx.Exec(ctx, `DELETE FROM teams WHERE id = $1`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete team: %w", err)
+	}
+	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
 }
 
-// SetTeamMembers replaces a team's members. It returns nil when the team does not
+// SetTeamMembers replaces a team's members and drops the alert recipients who no
+// longer see their rule's projects. It returns nil when the team does not
 // exist and ErrUnknownReference when a user id does not exist.
 func SetTeamMembers(ctx context.Context, pool *pgxpool.Pool, id string, userIDs []string) (*Team, error) {
 	tx, err := pool.Begin(ctx)
@@ -194,6 +207,9 @@ func SetTeamMembers(ctx context.Context, pool *pgxpool.Pool, id string, userIDs 
 			return nil, ErrUnknownReference
 		}
 		return nil, fmt.Errorf("insert members: %w", err)
+	}
+	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -251,7 +267,8 @@ func ListProjectTeams(ctx context.Context, pool *pgxpool.Pool) ([]*ProjectTeamEn
 	return entries, rows.Err()
 }
 
-// SetProjectTeams replaces the teams a project belongs to. It returns nil when the
+// SetProjectTeams replaces the teams a project belongs to and drops the alert
+// recipients who no longer see their rule's projects. It returns nil when the
 // project does not exist and ErrUnknownReference when a team does not exist.
 func SetProjectTeams(ctx context.Context, pool *pgxpool.Pool, projectID string, teamIDs []string) (*ProjectTeams, error) {
 	tx, err := pool.Begin(ctx)
@@ -277,6 +294,9 @@ func SetProjectTeams(ctx context.Context, pool *pgxpool.Pool, projectID string, 
 			return nil, ErrUnknownReference
 		}
 		return nil, fmt.Errorf("insert project teams: %w", err)
+	}
+	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
