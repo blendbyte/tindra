@@ -16,6 +16,9 @@ export interface AppUser {
   project_id: string
 }
 
+/** `all` sees every project; `teams` only sees the projects of their teams. */
+export type ProjectAccessMode = 'all' | 'teams'
+
 export interface User {
   id: string
   email: string
@@ -25,6 +28,7 @@ export interface User {
   weekly_digest: boolean
   timezone: string
   permissions: UserPermissions
+  project_access: ProjectAccessMode
   created_at: string
 }
 
@@ -300,11 +304,38 @@ export interface Comment {
   updated_at: string
 }
 
+/** A named set of users that projects can be attached to. */
+export interface Team {
+  id: string
+  name: string
+  member_ids: string[]
+  created_at: string
+}
+
+/** The teams a project belongs to. Their members see it, and so does everyone with access to all projects. */
+export interface ProjectTeams {
+  team_ids: string[]
+}
+
+export interface ProjectTeamEntry extends ProjectTeams {
+  project_id: string
+}
+
+/** What the people pickers get: just enough to choose someone. */
+export interface Person {
+  id: string
+  name: string
+  email: string
+}
+
 export interface Invite {
   id: string
   email: string
   name?: string
   inviter_id?: string
+  project_access: ProjectAccessMode
+  /** The teams the person joins when they accept. */
+  team_ids: string[]
   expires_at: string
   accepted_at?: string
 }

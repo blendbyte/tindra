@@ -26,7 +26,7 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: vi.fn() }))
 vi.mock('@/utils/formatters', () => ({ formatRel: vi.fn(() => '2m ago') }))
 
 import UsersTab from '../UsersTab.vue'
-import { ApiError } from '@/api/client'
+import { ApiError, apiFetch } from '@/api/client'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { adminUser, isEnabled, mockQueries, queryOptions, recordMutations, stubs, type RecordedMutation } from './harness'
 
@@ -39,6 +39,7 @@ const M = {
   sendPasswordReset: 4,
   createInvite: 5,
   revokeInvite: 6,
+  setAccess: 7,
 } as const
 
 let mutations: RecordedMutation[]
@@ -727,5 +728,216 @@ describe('set password panel', () => {
     expect(wrapper.find('.team-action-panel').exists()).toBe(true)
     await wrapper.findAll('.team-action-panel .btn--ghost').find(b => b.text() === 'Cancel')!.trigger('click')
     expect(wrapper.find('.team-action-panel').exists()).toBe(false)
+  })
+
+  describe('project access', () => {
+    const restricted = {
+      id: 'user-2', name: 'Bob', email: 'bob@example.com', project_access: 'teams',
+      mfa_enabled: false, weekly_digest: false, timezone: 'UTC', created_at: '2024-01-01T00:00:00Z',
+      permissions: { manage_projects: false, manage_users: false, manage_alerts: false, manage_issues: true },
+    }
+    const ops = { id: 'g-1', name: 'Ops', member_ids: ['user-2'], created_at: '2024-01-01T00:00:00Z' }
+    const accessSelect = (wrapper: VueWrapper, email: string) =>
+      wrapper.find(`select[aria-label="Project access of ${email}"]`)
+
+    it('hides the setting while there is no team and nobody is restricted', () => {
+      mockQueries({ users: [adminUser], teams: [] })
+      const wrapper = mountTab()
+      expect(wrapper.findAll('th').map(th => th.text())).not.toContain('Project access')
+      expect(wrapper.find('select.perm-access').exists()).toBe(false)
+    })
+
+    it('shows a select per user once a team exists', () => {
+      mockQueries({ users: [adminUser, restricted], teams: [ops] })
+      const wrapper = mountTab()
+      expect(wrapper.findAll('th').map(th => th.text())).toContain('Project access')
+      expect((accessSelect(wrapper, 'admin@example.com').element as HTMLSelectElement).value).toBe('all')
+      expect((accessSelect(wrapper, 'bob@example.com').element as HTMLSelectElement).value).toBe('teams')
+      expect(wrapper.findAll('select.perm-access option').map(o => o.text())).toEqual([
+        'All projects', "Their teams' projects", 'All projects', "Their teams' projects",
+      ])
+    })
+
+    it('stays visible when someone is restricted although every team was deleted', () => {
+      mockQueries({ users: [adminUser, restricted], teams: [] })
+      expect(mountTab().find('select.perm-access').exists()).toBe(true)
+    })
+
+    it('greys out the administration permissions of a restricted user', () => {
+      mockQueries({ users: [adminUser, restricted], teams: [ops] })
+      const [projects, users, alerts, issues] = mountTab().findAll('tbody tr').at(1)!.findAll('.perm-check')
+      expect(projects.attributes('disabled')).toBeDefined()
+      expect(projects.attributes('title')).toBe('Needs access to all projects')
+      expect(users.attributes('disabled')).toBeDefined()
+      expect(alerts.attributes('disabled')).toBeUndefined()
+      expect(issues.attributes('disabled')).toBeUndefined()
+    })
+
+    it('keeps every permission editable for a user with access to all projects', () => {
+      mockQueries({ users: [adminUser, restricted], teams: [ops] })
+      const boxes = mountTab().findAll('tbody tr').at(0)!.findAll('.perm-check')
+      expect(boxes.every(b => b.attributes('disabled') === undefined)).toBe(true)
+    })
+
+    it('saves a new access and leaves the select on the saved one until then', async () => {
+      mockQueries({ users: [adminUser, restricted], teams: [ops] })
+      const wrapper = mountTab()
+      const select = accessSelect(wrapper, 'bob@example.com')
+      await select.setValue('all')
+      expect(mutations[M.setAccess].mutate).toHaveBeenCalledWith({ userID: 'user-2', projectAccess: 'all' })
+      expect((select.element as HTMLSelectElement).value).toBe('teams')
+    })
+
+    it('does nothing when the access is unchanged', async () => {
+      mockQueries({ users: [adminUser, restricted], teams: [ops] })
+      const wrapper = mountTab()
+      await accessSelect(wrapper, 'bob@example.com').setValue('teams')
+      expect(mutations[M.setAccess].mutate).not.toHaveBeenCalled()
+    })
+
+    it('puts the access to /api/users/:id/access', async () => {
+      mountTab()
+      vi.mocked(apiFetch).mockResolvedValue(restricted)
+      await mutations[M.setAccess].opts.mutationFn({ userID: 'user-2', projectAccess: 'all' })
+      expect(apiFetch).toHaveBeenCalledWith('/api/users/user-2/access', { method: 'PUT', body: JSON.stringify({ project_access: 'all' }) })
+    })
+
+    it('refreshes the users, projects and current user, then says so', () => {
+      mountTab()
+      mutations[M.setAccess].opts.onSuccess({ ...restricted, project_access: 'all' })
+      expect(qc.invalidateQueries.mock.calls.map(([a]) => a.queryKey[0]).sort()).toEqual(['me', 'projects', 'users'])
+      expect(showToast).toHaveBeenCalledWith('bob@example.com now sees all projects')
+    })
+
+    it('shows the server message when the user administers users or projects', () => {
+      mountTab()
+      mutations[M.setAccess].opts.onError(new ApiError(409, 'a user who manages users or projects must have access to all projects\n'))
+      expect(showToast).toHaveBeenCalledWith('a user who manages users or projects must have access to all projects', 'error')
+    })
+
+    it('shows a generic message for any other failure', () => {
+      mountTab()
+      mutations[M.setAccess].opts.onError(new ApiError(500, 'boom'))
+      expect(showToast).toHaveBeenCalledWith('Project access not saved. Try again.')
+    })
+  })
+
+  describe('inviting with project access', () => {
+    const ops = { id: 'g-1', name: 'Ops', member_ids: [], created_at: '2024-01-01T00:00:00Z' }
+    const dev = { id: 'g-2', name: 'Dev', member_ids: [], created_at: '2024-01-01T00:00:00Z' }
+    const access = (wrapper: VueWrapper) => wrapper.find('#invite-access').element as HTMLSelectElement
+    const teamBoxes = (wrapper: VueWrapper) => wrapper.findAll('.proj-card--form .rule__project-check input')
+
+    async function openFilledForm(wrapper: VueWrapper) {
+      await openInviteForm(wrapper)
+      await wrapper.find('#invite-email').setValue('new@example.com')
+    }
+
+    it('is the plain invitation while there are no teams', async () => {
+      mockQueries({ teams: [] })
+      const wrapper = mountTab()
+      await openFilledForm(wrapper)
+      expect(wrapper.find('#invite-access').exists()).toBe(false)
+      await wrapper.find('form.proj-card--form').trigger('submit')
+      expect(mutations[M.createInvite].mutate).toHaveBeenCalledWith({ email: 'new@example.com', name: '', access: undefined })
+    })
+
+    it("defaults to the teams' projects and lists the teams as checkboxes", async () => {
+      mockQueries({ teams: [ops, dev] })
+      const wrapper = mountTab()
+      await openInviteForm(wrapper)
+      expect(wrapper.findAll('#invite-access option').map(o => o.text())).toEqual(["Only their teams' projects", 'All projects'])
+      expect(access(wrapper).value).toBe('teams')
+      expect(wrapper.findAll('.proj-card--form .rule__project-check').map(l => l.text())).toEqual(['Ops', 'Dev'])
+      expect(wrapper.find('.proj-card--form').text()).toContain('first sign-in')
+    })
+
+    it('only fetches the teams for users who can manage users', () => {
+      mockQueries({ teams: [ops] })
+      mountTab()
+      expect(isEnabled(queryOptions('teams'))).toBe(true)
+    })
+
+    it('needs at least one team before it can be sent', async () => {
+      mockQueries({ teams: [ops, dev] })
+      const wrapper = mountTab()
+      await openFilledForm(wrapper)
+      const send = wrapper.find('form.proj-card--form button[type="submit"]')
+      expect(send.attributes('disabled')).toBeDefined()
+      await wrapper.find('form.proj-card--form').trigger('submit')
+      expect(mutations[M.createInvite].mutate).not.toHaveBeenCalled()
+      await teamBoxes(wrapper)[0].setValue(true)
+      expect(send.attributes('disabled')).toBeUndefined()
+    })
+
+    it('submits several teams with the invite', async () => {
+      mockQueries({ teams: [ops, dev] })
+      const wrapper = mountTab()
+      await openFilledForm(wrapper)
+      await teamBoxes(wrapper)[0].setValue(true)
+      await teamBoxes(wrapper)[1].setValue(true)
+      await wrapper.find('form.proj-card--form').trigger('submit')
+      expect(mutations[M.createInvite].mutate).toHaveBeenCalledWith({
+        email: 'new@example.com', name: '', access: { project_access: 'teams', team_ids: ['g-1', 'g-2'] },
+      })
+    })
+
+    it('gives access to all projects only when chosen explicitly', async () => {
+      mockQueries({ teams: [ops, dev] })
+      const wrapper = mountTab()
+      await openFilledForm(wrapper)
+      await wrapper.find('#invite-access').setValue('all')
+      expect(teamBoxes(wrapper)).toHaveLength(0)
+      await wrapper.find('form.proj-card--form').trigger('submit')
+      expect(mutations[M.createInvite].mutate).toHaveBeenCalledWith({
+        email: 'new@example.com', name: '', access: { project_access: 'all', team_ids: [] },
+      })
+    })
+
+    it('posts the access and the teams only when there are teams', async () => {
+      mountTab()
+      vi.mocked(apiFetch).mockResolvedValue(undefined)
+      await mutations[M.createInvite].opts.mutationFn({
+        email: 'a@example.com', name: 'A', access: { project_access: 'teams', team_ids: ['g-1'] },
+      })
+      expect(apiFetch).toHaveBeenLastCalledWith('/api/invites', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'a@example.com', name: 'A', project_access: 'teams', team_ids: ['g-1'] }),
+      })
+      await mutations[M.createInvite].opts.mutationFn({ email: 'a@example.com', name: 'A' })
+      expect(apiFetch).toHaveBeenLastCalledWith('/api/invites', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'a@example.com', name: 'A' }),
+      })
+    })
+
+    it('clears the chosen teams once the invitation is sent', async () => {
+      mockQueries({ teams: [ops, dev] })
+      const wrapper = mountTab()
+      await openFilledForm(wrapper)
+      await teamBoxes(wrapper)[0].setValue(true)
+      mutations[M.createInvite].opts.onSuccess({ invite_url: 'https://x/invite/t', email_sent: false, email_configured: false, email_error: '' })
+      await flushPromises()
+      await wrapper.findAll('.btn--ghost').find(b => b.text() === 'Send another')!.trigger('click')
+      expect((teamBoxes(wrapper)[0].element as HTMLInputElement).checked).toBe(false)
+    })
+
+    it('shows the access of each pending invite', () => {
+      const invite = { id: 'i-1', email: 'p1@example.com', name: '', expires_at: '2030-01-01T00:00:00Z' }
+      mockQueries({
+        teams: [ops, dev],
+        invites: [
+          { ...invite, project_access: 'teams', team_ids: ['g-1', 'g-2'] },
+          { ...invite, id: 'i-2', email: 'p2@example.com', project_access: 'all', team_ids: [] },
+          { ...invite, id: 'i-3', email: 'p3@example.com', project_access: 'teams', team_ids: ['g-9'] },
+        ],
+      })
+      const wrapper = mountTab()
+      const row = (email: string) => wrapper.findAll('tbody tr').find(r => r.text().includes(email))!
+      expect(wrapper.findAll('th').map(th => th.text())).toContain('Project access')
+      expect(row('p1@example.com').text()).toContain('Ops, Dev')
+      expect(row('p2@example.com').text()).toContain('All projects')
+      expect(row('p3@example.com').text()).toContain('Unknown team')
+    })
   })
 })

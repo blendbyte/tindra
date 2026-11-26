@@ -257,6 +257,16 @@ describe('IssueDetailView', () => {
       const wrapper = mount(IssueDetailView, { global: { stubs } })
       expect(wrapper.text()).toContain('Try again')
     })
+
+    it('says the issue may be out of reach on a 404, without offering to retry', () => {
+      setupQueries(undefined, [
+        { data: ref(undefined) },
+        { data: ref(undefined), isError: ref(true), error: ref({ status: 404 }), refetch: vi.fn() },
+      ])
+      const wrapper = mount(IssueDetailView, { global: { stubs } })
+      expect(wrapper.text()).toContain('does not exist, or you do not have access to its project')
+      expect(wrapper.text()).not.toContain('Try again')
+    })
   })
 
   describe('loaded issue', () => {

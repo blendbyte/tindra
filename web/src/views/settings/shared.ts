@@ -1,14 +1,14 @@
 import { ref, computed, onMounted, onUnmounted, type Ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { apiFetch } from '@/api/client'
-import type { Project, ServerSettings, User } from '@/api/types'
+import type { Project, ServerSettings, Team, User } from '@/api/types'
 import { useMe } from '@/composables/useMe'
 import { useTimezone } from '@/composables/useTimezone'
 
 // Helpers shared by several settings tabs. Each tab calls these itself, so the
 // queries run only while a tab that needs them is on screen.
 
-export type SettingsTab = 'tokens' | 'projects' | 'users' | 'alerts' | 'audit' | 'overview' | 'profile'
+export type SettingsTab = 'tokens' | 'projects' | 'users' | 'teams' | 'alerts' | 'audit' | 'overview' | 'profile'
 
 export function usePermissions() {
   const { data: me } = useMe()
@@ -35,14 +35,35 @@ export function useProjectByID(projects: Ref<Project[]>) {
   })
 }
 
-export function useUsers(enabled: Ref<boolean> | boolean = true) {
+// The user list. With projectIds, a people picker: only the users who see all of
+// those projects, or only the users who see every project when the list is empty
+// (a rule for all projects). Without it, everyone the caller may list.
+export function useUsers(enabled: Ref<boolean> | boolean = true, projectIds?: Ref<string[]>) {
   const { data: usersData } = useQuery({
-    queryKey: ['users'],
-    queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
+    queryKey: computed(() => (projectIds ? ['users', 'for', [...projectIds.value]] : ['users'])),
+    queryFn: ({ signal }) => {
+      if (!projectIds) return apiFetch<User[]>('/api/users', { signal })
+      const params = new URLSearchParams()
+      for (const id of projectIds.value) params.append('project_id', id)
+      if (projectIds.value.length === 0) params.set('access', 'all')
+      return apiFetch<User[]>(`/api/users?${params}`, { signal })
+    },
     enabled,
   })
   const users = computed(() => usersData.value ?? [])
   return { users }
+}
+
+// Teams. Open to manage_users and manage_projects, who pick teams for users and
+// projects; everyone else gets a 403, so pass enabled for them.
+export function useTeams(enabled: Ref<boolean> | boolean = true) {
+  const { data: teamsData } = useQuery({
+    queryKey: ['teams'],
+    queryFn: ({ signal }) => apiFetch<Team[]>('/api/teams', { signal }),
+    enabled,
+  })
+  const teams = computed(() => teamsData.value ?? [])
+  return { teams }
 }
 
 // Server limits and version info.

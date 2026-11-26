@@ -17,6 +17,7 @@ export const adminUser = {
   id: 'user-1',
   name: 'Admin',
   email: 'admin@example.com',
+  project_access: 'all',
   mfa_enabled: false,
   weekly_digest: true,
   timezone: 'UTC',
@@ -32,8 +33,9 @@ export const adminUser = {
 export type QueryName =
   | 'me' | 'tokens' | 'projects' | 'users' | 'settings' | 'invites' | 'audit'
   | 'instance-health' | 'quota' | 'alert-rules' | 'alert-firings' | 'logs-count'
+  | 'teams' | 'project-teams'
 
-const listQueries: QueryName[] = ['tokens', 'projects', 'users', 'invites', 'audit', 'alert-rules', 'alert-firings']
+const listQueries: QueryName[] = ['tokens', 'projects', 'users', 'invites', 'audit', 'alert-rules', 'alert-firings', 'teams']
 
 export function queryName(options: any): QueryName {
   return toValue(options.queryKey)[0] as QueryName

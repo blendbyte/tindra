@@ -1053,4 +1053,14 @@ describe('AlertsTab users query', () => {
     mountTab()
     expect(isEnabled(queryOptions('users'))).toBe(true)
   })
+
+  it('offers only the users who see every project of the rule, or who see every project for a global rule', async () => {
+    mockQueries({ 'alert-rules': [{ ...baseRule, channel: 'push' as const, recipient_ids: ['user-1'] }] })
+    mountTab()
+    const options = queryOptions('users')
+    vi.mocked(apiFetch).mockResolvedValue([])
+    await options.queryFn({ signal: undefined })
+    // No project on the open form: a rule for all projects, so users with access to all of them.
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/users?access=all', { signal: undefined })
+  })
 })

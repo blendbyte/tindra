@@ -41,7 +41,8 @@ import ProjectsTab from '../ProjectsTab.vue'
 import { useRoute } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import { useToast } from '@/composables/useToast'
-import { isEnabled, mockQueries, queryOptions, recordMutations, stubs, type RecordedMutation } from './harness'
+import { apiFetch } from '@/api/client'
+import { adminUser, isEnabled, mockQueries, queryOptions, recordMutations, stubs, type RecordedMutation } from './harness'
 
 // Order of the useMutation calls inside ProjectsTab.
 const M = { createProject: 0, updateProject: 1, deleteProject: 2, updatePrivacy: 3 }
@@ -261,6 +262,204 @@ describe('ProjectsTab', () => {
       expect(muts[M.createProject].mutate).toHaveBeenCalledWith({ name: 'My App', slug: 'my-app' })
       // Form stays open since the mocked mutation never calls onSuccess
       expect(wrapper.find('.proj-card--form').exists()).toBe(true)
+    })
+
+    describe('team choice', () => {
+      const ops = { id: 'g-1', name: 'Ops', member_ids: [], created_at: '2024-01-01T00:00:00Z' }
+      const dev = { id: 'g-2', name: 'Dev', member_ids: [], created_at: '2024-01-01T00:00:00Z' }
+
+      async function fillForm(wrapper: VueWrapper) {
+        await wrapper.find('#proj-name').setValue('My App')
+        await wrapper.find('#proj-slug').setValue('my-app')
+      }
+      const boxes = (wrapper: VueWrapper) => wrapper.findAll('.proj-card--form .rule__project-check input')
+
+      it('offers no team checkboxes while there are no teams', async () => {
+        mockQueries({ teams: [] })
+        const wrapper = mountTab()
+        await openNewProjectForm(wrapper)
+        expect(boxes(wrapper)).toHaveLength(0)
+      })
+
+      it('lists the teams as checkboxes, none ticked', async () => {
+        mockQueries({ teams: [ops, dev] })
+        const wrapper = mountTab()
+        await openNewProjectForm(wrapper)
+        const form = wrapper.find('.proj-card--form')
+        expect(form.findAll('.rule__project-check').map(l => l.text())).toEqual(['Ops', 'Dev'])
+        expect(boxes(wrapper).every(b => !(b.element as HTMLInputElement).checked)).toBe(true)
+        expect(form.text()).toContain('Without a team, only users with access to all projects see it')
+      })
+
+      it('fetches the teams for holders of manage_projects', () => {
+        mockQueries({ teams: [ops] })
+        mountTab()
+        expect(isEnabled(queryOptions('teams'))).toBe(true)
+      })
+
+      it('submits the chosen teams with the project', async () => {
+        mockQueries({ teams: [ops, dev] })
+        const wrapper = mountTab()
+        await openNewProjectForm(wrapper)
+        await fillForm(wrapper)
+        await boxes(wrapper)[0].setValue(true)
+        await boxes(wrapper)[1].setValue(true)
+        await wrapper.find('.proj-card--form form, form.proj-card--form').trigger('submit')
+        expect(muts[M.createProject].mutate).toHaveBeenCalledWith({ name: 'My App', slug: 'my-app', teamIds: ['g-1', 'g-2'] })
+      })
+
+      it('submits no teamIds when none is ticked', async () => {
+        mockQueries({ teams: [ops, dev] })
+        const wrapper = mountTab()
+        await openNewProjectForm(wrapper)
+        await fillForm(wrapper)
+        await wrapper.find('.proj-card--form form, form.proj-card--form').trigger('submit')
+        expect(muts[M.createProject].mutate).toHaveBeenCalledWith({ name: 'My App', slug: 'my-app' })
+      })
+
+      it('sends team_ids only when a team was chosen', async () => {
+        mountTab()
+        vi.mocked(apiFetch).mockResolvedValue(undefined)
+        await muts[M.createProject].opts.mutationFn({ name: 'My App', slug: 'my-app', teamIds: ['g-1'] })
+        expect(apiFetch).toHaveBeenLastCalledWith('/api/projects', {
+          method: 'POST',
+          body: JSON.stringify({ name: 'My App', slug: 'my-app', team_ids: ['g-1'] }),
+        })
+        await muts[M.createProject].opts.mutationFn({ name: 'My App', slug: 'my-app', teamIds: [] })
+        expect(apiFetch).toHaveBeenLastCalledWith('/api/projects', {
+          method: 'POST',
+          body: JSON.stringify({ name: 'My App', slug: 'my-app' }),
+        })
+      })
+
+      it('clears the chosen teams and refreshes the team chips once the project is created', async () => {
+        mockQueries({ teams: [ops, dev] })
+        const wrapper = mountTab()
+        await openNewProjectForm(wrapper)
+        await fillForm(wrapper)
+        await boxes(wrapper)[0].setValue(true)
+        muts[M.createProject].opts.onSuccess({ id: 'new-p', name: 'My App', slug: 'my-app', public_key: 'k' })
+        await nextTick()
+        expect(qc.invalidateQueries.mock.calls.map(([a]) => a.queryKey[0])).toEqual(expect.arrayContaining(['projects', 'project-teams']))
+        await openNewProjectForm(wrapper)
+        expect(boxes(wrapper).every(b => !(b.element as HTMLInputElement).checked)).toBe(true)
+      })
+    })
+  })
+
+  describe('teams of each project', () => {
+    const base = { public_key: 'k', event_count: 0, events_24h: 0, storage_bytes: 0, event_limit: 0, scrub_fields: [], scrub_patterns: [] }
+    const projects = [
+      { ...base, id: 'p1', name: 'Alpha', slug: 'alpha' },
+      { ...base, id: 'p2', name: 'Bravo', slug: 'bravo' },
+      { ...base, id: 'p3', name: 'Charlie', slug: 'charlie' },
+    ]
+    const teams = [
+      { id: 'g-1', name: 'Ops', member_ids: [], created_at: '2024-01-01T00:00:00Z' },
+      { id: 'g-2', name: 'Dev', member_ids: [], created_at: '2024-01-01T00:00:00Z' },
+    ]
+    const entry = (project_id: string, team_ids: string[]) => ({ project_id, team_ids })
+    // A project in two teams, one in a single team and one in none.
+    const entries = [entry('p1', []), entry('p2', ['g-1', 'g-2']), entry('p3', ['g-2'])]
+
+    const names = (wrapper: VueWrapper) => wrapper.findAll('.proj-card .proj-card__name').map(n => n.text())
+    const chips = (wrapper: VueWrapper, name: string) =>
+      wrapper.findAll('.proj-card').find(c => c.find('.proj-card__name').text() === name)!
+        .findAll('.proj-teams .team-badge').map(b => b.text())
+
+    it('shows a chip for every team of a project, so a project can have several', () => {
+      mockQueries({ projects, teams, 'project-teams': entries })
+      const wrapper = mountTab()
+      expect(chips(wrapper, 'Alpha')).toEqual([])
+      expect(chips(wrapper, 'Bravo')).toEqual(['Ops', 'Dev'])
+      expect(chips(wrapper, 'Charlie')).toEqual(['Dev'])
+    })
+
+    it('keeps one flat list with every project once', () => {
+      mockQueries({ projects, teams, 'project-teams': entries })
+      const wrapper = mountTab()
+      expect(names(wrapper)).toEqual(['Alpha', 'Bravo', 'Charlie'])
+      expect(wrapper.find('.proj-section__head').exists()).toBe(false)
+    })
+
+    it('names a team it does not know yet', () => {
+      mockQueries({ projects, teams: [], 'project-teams': [entry('p1', ['g-9'])] })
+      expect(chips(mountTab(), 'Alpha')).toEqual(['Unknown team'])
+    })
+
+    it('fetches the teams of every project from /api/projects/teams, for holders of manage_projects only', async () => {
+      mockQueries({ projects, teams, 'project-teams': entries })
+      mountTab()
+      const options = queryOptions('project-teams')
+      expect(options.queryKey).toEqual(['project-teams', 'all'])
+      expect(isEnabled(options)).toBe(true)
+      vi.mocked(apiFetch).mockResolvedValue([])
+      await options.queryFn({ signal: undefined })
+      expect(apiFetch).toHaveBeenCalledWith('/api/projects/teams', { signal: undefined })
+    })
+
+    it('shows no chips or filter to users who cannot manage projects', () => {
+      const reader = { ...adminUser, permissions: { ...adminUser.permissions, manage_projects: false } }
+      mockQueries({ me: reader, projects, teams, 'project-teams': entries })
+      const wrapper = mountTab()
+      expect(wrapper.find('.proj-teams').exists()).toBe(false)
+      expect(wrapper.find('#proj-team-filter').exists()).toBe(false)
+      expect(isEnabled(queryOptions('project-teams'))).toBe(false)
+    })
+
+    describe('team filter', () => {
+      it('is offered once a team exists, listing the teams and "No team"', () => {
+        mockQueries({ projects, teams, 'project-teams': entries })
+        expect(mountTab().findAll('#proj-team-filter option').map(o => o.text())).toEqual(['All projects', 'Ops', 'Dev', 'No team'])
+      })
+
+      it('is not offered without teams', () => {
+        mockQueries({ projects, teams: [], 'project-teams': entries })
+        expect(mountTab().find('#proj-team-filter').exists()).toBe(false)
+      })
+
+      it('narrows the list to the projects of a team', async () => {
+        mockQueries({ projects, teams, 'project-teams': entries })
+        const wrapper = mountTab()
+        await wrapper.find('#proj-team-filter').setValue('g-2')
+        expect(names(wrapper)).toEqual(['Bravo', 'Charlie'])
+        await wrapper.find('#proj-team-filter').setValue('g-1')
+        expect(names(wrapper)).toEqual(['Bravo'])
+      })
+
+      it('narrows the list to the projects without a team', async () => {
+        mockQueries({ projects, teams, 'project-teams': entries })
+        const wrapper = mountTab()
+        await wrapper.find('#proj-team-filter').setValue('none')
+        expect(names(wrapper)).toEqual(['Alpha'])
+      })
+
+      it('shows every project again on "All projects"', async () => {
+        mockQueries({ projects, teams, 'project-teams': entries })
+        const wrapper = mountTab()
+        await wrapper.find('#proj-team-filter').setValue('g-1')
+        await wrapper.find('#proj-team-filter').setValue('')
+        expect(names(wrapper)).toEqual(['Alpha', 'Bravo', 'Charlie'])
+      })
+    })
+
+    it('offers a Teams button on each project card for holders of manage_projects', async () => {
+      mockQueries({ projects, teams, 'project-teams': entries })
+      const wrapper = mountTab()
+      const alpha = wrapper.findAll('.proj-card').find(c => c.find('.proj-card__name').text() === 'Alpha')!
+      await alpha.find('.proj-card__head').trigger('click')
+      expect(alpha.findAll('button').some(b => b.text() === 'Teams')).toBe(true)
+    })
+  })
+
+  describe('empty state', () => {
+    it('tells a user limited to their teams to ask for one, without offering to create a project', () => {
+      const limited = { ...adminUser, project_access: 'teams', permissions: { ...adminUser.permissions, manage_projects: false } }
+      mockQueries({ me: limited, projects: [] })
+      const wrapper = mountTab()
+      expect(wrapper.text()).toContain("You don't have access to any projects yet")
+      expect(wrapper.text()).toContain('Ask an admin to add you to a team')
+      expect(wrapper.text()).not.toContain('Create project')
     })
   })
 

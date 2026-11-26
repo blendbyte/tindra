@@ -4545,6 +4545,17 @@ input.row-check {
 
 /* ---------- Team permissions table ---------- */
 
+.perm-access {
+  font: inherit;
+  font-size: var(--text-xs);
+  padding: 2px 4px;
+  color: var(--text-1);
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.perm-access:disabled { cursor: default; opacity: 0.6; }
 .team-perms-table th.perm-col,
 .team-perms-table td.perm-col {
   text-align: center;
@@ -5567,6 +5578,12 @@ input.row-check {
   background: var(--bg);
 }
 
+.proj-teams {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
 .proj-table-head {
   display: grid;
   grid-template-columns: minmax(200px, 1fr) 120px 100px 110px 28px;

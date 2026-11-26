@@ -310,7 +310,10 @@ watch(() => editRule.trigger, (t, prev) => {
 // alerts page does not load it otherwise.
 const needsUsers = computed(() =>
   newRule.channel === 'push' || editRule.channel === 'push' || alertRules.value.some(r => r.channel === 'push'))
-const { users } = useUsers(needsUsers)
+// Only people who see every project of the rule can be notified about it, so the
+// picker follows the projects of whichever form is open.
+const recipientProjects = computed(() => (editingRuleID.value ? editRule.projectIDs : newRule.projectIDs))
+const { users } = useUsers(needsUsers, recipientProjects)
 
 // Picking push in a form starts with yourself as the recipient. Only a pick
 // in the select does this: opening a saved rule must not add anyone.

@@ -26,6 +26,7 @@ import TransactionDensityWidget from './dashboard/TransactionDensityWidget.vue'
 import SlowTransactionsWidget from './dashboard/SlowTransactionsWidget.vue'
 import AlertsWidget from './dashboard/AlertsWidget.vue'
 import ReleasesWidget from './dashboard/ReleasesWidget.vue'
+import { useProjectAccess, NO_ACCESS_TITLE, NO_ACCESS_BODY } from '@/composables/useProjectAccess'
 
 const router = useRouter()
 const projects = useProjectsStore()
@@ -114,6 +115,7 @@ const busiestRest = computed(() => {
 // ── First-run / empty state ───────────────────────────────────────────────────
 
 const noProjects = computed(() => !(projects.projects?.length))
+const { restricted: restrictedAccess } = useProjectAccess()
 
 const firstProject = computed(() => {
   if (projects.selectedIds.length > 0) {
@@ -173,12 +175,13 @@ function finishSetup() {
       <div class="empty-state__icon">
         <BrandMark :size="32" />
       </div>
-      <h2 class="empty-state__title">No projects yet</h2>
-      <p class="empty-state__body">
+      <h2 class="empty-state__title">{{ restrictedAccess ? NO_ACCESS_TITLE : 'No projects yet' }}</h2>
+      <p v-if="restrictedAccess" class="empty-state__body">{{ NO_ACCESS_BODY }}</p>
+      <p v-else class="empty-state__body">
         Create a project to get your DSN, then point any Sentry-compatible SDK at Tindra.
         Errors and traces will appear here automatically.
       </p>
-      <div class="empty-state__actions">
+      <div v-if="!restrictedAccess" class="empty-state__actions">
         <button class="btn btn--primary" @click="router.push('/settings/projects?new=1')">
           <Icon name="plus" :size="12" />
           Create project

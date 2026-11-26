@@ -12,6 +12,7 @@ const mockUser: User = {
   weekly_digest: false,
   timezone: 'UTC',
   permissions: { manage_projects: false, manage_users: false, manage_alerts: false, manage_issues: false },
+  project_access: 'all',
   created_at: '2025-01-01T00:00:00Z',
 }
 

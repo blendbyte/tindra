@@ -61,10 +61,14 @@ const assignOpen = ref(false)
 const assignEl = ref<HTMLElement | null>(null)
 const showEventList = ref(false)
 
-const { data: issue, isError: issueError, refetch: refetchIssue } = useQuery({
+const { data: issue, isError: issueError, error: issueErrorDetail, refetch: refetchIssue } = useQuery({
   queryKey: computed(() => ['issues', issueId.value]),
   queryFn: ({ signal }) => apiFetch<Issue>(`/api/issues/${issueId.value}`, { signal }),
 })
+
+// A 404 also covers an issue of a project the user cannot see: the API does not
+// tell the two apart, so retrying is pointless.
+const issueNotFound = computed(() => (issueErrorDetail?.value as { status?: number } | null | undefined)?.status === 404)
 
 // The address names the issue by its short ID, which the API takes in place of
 // the UUID. A UUID, another spelling or the short ID of an issue merged into
@@ -90,9 +94,12 @@ const { data: currentEvent, error: currentEventError } = useQuery({
   placeholderData: keepPreviousData,
 })
 
+// Only people who see the issue's project can be assigned to it, and a user limited
+// to their teams' projects is only offered their teammates.
 const { data: usersData } = useQuery({
-  queryKey: ['users'],
-  queryFn: ({ signal }) => apiFetch<User[]>('/api/users', { signal }),
+  queryKey: computed(() => ['users', 'for', [issue.value?.project_id]]),
+  queryFn: ({ signal }) => apiFetch<User[]>(`/api/users?project_id=${issue.value?.project_id}`, { signal }),
+  enabled: computed(() => !!issue.value?.project_id),
 })
 const users = computed(() => usersData.value ?? [])
 
@@ -582,8 +589,11 @@ onUnmounted(() => {
     </div>
     <div class="txerror" style="margin: 24px">
       <Icon name="alert-triangle" :size="14" class="txerror__icon" />
-      <span>Failed to load issue.</span>
-      <button class="btn" @click="refetchIssue()">Try again</button>
+      <span v-if="issueNotFound">This issue does not exist, or you do not have access to its project.</span>
+      <template v-else>
+        <span>Failed to load issue.</span>
+        <button class="btn" @click="refetchIssue()">Try again</button>
+      </template>
     </div>
   </div>
 
