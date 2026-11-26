@@ -285,6 +285,9 @@ func TestGetPasswordReset_valid(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control: got %q, want no-store", got)
+	}
 	var resp map[string]string
 	json.NewDecoder(rec.Body).Decode(&resp)
 	if resp["email"] != testUser.Email {
@@ -317,6 +320,9 @@ func TestDoPasswordReset_success(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control: got %q, want no-store", got)
 	}
 	var cookieFound bool
 	for _, c := range rec.Result().Cookies() {

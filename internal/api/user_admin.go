@@ -125,6 +125,8 @@ func (ro *router) handleAdminSendPasswordReset(w http.ResponseWriter, r *http.Re
 
 // handleGetPasswordReset validates a reset token and returns the email. Public endpoint.
 func (ro *router) handleGetPasswordReset(w http.ResponseWriter, r *http.Request) {
+	// The response names the account the token belongs to.
+	w.Header().Set("Cache-Control", "no-store")
 	token := chi.URLParam(r, "token")
 	u, err := storage.GetPasswordResetUser(r.Context(), ro.pool, token)
 	if err != nil {
@@ -146,6 +148,7 @@ const (
 
 // handleDoPasswordReset redeems the token, sets the new password, and opens a session. Public endpoint.
 func (ro *router) handleDoPasswordReset(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if ro.ssoRequired() {
 		http.Error(w, "Password recovery is disabled for this instance. Sign in with SSO or contact your administrator.", http.StatusForbidden)
 		return

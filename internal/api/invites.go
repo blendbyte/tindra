@@ -130,6 +130,8 @@ func (ro *router) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 
 // handleGetInvite validates a token and returns the email - used by the accept page.
 func (ro *router) handleGetInvite(w http.ResponseWriter, r *http.Request) {
+	// The response names the invited account.
+	w.Header().Set("Cache-Control", "no-store")
 	token := chi.URLParam(r, "token")
 	inv, err := storage.GetInvite(r.Context(), ro.pool, token)
 	if err != nil {
@@ -150,6 +152,7 @@ func (ro *router) handleGetInvite(w http.ResponseWriter, r *http.Request) {
 
 // handleAcceptInvite creates the user account, marks the invite accepted, and opens a session.
 func (ro *router) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if ro.ssoRequired() {
 		http.Error(w, "Use SSO with your invited email to accept this invitation.", http.StatusForbidden)
 		return
