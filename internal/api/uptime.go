@@ -13,7 +13,7 @@ import (
 )
 
 func (ro *router) handleListUptimeMonitors(w http.ResponseWriter, r *http.Request) {
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	monitors, err := storage.ListUptimeMonitors(r.Context(), ro.pool, projectIDs)
 	if err != nil {
 		slog.Error("list uptime monitors", "err", err)
@@ -267,7 +267,7 @@ func (ro *router) resolveUptimeMonitor(w http.ResponseWriter, r *http.Request) (
 		http.Error(w, "not found", http.StatusNotFound)
 		return nil, false
 	}
-	if !enforceTokenProject(w, r, m.ProjectID) {
+	if !enforceProjectAccess(w, r, m.ProjectID) {
 		return nil, false
 	}
 	return m, true

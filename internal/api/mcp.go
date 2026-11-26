@@ -626,9 +626,10 @@ func (ro *router) mcpCallTool(ctx context.Context, id any, params json.RawMessag
 
 // --- Argument helpers ---
 
-// mcpProjectIDs returns the effective project ID list for a request.
-// Bearer token requests are always scoped to the token's project, ignoring any argument.
-func mcpProjectIDs(ctx context.Context, args map[string]any) []string {
+// mcpRequestedProjectIDs returns the project the caller asked for: the token's
+// own project for bearer tokens (any argument is ignored), otherwise the
+// project_id argument, or nil for no preference.
+func mcpRequestedProjectIDs(ctx context.Context, args map[string]any) []string {
 	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
 		return []string{tokenProjID}
 	}
@@ -636,6 +637,14 @@ func mcpProjectIDs(ctx context.Context, args map[string]any) []string {
 		return []string{v}
 	}
 	return nil
+}
+
+// mcpProjectIDs returns the effective project ID list for a request. Bearer
+// token requests are always scoped to the token's project, ignoring any
+// argument. A session user who cannot see every project is limited to the
+// ones they can see, like scopedProjectIDs does for REST.
+func mcpProjectIDs(ctx context.Context, args map[string]any) []string {
+	return restrictProjectIDs(accessFromContext(ctx), mcpRequestedProjectIDs(ctx, args))
 }
 
 func mcpArgString(args map[string]any, key string) string {
@@ -710,6 +719,7 @@ func (ro *router) mcpGetOverview(ctx context.Context, args map[string]any) (stri
 	if err != nil {
 		return "", fmt.Errorf("list alert rules: %w", err)
 	}
+	allRules = slices.DeleteFunc(allRules, func(rule *storage.AlertRule) bool { return !ruleVisible(ctx, rule) })
 	cutoff := time.Now().Add(-24 * time.Hour)
 	firingCount := 0
 	for _, rule := range allRules {
@@ -863,11 +873,8 @@ func (ro *router) mcpGetMonitor(ctx context.Context, args map[string]any) (strin
 	if monitor == nil {
 		return "", mcpToolError{"monitor not found"}
 	}
-	// Enforce project scope for Bearer token requests.
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		if monitor.ProjectID != tokenProjID {
-			return "", mcpToolError{"monitor not found"}
-		}
+	if !projectAllowed(ctx, monitor.ProjectID) {
+		return "", mcpToolError{"monitor not found"}
 	}
 	b, _ := json.Marshal(monitor)
 	return string(b), nil
@@ -894,6 +901,7 @@ func (ro *router) mcpListAlerts(ctx context.Context, args map[string]any) (strin
 	if err != nil {
 		return "", fmt.Errorf("list alert rules: %w", err)
 	}
+	rules = slices.DeleteFunc(rules, func(rule *storage.AlertRule) bool { return !ruleVisible(ctx, rule) })
 
 	projectIDs := mcpProjectIDs(ctx, args)
 	if len(projectIDs) > 0 {
@@ -976,11 +984,8 @@ func (ro *router) mcpGetTransaction(ctx context.Context, args map[string]any) (s
 	if tx == nil {
 		return "", mcpToolError{"transaction not found"}
 	}
-	// Enforce project scope for Bearer token requests.
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		if tx.ProjectID != tokenProjID {
-			return "", mcpToolError{"transaction not found"}
-		}
+	if !projectAllowed(ctx, tx.ProjectID) {
+		return "", mcpToolError{"transaction not found"}
 	}
 	spans, err := storage.GetSpansForTransaction(ctx, ro.pool, id)
 	if err != nil {
@@ -1025,10 +1030,8 @@ func (ro *router) mcpListIssueEvents(ctx context.Context, args map[string]any) (
 	if issue == nil {
 		return "", mcpToolError{"issue not found"}
 	}
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		if issue.ProjectID != tokenProjID {
-			return "", mcpToolError{"issue not found"}
-		}
+	if !projectAllowed(ctx, issue.ProjectID) {
+		return "", mcpToolError{"issue not found"}
 	}
 	limit := mcpArgLimit(args, "limit", 20, 50)
 	events, _, err := storage.ListEventsForIssue(ctx, ro.pool, issueID, nil, nil, limit)
@@ -1074,7 +1077,7 @@ func (ro *router) mcpGetLogs(ctx context.Context, args map[string]any) (string, 
 		TraceID:     mcpArgString(args, "trace_id"),
 		Limit:       limit,
 		// Tokens must not learn transaction IDs from other projects via trace links.
-		TraceProjectIDs: tokenScope(ctx),
+		TraceProjectIDs: projectScope(ctx),
 	}
 	logs, _, err := storage.ListLogs(ctx, ro.pool, filter)
 	if err != nil {
@@ -1114,10 +1117,8 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 	if issue == nil {
 		return "", mcpToolError{"issue not found"}
 	}
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		if issue.ProjectID != tokenProjID {
-			return "", mcpToolError{"issue not found"}
-		}
+	if !projectAllowed(ctx, issue.ProjectID) {
+		return "", mcpToolError{"issue not found"}
 	}
 
 	actor := actorFromContext(ctx)
@@ -1153,6 +1154,9 @@ func (ro *router) mcpUpdateIssue(ctx context.Context, args map[string]any) (stri
 			assigneeID = &v
 		}
 		updated, err = storage.UpdateIssueAssignee(ctx, ro.pool, id, assigneeID)
+		if errors.Is(err, storage.ErrAssigneeCannotSeeProject) {
+			return "", mcpToolError{err.Error()}
+		}
 		if err != nil {
 			return "", fmt.Errorf("update issue: %w", err)
 		}
@@ -1209,13 +1213,9 @@ func (ro *router) mcpBulkUpdateIssues(ctx context.Context, args map[string]any) 
 		return "", mcpToolError{"status is required"}
 	}
 
-	// When using a bearer token, restrict to the token's project to prevent cross-project writes.
-	var projectIDs []string
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		projectIDs = []string{tokenProjID}
-	}
-
-	updated, err := storage.BulkUpdateIssueStatus(ctx, ro.pool, ids, status, nil, projectIDs)
+	// Restrict to the caller's projects (a token's own, or the ones a session
+	// user can see) to prevent cross-project writes.
+	updated, err := storage.BulkUpdateIssueStatus(ctx, ro.pool, ids, status, nil, projectScope(ctx))
 	if err != nil {
 		return "", fmt.Errorf("bulk update: %w", err)
 	}
@@ -1264,7 +1264,12 @@ func (ro *router) mcpCreateAlertRule(ctx context.Context, args map[string]any) (
 	}
 
 	// Project scoping: bearer token forces its own project; session may specify one.
-	projectIDs := mcpProjectIDs(ctx, args)
+	// A session user who cannot see every project must name theirs, since a rule
+	// with no project covers all of them.
+	projectIDs := mcpRequestedProjectIDs(ctx, args)
+	if !ruleProjectsAllowed(ctx, projectIDs) {
+		return "", mcpToolError{errRuleProjectsForbidden}
+	}
 	if len(projectIDs) > 0 {
 		rule.ProjectIDs = projectIDs
 	}

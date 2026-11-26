@@ -143,7 +143,7 @@ func TestGetWebVitals_withEnvFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetWebVitals: with project_id filter (bearerProjectIDs)
+// handleGetWebVitals: with project_id filter (scopedProjectIDs)
 // ---------------------------------------------------------------------------
 
 func TestGetWebVitals_withProjectIDFilter(t *testing.T) {
@@ -804,7 +804,7 @@ func TestUpdateProject_validPassthroughDSN(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetProjectQuota: with bearer token (enforceTokenProject passes)
+// handleGetProjectQuota: with bearer token (enforceProjectAccess passes)
 // ---------------------------------------------------------------------------
 
 func TestGetProjectQuota_bearerCorrectProject(t *testing.T) {
@@ -822,7 +822,7 @@ func TestGetProjectQuota_bearerCorrectProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleGetProjectQuota: with wrong bearer project (enforceTokenProject fails)
+// handleGetProjectQuota: with wrong bearer project (enforceProjectAccess fails)
 // ---------------------------------------------------------------------------
 
 func TestGetProjectQuota_bearerWrongProject(t *testing.T) {

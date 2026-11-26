@@ -249,7 +249,7 @@ func (ro *router) mcpIssueInScope(ctx context.Context, ref string) (*storage.Iss
 	if issue == nil {
 		return nil, mcpToolError{"issue not found"}
 	}
-	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" && issue.ProjectID != tokenProjID {
+	if !projectAllowed(ctx, issue.ProjectID) {
 		return nil, mcpToolError{"issue not found"}
 	}
 	return issue, nil

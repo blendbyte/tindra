@@ -78,7 +78,7 @@ func environmentWalk(table string) string {
 }
 
 func serveEnvironments(w http.ResponseWriter, r *http.Request, db environmentQuerier) {
-	ids := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	ids := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	if ids == nil {
 		ids = []string{}
 	}

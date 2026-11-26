@@ -396,5 +396,10 @@ func (ro *router) projectFromSlug(w http.ResponseWriter, r *http.Request) (*stor
 			return nil, false
 		}
 	}
+	// A project the session user cannot see answers like one that does not exist.
+	if !accessFromContext(r.Context()).Allows(project.ID) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return nil, false
+	}
 	return project, true
 }
