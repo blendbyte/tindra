@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -130,25 +132,40 @@ func (w *Worker) sendToUsers(ctx context.Context, users []storage.DigestUser) {
 		return
 	}
 
-	projectIDs := make([]string, len(projects))
-	for i, p := range projects {
-		projectIDs[i] = p.ID
-	}
-
 	from, to := reportWeek(time.Now().UTC())
-	report, err := w.buildReport(ctx, projectIDs, from, to)
-	if err != nil {
-		slog.Error("digest: build report", "err", err)
-		return
-	}
 
+	// A user only gets the projects they may see, so users are grouped by their
+	// visible set and each distinct set is reported once.
+	reports := make(map[string]*Report)
 	for _, u := range users {
-		report.UserName = u.Name
-		if report.UserName == "" {
-			report.UserName = u.Email
+		projectIDs, err := w.visibleProjects(ctx, u, projects)
+		if err != nil {
+			slog.Error("digest: resolve project access", "user", u.ID, "err", err)
+			continue
+		}
+		if len(projectIDs) == 0 {
+			// Nothing to report, and not marked as sent so the user gets their
+			// digest once they are given access to a project.
+			continue
+		}
+		key := strings.Join(projectIDs, ",")
+		report, ok := reports[key]
+		if !ok {
+			report, err = w.buildReport(ctx, projectIDs, from, to)
+			if err != nil {
+				slog.Error("digest: build report", "err", err)
+				continue
+			}
+			reports[key] = report
 		}
 
-		subject, html, text, err := RenderDigestEmail(report)
+		personal := *report
+		personal.UserName = u.Name
+		if personal.UserName == "" {
+			personal.UserName = u.Email
+		}
+
+		subject, html, text, err := RenderDigestEmail(&personal)
 		if err != nil {
 			slog.Error("digest: render email", "user", u.ID, "err", err)
 			continue
@@ -170,6 +187,22 @@ func (w *Worker) sendToUsers(ctx context.Context, users []storage.DigestUser) {
 
 		slog.Info("digest: sent", "user", u.ID, "email", u.Email)
 	}
+}
+
+// visibleProjects returns the sorted ids of the projects the user may see.
+func (w *Worker) visibleProjects(ctx context.Context, u storage.DigestUser, projects []*storage.ProjectMetadata) ([]string, error) {
+	access, err := storage.GetProjectAccess(ctx, w.pool, u.ID, u.ProjectAccess)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(projects))
+	for _, p := range projects {
+		if access.Allows(p.ID) {
+			ids = append(ids, p.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 // reportWeek returns the last complete ISO week before now: Monday 00:00 UTC

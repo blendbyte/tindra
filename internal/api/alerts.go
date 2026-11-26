@@ -165,6 +165,10 @@ func nonemptyCount(ids []string) int {
 	return n
 }
 
+// errRuleProjectsForbidden is the answer when a rule names projects the caller
+// cannot see, or names none while the caller cannot see them all.
+const errRuleProjectsForbidden = "project_ids must list projects you have access to"
+
 func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		storage.AlertRule
@@ -190,8 +194,12 @@ func (ro *router) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	if !ruleProjectsAllowed(r.Context(), rule.ProjectIDs) {
+		http.Error(w, errRuleProjectsForbidden, http.StatusBadRequest)
+		return
+	}
 	created, err := storage.CreateAlertRule(r.Context(), ro.pool, &rule)
-	if errors.Is(err, storage.ErrNoPushRecipients) {
+	if errors.Is(err, storage.ErrNoPushRecipients) || errors.Is(err, storage.ErrRecipientCannotSeeRule) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -218,6 +226,9 @@ func (ro *router) handleListAlertRules(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	rules = slices.DeleteFunc(rules, func(rule *storage.AlertRule) bool {
+		return !ruleVisible(r.Context(), rule)
+	})
 
 	if !canManageAlerts(r.Context()) {
 		for _, rule := range rules {
@@ -284,7 +295,7 @@ func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenRule(w, r, rule) {
+	if !enforceRuleAccess(w, r, rule) {
 		return
 	}
 	if !canManageAlerts(r.Context()) {
@@ -297,15 +308,48 @@ func (ro *router) handleGetAlertRule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rule)
 }
 
-// enforceTokenRule writes a 404 and returns false when a project-scoped token
-// asks for a rule that is not scoped to its project. Global rules span every
-// project, so they are hidden from tokens as well.
-func enforceTokenRule(w http.ResponseWriter, r *http.Request, rule *storage.AlertRule) bool {
-	if tokenProjID, ok := r.Context().Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
-		if !slices.Contains(rule.ProjectIDs, tokenProjID) {
-			http.Error(w, "not found", http.StatusNotFound)
+// ruleVisible reports whether the caller may see an alert rule. A project-scoped
+// token sees rules scoped to its project; global rules span every project, so
+// they are hidden from tokens. A session user who cannot see every project only
+// sees rules whose projects they can all see, and never a global rule.
+func ruleVisible(ctx context.Context, rule *storage.AlertRule) bool {
+	if tokenProjID, ok := ctx.Value(ctxTokenProjID).(string); ok && tokenProjID != "" {
+		return slices.Contains(rule.ProjectIDs, tokenProjID)
+	}
+	if accessFromContext(ctx).All {
+		return true
+	}
+	return !rule.IsGlobal && ruleProjectsAllowed(ctx, rule.ProjectIDs)
+}
+
+// ruleProjectsAllowed reports whether a rule limited to projectIDs stays within
+// what the caller may see. A rule with no projects covers every project, so only
+// a caller who can see them all may have one.
+func ruleProjectsAllowed(ctx context.Context, projectIDs []string) bool {
+	access := accessFromContext(ctx)
+	if access.All {
+		return true
+	}
+	n := 0
+	for _, id := range projectIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if !access.Allows(id) {
 			return false
 		}
+		n++
+	}
+	return n > 0
+}
+
+// enforceRuleAccess writes a 404 and returns false when the caller may not see
+// the rule, so a rule about a hidden project looks like one that does not exist.
+func enforceRuleAccess(w http.ResponseWriter, r *http.Request, rule *storage.AlertRule) bool {
+	if !ruleVisible(r.Context(), rule) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return false
 	}
 	return true
 }
@@ -320,6 +364,9 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 	}
 	if existing == nil {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !enforceRuleAccess(w, r, existing) {
 		return
 	}
 
@@ -477,6 +524,10 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
+	if !ruleProjectsAllowed(r.Context(), existing.ProjectIDs) {
+		http.Error(w, errRuleProjectsForbidden, http.StatusBadRequest)
+		return
+	}
 	if existing.Channel == "webhook" || existing.Channel == "slack" || existing.Channel == "discord" || existing.Channel == "teams" {
 		if err := alerts.ValidateWebhookURL(r.Context(), *existing.WebhookURL, ro.webhookAllowPrivateIPs); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -484,7 +535,7 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	updated, err := storage.UpdateAlertRule(r.Context(), ro.pool, existing)
-	if errors.Is(err, storage.ErrNoPushRecipients) {
+	if errors.Is(err, storage.ErrNoPushRecipients) || errors.Is(err, storage.ErrRecipientCannotSeeRule) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -505,6 +556,19 @@ func (ro *router) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) 
 
 func (ro *router) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "ruleID")
+	rule, err := storage.GetAlertRule(r.Context(), ro.pool, id)
+	if err != nil {
+		slog.Error("get alert rule for delete", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if rule == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !enforceRuleAccess(w, r, rule) {
+		return
+	}
 	deleted, err := storage.DeleteAlertRule(r.Context(), ro.pool, id)
 	if err != nil {
 		slog.Error("delete alert rule", "err", err)
@@ -536,7 +600,7 @@ func (ro *router) handleListAlertFirings(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenRule(w, r, rule) {
+	if !enforceRuleAccess(w, r, rule) {
 		return
 	}
 
@@ -564,6 +628,9 @@ func (ro *router) handleTestAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if rule == nil {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !enforceRuleAccess(w, r, rule) {
 		return
 	}
 
