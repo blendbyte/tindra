@@ -49,7 +49,7 @@ func TestSessionIdentityCurrentPermissionsAndSingleQuery(t *testing.T) {
 		before := trace.queries
 		identity, err := storage.GetSessionIdentity(ctx, pool, s.Token)
 		require.NoError(t, err)
-		require.Equal(t, &storage.SessionIdentity{UserID: u.ID, Permissions: perms}, identity)
+		require.Equal(t, &storage.SessionIdentity{UserID: u.ID, ProjectAccess: storage.AccessAll, Permissions: perms}, identity)
 		require.Equal(t, 1, trace.queries-before)
 	}
 }

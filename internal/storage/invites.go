@@ -13,40 +13,85 @@ import (
 )
 
 type Invite struct {
-	ID         string     `json:"id"`
-	Email      string     `json:"email"`
-	Name       string     `json:"name,omitempty"`
-	InviterID  *string    `json:"inviter_id,omitempty"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID        string  `json:"id"`
+	Email     string  `json:"email"`
+	Name      string  `json:"name,omitempty"`
+	InviterID *string `json:"inviter_id,omitempty"`
+	// ProjectAccess is the access the person gets, and TeamIDs the teams they join,
+	// when they accept.
+	ProjectAccess string     `json:"project_access"`
+	TeamIDs       []string   `json:"team_ids"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	AcceptedAt    *time.Time `json:"accepted_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
+// ErrInviteNeedsTeam is returned for an invitation to a user who only sees their
+// teams' projects but names no team: they would land on an empty instance.
+var ErrInviteNeedsTeam = errors.New("an invitation with access to teams only needs at least one team")
+
+// CreateInvite creates an invitation to a user who sees every project.
 func CreateInvite(ctx context.Context, pool *pgxpool.Pool, inviterID, email, name string) (string, error) {
+	return CreateInviteForTeams(ctx, pool, inviterID, email, name, AccessAll, nil)
+}
+
+// CreateInviteForTeams creates an invitation that sets the person's project access
+// and adds them to the given teams when they accept. It returns ErrInvalidAccess for
+// an unknown access, ErrInviteNeedsTeam for access to teams only without a team, and
+// ErrUnknownReference when a team does not exist.
+func CreateInviteForTeams(ctx context.Context, pool *pgxpool.Pool, inviterID, email, name, projectAccess string, teamIDs []string) (string, error) {
+	if projectAccess != AccessAll && projectAccess != AccessTeams {
+		return "", ErrInvalidAccess
+	}
+	teamIDs = uniqueIDs(teamIDs)
+	if projectAccess == AccessTeams && len(teamIDs) == 0 {
+		return "", ErrInviteNeedsTeam
+	}
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate token: %w", err)
 	}
 	token := hex.EncodeToString(b)
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	_, err := pool.Exec(ctx, `
-		INSERT INTO user_invites (token_hash, email, name, inviter_id, expires_at)
-		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, '')::uuid, $5)
-	`, tokenHash(token), email, name, inviterID, expiresAt)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var inviteID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO user_invites (token_hash, email, name, inviter_id, expires_at, project_access)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, '')::uuid, $5, $6)
+		RETURNING id
+	`, tokenHash(token), email, name, inviterID, expiresAt, projectAccess).Scan(&inviteID)
 	if err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO invite_teams (invite_id, team_id)
+		SELECT $1, t FROM unnest($2::uuid[]) AS t
+	`, inviteID, teamIDs); err != nil {
+		if isForeignKeyViolation(err) {
+			return "", ErrUnknownReference
+		}
+		return "", fmt.Errorf("insert invite teams: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
 	return token, nil
 }
+
+const inviteTeamIDs = `COALESCE(ARRAY(SELECT team_id FROM invite_teams WHERE invite_id = user_invites.id ORDER BY team_id), '{}')`
 
 func GetInvite(ctx context.Context, pool *pgxpool.Pool, token string) (*Invite, error) {
 	var inv Invite
 	var name *string
 	err := pool.QueryRow(ctx, `
-		SELECT id, email, name, inviter_id, expires_at, accepted_at, created_at
+		SELECT id, email, name, inviter_id, project_access, `+inviteTeamIDs+`, expires_at, accepted_at, created_at
 		FROM user_invites
 		WHERE token_hash = $1 AND expires_at > NOW() AND accepted_at IS NULL
-	`, tokenHash(token)).Scan(&inv.ID, &inv.Email, &name, &inv.InviterID, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+	`, tokenHash(token)).Scan(&inv.ID, &inv.Email, &name, &inv.InviterID, &inv.ProjectAccess, &inv.TeamIDs, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -61,7 +106,7 @@ func GetInvite(ctx context.Context, pool *pgxpool.Pool, token string) (*Invite, 
 
 func ListPendingInvites(ctx context.Context, pool *pgxpool.Pool) ([]*Invite, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, email, name, inviter_id, expires_at, accepted_at, created_at
+		SELECT id, email, name, inviter_id, project_access, `+inviteTeamIDs+`, expires_at, accepted_at, created_at
 		FROM user_invites
 		WHERE expires_at > NOW() AND accepted_at IS NULL
 		ORDER BY created_at DESC
@@ -74,7 +119,7 @@ func ListPendingInvites(ctx context.Context, pool *pgxpool.Pool) ([]*Invite, err
 	for rows.Next() {
 		var inv Invite
 		var name *string
-		if err := rows.Scan(&inv.ID, &inv.Email, &name, &inv.InviterID, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt); err != nil {
+		if err := rows.Scan(&inv.ID, &inv.Email, &name, &inv.InviterID, &inv.ProjectAccess, &inv.TeamIDs, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if name != nil {
@@ -131,10 +176,10 @@ func AcceptInviteWithSession(ctx context.Context, pool *pgxpool.Pool, token, pas
 	if _, err := tx.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return nil, nil, fmt.Errorf("lock invitation admission: %w", err)
 	}
-	var email, invitedName string
+	var inviteID, email, invitedName, projectAccess string
 	err = tx.QueryRow(ctx, `UPDATE user_invites SET accepted_at=clock_timestamp()
 		WHERE token_hash=$1 AND accepted_at IS NULL AND expires_at>clock_timestamp()
-		RETURNING email, COALESCE(name, '')`, tokenHash(token)).Scan(&email, &invitedName)
+		RETURNING id, email, COALESCE(name, ''), project_access`, tokenHash(token)).Scan(&inviteID, &email, &invitedName, &projectAccess)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, nil
 	}
@@ -163,6 +208,10 @@ func AcceptInviteWithSession(ctx context.Context, pool *pgxpool.Pool, token, pas
 		}
 		user.Name = name
 	}
+	if err := applyInviteAccess(ctx, tx, inviteID, projectAccess, user.ID); err != nil {
+		return nil, nil, err
+	}
+	user.ProjectAccess = projectAccess
 	// The new account is not visible outside this transaction yet. A later
 	// password reset cannot race ahead of issuance and will revoke this session.
 	session, err := createSession(ctx, tx, user.ID)
@@ -173,6 +222,28 @@ func AcceptInviteWithSession(ctx context.Context, pool *pgxpool.Pool, token, pas
 		return nil, nil, fmt.Errorf("commit invitation acceptance: %w", err)
 	}
 	return user, session, nil
+}
+
+// applyInviteAccess gives a newly created user the project access their invitation
+// named and adds them to its teams. A team deleted in the meantime is simply gone from
+// the invitation, so the account is still created.
+func applyInviteAccess(ctx context.Context, tx pgx.Tx, inviteID, projectAccess, userID string) error {
+	if projectAccess == AccessTeams {
+		if _, err := tx.Exec(ctx, `UPDATE users SET project_access = $2 WHERE id = $1`, userID, AccessTeams); err != nil {
+			if isCheckViolation(err) {
+				return ErrRestrictedUserPermissions
+			}
+			return fmt.Errorf("set invited user access: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO team_members (team_id, user_id)
+		SELECT team_id, $2 FROM invite_teams WHERE invite_id = $1
+		ON CONFLICT DO NOTHING
+	`, inviteID, userID); err != nil {
+		return fmt.Errorf("join invited teams: %w", err)
+	}
+	return nil
 }
 
 // HasPendingInvite reports whether an unaccepted, unexpired invite exists for

@@ -39,17 +39,34 @@ type UserPermissions struct {
 	ManageIssues   bool `json:"manage_issues"`
 }
 
+// Project access decides which projects a user can see. A user with AccessAll sees
+// every project. One with AccessTeams only sees the projects of the teams they
+// belong to, and a project without a team is only visible to AccessAll users.
+const (
+	AccessAll   = "all"
+	AccessTeams = "teams"
+)
+
+// ErrInvalidAccess is returned for a project access that is neither all nor teams.
+var ErrInvalidAccess = errors.New("project_access must be all or teams")
+
+// ErrRestrictedUserPermissions is returned when a change would give manage_users or
+// manage_projects to a user who only sees their teams' projects. Those permissions
+// administer the whole instance, so they require access to all projects.
+var ErrRestrictedUserPermissions = errors.New("manage users and manage projects require access to all projects")
+
 type User struct {
-	ID           string          `json:"id"`
-	Email        string          `json:"email"`
-	Name         string          `json:"name"`
-	PasswordHash string          `json:"-"`
-	HasPassword  bool            `json:"has_password"`
-	MFAEnabled   bool            `json:"mfa_enabled"`
-	WeeklyDigest bool            `json:"weekly_digest"`
-	Timezone     string          `json:"timezone"`
-	Permissions  UserPermissions `json:"permissions"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ID            string          `json:"id"`
+	Email         string          `json:"email"`
+	Name          string          `json:"name"`
+	PasswordHash  string          `json:"-"`
+	HasPassword   bool            `json:"has_password"`
+	MFAEnabled    bool            `json:"mfa_enabled"`
+	WeeklyDigest  bool            `json:"weekly_digest"`
+	Timezone      string          `json:"timezone"`
+	Permissions   UserPermissions `json:"permissions"`
+	ProjectAccess string          `json:"project_access"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 // ErrInvalidPassword is returned when a password verification fails.
@@ -90,11 +107,11 @@ func createUser(ctx context.Context, db interface {
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)
 		SELECT $1, $2, v, v, v, v FROM is_first
 		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access, created_at
 	`, strings.ToLower(email), string(hash)).Scan(
 		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert: %w", err)
 	}
@@ -122,11 +139,11 @@ func CreateAdminUser(ctx context.Context, pool *pgxpool.Pool, email, name, passw
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)
 		VALUES ($1, $2, $3, true, true, true, true)
 		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access, created_at
 	`, strings.ToLower(email), name, string(hash)).Scan(
 		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert: %w", err)
 	}
@@ -138,12 +155,12 @@ func GetUserByID(ctx context.Context, pool *pgxpool.Pool, id string) (*User, err
 	var u User
 	err := pool.QueryRow(ctx, `
 		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access,
 			created_at
 		FROM users WHERE id = $1
 	`, id).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -158,12 +175,12 @@ func GetUserByEmail(ctx context.Context, pool *pgxpool.Pool, email string) (*Use
 	var u User
 	err := pool.QueryRow(ctx, `
 		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access,
 			created_at
 		FROM users WHERE email = $1
 	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -181,12 +198,12 @@ func AuthenticateUser(ctx context.Context, pool *pgxpool.Pool, email, password s
 
 	err := pool.QueryRow(ctx, `
 		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access,
 			created_at, failed_attempts, locked_until
 		FROM users WHERE email = $1
 	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues,
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess,
 		&u.CreatedAt, &failedAttempts, &lockedUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
@@ -224,12 +241,48 @@ func AuthenticateUser(ctx context.Context, pool *pgxpool.Pool, email, password s
 }
 
 func ListUsers(ctx context.Context, pool *pgxpool.Pool) ([]*User, error) {
+	return ListUsersFiltered(ctx, pool, UserFilter{})
+}
+
+// UserFilter narrows ListUsersFiltered. The zero value lists everyone.
+type UserFilter struct {
+	// ProjectIDs, when not empty, keeps the users who see every one of these
+	// projects. Users with access to all projects always qualify.
+	ProjectIDs []string
+	// AllAccessOnly keeps only the users with access to all projects, which is who a
+	// rule covering all projects may notify.
+	AllAccessOnly bool
+	// TeammatesOf, when set, keeps that user, the members of their teams and the
+	// users with access to all projects.
+	TeammatesOf string
+}
+
+// ListUsersFiltered lists users in creation order, narrowed by f.
+func ListUsersFiltered(ctx context.Context, pool *pgxpool.Pool, f UserFilter) ([]*User, error) {
+	where := []string{"TRUE"}
+	var args []any
+	if len(f.ProjectIDs) > 0 {
+		args = append(args, uniqueIDs(f.ProjectIDs))
+		where = append(where, fmt.Sprintf(`(u.project_access = 'all' OR NOT EXISTS (
+			SELECT 1 FROM unnest($%d::uuid[]) AS want(id) WHERE NOT EXISTS (
+				SELECT 1 FROM project_teams pt JOIN team_members m ON m.team_id = pt.team_id
+				WHERE m.user_id = u.id AND pt.project_id = want.id)))`, len(args)))
+	}
+	if f.AllAccessOnly {
+		where = append(where, `u.project_access = 'all'`)
+	}
+	if f.TeammatesOf != "" {
+		args = append(args, f.TeammatesOf)
+		where = append(where, fmt.Sprintf(`(u.project_access = 'all' OR u.id = $%[1]d::uuid OR EXISTS (
+			SELECT 1 FROM team_members mine JOIN team_members theirs ON theirs.team_id = mine.team_id
+			WHERE mine.user_id = $%[1]d::uuid AND theirs.user_id = u.id))`, len(args)))
+	}
 	rows, err := pool.Query(ctx, `
-		SELECT id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
-			created_at
-		FROM users ORDER BY created_at ASC
-	`)
+		SELECT u.id, u.email, u.name, u.password_hash, u.mfa_enabled, u.weekly_digest, u.timezone,
+			u.perm_manage_projects, u.perm_manage_users, u.perm_manage_alerts, u.perm_manage_issues, u.project_access,
+			u.created_at
+		FROM users u WHERE `+strings.Join(where, " AND ")+` ORDER BY u.created_at ASC
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -240,7 +293,7 @@ func ListUsers(ctx context.Context, pool *pgxpool.Pool) ([]*User, error) {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 			&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-			&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt); err != nil {
+			&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		u.HasPassword = u.PasswordHash != ""
@@ -324,6 +377,31 @@ func DeleteUser(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error
 	return tag.RowsAffected() > 0, nil
 }
 
+// SetUserProjectAccess changes which projects a user sees. It returns nil when the
+// user does not exist, and ErrRestrictedUserPermissions when restricting a user who
+// holds manage_users or manage_projects (remove those first).
+func SetUserProjectAccess(ctx context.Context, pool *pgxpool.Pool, id, access string) (*User, error) {
+	if access != AccessAll && access != AccessTeams {
+		return nil, ErrInvalidAccess
+	}
+	tag, err := pool.Exec(ctx, `UPDATE users SET project_access = $2 WHERE id = $1`, id, access)
+	if isCheckViolation(err) {
+		return nil, ErrRestrictedUserPermissions
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update project access: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, nil
+	}
+	return GetUserByID(ctx, pool, id)
+}
+
+func isCheckViolation(err error) bool {
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	return ok && pgErr.Code == "23514"
+}
+
 func UpdateUserPermissions(ctx context.Context, pool *pgxpool.Pool, id string, perms UserPermissions) (*User, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -344,14 +422,17 @@ func UpdateUserPermissions(ctx context.Context, pool *pgxpool.Pool, id string, p
 		    perm_manage_issues   = $5
 		WHERE id = $1
 		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access,
 			created_at
 	`, id, perms.ManageProjects, perms.ManageUsers, perms.ManageAlerts, perms.ManageIssues).Scan(
 		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
+	}
+	if isCheckViolation(err) {
+		return nil, ErrRestrictedUserPermissions
 	}
 	if err != nil {
 		return nil, fmt.Errorf("update permissions: %w", err)
@@ -368,12 +449,12 @@ func UpdateUserProfile(ctx context.Context, pool *pgxpool.Pool, id, name, email,
 	err := pool.QueryRow(ctx, `
 		UPDATE users SET name = $1, email = $2, timezone = $3 WHERE id = $4
 		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues,
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access,
 			created_at
 	`, name, strings.ToLower(email), timezone, id).Scan(
 		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -504,19 +585,21 @@ func createSession(ctx context.Context, db interface {
 
 // SessionIdentity contains only the fields required by authentication middleware.
 type SessionIdentity struct {
-	MFAEnabled  bool
-	UserID      string
-	Permissions UserPermissions
+	MFAEnabled bool
+	UserID     string
+	// ProjectAccess is AccessAll or AccessTeams.
+	ProjectAccess string
+	Permissions   UserPermissions
 }
 
 func GetSessionIdentity(ctx context.Context, pool *pgxpool.Pool, token string) (*SessionIdentity, error) {
 	var identity SessionIdentity
 	err := pool.QueryRow(ctx, `
-		SELECT s.user_id, u.mfa_enabled, u.perm_manage_projects, u.perm_manage_users,
+		SELECT s.user_id, u.mfa_enabled, u.project_access, u.perm_manage_projects, u.perm_manage_users,
 			u.perm_manage_alerts, u.perm_manage_issues
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND s.expires_at > NOW()
-	`, tokenHash(token)).Scan(&identity.UserID, &identity.MFAEnabled, &identity.Permissions.ManageProjects,
+	`, tokenHash(token)).Scan(&identity.UserID, &identity.MFAEnabled, &identity.ProjectAccess, &identity.Permissions.ManageProjects,
 		&identity.Permissions.ManageUsers, &identity.Permissions.ManageAlerts, &identity.Permissions.ManageIssues)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -554,6 +637,9 @@ type DigestUser struct {
 	ID    string
 	Email string
 	Name  string
+	// ProjectAccess is the user's project_access setting, which decides what their
+	// report covers.
+	ProjectAccess string
 }
 
 // ListDigestDueUsers returns all opted-in users who have not received a
@@ -562,7 +648,7 @@ type DigestUser struct {
 // strict cooldown would then skip whole weeks. Pass force=true to ignore the
 // time filter and return all opted-in users regardless.
 func ListDigestDueUsers(ctx context.Context, pool *pgxpool.Pool, force bool) ([]DigestUser, error) {
-	q := `SELECT id, email, name FROM users WHERE weekly_digest = TRUE AND email <> ''`
+	q := `SELECT id, email, name, project_access FROM users WHERE weekly_digest = TRUE AND email <> ''`
 	if !force {
 		q += ` AND (digest_last_sent_at IS NULL
 			OR digest_last_sent_at < date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`
@@ -576,7 +662,7 @@ func ListDigestDueUsers(ctx context.Context, pool *pgxpool.Pool, force bool) ([]
 	var users []DigestUser
 	for rows.Next() {
 		var u DigestUser
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.ProjectAccess); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		users = append(users, u)

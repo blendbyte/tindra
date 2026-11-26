@@ -143,6 +143,9 @@ func CreateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 	if r.Channel == "push" && r.Enabled && len(created.RecipientIDs) == 0 {
 		return nil, ErrNoPushRecipients
 	}
+	if err := requireRecipientsSeeRule(ctx, tx, created.ID); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -290,6 +293,9 @@ func UpdateAlertRule(ctx context.Context, pool *pgxpool.Pool, r *AlertRule) (*Al
 	if r.Channel == "push" && r.Enabled && len(updated.RecipientIDs) == 0 {
 		return nil, ErrNoPushRecipients
 	}
+	if err := requireRecipientsSeeRule(ctx, tx, updated.ID); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -368,6 +374,39 @@ func validUUIDs(ids []string) []string {
 // user. A disabled one may have none, so a rule whose last recipient was
 // deleted can still be paused.
 var ErrNoPushRecipients = errors.New("recipient_ids must name existing users")
+
+// ErrRecipientCannotSeeRule is returned when a recipient could not see every
+// project of the rule, so the notification would leak what happens there. A
+// rule that covers all projects can only notify users with access to all of them.
+var ErrRecipientCannotSeeRule = errors.New("recipient_ids must name users who can see every project of the rule")
+
+// recipientCannotSeeRule is true for a recipient u (an alias of users) of the rule
+// $1 who lacks access to at least one of its projects, or to any of them for a rule
+// that covers all projects.
+const recipientCannotSeeRule = `(u.project_access <> 'all' AND (
+	NOT EXISTS (SELECT 1 FROM alert_rule_projects WHERE rule_id = $1::uuid)
+	OR EXISTS (
+		SELECT 1 FROM alert_rule_projects arp WHERE arp.rule_id = $1::uuid AND NOT EXISTS (
+			SELECT 1 FROM project_teams pt JOIN team_members m ON m.team_id = pt.team_id
+			WHERE m.user_id = u.id AND pt.project_id = arp.project_id))))`
+
+// requireRecipientsSeeRule checks, once the rule's projects and recipients are
+// stored in tx, that every recipient may see all of the rule's projects. Running it
+// after both are written means a change to the projects alone re-checks the
+// recipients already on the rule.
+func requireRecipientsSeeRule(ctx context.Context, tx pgx.Tx, ruleID string) error {
+	var blocked bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM alert_rule_recipients r JOIN users u ON u.id = r.user_id
+			WHERE r.rule_id = $1::uuid AND `+recipientCannotSeeRule+`)`, ruleID).Scan(&blocked); err != nil {
+		return fmt.Errorf("check recipients: %w", err)
+	}
+	if blocked {
+		return ErrRecipientCannotSeeRule
+	}
+	return nil
+}
 
 // setAlertRuleRecipients replaces a rule's push recipients within an existing
 // transaction. IDs that are not existing users are dropped, so a stale or

@@ -34,11 +34,11 @@ func CreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, email string) (*Us
 			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues)
 		SELECT $1, '', v, v, v, v FROM is_first
 		RETURNING id, email, name, password_hash, mfa_enabled, weekly_digest, timezone,
-			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, created_at
+			perm_manage_projects, perm_manage_users, perm_manage_alerts, perm_manage_issues, project_access, created_at
 	`, strings.ToLower(email)).Scan(
 		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled, &u.WeeklyDigest, &u.Timezone,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert: %w", err)
 	}

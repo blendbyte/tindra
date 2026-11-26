@@ -11,7 +11,7 @@ import (
 
 func truncateInvites(t *testing.T) {
 	t.Helper()
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE user_invites"); err != nil {
+	if _, err := testPool.Exec(context.Background(), "TRUNCATE user_invites CASCADE"); err != nil {
 		t.Fatalf("truncate user_invites: %v", err)
 	}
 }

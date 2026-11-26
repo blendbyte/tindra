@@ -1130,7 +1130,28 @@ func ExpireIgnoredIssues(ctx context.Context, pool *pgxpool.Pool) (int64, error)
 	return tag.RowsAffected(), nil
 }
 
+// ErrAssigneeCannotSeeProject is returned when an issue would be assigned to a user
+// who has no access to its project.
+var ErrAssigneeCannotSeeProject = errors.New("assignee cannot see this project")
+
+// UpdateIssueAssignee assigns an issue, or unassigns it when assigneeID is nil. It
+// returns nil when the issue does not exist and ErrAssigneeCannotSeeProject when the
+// assignee has no access to the issue's project.
 func UpdateIssueAssignee(ctx context.Context, pool *pgxpool.Pool, id string, assigneeID *string) (*Issue, error) {
+	if assigneeID != nil {
+		var sees bool
+		err := pool.QueryRow(ctx, `
+			SELECT u.project_access = 'all' OR EXISTS (
+				SELECT 1 FROM project_teams pt JOIN team_members m ON m.team_id = pt.team_id
+				WHERE m.user_id = u.id AND pt.project_id = i.project_id)
+			FROM users u, issues i WHERE u.id = $1 AND i.id = $2`, *assigneeID, id).Scan(&sees)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("check assignee access: %w", err)
+		}
+		if err == nil && !sees {
+			return nil, ErrAssigneeCannotSeeProject
+		}
+	}
 	var iss Issue
 	err := scanIssue(pool.QueryRow(ctx, `
 		UPDATE issues SET assignee_id = $1 WHERE id = $2

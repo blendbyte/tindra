@@ -89,10 +89,10 @@ func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, su
 		err = tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, email).Scan(&userID)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		var inviteID, name string
-		err = tx.QueryRow(ctx, `SELECT id, COALESCE(name, '') FROM user_invites
+		var inviteID, name, inviteAccess string
+		err = tx.QueryRow(ctx, `SELECT id, COALESCE(name, ''), project_access FROM user_invites
 			WHERE lower(email) = $1 AND accepted_at IS NULL AND expires_at > NOW()
-			ORDER BY created_at, id LIMIT 1 FOR UPDATE`, email).Scan(&inviteID, &name)
+			ORDER BY created_at, id LIMIT 1 FOR UPDATE`, email).Scan(&inviteID, &name, &inviteAccess)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrOAuthInviteRequired
 		}
@@ -114,6 +114,9 @@ func FindOrCreateOAuthUser(ctx context.Context, pool *pgxpool.Pool, provider, su
 		}
 		if _, err := tx.Exec(ctx, `UPDATE user_invites SET accepted_at = NOW() WHERE id = $1`, inviteID); err != nil {
 			return nil, fmt.Errorf("accept OAuth invitation: %w", err)
+		}
+		if err := applyInviteAccess(ctx, tx, inviteID, inviteAccess, userID); err != nil {
+			return nil, err
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("lookup OAuth account: %w", err)
