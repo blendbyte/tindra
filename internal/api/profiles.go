@@ -30,7 +30,7 @@ func (ro *router) handleGetTransactionFlameGraph(w http.ResponseWriter, r *http.
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, tx.ProjectID) {
+	if !enforceProjectAccess(w, r, tx.ProjectID) {
 		return
 	}
 

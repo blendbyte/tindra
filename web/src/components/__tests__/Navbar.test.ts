@@ -460,6 +460,7 @@ describe('Navbar', () => {
         expect(labels).toContain('Projects')
         expect(labels).not.toContain('Alerts')
         expect(labels).toContain('Users')
+        expect(labels).toContain('Teams')
         expect(labels).toContain('Audit')
         expect(labels).toContain('Tokens')
         expect(labels).toContain('Profile')
@@ -468,6 +469,7 @@ describe('Navbar', () => {
       it.each([
         ['/settings/projects', 'Projects'],
         ['/settings/users', 'Users'],
+        ['/settings/teams', 'Teams'],
         ['/settings/audit', 'Audit'],
         ['/settings/tokens', 'Tokens'],
         ['/settings/profile', 'Profile'],

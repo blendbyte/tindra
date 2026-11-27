@@ -242,7 +242,7 @@ func TestDeleteMonitor_notFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go: handleListMonitors: project_id filter (bearerProjectIDs branch)
+// cron.go: handleListMonitors: project_id filter (scopedProjectIDs branch)
 // ---------------------------------------------------------------------------
 
 func TestListMonitors_withProjectFilter(t *testing.T) {
@@ -486,7 +486,7 @@ func TestListCheckins_withInvalidLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go: resolveMonitor: enforceTokenProject path (bearer wrong project)
+// cron.go: resolveMonitor: enforceProjectAccess path (bearer wrong project)
 // ---------------------------------------------------------------------------
 
 func TestGetMonitor_bearerTokenWrongProject(t *testing.T) {
@@ -507,7 +507,7 @@ func TestGetMonitor_bearerTokenWrongProject(t *testing.T) {
 	rec := httptest.NewRecorder()
 	cronHandler().ServeHTTP(rec, req)
 
-	// enforceTokenProject returns 403 when the token project doesn't match.
+	// enforceProjectAccess returns 403 when the token project doesn't match.
 	if rec.Code != http.StatusForbidden && rec.Code != http.StatusNotFound {
 		t.Errorf("expected 403 or 404 for wrong project bearer token, got %d", rec.Code)
 	}
@@ -1045,7 +1045,7 @@ func TestGetTransactionErrors_notFoundCov2(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // global.go: handleGetTransactionErrors: bearer token correct project
-// (covers the enforceTokenProject branch that passes)
+// (covers the enforceProjectAccess branch that passes)
 // ---------------------------------------------------------------------------
 
 func TestGetTransactionErrors_bearerTokenCorrectProject(t *testing.T) {
@@ -1103,7 +1103,7 @@ func TestListAllTokens_bearerTokenScoped(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // global.go: handleGetProjectStats: bearerToken restricts to its project
-// (bearerProjectIDs with non-empty list skips ListProjects call)
+// (scopedProjectIDs with non-empty list skips ListProjects call)
 // ---------------------------------------------------------------------------
 
 func TestGetProjectStats_bearerTokenFilter(t *testing.T) {

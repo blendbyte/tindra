@@ -32,14 +32,14 @@ func GetPasswordResetUser(ctx context.Context, pool *pgxpool.Pool, token string)
 	var u User
 	err := pool.QueryRow(ctx, `
 		SELECT u.id, u.email, u.name, u.password_hash, u.mfa_enabled,
-			u.perm_manage_projects, u.perm_manage_users, u.perm_manage_alerts, u.perm_manage_issues,
+			u.perm_manage_projects, u.perm_manage_users, u.perm_manage_alerts, u.perm_manage_issues, u.project_access,
 			u.created_at
 		FROM password_reset_tokens t
 		JOIN users u ON u.id = t.user_id
 		WHERE t.token_hash = $1 AND t.expires_at > NOW() AND t.used_at IS NULL
 	`, tokenHash(token)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
 		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers,
-		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -105,9 +105,9 @@ func usePasswordResetToken(ctx context.Context, pool *pgxpool.Pool, token, newPa
 			mfa_enabled=false, mfa_secret=NULL, mfa_pending_secret=NULL, mfa_pending_expires_at=NULL
 		WHERE id=$1
 		RETURNING id,email,name,password_hash,mfa_enabled,
-			perm_manage_projects,perm_manage_users,perm_manage_alerts,perm_manage_issues,created_at
+			perm_manage_projects,perm_manage_users,perm_manage_alerts,perm_manage_issues,project_access,created_at
 	`, userID, string(hash)).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.MFAEnabled,
-		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers, &u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.CreatedAt)
+		&u.Permissions.ManageProjects, &u.Permissions.ManageUsers, &u.Permissions.ManageAlerts, &u.Permissions.ManageIssues, &u.ProjectAccess, &u.CreatedAt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reset password: %w", err)
 	}

@@ -29,7 +29,7 @@ func setupError(w http.ResponseWriter, err error) {
 }
 
 func (ro *router) handleSetupProjects(w http.ResponseWriter, r *http.Request) {
-	ids := bearerProjectIDs(r, nil)
+	ids := scopedProjectIDs(r, nil)
 	rows, err := ro.pool.Query(r.Context(), `SELECT p.id, EXISTS(SELECT 1 FROM project_setup_receipts s WHERE s.project_id=p.id AND s.kind IN ('events','transactions')) FROM projects p WHERE $1::uuid[] IS NULL OR p.id=ANY($1::uuid[]) ORDER BY p.id`, ids)
 	if err != nil {
 		setupError(w, err)

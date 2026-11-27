@@ -39,7 +39,7 @@ func truncateUsersAndInvites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("truncate users: %v", err)
 	}
-	_, err = testUserPool.Exec(context.Background(), "TRUNCATE user_invites")
+	_, err = testUserPool.Exec(context.Background(), "TRUNCATE user_invites CASCADE")
 	if err != nil {
 		t.Fatalf("truncate user_invites: %v", err)
 	}

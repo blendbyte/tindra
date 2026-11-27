@@ -11,7 +11,7 @@ package api_test
 //   - handleListCheckins: non-numeric limit silently falls back to default
 //   - handleListCheckins: resolveMonitor not-found path
 //   - handleCronPing: paused monitor produces no checkin record
-//   - resolveMonitor: enforceTokenProject mismatch (wrong-project bearer token)
+//   - resolveMonitor: enforceProjectAccess mismatch (wrong-project bearer token)
 //
 // Issues gaps covered:
 //   - handleGetIssue: issue.ProjectID != project.ID returns 404
@@ -250,9 +250,9 @@ func TestCronPing_pausedMonitor_zeroCheckinsCov9(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cron: resolveMonitor: enforceTokenProject mismatch (wrong-project bearer)
+// Cron: resolveMonitor: enforceProjectAccess mismatch (wrong-project bearer)
 // A bearer token scoped to project B cannot read a monitor from project A.
-// (cron.go:419 enforceTokenProject returns false, writes 404)
+// (cron.go:419 enforceProjectAccess returns false, writes 404)
 // ---------------------------------------------------------------------------
 
 func TestGetMonitor_wrongProjectBearerCov9(t *testing.T) {
@@ -272,7 +272,7 @@ func TestGetMonitor_wrongProjectBearerCov9(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	cronHandler().ServeHTTP(rec, req)
-	// enforceTokenProject writes 404 to avoid leaking resource existence.
+	// enforceProjectAccess writes 404 to avoid leaking resource existence.
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusForbidden {
 		t.Errorf("expected 403 or 404 for wrong-project bearer on monitor, got %d: %s",
 			rec.Code, rec.Body.String())

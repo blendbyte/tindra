@@ -26,7 +26,7 @@ func bearerToken(t *testing.T, projectID string) string {
 	return plaintext
 }
 
-// --- bearerProjectIDs: list endpoints restrict to the token's project ---
+// --- scopedProjectIDs: list endpoints restrict to the token's project ---
 
 func TestIssueScopeChecksDoNotReadEventHistory(t *testing.T) {
 	ctx := context.Background()
@@ -114,7 +114,7 @@ func TestBearerProjectIDs_sessionAuthPassesProvidedIDs(t *testing.T) {
 	}
 }
 
-// --- enforceTokenProject: single-resource endpoints block cross-project reads ---
+// --- enforceProjectAccess: single-resource endpoints block cross-project reads ---
 
 func TestEnforceTokenProject_wrongProject(t *testing.T) {
 	truncateIssues(t)
@@ -144,7 +144,7 @@ func TestEnforceTokenProject_wrongProject(t *testing.T) {
 	issuesHandler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("enforceTokenProject: expected 404 for cross-project read, got %d", rec.Code)
+		t.Errorf("enforceProjectAccess: expected 404 for cross-project read, got %d", rec.Code)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestEnforceTokenProject_correctProject(t *testing.T) {
 	issuesHandler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Errorf("enforceTokenProject: expected 200 for same-project read, got %d: %s", rec.Code, rec.Body.String())
+		t.Errorf("enforceProjectAccess: expected 200 for same-project read, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -178,7 +178,7 @@ func TestEnforceTokenProject_sessionAuthUnaffected(t *testing.T) {
 		t.Fatalf("upsert issue: %v", err)
 	}
 
-	// Session auth has no token project - enforceTokenProject must return true.
+	// Session auth has no token project - enforceProjectAccess must return true.
 	req := httptest.NewRequest(http.MethodGet,
 		fmt.Sprintf("/api/issues/%s", iss.ID), nil)
 	req.AddCookie(authCookie())

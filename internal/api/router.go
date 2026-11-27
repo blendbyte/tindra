@@ -264,6 +264,12 @@ func NewRouter(cfg Config) *Handle {
 		r.With(ro.requirePerm("manage_projects")).Patch("/api/projects/{projectID}", ro.handleUpdateProject)
 		r.With(ro.requirePerm("manage_projects")).Patch("/api/projects/{projectID}/privacy", ro.handleUpdateProjectPrivacy)
 		r.With(ro.requirePerm("manage_projects")).Delete("/api/projects/{projectID}", ro.handleDeleteProject)
+		// Which teams a project belongs to. Their members see it, and so does every user
+		// with access to all projects, so these links cannot lock anyone out.
+		r.With(ro.requirePerm("manage_projects")).Get("/api/projects/teams", ro.handleListProjectTeams)
+		projectTeams := r.With(ro.requirePerm("manage_projects"), requireUUIDParams("projectID"))
+		projectTeams.Get("/api/projects/{projectID}/teams", ro.handleGetProjectTeams)
+		projectTeams.Put("/api/projects/{projectID}/teams", ro.handleSetProjectTeams)
 		r.Get("/api/app-users", ro.handleListAppUsers)
 		r.Get("/api/issues", ro.handleListAllIssues)
 		r.Get("/api/issues/overview", ro.handleDashboardIssues)
@@ -351,9 +357,20 @@ func NewRouter(cfg Config) *Handle {
 		r.With(ro.requirePerm("manage_users")).Delete("/api/invites/{id}", ro.handleRevokeInvite)
 		r.With(ro.requirePerm("manage_users")).Delete("/api/users/{userID}", ro.handleDeleteUser)
 		r.With(ro.requirePerm("manage_users")).Put("/api/users/{userID}/permissions", ro.handleUpdateUserPermissions)
+		r.With(ro.requirePerm("manage_users"), requireUUIDParams("userID")).Put("/api/users/{userID}/access", ro.handleUpdateUserAccess)
 		r.With(ro.requirePerm("manage_users")).Delete("/api/users/{userID}/mfa", ro.handleAdminDisableMFA)
 		r.With(ro.requirePerm("manage_users")).Put("/api/users/{userID}/password", ro.handleAdminSetPassword)
 		r.With(ro.requirePerm("manage_users")).Post("/api/users/{userID}/password-reset", ro.handleAdminSendPasswordReset)
+
+		// Teams. Listing is also open to manage_projects, which picks teams when editing a
+		// project's teams; changing them needs manage_users.
+		r.With(ro.requireAnyPerm("manage_users", "manage_projects")).Get("/api/teams", ro.handleListTeams)
+		teamAdmin := r.With(ro.requirePerm("manage_users"))
+		teamAdmin.Post("/api/teams", ro.handleCreateTeam)
+		teamByID := teamAdmin.With(requireUUIDParams("teamID"))
+		teamByID.Patch("/api/teams/{teamID}", ro.handleRenameTeam)
+		teamByID.Delete("/api/teams/{teamID}", ro.handleDeleteTeam)
+		teamByID.Put("/api/teams/{teamID}/members", ro.handleSetTeamMembers)
 
 		// MCP (Model Context Protocol) - Streamable HTTP transport.
 		r.Post("/mcp", ro.handleMCP)

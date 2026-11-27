@@ -433,7 +433,9 @@ func ListPushSubscriptionsForRule(ctx context.Context, pool *pgxpool.Pool, ruleI
 	}
 	rows, err := pool.Query(ctx, `SELECT `+pushSubscriptionColumns+`
 		FROM push_subscriptions
-		WHERE user_id IN (SELECT user_id FROM alert_rule_recipients WHERE rule_id = $1)
+		WHERE user_id IN (
+			SELECT r.user_id FROM alert_rule_recipients r JOIN users u ON u.id = r.user_id
+			WHERE r.rule_id = $1 AND NOT `+recipientCannotSeeRule+`)
 		  AND ($2::uuid[] IS NULL OR id = ANY($2::uuid[]))
 		ORDER BY created_at, id`, ruleID, ids)
 	if err != nil {

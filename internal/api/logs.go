@@ -16,7 +16,7 @@ func (ro *router) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	filter := storage.LogFilter{
-		ProjectIDs:   bearerProjectIDs(r, q["project_id"]),
+		ProjectIDs:   scopedProjectIDs(r, q["project_id"]),
 		Level:        q.Get("level"),
 		Environment:  q.Get("environment"),
 		Search:       q.Get("search"),
@@ -24,7 +24,7 @@ func (ro *router) handleListLogs(w http.ResponseWriter, r *http.Request) {
 		UserIdentity: q.Get("user"),
 		Limit:        100,
 		// Tokens must not learn transaction IDs from other projects via trace links.
-		TraceProjectIDs: tokenScope(r.Context()),
+		TraceProjectIDs: projectScope(r.Context()),
 	}
 	if min := q.Get("min_level"); min != "" {
 		if min == "warn" {
@@ -72,7 +72,7 @@ func (ro *router) handleListLogs(w http.ResponseWriter, r *http.Request) {
 
 func (ro *router) handleCountLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	projectIDs := bearerProjectIDs(r, q["project_id"])
+	projectIDs := scopedProjectIDs(r, q["project_id"])
 	if len(projectIDs) == 0 {
 		http.Error(w, "project_id is required", http.StatusBadRequest)
 		return

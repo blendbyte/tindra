@@ -18,7 +18,7 @@ const invalidSlugMessage = "slug must be 1-50 lower-case letters, digits, dashes
 // handleListMonitors returns all monitors visible to the caller, optionally
 // filtered by project_id query params.
 func (ro *router) handleListMonitors(w http.ResponseWriter, r *http.Request) {
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	monitors, err := storage.ListCronMonitors(r.Context(), ro.pool, projectIDs)
 	if err != nil {
 		slog.Error("list monitors", "err", err)
@@ -441,7 +441,7 @@ func (ro *router) resolveMonitor(w http.ResponseWriter, r *http.Request) (*stora
 		http.Error(w, "not found", http.StatusNotFound)
 		return nil, false
 	}
-	if !enforceTokenProject(w, r, m.ProjectID) {
+	if !enforceProjectAccess(w, r, m.ProjectID) {
 		return nil, false
 	}
 	return m, true

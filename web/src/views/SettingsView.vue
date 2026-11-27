@@ -8,6 +8,7 @@ import OverviewTab from './settings/OverviewTab.vue'
 import TokensTab from './settings/TokensTab.vue'
 import ProjectsTab from './settings/ProjectsTab.vue'
 import UsersTab from './settings/UsersTab.vue'
+import TeamsTab from './settings/TeamsTab.vue'
 import AlertsTab from './settings/AlertsTab.vue'
 import AuditTab from './settings/AuditTab.vue'
 import ProfileTab from './settings/ProfileTab.vue'
@@ -20,10 +21,12 @@ const ui = useUiStore()
 const router = useRouter()
 const route = useRoute()
 
-const ALL_TABS: Tab[] = ['overview', 'projects', 'alerts', 'users', 'audit', 'tokens', 'profile']
+const ALL_TABS: Tab[] = ['overview', 'projects', 'alerts', 'users', 'teams', 'audit', 'tokens', 'profile']
 
 function resolveTab(param: unknown): Tab {
-  const p = param === 'team' ? 'users' : param // backward compat with old URL
+  // Backward compat with old URLs: /settings/team was the users tab, and the
+  // teams tab was briefly called groups.
+  const p = param === 'team' ? 'users' : param === 'groups' ? 'teams' : param
   return ALL_TABS.includes(p as Tab) ? (p as Tab) : 'overview'
 }
 
@@ -52,7 +55,7 @@ watchEffect(() => {
   if (tab.value === 'overview' && me.value && !me.value.permissions.manage_projects) {
     setTab('projects')
   }
-  if (tab.value === 'audit' && me.value && !me.value.permissions.manage_users) {
+  if ((tab.value === 'audit' || tab.value === 'teams') && me.value && !me.value.permissions.manage_users) {
     setTab('projects')
   }
   if (tab.value === 'alerts' && me.value && !me.value.permissions.manage_alerts) {
@@ -63,7 +66,7 @@ watchEffect(() => {
 // Alerts live on their own page, so the settings nav never lists them.
 const visibleTabs = computed(() => ALL_TABS.filter((t) => {
   if (t === 'tokens' || t === 'overview') return canManageProjects.value
-  if (t === 'audit') return canManageUsers.value
+  if (t === 'audit' || t === 'teams') return canManageUsers.value
   if (t === 'alerts') return false
   return true
 }))
@@ -117,6 +120,7 @@ function selectTab(t: Tab) {
       <TokensTab v-else-if="tab === 'tokens'" />
       <ProjectsTab v-else-if="tab === 'projects'" />
       <UsersTab v-else-if="tab === 'users'" />
+      <TeamsTab v-else-if="tab === 'teams'" />
       <AlertsTab v-else-if="tab === 'alerts'" />
       <AuditTab v-else-if="tab === 'audit'" />
       <ProfileTab v-else-if="tab === 'profile'" ref="profileTab" />

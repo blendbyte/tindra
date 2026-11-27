@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -226,6 +227,10 @@ const (
 	ctxTokenProjID   ctxKey = 1
 	ctxUserPerms     ctxKey = 2
 	ctxTokenWritable ctxKey = 3
+	// ctxProjectAccess holds the storage.ProjectAccess of the caller: the projects a
+	// session user may see, or the single project of a bearer token. It is the one
+	// value every scope helper in scope.go reads.
+	ctxProjectAccess ctxKey = 4
 )
 
 // actorFromContext returns the authenticated user ID when the request was
@@ -236,6 +241,19 @@ func actorFromContext(ctx context.Context) *string {
 		return &id
 	}
 	return nil
+}
+
+// sessionContext adds a session user's identity, permissions and visible projects
+// to ctx.
+func (ro *router) sessionContext(ctx context.Context, session *storage.SessionIdentity) (context.Context, error) {
+	access, err := storage.GetProjectAccess(ctx, ro.pool, session.UserID, session.ProjectAccess)
+	if err != nil {
+		return nil, err
+	}
+	perms := session.Permissions
+	ctx = context.WithValue(ctx, ctxUserID, session.UserID)
+	ctx = context.WithValue(ctx, ctxUserPerms, &perms)
+	return context.WithValue(ctx, ctxProjectAccess, access), nil
 }
 
 func permsFromContext(ctx context.Context) *storage.UserPermissions {
@@ -263,6 +281,12 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 				}
 				ctx := context.WithValue(r.Context(), ctxTokenProjID, tok.ProjectID)
 				ctx = context.WithValue(ctx, ctxTokenWritable, tok.Writable)
+				// A token is scoped to its project; an unscoped one (no project) sees them all.
+				tokenAccess := storage.ProjectAccess{All: true}
+				if tok.ProjectID != "" {
+					tokenAccess = storage.ProjectAccess{IDs: []string{tok.ProjectID}}
+				}
+				ctx = context.WithValue(ctx, ctxProjectAccess, tokenAccess)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -287,8 +311,12 @@ func (ro *router) requireAuth(next http.Handler) http.Handler {
 		if !ro.allowMFAEnrollmentRequest(w, r, session) {
 			return
 		}
-		ctx := context.WithValue(r.Context(), ctxUserID, session.UserID)
-		ctx = context.WithValue(ctx, ctxUserPerms, &session.Permissions)
+		ctx, err := ro.sessionContext(r.Context(), session)
+		if err != nil {
+			slog.Error("resolve project access", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -314,8 +342,12 @@ func (ro *router) requireSessionAuth(next http.Handler) http.Handler {
 		if !ro.allowMFAEnrollmentRequest(w, r, session) {
 			return
 		}
-		ctx := context.WithValue(r.Context(), ctxUserID, session.UserID)
-		ctx = context.WithValue(ctx, ctxUserPerms, &session.Permissions)
+		ctx, err := ro.sessionContext(r.Context(), session)
+		if err != nil {
+			slog.Error("resolve project access", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -374,24 +406,46 @@ func (ro *router) requirePerm(perm string) func(http.Handler) http.Handler {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
-			var allowed bool
-			switch perm {
-			case "manage_projects":
-				allowed = p.ManageProjects
-			case "manage_users":
-				allowed = p.ManageUsers
-			case "manage_alerts":
-				allowed = p.ManageAlerts
-			case "manage_issues":
-				allowed = p.ManageIssues
-			}
-			if !allowed {
+			if !hasPerm(p, perm) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// requireAnyPerm is requirePerm for routes open to holders of any of the perms.
+func (ro *router) requireAnyPerm(perms ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := r.Context().Value(ctxTokenProjID).(string); ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			p := permsFromContext(r.Context())
+			if p == nil || !slices.ContainsFunc(perms, func(perm string) bool { return hasPerm(p, perm) }) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// hasPerm reports whether p grants the named permission. Unknown names grant nothing.
+func hasPerm(p *storage.UserPermissions, perm string) bool {
+	switch perm {
+	case "manage_projects":
+		return p.ManageProjects
+	case "manage_users":
+		return p.ManageUsers
+	case "manage_alerts":
+		return p.ManageAlerts
+	case "manage_issues":
+		return p.ManageIssues
+	}
+	return false
 }
 
 // Last-use writes are best effort. Keep at most four in flight per router and

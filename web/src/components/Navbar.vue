@@ -13,6 +13,7 @@ import Icon from './Icon.vue'
 import { badgeCount, useAttentionCounts } from '@/composables/useBriefingData'
 import logoLight from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
+import { useProjectAccess, NO_ACCESS_TITLE, NO_ACCESS_BODY } from '@/composables/useProjectAccess'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,6 +65,7 @@ const filteredProjects = computed(() => {
 
 const allSelected = computed(() => projects.selectedIds.length === 0)
 const noProjects = computed(() => projects.projects.length === 0)
+const { restricted: restrictedAccess } = useProjectAccess()
 
 const filterLabel = computed(() => {
   if (noProjects.value) return 'No projects'
@@ -258,9 +260,11 @@ async function logout() {
           <template v-if="noProjects">
             <div class="popover-empty">
               <Icon name="package" :size="20" style="color: var(--text-3); margin-bottom: 8px" />
-              <div class="popover-empty__title">No projects yet</div>
-              <div class="popover-empty__sub">Create a project to get your DSN and start capturing errors.</div>
+              <div class="popover-empty__title">{{ restrictedAccess ? NO_ACCESS_TITLE : 'No projects yet' }}</div>
+              <div v-if="restrictedAccess" class="popover-empty__sub">{{ NO_ACCESS_BODY }}</div>
+              <div v-else class="popover-empty__sub">Create a project to get your DSN and start capturing errors, or ask an administrator for access to one.</div>
               <button
+                v-if="!restrictedAccess"
                 class="btn btn--primary"
                 style="margin-top: 12px; width: 100%"
                 @click="filterOpen = false; router.push('/settings/projects?new=1')"
@@ -339,6 +343,7 @@ async function logout() {
           <RouterLink to="/settings/overview" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/overview' || route.path === '/settings' }">Overview</RouterLink>
           <RouterLink to="/settings/projects" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/projects' }">Projects</RouterLink>
           <RouterLink to="/settings/users" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/users' }">Users</RouterLink>
+          <RouterLink to="/settings/teams" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/teams' }">Teams</RouterLink>
           <RouterLink to="/settings/audit" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/audit' }">Audit</RouterLink>
           <RouterLink to="/settings/tokens" class="nav__dropdown-item" :class="{ 'nav__dropdown-item--active': route.path === '/settings/tokens' }">Tokens</RouterLink>
           <div class="nav__dropdown-divider"></div>

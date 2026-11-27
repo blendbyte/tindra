@@ -104,12 +104,12 @@ afterEach(() => {
 describe('view request lifecycle', () => {
   it('cancels issue reads, including dependent event and trace requests', async () => {
     await open(IssueDetailView, '/issues/issue-1', [
-      [['issues', 'issue-1'], { id: 'issue-1', title: 'Failure', kind: 'error', event_count: 1, status: 'open', first_seen: '2026-01-01', last_seen: '2026-01-01' }],
+      [['issues', 'issue-1'], { id: 'issue-1', project_id: 'project-1', title: 'Failure', kind: 'error', event_count: 1, status: 'open', first_seen: '2026-01-01', last_seen: '2026-01-01' }],
       [['issues', 'issue-1', 'events', 0, ''], { payload: { contexts: { trace: { trace_id: 'trace-1' } } } }],
       [['issues', 'issue-1', 'trace', 0, ''], { id: 'tx-1' }],
     ], {}, { IssueTracePreview: false, IssueTags: false, IssueActivity: false })
     await expectCancelled(['/api/me', '/api/issues/issue-1', '/api/issues/issue-1/events/latest?offset=0',
-      '/api/issues/issue-1/comments', '/api/issues/issue-1/history', '/api/users',
+      '/api/issues/issue-1/comments', '/api/issues/issue-1/history', '/api/users?project_id=project-1',
       '/api/issues/issue-1/trace?offset=0', '/api/transactions/tx-1/spans',
       '/api/issues/issue-1/tags', '/api/issues/issue-1/events/histogram'])
   })

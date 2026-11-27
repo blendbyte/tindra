@@ -23,6 +23,7 @@ import { useMe } from '@/composables/useMe'
 import { useDebounced } from '@/composables/useDebounced'
 import { splitTitle } from '@/utils/issueTitle'
 import { findIssueByShortId, issueRef } from '@/utils/shortId'
+import { useProjectAccess, NO_ACCESS_TITLE, NO_ACCESS_BODY } from '@/composables/useProjectAccess'
 
 const router = useRouter()
 const route = useRoute()
@@ -588,6 +589,7 @@ const activeFilterSummary = computed(() => {
 })
 
 const noProjects = computed(() => projects.isSuccess && projects.projects.length === 0)
+const { restricted: restrictedAccess } = useProjectAccess()
 const noOpenIssues = computed(() => statusFilter.value === 'Open' && !isFiltered.value)
 
 // Sync filter/sort state → URL so F5 restores the same view.
@@ -915,12 +917,13 @@ watch([statusFilter, levelFilter, assigneeFilter, sortCol, sortDir], () => {
         <div class="empty-state__icon">
           <BrandMark :size="32" />
         </div>
-        <h2 class="empty-state__title">No projects yet</h2>
-        <p class="empty-state__body">
+        <h2 class="empty-state__title">{{ restrictedAccess ? NO_ACCESS_TITLE : 'No projects yet' }}</h2>
+        <p v-if="restrictedAccess" class="empty-state__body">{{ NO_ACCESS_BODY }}</p>
+        <p v-else class="empty-state__body">
           Create a project to get your DSN, then point your Sentry-compatible SDK at Tindra.
           Errors and traces appear here automatically, no code changes required.
         </p>
-        <div class="empty-state__actions">
+        <div v-if="!restrictedAccess" class="empty-state__actions">
           <button class="btn btn--primary" @click="router.push('/settings/projects?new=1')">
             <Icon name="plus" :size="12" />
             Create project

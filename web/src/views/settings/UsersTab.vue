@@ -4,9 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { useToast } from '@/composables/useToast'
 import { useClipboard } from '@/composables/useClipboard'
 import { ApiError, apiFetch } from '@/api/client'
-import type { Invite, User, UserPermissions } from '@/api/types'
+import type { Invite, ProjectAccessMode, User, UserPermissions } from '@/api/types'
 import Icon from '@/components/Icon.vue'
-import { useFormatDate, usePermissions, useRowMenu, useServerSettings, useUsers } from './shared'
+import { useAlertImpactConfirm, useFormatDate, useTeams, usePermissions, useRowMenu, useServerSettings, useUsers } from './shared'
 
 const { show: showToast } = useToast()
 const { copy } = useClipboard()
@@ -16,6 +16,7 @@ const { me, canManageUsers } = usePermissions()
 const { users } = useUsers()
 const { settings } = useServerSettings()
 const { openMenuId, toggleUserMenu, closeUserMenus } = useRowMenu()
+const confirmAlertImpact = useAlertImpactConfirm()
 
 const userLimitReached = computed(() => {
   const limit = settings.value?.user_limit ?? 0
@@ -202,6 +203,10 @@ function closeResetResult() {
 const showInviteForm = ref(false)
 const inviteEmail = ref('')
 const inviteName = ref('')
+// Once a team exists the invite asks for project access, and defaults to the
+// teams: giving access to every project has to be a deliberate choice.
+const inviteAccess = ref<ProjectAccessMode>('teams')
+const inviteTeams = ref<string[]>([])
 const inviteError = ref<string | null>(null)
 type InviteResult = { invite_url: string; email_sent: boolean; email_configured: boolean; email_error: string }
 const inviteResult = ref<InviteResult | null>(null)
@@ -212,17 +217,38 @@ const { data: invitesData } = useQuery({
   enabled: () => !!me.value?.permissions.manage_users,
 })
 const invites = computed(() => invitesData.value ?? [])
+const { teams } = useTeams(canManageUsers)
+
+// Project access only matters once teams exist, or when someone is already
+// restricted: until then every user sees every project and the setting stays hidden.
+const showAccess = computed(() => teams.value.length > 0 || users.value.some((u) => u.project_access === 'teams'))
+const tableCols = computed(() => (showAccess.value ? 9 : 8))
+
+function teamNames(ids: string[] | undefined): string {
+  if (!ids?.length) return '–'
+  return ids.map((id) => teams.value.find((t) => t.id === id)?.name ?? 'Unknown team').join(', ')
+}
+
+function inviteAccessLabel(inv: Invite): string {
+  return inv.project_access === 'teams' ? teamNames(inv.team_ids) : 'All projects'
+}
+
+// An invitation to teams needs at least one.
+const inviteIncomplete = computed(() => teams.value.length > 0 && inviteAccess.value === 'teams' && inviteTeams.value.length === 0)
 
 const { mutate: createInvite, isPending: creatingInvite } = useMutation({
-  mutationFn: ({ email, name }: { email: string; name: string }) =>
+  mutationFn: ({ email, name, access }: { email: string; name: string; access?: { project_access: ProjectAccessMode; team_ids: string[] } }) =>
     apiFetch<InviteResult>('/api/invites', {
       method: 'POST',
-      body: JSON.stringify({ email, name }),
+      // Without teams the invite is the plain one: the person sees every project.
+      body: JSON.stringify({ email, name, ...access }),
     }),
   onSuccess: (result) => {
     inviteResult.value = result
     inviteEmail.value = ''
     inviteName.value = ''
+    inviteAccess.value = 'teams'
+    inviteTeams.value = []
     inviteError.value = null
     qc.invalidateQueries({ queryKey: ['invites'] })
   },
@@ -236,14 +262,19 @@ function submitInvite(e: Event) {
   inviteError.value = null
   inviteResult.value = null
   const email = inviteEmail.value.trim()
-  if (!email) return
-  createInvite({ email, name: inviteName.value.trim() })
+  if (!email || inviteIncomplete.value) return
+  const access = teams.value.length > 0
+    ? { project_access: inviteAccess.value, team_ids: inviteAccess.value === 'teams' ? inviteTeams.value : [] }
+    : undefined
+  createInvite({ email, name: inviteName.value.trim(), access })
 }
 
 function closeInviteForm() {
   showInviteForm.value = false
   inviteEmail.value = ''
   inviteName.value = ''
+  inviteAccess.value = 'teams'
+  inviteTeams.value = []
   inviteError.value = null
   inviteResult.value = null
 }
@@ -255,6 +286,41 @@ const { mutate: revokeInvite } = useMutation({
     showToast('Invite revoked')
   },
 })
+
+// Declared after the other mutations so their order stays the same.
+const { mutate: setAccess } = useMutation({
+  mutationFn: ({ userID, projectAccess }: { userID: string; projectAccess: ProjectAccessMode }) =>
+    apiFetch<User>(`/api/users/${userID}/access`, { method: 'PUT', body: JSON.stringify({ project_access: projectAccess }) }),
+  onSuccess: (updated) => {
+    // Access decides which projects the user sees, so refresh everything that depends on it.
+    qc.invalidateQueries({ queryKey: ['users'] })
+    qc.invalidateQueries({ queryKey: ['projects'] })
+    qc.invalidateQueries({ queryKey: ['me'] })
+    showToast(`${updated.email} now sees ${updated.project_access === 'teams' ? "their teams' projects" : 'all projects'}`)
+  },
+  onError: (e) => {
+    // 409: a user who administers users or projects must keep access to all projects.
+    if (e instanceof ApiError && e.status === 409) showToast(e.message.trim(), 'error')
+    else showToast('Project access not saved. Try again.')
+  },
+})
+
+async function changeAccess(user: User, e: Event) {
+  const select = e.target as HTMLSelectElement
+  const projectAccess = select.value as ProjectAccessMode
+  // Keep the select on the saved value until the save succeeds, like the permission boxes.
+  select.value = user.project_access
+  if (projectAccess === user.project_access) return
+  // Limiting someone to their teams can take them off alert rules, so say so first.
+  if (projectAccess === 'teams') {
+    const ok = await confirmAlertImpact(`/api/users/${user.id}/access`, 'PUT', { project_access: projectAccess }, {
+      title: `Limit ${user.email} to their teams' projects?`,
+      confirmLabel: 'Limit access',
+    })
+    if (!ok) return
+  }
+  setAccess({ userID: user.id, projectAccess })
+}
 
 function copyInviteURL(url: string) {
   copy(url, 'Invite link copied')
@@ -341,9 +407,25 @@ function copyToClipboard(text: string, label: string) {
             <input id="invite-name" v-model="inviteName" class="field__input" placeholder="Full name" />
           </div>
         </div>
+        <div v-if="teams.length > 0" class="field" style="margin-top: 12px">
+          <label class="field__label" for="invite-access">Project access</label>
+          <select id="invite-access" v-model="inviteAccess" class="field__input">
+            <option value="teams">Only their teams' projects</option>
+            <option value="all">All projects</option>
+          </select>
+          <template v-if="inviteAccess === 'teams'">
+            <div class="rule__project-checks" style="margin-top: 8px">
+              <label v-for="t in teams" :key="t.id" class="rule__project-check">
+                <input v-model="inviteTeams" type="checkbox" :value="t.id" />
+                {{ t.name }}
+              </label>
+            </div>
+            <div class="field__hint">They join these teams when they accept, so they see their projects from their first sign-in. Pick at least one.</div>
+          </template>
+        </div>
         <div v-if="inviteError" class="proj-form-error">{{ inviteError }}</div>
         <div style="display: flex; gap: 8px; margin-top: 14px">
-          <button type="submit" class="btn btn--primary" :disabled="!inviteEmail.trim() || creatingInvite">
+          <button type="submit" class="btn btn--primary" :disabled="!inviteEmail.trim() || inviteIncomplete || creatingInvite">
             {{ creatingInvite ? 'Sending…' : 'Send invite' }}
           </button>
           <button type="button" class="btn btn--ghost" @click="closeInviteForm">Cancel</button>
@@ -395,6 +477,7 @@ function copyToClipboard(text: string, label: string) {
       <tr>
         <th style="min-width: 180px">User</th>
         <th class="perm-col" title="Two-factor authentication">2FA</th>
+        <th v-if="showAccess" class="perm-col" title="Whether the user sees every project, or only the projects of their teams.">Project access</th>
         <th class="perm-col">Projects</th>
         <th class="perm-col">Users</th>
         <th class="perm-col">Alerts</th>
@@ -416,11 +499,23 @@ function copyToClipboard(text: string, label: string) {
           <td class="perm-col">
             <span v-if="u.mfa_enabled" class="team-badge team-badge--mfa" title="Two-factor authentication enabled">2FA</span>
           </td>
-          <td class="perm-col">
-            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_projects" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_projects', $event)" />
+          <td v-if="showAccess" class="perm-col">
+            <select
+              class="perm-access"
+              :value="u.project_access"
+              :disabled="!canManageUsers"
+              :aria-label="`Project access of ${u.email}`"
+              @change="changeAccess(u, $event)"
+            >
+              <option value="all">All projects</option>
+              <option value="teams">Their teams' projects</option>
+            </select>
           </td>
           <td class="perm-col">
-            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_users" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_users', $event)" />
+            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_projects" :disabled="!canManageUsers || u.project_access === 'teams'" :title="u.project_access === 'teams' ? 'Needs access to all projects' : undefined" @change="togglePerm(u, 'manage_projects', $event)" />
+          </td>
+          <td class="perm-col">
+            <input type="checkbox" class="perm-check" :checked="u.permissions.manage_users" :disabled="!canManageUsers || u.project_access === 'teams'" :title="u.project_access === 'teams' ? 'Needs access to all projects' : undefined" @change="togglePerm(u, 'manage_users', $event)" />
           </td>
           <td class="perm-col">
             <input type="checkbox" class="perm-check" :checked="u.permissions.manage_alerts" :disabled="!canManageUsers" @change="togglePerm(u, 'manage_alerts', $event)" />
@@ -495,7 +590,7 @@ function copyToClipboard(text: string, label: string) {
 
         <!-- Set password inline form -->
         <tr v-if="setPwTarget === u.id" class="team-action-row">
-          <td colspan="8">
+          <td :colspan="tableCols">
             <div class="team-action-panel">
               <div class="team-action-panel__title">Set password for {{ u.email }}</div>
               <div class="proj-config-grid" style="margin-top: 10px">
@@ -521,7 +616,7 @@ function copyToClipboard(text: string, label: string) {
 
         <!-- Delete confirmation step 1 -->
         <tr v-else-if="deleteStep === 1 && deleteTarget?.id === u.id" class="team-action-row">
-          <td colspan="8">
+          <td :colspan="tableCols">
             <div class="team-action-panel team-action-panel--danger">
               <div class="team-action-panel__title">Remove {{ u.email }}?</div>
               <div class="team-action-panel__body">Their account and all associated data will be permanently deleted.</div>
@@ -535,7 +630,7 @@ function copyToClipboard(text: string, label: string) {
 
         <!-- Delete confirmation step 2: type email -->
         <tr v-else-if="deleteStep === 2 && deleteTarget?.id === u.id" class="team-action-row">
-          <td colspan="8">
+          <td :colspan="tableCols">
             <div class="team-action-panel team-action-panel--danger">
               <div class="team-action-panel__title">Final confirmation</div>
               <div class="team-action-panel__body">Type <strong>{{ u.email }}</strong> to confirm removal.</div>
@@ -557,7 +652,7 @@ function copyToClipboard(text: string, label: string) {
       </template>
 
       <tr v-if="users.length === 0">
-        <td colspan="8" style="color: var(--text-3); text-align: center; padding: 24px">No users yet.</td>
+        <td :colspan="tableCols" style="color: var(--text-3); text-align: center; padding: 24px">No users yet.</td>
       </tr>
     </tbody>
   </table>
@@ -572,6 +667,7 @@ function copyToClipboard(text: string, label: string) {
         <tr>
           <th>Email</th>
           <th>Name</th>
+          <th v-if="showAccess">Project access</th>
           <th>Expires</th>
           <th style="width: 40px" />
         </tr>
@@ -580,6 +676,7 @@ function copyToClipboard(text: string, label: string) {
         <tr v-for="inv in invites" :key="inv.id">
           <td class="mono" style="font-size: 12px">{{ inv.email }}</td>
           <td class="muted" style="font-size: 12px">{{ inv.name || '–' }}</td>
+          <td v-if="showAccess" class="muted" style="font-size: 12px">{{ inviteAccessLabel(inv) }}</td>
           <td class="muted" style="font-size: 11px">{{ formatDate(inv.expires_at) }}</td>
           <td class="actions" style="position: relative; overflow: visible">
             <div class="user-menu" @click.stop>

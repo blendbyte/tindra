@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +35,7 @@ func truncSearch(s string) string {
 
 func (ro *router) handleListAppUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	projectIDs := bearerProjectIDs(r, q["project_id"])
+	projectIDs := scopedProjectIDs(r, q["project_id"])
 	if projectIDs == nil {
 		projectIDs = []string{}
 	}
@@ -185,7 +186,7 @@ func (ro *router) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 
 // handleListProjectMetadata serves navigation without computing usage.
 func (ro *router) handleListProjectMetadata(w http.ResponseWriter, r *http.Request) {
-	projects, err := storage.ListProjectMetadata(r.Context(), ro.pool, bearerProjectIDs(r, nil)...)
+	projects, err := storage.ListProjectMetadata(r.Context(), ro.pool, scopedProjectIDs(r, nil)...)
 	if err != nil {
 		slog.Error("list project metadata", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -196,20 +197,11 @@ func (ro *router) handleListProjectMetadata(w http.ResponseWriter, r *http.Reque
 
 // handleListProjects retains the full project response for existing clients.
 func (ro *router) handleListProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := storage.ListProjects(r.Context(), ro.pool)
+	projects, err := storage.ListProjects(r.Context(), ro.pool, scopedProjectIDs(r, nil)...)
 	if err != nil {
 		slog.Error("list projects", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
-	}
-	if scope := bearerProjectIDs(r, nil); len(scope) > 0 {
-		scoped := []*storage.Project{}
-		for _, project := range projects {
-			if project.ID == scope[0] {
-				scoped = append(scoped, project)
-			}
-		}
-		projects = scoped
 	}
 	if projects == nil {
 		projects = []*storage.Project{}
@@ -223,6 +215,8 @@ func (ro *router) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 		Slug string `json:"slug"`
+		// TeamIDs optionally attaches the new project to these teams from the start.
+		TeamIDs []string `json:"team_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
 		http.Error(w, "name and slug required", http.StatusBadRequest)
@@ -230,6 +224,10 @@ func (ro *router) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if !slugRe.MatchString(req.Slug) {
 		http.Error(w, "slug must be lowercase alphanumeric with hyphens", http.StatusBadRequest)
+		return
+	}
+	if !validUUIDs(req.TeamIDs) {
+		http.Error(w, "team_ids must be an array of team ids", http.StatusBadRequest)
 		return
 	}
 	if lim := ro.projectLimit.Load(); lim > 0 {
@@ -244,7 +242,17 @@ func (ro *router) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	p, err := storage.CreateProject(r.Context(), ro.pool, req.Slug, req.Name)
+	var p *storage.Project
+	var err error
+	if len(req.TeamIDs) > 0 {
+		p, err = storage.CreateProjectForTeams(r.Context(), ro.pool, req.Slug, req.Name, req.TeamIDs)
+	} else {
+		p, err = storage.CreateProject(r.Context(), ro.pool, req.Slug, req.Name)
+	}
+	if errors.Is(err, storage.ErrUnknownReference) {
+		http.Error(w, "unknown team", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -255,12 +263,16 @@ func (ro *router) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+	entry := storage.AuditEntry{
 		EventType: "project.created",
 		ActorID:   actorFromContext(r.Context()),
 		TargetID:  &p.ID,
 		IP:        r.RemoteAddr,
-	})
+	}
+	if len(req.TeamIDs) > 0 {
+		entry.Details = map[string]any{"teams": len(uniqueStrings(req.TeamIDs))}
+	}
+	storage.WriteAuditLog(ro.pool, entry)
 	writeJSONStatus(w, http.StatusCreated, p)
 }
 
@@ -364,7 +376,7 @@ func (ro *router) handleUpdateProjectPrivacy(w http.ResponseWriter, r *http.Requ
 
 func (ro *router) handleGetProjectQuota(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
-	if !enforceTokenProject(w, r, projectID) {
+	if !enforceProjectAccess(w, r, projectID) {
 		return
 	}
 
@@ -432,7 +444,7 @@ func (ro *router) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ro *router) handleGetProjectStats(w http.ResponseWriter, r *http.Request) {
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	if len(projectIDs) == 0 {
 		projs, err := storage.ListProjectMetadata(r.Context(), ro.pool)
 		if err != nil {
@@ -458,7 +470,7 @@ func (ro *router) handleGetProjectStats(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ro *router) handleDashboardIssues(w http.ResponseWriter, r *http.Request) {
-	projects := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projects := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	total, err := storage.CountAllIssues(r.Context(), ro.pool, storage.IssueFilter{Status: "open", ProjectIDs: projects})
 	if err != nil {
 		slog.Error("count dashboard issues", "err", err)
@@ -499,7 +511,7 @@ func (ro *router) handleAttentionIssues(w http.ResponseWriter, r *http.Request) 
 	bounds := storage.ResolveTimeRange(r.Context(), hours, 0)
 	filter := storage.IssueFilter{
 		Environment:  q.Get("env"),
-		ProjectIDs:   bearerProjectIDs(r, q["project_id"]),
+		ProjectIDs:   scopedProjectIDs(r, q["project_id"]),
 		UserIdentity: q.Get("user"),
 	}
 	var lastVisit *time.Time
@@ -554,7 +566,7 @@ func (ro *router) handleListAllIssues(w http.ResponseWriter, r *http.Request) {
 		TagKey:       r.URL.Query().Get("tag_key"),
 		TagValue:     r.URL.Query().Get("tag_value"),
 		Title:        truncSearch(r.URL.Query().Get("q")),
-		ProjectIDs:   bearerProjectIDs(r, r.URL.Query()["project_id"]),
+		ProjectIDs:   scopedProjectIDs(r, r.URL.Query()["project_id"]),
 		UserIdentity: r.URL.Query().Get("user"),
 		Limit:        pageSize,
 	}
@@ -653,7 +665,7 @@ func (ro *router) handleExportIssues(w http.ResponseWriter, r *http.Request) {
 		AssigneeID:   r.URL.Query().Get("assignee_id"),
 		TagKey:       r.URL.Query().Get("tag_key"),
 		TagValue:     r.URL.Query().Get("tag_value"),
-		ProjectIDs:   bearerProjectIDs(r, r.URL.Query()["project_id"]),
+		ProjectIDs:   scopedProjectIDs(r, r.URL.Query()["project_id"]),
 		UserIdentity: r.URL.Query().Get("user"),
 		Limit:        maxRows,
 	}
@@ -751,7 +763,7 @@ func (ro *router) handleBulkUpdateIssues(w http.ResponseWriter, r *http.Request)
 	if req.Status == "ignored" && (req.IgnoreUntil != nil || req.IgnoreCountLimit != nil) {
 		ignoreOpts = &storage.IgnoreOptions{Until: req.IgnoreUntil, CountLimit: req.IgnoreCountLimit}
 	}
-	updated, err := storage.BulkUpdateIssueStatus(r.Context(), ro.pool, req.IDs, req.Status, ignoreOpts, nil)
+	updated, err := storage.BulkUpdateIssueStatus(r.Context(), ro.pool, req.IDs, req.Status, ignoreOpts, projectScope(r.Context()))
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid status") {
 			http.Error(w, "invalid status", http.StatusBadRequest)
@@ -812,7 +824,7 @@ func (ro *router) handleGetIssueGlobal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, issue.ProjectID) {
+	if !enforceProjectAccess(w, r, issue.ProjectID) {
 		return
 	}
 	writeJSON(w, issue)
@@ -830,6 +842,9 @@ func (ro *router) handleUpdateIssueGlobal(w http.ResponseWriter, r *http.Request
 	}
 	if issue == nil {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !enforceProjectAccess(w, r, issue.ProjectID) {
 		return
 	}
 
@@ -894,6 +909,10 @@ func (ro *router) handleUpdateIssueGlobal(w http.ResponseWriter, r *http.Request
 	} else {
 		// assignee update (req.AssigneeID may be nil to unassign)
 		updated, err = storage.UpdateIssueAssignee(r.Context(), ro.pool, id, req.AssigneeID)
+		if errors.Is(err, storage.ErrAssigneeCannotSeeProject) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err != nil {
 			slog.Error("update issue assignee", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -971,7 +990,7 @@ func (ro *router) handleGetLatestEventGlobal(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, issue.ProjectID) {
+	if !enforceProjectAccess(w, r, issue.ProjectID) {
 		return
 	}
 
@@ -1036,7 +1055,7 @@ func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, issue.ProjectID) {
+	if !enforceProjectAccess(w, r, issue.ProjectID) {
 		return
 	}
 
@@ -1067,7 +1086,7 @@ func (ro *router) handleGetIssueTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := storage.GetTransactionByTraceID(r.Context(), ro.pool, *ev.TraceID, tokenScope(r.Context()))
+	tx, err := storage.GetTransactionByTraceID(r.Context(), ro.pool, *ev.TraceID, projectScope(r.Context()))
 	if err != nil {
 		slog.Error("get transaction by trace", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1088,7 +1107,7 @@ func (ro *router) handleGetIssueHistogram(w http.ResponseWriter, r *http.Request
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, issue.ProjectID) {
+	if !enforceProjectAccess(w, r, issue.ProjectID) {
 		return
 	}
 	result, err := storage.GetIssueHistogram(r.Context(), ro.pool, issueID, issue.FirstSeen)
@@ -1166,7 +1185,7 @@ func (ro *router) handleListTransactionSummaries(w http.ResponseWriter, r *http.
 	op := r.URL.Query().Get("op")
 	release := r.URL.Query().Get("release")
 	userIdentity := r.URL.Query().Get("user")
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	if projectIDs == nil {
 		projectIDs = []string{}
 	}
@@ -1192,7 +1211,7 @@ func (ro *router) handleGetProjectPerformance(w http.ResponseWriter, r *http.Req
 			hours = n
 		}
 	}
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	overview, err := storage.GetPerformanceOverview(r.Context(), ro.pool, projectIDs, hours, r.URL.Query().Get("env"), r.URL.Query().Get("user"))
 	if err != nil {
 		slog.Error("get project performance", "err", err)
@@ -1222,7 +1241,7 @@ func (ro *router) transactionTimeseries(w http.ResponseWriter, r *http.Request, 
 	name := r.URL.Query().Get("name")
 	op := r.URL.Query().Get("op")
 	userIdentity := r.URL.Query().Get("user")
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	if projectIDs == nil {
 		projectIDs = []string{}
 	}
@@ -1252,7 +1271,7 @@ func (ro *router) handleListAllTransactions(w http.ResponseWriter, r *http.Reque
 	}
 	q := r.URL.Query()
 	filter := storage.TransactionFilter{
-		ProjectIDs:   bearerProjectIDs(r, q["project_id"]),
+		ProjectIDs:   scopedProjectIDs(r, q["project_id"]),
 		Status:       q.Get("status"),
 		Environment:  q.Get("environment"),
 		Name:         q.Get("name"),
@@ -1318,7 +1337,7 @@ func (ro *router) handleGetTransactionGlobal(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, tx.ProjectID) {
+	if !enforceProjectAccess(w, r, tx.ProjectID) {
 		return
 	}
 	writeJSON(w, tx)
@@ -1428,7 +1447,7 @@ func (ro *router) handleGetSpansGlobal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, tx.ProjectID) {
+	if !enforceProjectAccess(w, r, tx.ProjectID) {
 		return
 	}
 
@@ -1475,14 +1494,14 @@ func (ro *router) handleGetTransactionErrors(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !enforceTokenProject(w, r, tx.ProjectID) {
+	if !enforceProjectAccess(w, r, tx.ProjectID) {
 		return
 	}
 	if tx.TraceID == "" {
 		writeJSON(w, []*storage.TraceError{})
 		return
 	}
-	errs, err := storage.GetErrorsForTrace(r.Context(), ro.pool, tx.TraceID, tokenScope(r.Context()))
+	errs, err := storage.GetErrorsForTrace(r.Context(), ro.pool, tx.TraceID, projectScope(r.Context()))
 	if err != nil {
 		slog.Error("get trace errors", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1502,6 +1521,10 @@ func (ro *router) handleListAllTokens(w http.ResponseWriter, r *http.Request) {
 		tokens, err = storage.ListAPITokens(r.Context(), ro.pool, tokenProjID)
 	} else {
 		tokens, err = storage.ListAllAPITokens(r.Context(), ro.pool)
+		// A session user only sees the tokens of projects they can see.
+		tokens = slices.DeleteFunc(tokens, func(t *storage.APIToken) bool {
+			return !projectAllowed(r.Context(), t.ProjectID)
+		})
 	}
 	if err != nil {
 		slog.Error("list all tokens", "err", err)
@@ -1616,7 +1639,7 @@ func (ro *router) handleSpanSummaries(category string) http.HandlerFunc {
 				hours = n
 			}
 		}
-		projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+		projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 		env := r.URL.Query().Get("env")
 		release := r.URL.Query().Get("release")
 
@@ -1639,7 +1662,7 @@ func (ro *router) handleSpanSamples(w http.ResponseWriter, r *http.Request) {
 	if hours <= 0 {
 		hours = 24
 	}
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 
 	samples, err := storage.GetSpanSamples(r.Context(), ro.pool, op, description, projectIDs, hours, env, release, r.URL.Query().Get("user"))
 	if err != nil {
@@ -1659,7 +1682,7 @@ func (ro *router) handleSpanTimeseries(category string) http.HandlerFunc {
 				hours = n
 			}
 		}
-		projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+		projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 		env := r.URL.Query().Get("env")
 		release := r.URL.Query().Get("release")
 
@@ -1680,7 +1703,7 @@ func (ro *router) handleGetWebVitals(w http.ResponseWriter, r *http.Request) {
 			hours = n
 		}
 	}
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	if len(projectIDs) == 0 {
 		projectIDs = []string{}
 	}
@@ -1706,7 +1729,7 @@ func (ro *router) handleGetWebVitalsPages(w http.ResponseWriter, r *http.Request
 			hours = n
 		}
 	}
-	projectIDs := bearerProjectIDs(r, r.URL.Query()["project_id"])
+	projectIDs := scopedProjectIDs(r, r.URL.Query()["project_id"])
 	if len(projectIDs) == 0 {
 		projectIDs = []string{}
 	}

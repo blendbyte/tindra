@@ -19,6 +19,7 @@ import TimeseriesChart from '@/components/TimeseriesChart.vue'
 import PerformanceSubnav from '@/components/PerformanceSubnav.vue'
 import { failureClass, perfChanges, perfVerdict, MIN_SAMPLES } from './performance/changes'
 import { useAppUserStore, routeUserIdentity } from '@/stores/appUser'
+import { useProjectAccess, NO_ACCESS_TITLE, NO_ACCESS_BODY } from '@/composables/useProjectAccess'
 
 const router = useRouter()
 const route = useRoute()
@@ -299,6 +300,7 @@ function sortIcon(col: SortCol) {
 }
 
 const noProjects = computed(() => !projects.projects?.length)
+const { restricted: restrictedAccess } = useProjectAccess()
 const noData = computed(() => !isLoading.value && !isError.value && (userMode.value ? traces.value.length === 0 : filteredSummaries.value.length === 0))
 
 const stats = computed(() => {
@@ -349,12 +351,13 @@ function apdexClass(score: number): string {
         <div class="empty-state__icon">
           <BrandMark :size="32" />
         </div>
-        <h2 class="empty-state__title">No projects yet</h2>
-        <p class="empty-state__body">
+        <h2 class="empty-state__title">{{ restrictedAccess ? NO_ACCESS_TITLE : 'No projects yet' }}</h2>
+        <p v-if="restrictedAccess" class="empty-state__body">{{ NO_ACCESS_BODY }}</p>
+        <p v-else class="empty-state__body">
           Create a project to get your DSN, then point your Sentry-compatible SDK at Tindra.
           Transactions appear here automatically once your SDK is connected.
         </p>
-        <div class="empty-state__actions">
+        <div v-if="!restrictedAccess" class="empty-state__actions">
           <button class="btn btn--primary" @click="router.push('/settings/projects?new=1')">
             <Icon name="plus" :size="12" />
             Create project

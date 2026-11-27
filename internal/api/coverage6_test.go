@@ -1321,8 +1321,8 @@ func TestListReleases_emptyTableCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extra.go: handleGetRelease: enforceTokenProject fails (bearer token for
-// a release in a different project) covers the "!enforceTokenProject" branch
+// extra.go: handleGetRelease: enforceProjectAccess fails (bearer token for
+// a release in a different project) covers the "!enforceProjectAccess" branch
 // ---------------------------------------------------------------------------
 
 func TestGetRelease_bearerWrongProjectCov6b(t *testing.T) {
@@ -1570,8 +1570,8 @@ func TestGetIssueTags_withEventsCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// cron.go: handleListMonitors: bearerProjectIDs filters (covers the
-// "bearerProjectIDs" call with bearer token, hitting the "isBearer" branch)
+// cron.go: handleListMonitors: scopedProjectIDs filters (covers the
+// "scopedProjectIDs" call with bearer token, hitting the "isBearer" branch)
 // ---------------------------------------------------------------------------
 
 func TestListMonitors_bearerTokenScopedCov6(t *testing.T) {
@@ -1594,8 +1594,8 @@ func TestListMonitors_bearerTokenScopedCov6(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// global.go: handleGetProjectStats: with bearerProjectIDs token
-// (covers the bearerProjectIDs != empty path in handleGetProjectStats)
+// global.go: handleGetProjectStats: with scopedProjectIDs token
+// (covers the scopedProjectIDs != empty path in handleGetProjectStats)
 // ---------------------------------------------------------------------------
 
 func TestGetProjectStats_bearerTokenCov6(t *testing.T) {

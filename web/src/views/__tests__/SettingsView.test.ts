@@ -146,7 +146,7 @@ describe('SettingsView', () => {
       setupMocks()
       const wrapper = mountView()
       const navBtns = wrapper.findAll('.settings__nav button')
-      expect(navBtns.map(b => b.text())).toEqual(['Overview', 'Projects', 'Users', 'Audit', 'Tokens', 'Profile'])
+      expect(navBtns.map(b => b.text())).toEqual(['Overview', 'Projects', 'Users', 'Teams', 'Audit', 'Tokens', 'Profile'])
       expect(navBtns[0].attributes('aria-current')).toBe('page')
       expect(navBtns[1].attributes('aria-current')).toBeUndefined()
     })

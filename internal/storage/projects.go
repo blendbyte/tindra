@@ -49,6 +49,43 @@ func CreateProject(ctx context.Context, pool *pgxpool.Pool, slug, name string) (
 	return &p, nil
 }
 
+// CreateProjectForTeams creates a project attached to the given teams from the start,
+// so it is never visible to a restricted user outside those teams, not even briefly.
+// It returns ErrUnknownReference when a team does not exist.
+func CreateProjectForTeams(ctx context.Context, pool *pgxpool.Pool, slug, name string, teamIDs []string) (*Project, error) {
+	key, err := generatePublicKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate key: %w", err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var p Project
+	err = tx.QueryRow(ctx, `
+		INSERT INTO projects (slug, name, public_key)
+		VALUES ($1, $2, $3)
+		RETURNING id, slug, name, public_key, passthrough_dsn, scrub_fields, scrub_patterns, profiling_enabled, created_at
+	`, slug, name, key).Scan(&p.ID, &p.Slug, &p.Name, &p.PublicKey, &p.PassthroughDSN, &p.ScrubFields, &p.ScrubPatterns, &p.ProfilingEnabled, &p.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("insert: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO project_teams (project_id, team_id)
+		SELECT $1, t FROM unnest($2::uuid[]) AS t
+	`, p.ID, uniqueIDs(teamIDs)); err != nil {
+		if isForeignKeyViolation(err) {
+			return nil, ErrUnknownReference
+		}
+		return nil, fmt.Errorf("insert project teams: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return &p, nil
+}
+
 func CountProjects(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	var n int64
 	err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM projects`).Scan(&n)
@@ -90,7 +127,13 @@ func ListProjectMetadata(ctx context.Context, pool *pgxpool.Pool, projectIDs ...
 	return projects, rows.Err()
 }
 
-func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
+// ListProjects returns every project with its usage. When projectIDs is
+// non-empty only those projects are returned.
+func ListProjects(ctx context.Context, pool *pgxpool.Pool, projectIDs ...string) ([]*Project, error) {
+	var filter []string
+	if len(projectIDs) > 0 {
+		filter = projectIDs
+	}
 	rows, err := pool.Query(ctx, `
 		WITH
 		  totals AS MATERIALIZED (SELECT * FROM telemetry_usage_since()),
@@ -138,8 +181,9 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]*Project, error) {
 		LEFT JOIN tx  ON tx.project_id  = p.id
 		LEFT JOIN lg  ON lg.project_id  = p.id
 		LEFT JOIN pr  ON pr.project_id  = p.id
+		WHERE $1::uuid[] IS NULL OR p.id = ANY($1::uuid[])
 		ORDER BY p.name ASC
-	`)
+	`, filter)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}

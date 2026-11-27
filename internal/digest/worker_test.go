@@ -3,6 +3,7 @@ package digest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -295,5 +296,73 @@ func TestReportWeek_isTheLastFullISOWeek(t *testing.T) {
 		if want := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC); !to.Equal(want) {
 			t.Errorf("reportWeek(%v) to = %v, want %v", now, to, want)
 		}
+	}
+}
+
+// A user restricted to their teams' projects gets a report of those projects
+// only, a user with access to everything gets all of them, and a restricted user
+// who sees no project gets nothing and is not marked as sent.
+func TestWorker_sendToUsers_scopesReportToVisibleProjects(t *testing.T) {
+	truncateAll(t)
+	visible := seedProject(t, "wr-scope-visible", "Visible Scope Project")
+	hidden := seedProject(t, "wr-scope-hidden", "Hidden Scope Project")
+	for _, p := range []*storage.Project{visible, hidden} {
+		seedEvent(t, p.ID, time.Now().UTC().AddDate(0, 0, -1))
+	}
+
+	ctx := context.Background()
+	newUser := func(email, access string) string {
+		t.Helper()
+		var id string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO users (email, name, password_hash, project_access)
+			VALUES ($1, $1, 'x', $2) RETURNING id
+		`, email, access).Scan(&id); err != nil {
+			t.Fatalf("create user: %v", err)
+		}
+		t.Cleanup(func() { testPool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", id) })
+		return id
+	}
+	restricted := newUser("digest-scope-restricted@example.com", storage.AccessTeams)
+	newUser("digest-scope-all@example.com", storage.AccessAll)
+	stranded := newUser("digest-scope-stranded@example.com", storage.AccessTeams)
+
+	team, err := storage.CreateTeam(ctx, testPool, "digest scope team")
+	if err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	t.Cleanup(func() { storage.DeleteTeam(context.Background(), testPool, team.ID) })
+	if _, err := storage.SetTeamMembers(ctx, testPool, team.ID, []string{restricted}); err != nil {
+		t.Fatalf("set members: %v", err)
+	}
+	if _, err := storage.SetProjectTeams(ctx, testPool, visible.ID, []string{team.ID}); err != nil {
+		t.Fatalf("set project teams: %v", err)
+	}
+
+	sender := &mockEmailSender{}
+	NewWorker(testPool, sender, "https://example.com").send(ctx, true)
+
+	byTo := map[string]alerts.EmailMessage{}
+	for _, m := range sender.messages {
+		byTo[m.To] = m
+	}
+	if len(byTo) != 2 {
+		t.Fatalf("expected reports for the restricted and the all-access user only, got %d", len(byTo))
+	}
+	mine := byTo["digest-scope-restricted@example.com"]
+	if !strings.Contains(mine.Text, "Visible Scope Project") || strings.Contains(mine.Text, "Hidden Scope Project") {
+		t.Errorf("restricted report must cover only its team's project:\n%s", mine.Text)
+	}
+	everything := byTo["digest-scope-all@example.com"]
+	if !strings.Contains(everything.Text, "Visible Scope Project") || !strings.Contains(everything.Text, "Hidden Scope Project") {
+		t.Errorf("all-access report must cover every project:\n%s", everything.Text)
+	}
+
+	var sentAt *time.Time
+	if err := testPool.QueryRow(ctx, `SELECT digest_last_sent_at FROM users WHERE id = $1`, stranded).Scan(&sentAt); err != nil {
+		t.Fatalf("read digest_last_sent_at: %v", err)
+	}
+	if sentAt != nil {
+		t.Errorf("a restricted user without projects must not be marked as sent")
 	}
 }

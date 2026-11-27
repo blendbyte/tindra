@@ -8,10 +8,11 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useConfig } from '@/composables/useConfig'
 import { useTimezone } from '@/composables/useTimezone'
 import { apiFetch } from '@/api/client'
-import type { Project, ProjectQuota, ScrubPattern } from '@/api/types'
+import type { Project, ProjectQuota, ProjectTeamEntry, ScrubPattern } from '@/api/types'
 import Icon from '@/components/Icon.vue'
 import Sparkline from '@/components/Sparkline.vue'
-import { formatBytes, useMonthlyEvents, usePermissions, useProjects, useServerSettings } from './shared'
+import ProjectTeamsPanel from './ProjectTeamsPanel.vue'
+import { formatBytes, useTeams, useMonthlyEvents, usePermissions, useProjects, useServerSettings } from './shared'
 
 const { show: showToast } = useToast()
 const { copy } = useClipboard()
@@ -19,8 +20,10 @@ const tz = useTimezone()
 const qc = useQueryClient()
 const route = useRoute()
 const { dsnFor } = useConfig()
-const { canManageProjects } = usePermissions()
+const { me, canManageProjects } = usePermissions()
 const { projects } = useProjects()
+// Teams a new project can be attached to; only holders of manage_projects can create projects (and list teams).
+const { teams } = useTeams(canManageProjects)
 const { settings } = useServerSettings()
 const { totalMonthlyEvents, instanceAtLimit, instanceNearLimit, globalEventPct } = useMonthlyEvents(projects, settings)
 
@@ -64,6 +67,37 @@ const sortedProjects = computed(() => {
   })
 })
 
+// ── Teams of each project ─────────────────────────────────────────────────────
+// Holders of manage_projects see which teams each project belongs to, as chips on
+// the row, and can narrow the list to one team.
+const { data: teamEntries } = useQuery({
+  queryKey: ['project-teams', 'all'],
+  queryFn: ({ signal }) => apiFetch<ProjectTeamEntry[]>('/api/projects/teams', { signal }),
+  enabled: canManageProjects,
+})
+
+const teamIdsOf = computed(() =>
+  new Map((canManageProjects.value ? (teamEntries.value ?? []) : []).map(e => [e.project_id, e.team_ids])))
+
+function teamsOf(p: Project): { id: string; name: string }[] {
+  return (teamIdsOf.value.get(p.id) ?? []).map(id => ({
+    id,
+    name: teams.value.find(t => t.id === id)?.name ?? 'Unknown team',
+  }))
+}
+
+// '' shows every project, 'none' the ones no team has, otherwise a team id.
+const teamFilter = ref('')
+
+const filteredProjects = computed(() => {
+  const list = sortedProjects.value
+  if (!teamFilter.value) return list
+  return list.filter((p) => {
+    const ids = teamIdsOf.value.get(p.id) ?? []
+    return teamFilter.value === 'none' ? ids.length === 0 : ids.includes(teamFilter.value)
+  })
+})
+
 const projectLimitReached = computed(() => {
   const limit = settings.value?.project_limit ?? 0
   return limit > 0 && projects.value.length >= limit
@@ -85,6 +119,8 @@ const showNewProject = ref(false)
 const newProjectName = ref('')
 const newProjectSlug = ref('')
 const slugTouched = ref(false)
+// Teams the new project is attached to; none leaves it to the users with access to all projects.
+const newProjectTeams = ref<string[]>([])
 const newProjectError = ref<string | null>(null)
 const createdProject = ref<Project | null>(null)
 
@@ -105,6 +141,9 @@ const editProfilingEnabled = ref(true)
 const editError = ref<string | null>(null)
 const confirmingDelete = ref<string | null>(null)
 const deleteConfirmText = ref('')
+
+// Which project's access panel is open
+const accessProject = ref<string | null>(null)
 
 // Privacy / scrubbing state
 const privacyProject = ref<string | null>(null)
@@ -150,16 +189,22 @@ watch(newProjectName, (name) => {
 })
 
 const { mutate: createProject, isPending: creatingProject } = useMutation({
-  mutationFn: ({ name, slug }: { name: string; slug: string }) =>
-    apiFetch<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ name, slug }) }),
+  mutationFn: ({ name, slug, teamIds }: { name: string; slug: string; teamIds?: string[] }) =>
+    apiFetch<Project>('/api/projects', {
+      method: 'POST',
+      // The teams are optional: leave them out to create a project for users with access to all projects.
+      body: JSON.stringify({ name, slug, ...(teamIds?.length ? { team_ids: teamIds } : {}) }),
+    }),
   onSuccess: (p) => {
     createdProject.value = p
     showNewProject.value = false
     newProjectName.value = ''
     newProjectSlug.value = ''
+    newProjectTeams.value = []
     slugTouched.value = false
     newProjectError.value = null
     qc.invalidateQueries({ queryKey: ['projects'] })
+    qc.invalidateQueries({ queryKey: ['project-teams'] })
   },
   onError: (e) => {
     newProjectError.value = e instanceof Error ? e.message : 'Failed to create project'
@@ -236,7 +281,7 @@ function submitNewProject(e: Event) {
   const name = newProjectName.value.trim()
   const slug = newProjectSlug.value.trim()
   if (!name || !slug) return
-  createProject({ name, slug })
+  createProject({ name, slug, ...(newProjectTeams.value.length ? { teamIds: newProjectTeams.value } : {}) })
 }
 
 function openNewProject() {
@@ -400,6 +445,18 @@ function copyDsn(key: string, projectId: string) {
           />
         </div>
       </div>
+      <div v-if="teams.length > 0" class="field" style="margin-top: 12px">
+        <div class="field__label">Teams <span style="font-weight: normal; color: var(--text-2)">(optional)</span></div>
+        <div class="rule__project-checks">
+          <label v-for="t in teams" :key="t.id" class="rule__project-check">
+            <input v-model="newProjectTeams" type="checkbox" :value="t.id" />
+            {{ t.name }}
+          </label>
+        </div>
+        <div class="field__hint">
+          Members of these teams see the project. Without a team, only users with access to all projects see it.
+        </div>
+      </div>
       <div v-if="newProjectError" class="proj-form-error">{{ newProjectError }}</div>
       <div style="display: flex; gap: 8px; margin-top: 14px">
         <button
@@ -422,6 +479,7 @@ function copyDsn(key: string, projectId: string) {
     <div class="settings-empty__title">No projects yet</div>
     <div class="settings-empty__body">
       <template v-if="canManageProjects">Create your first project to get a DSN and start capturing errors and traces.</template>
+      <template v-else-if="me?.project_access === 'teams'">You don't have access to any projects yet. Ask an admin to add you to a team.</template>
       <template v-else>No projects have been created yet. Ask an admin to create one.</template>
     </div>
     <button v-if="canManageProjects" class="btn btn--primary" style="margin-top: 4px" @click="openNewProject">
@@ -431,6 +489,15 @@ function copyDsn(key: string, projectId: string) {
   </div>
 
   <!-- Project list -->
+  <div v-if="projects.length > 0 && canManageProjects && teams.length > 0" style="display: flex; align-items: center; gap: 8px; margin: 12px 0 8px">
+    <label class="field__label" for="proj-team-filter" style="margin: 0">Team</label>
+    <select id="proj-team-filter" v-model="teamFilter" class="field__input" style="width: auto; min-width: 160px">
+      <option value="">All projects</option>
+      <option v-for="t in teams" :key="t.id" :value="t.id">{{ t.name }}</option>
+      <option value="none">No team</option>
+    </select>
+  </div>
+
   <div v-if="projects.length > 0" class="proj-grid" :style="showNewProject ? 'margin-top: 12px' : ''">
     <!-- Table header -->
     <div class="proj-table-head">
@@ -450,7 +517,7 @@ function copyDsn(key: string, projectId: string) {
     </div>
 
     <div
-      v-for="p in sortedProjects"
+      v-for="p in filteredProjects"
       :key="p.id"
       class="proj-card"
       :class="{ 'proj-card--open': expandedProject === p.id }"
@@ -459,6 +526,9 @@ function copyDsn(key: string, projectId: string) {
         <div style="min-width: 0">
           <div class="proj-card__name" :title="p.name">{{ p.name }}</div>
           <div class="proj-card__meta mono">{{ p.slug }}</div>
+          <div v-if="teamsOf(p).length" class="proj-teams">
+            <span v-for="t in teamsOf(p)" :key="t.id" class="team-badge">{{ t.name }}</span>
+          </div>
         </div>
         <span class="proj-card__stat mono">{{ (p.event_count ?? 0).toLocaleString() }}</span>
         <span class="proj-card__stat mono">+{{ (p.events_24h ?? 0).toLocaleString() }}</span>
@@ -669,6 +739,10 @@ function copyDsn(key: string, projectId: string) {
               <Icon name="shield" :size="12" />
               Data privacy
             </button>
+            <button class="btn" @click="accessProject = accessProject === p.id ? null : p.id">
+              <Icon name="users" :size="12" />
+              Teams
+            </button>
             <button
               class="btn btn--ghost"
               style="color: var(--danger); margin-left: auto"
@@ -678,6 +752,9 @@ function copyDsn(key: string, projectId: string) {
               Delete
             </button>
           </div>
+
+          <!-- Teams panel: which teams' members can see this project -->
+          <ProjectTeamsPanel v-if="accessProject === p.id" :project-id="p.id" @close="accessProject = null" />
 
           <!-- Data privacy panel -->
           <form v-if="privacyProject === p.id" class="privacy-panel" @submit="(e) => submitPrivacy(e, p.id)">
