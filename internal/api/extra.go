@@ -202,9 +202,9 @@ func (ro *router) signOutAfterReauth(w http.ResponseWriter) {
 
 // confirmEmailChange re-authenticates the user before their email changes, so a
 // hijacked session cannot redirect password resets to an attacker's address.
-// Users with a password confirm with it; SSO-only users confirm with a current
-// two-factor code; users with neither must ask an admin. It writes the error
-// response and returns false when the change must not proceed.
+// Users confirm with their password and, when two-factor is on, a current
+// code; users with neither must ask an admin. It writes the error response and
+// returns false when the change must not proceed.
 func (ro *router) confirmEmailChange(w http.ResponseWriter, r *http.Request, user *storage.User, newEmail, password, mfaCode string) bool {
 	if !user.HasPassword && !user.MFAEnabled {
 		http.Error(w, "your account has no password or two-factor code to confirm this change; ask an admin to update your email", http.StatusForbidden)
@@ -214,14 +214,15 @@ func (ro *router) confirmEmailChange(w http.ResponseWriter, r *http.Request, use
 		http.Error(w, "enter your current password to change your email", http.StatusBadRequest)
 		return false
 	}
-	if !user.HasPassword && mfaCode == "" {
+	if user.MFAEnabled && mfaCode == "" {
 		http.Error(w, "enter a two-factor code to change your email", http.StatusBadRequest)
 		return false
 	}
-	if user.HasPassword {
-		mfaCode = ""
-	} else {
+	if !user.HasPassword {
 		password = ""
+	}
+	if !user.MFAEnabled {
+		mfaCode = ""
 	}
 	if _, ok := ro.reauthenticate(w, r, user.ID, password, mfaCode); !ok {
 		return false
@@ -323,6 +324,9 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		// The push endpoint of the browser making the change, which keeps
 		// its notifications while every other device loses them.
 		KeepPushEndpoint string `json:"keep_push_endpoint"`
+		// Required when two-factor is on, so a guessed password alone cannot
+		// mint fresh sessions and sign the owner out.
+		MFACode string `json:"mfa_code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CurrentPassword == "" || req.NewPassword == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -333,7 +337,24 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusUnauthorized)
 		return
 	}
-	if _, ok := ro.reauthenticate(w, r, userID, req.CurrentPassword, ""); !ok {
+	user, err := storage.GetUserByID(r.Context(), ro.pool, userID)
+	if err != nil {
+		slog.Error("change password: get user", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if user == nil {
+		http.Error(w, "session required", http.StatusUnauthorized)
+		return
+	}
+	if user.MFAEnabled && req.MFACode == "" {
+		http.Error(w, "enter a two-factor code to change your password", http.StatusBadRequest)
+		return
+	}
+	if !user.MFAEnabled {
+		req.MFACode = ""
+	}
+	if _, ok := ro.reauthenticate(w, r, userID, req.CurrentPassword, req.MFACode); !ok {
 		return
 	}
 	// The change checks the password again under its row lock, in case it

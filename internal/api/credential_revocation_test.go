@@ -8,9 +8,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/blendbyte/tindra/internal/storage"
@@ -55,7 +57,9 @@ func TestCredentialChangesRevokeAccess(t *testing.T) {
 			f := seedRecovery(t, pool)
 			other := seedRecovery(t, pool)
 			h := NewRouter(Config{Pool: pool, CookieSecure: true, RequireMFA: true})
-			method, path, body := "PATCH", "/api/me/password", `{"current_password":"original-password","new_password":"replacement-password"}`
+			code, err := totp.GenerateCode("JBSWY3DPEHPK3PXP", time.Now())
+			require.NoError(t, err)
+			method, path, body := "PATCH", "/api/me/password", `{"current_password":"original-password","new_password":"replacement-password","mfa_code":"`+code+`"}`
 			if kind == "admin" {
 				_, err := storage.UpdateUserPermissions(t.Context(), pool, f.user.ID, storage.UserPermissions{ManageUsers: true})
 				require.NoError(t, err)

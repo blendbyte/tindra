@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
@@ -318,6 +321,36 @@ func TestChangePassword_wrongPasswordsEndSession(t *testing.T) {
 	}
 	if rec := change(fresh, "readonlypass123"); rec.Code != http.StatusOK {
 		t.Fatalf("right password on a new session: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// With two-factor on, a guessed password alone cannot change the password.
+func TestChangePassword_mfaUserNeedsCode(t *testing.T) {
+	const secret = "JBSWY3DPEHPK3PXP"
+	cookie := makeReadOnlyUser(t, "pwchange-mfa@example.com")
+	testPool.Exec(context.Background(), "UPDATE users SET mfa_enabled = true, mfa_secret = $1 WHERE email = 'pwchange-mfa@example.com'", secret)
+	change := func(body string) int {
+		req := httptest.NewRequest(http.MethodPatch, "/api/me/password", bytes.NewBufferString(body))
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		globalHandler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := change(`{"current_password":"readonlypass123","new_password":"newpassword99"}`); code != http.StatusBadRequest {
+		t.Errorf("no code: expected 400, got %d", code)
+	}
+	wrong, _ := totp.GenerateCode(secret, time.Now().Add(-time.Hour))
+	if code := change(`{"current_password":"readonlypass123","new_password":"newpassword99","mfa_code":"` + wrong + `"}`); code != http.StatusForbidden {
+		t.Errorf("wrong code: expected 403, got %d", code)
+	}
+	var hash string
+	testPool.QueryRow(context.Background(), `SELECT password_hash FROM users WHERE email = 'pwchange-mfa@example.com'`).Scan(&hash)
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte("readonlypass123")) != nil {
+		t.Fatal("password changed without a valid code")
+	}
+	current, _ := totp.GenerateCode(secret, time.Now())
+	if code := change(`{"current_password":"readonlypass123","new_password":"newpassword99","mfa_code":"` + current + `"}`); code != http.StatusOK {
+		t.Errorf("password and code: expected 200, got %d", code)
 	}
 }
 

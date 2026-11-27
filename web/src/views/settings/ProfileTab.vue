@@ -69,6 +69,7 @@ const { mutate: updateProfile } = useMutation({
 const pwCurrent = ref('')
 const pwNew = ref('')
 const pwConfirm = ref('')
+const pwMfaCode = ref('')
 const pwError = ref<string | null>(null)
 
 // A password change signs every other device out, push included. Remounting
@@ -76,18 +77,23 @@ const pwError = ref<string | null>(null)
 const pushDevicesKey = ref(0)
 
 const { mutate: changePassword, isPending: changingPw } = useMutation({
-  mutationFn: async ({ current_password, new_password }: { current_password: string; new_password: string }) => {
+  mutationFn: async ({ current_password, new_password, mfa_code }: { current_password: string; new_password: string; mfa_code?: string }) => {
     // This browser keeps its push notifications; the others lose them.
     const keep_push_endpoint = await pushEndpointOnThisDevice()
     return apiFetch('/api/me/password', {
       method: 'PATCH',
-      body: JSON.stringify({ current_password, new_password, ...(keep_push_endpoint ? { keep_push_endpoint } : {}) }),
+      body: JSON.stringify({
+        current_password, new_password,
+        ...(mfa_code ? { mfa_code } : {}),
+        ...(keep_push_endpoint ? { keep_push_endpoint } : {}),
+      }),
     })
   },
   onSuccess: () => {
     pwCurrent.value = ''
     pwNew.value = ''
     pwConfirm.value = ''
+    pwMfaCode.value = ''
     pwError.value = null
     pushDevicesKey.value++
     showToast('Password changed. Other devices are signed out and no longer get push notifications.')
@@ -99,7 +105,7 @@ function submitPasswordChange() {
   pwError.value = null
   if (pwNew.value !== pwConfirm.value) { pwError.value = 'Passwords do not match'; return }
   if (pwNew.value.length < 12) { pwError.value = 'Password must be at least 12 characters'; return }
-  changePassword({ current_password: pwCurrent.value, new_password: pwNew.value })
+  changePassword({ current_password: pwCurrent.value, new_password: pwNew.value, ...(me.value?.mfa_enabled ? { mfa_code: pwMfaCode.value } : {}) })
 }
 
 // MFA setup / disable
@@ -182,11 +188,11 @@ function cancelMFASetup() {
           <label class="field__label" for="profile-current-password">Current password</label>
           <input id="profile-current-password" v-model="profileCurrentPassword" class="field__input" type="password" autocomplete="current-password" placeholder="Confirm it's you to change your email" />
         </div>
-        <div v-else-if="emailChanged && me?.mfa_enabled" class="field" style="grid-column: 1 / -1">
+        <div v-if="emailChanged && me?.mfa_enabled" class="field" style="grid-column: 1 / -1">
           <label class="field__label" for="profile-mfa-code">Two-factor code</label>
           <input id="profile-mfa-code" v-model="profileMfaCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Confirm it's you to change your email" />
         </div>
-        <p v-else-if="emailChanged" class="field__hint" style="grid-column: 1 / -1">
+        <p v-if="emailChanged && !me?.has_password && !me?.mfa_enabled" class="field__hint" style="grid-column: 1 / -1">
           Your account has no password or two-factor code to confirm this change. Ask an admin to update your email.
         </p>
         <div class="field" style="grid-column: 1 / -1">
@@ -243,9 +249,13 @@ function cancelMFASetup() {
           <label class="field__label">Confirm new password</label>
           <input v-model="pwConfirm" class="field__input" type="password" autocomplete="new-password" />
         </div>
+        <div v-if="me?.mfa_enabled" class="field">
+          <label class="field__label" for="pw-mfa-code">Two-factor code</label>
+          <input id="pw-mfa-code" v-model="pwMfaCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" />
+        </div>
         <div v-if="pwError" class="profile-error">{{ pwError }}</div>
         <div style="display: flex; gap: 8px">
-          <button class="btn btn--primary" :disabled="changingPw || !pwCurrent || !pwNew || !pwConfirm" @click="submitPasswordChange">
+          <button class="btn btn--primary" :disabled="changingPw || !pwCurrent || !pwNew || !pwConfirm || (me?.mfa_enabled && pwMfaCode.length !== 6)" @click="submitPasswordChange">
             {{ changingPw ? 'Changing…' : 'Change password' }}
           </button>
         </div>
