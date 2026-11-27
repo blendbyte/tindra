@@ -179,6 +179,66 @@ describe('TeamsTab', () => {
       })
     })
 
+    describe('removing members', () => {
+      const effect = {
+        removed_recipients: [
+          { user_id: 'user-2', user_name: 'Bob', rule_id: 'r-1', rule_name: 'Prod alerts' },
+          { user_id: 'user-2', user_name: 'Bob', rule_id: 'r-2', rule_name: 'Staging alerts' },
+        ],
+        paused_rules: [{ id: 'r-2', name: 'Staging alerts' }],
+      }
+
+      async function untickBob() {
+        const wrapper = await openOps()
+        await wrapper.findAll('.rule__project-check input')[1].setValue(false)
+        await wrapper.find('.proj-card__body form').trigger('submit')
+        await flushPromises()
+      }
+
+      it('previews the change and says what happens to the alert rules', async () => {
+        vi.mocked(apiFetch).mockResolvedValue(effect)
+        confirm.mockResolvedValue(true)
+        await untickBob()
+        expect(apiFetch).toHaveBeenCalledWith('/api/teams/g-1/members?dry_run=true', {
+          method: 'PUT', body: JSON.stringify({ user_ids: [] }),
+        })
+        expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+          message: 'This removes Bob from 2 alert rules. 1 push rule will be paused (Staging alerts) because nobody would be left to notify.',
+        }))
+        expect(mutations[M.saveTeam].mutate).toHaveBeenCalledWith({ team: ops, name: 'Ops', memberIds: [] })
+      })
+
+      it('saves nothing when the admin cancels', async () => {
+        vi.mocked(apiFetch).mockResolvedValue(effect)
+        confirm.mockResolvedValue(false)
+        await untickBob()
+        expect(mutations[M.saveTeam].mutate).not.toHaveBeenCalled()
+      })
+
+      it('saves without asking when no alert rule is affected', async () => {
+        vi.mocked(apiFetch).mockResolvedValue({ removed_recipients: [], paused_rules: [] })
+        await untickBob()
+        expect(confirm).not.toHaveBeenCalled()
+        expect(mutations[M.saveTeam].mutate).toHaveBeenCalled()
+      })
+
+      it('does not save, and says so, when the effect cannot be checked', async () => {
+        vi.mocked(apiFetch).mockRejectedValue(new ApiError(500, 'boom'))
+        await untickBob()
+        expect(showToast).toHaveBeenCalledWith('Could not check the effect on alert rules. Try again.', 'error')
+        expect(mutations[M.saveTeam].mutate).not.toHaveBeenCalled()
+      })
+
+      it('does not preview when only adding members', async () => {
+        const wrapper = await openOps()
+        await wrapper.findAll('.rule__project-check input')[0].setValue(true)
+        await wrapper.find('.proj-card__body form').trigger('submit')
+        await flushPromises()
+        expect(apiFetch).not.toHaveBeenCalled()
+        expect(mutations[M.saveTeam].mutate).toHaveBeenCalled()
+      })
+    })
+
     it('does not save a blank name', async () => {
       const wrapper = await openOps()
       await wrapper.find('#team-name-g-1').setValue('  ')
@@ -235,6 +295,19 @@ describe('TeamsTab', () => {
       await clickDelete()
       expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'Delete Ops?', danger: true }))
       expect(mutations[M.deleteTeam].mutate).toHaveBeenCalledWith(ops)
+    })
+
+    it('adds what the deletion does to alert rules to the confirmation', async () => {
+      vi.mocked(apiFetch).mockResolvedValue({
+        removed_recipients: [{ user_id: 'user-2', user_name: 'Bob', rule_id: 'r-1', rule_name: 'Prod alerts' }],
+        paused_rules: [],
+      })
+      confirm.mockResolvedValue(true)
+      await clickDelete()
+      expect(apiFetch).toHaveBeenCalledWith('/api/teams/g-1?dry_run=true', { method: 'DELETE' })
+      expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+        message: expect.stringMatching(/Accounts are not affected\. This removes Bob from 1 alert rule\.$/),
+      }))
     })
 
     it('does nothing when the confirmation is declined', async () => {

@@ -381,6 +381,23 @@ func DeleteUser(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error
 // user does not exist, and ErrRestrictedUserPermissions when restricting a user who
 // holds manage_users or manage_projects (remove those first).
 func SetUserProjectAccess(ctx context.Context, pool *pgxpool.Pool, id, access string) (*User, error) {
+	impact, err := setUserProjectAccess(ctx, pool, id, access, false)
+	if err != nil || impact == nil {
+		return nil, err
+	}
+	return GetUserByID(ctx, pool, id)
+}
+
+// PreviewUserProjectAccess reports what SetUserProjectAccess would do to alert rules,
+// without changing anything. It fails the same way, and returns nil when the user does
+// not exist.
+func PreviewUserProjectAccess(ctx context.Context, pool *pgxpool.Pool, id, access string) (*AlertImpact, error) {
+	return setUserProjectAccess(ctx, pool, id, access, true)
+}
+
+// setUserProjectAccess runs SetUserProjectAccess' transaction and commits it unless
+// dryRun. A nil impact means the user does not exist.
+func setUserProjectAccess(ctx context.Context, pool *pgxpool.Pool, id, access string, dryRun bool) (*AlertImpact, error) {
 	if access != AccessAll && access != AccessTeams {
 		return nil, ErrInvalidAccess
 	}
@@ -400,13 +417,16 @@ func SetUserProjectAccess(ctx context.Context, pool *pgxpool.Pool, id, access st
 		return nil, nil
 	}
 	// A user limited to their teams may no longer see what their alert rules cover.
-	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
+	impact, err := purgeIneligibleRecipients(ctx, tx)
+	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
+	if !dryRun {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit: %w", err)
+		}
 	}
-	return GetUserByID(ctx, pool, id)
+	return impact, nil
 }
 
 func isCheckViolation(err error) bool {

@@ -265,7 +265,6 @@ func NewRouter(cfg Config) *Handle {
 		r.With(ro.requirePerm("manage_projects")).Delete("/api/projects/{projectID}", ro.handleDeleteProject)
 		// Which teams a project belongs to. Their members see it, and so does every user
 		// with access to all projects, so these links cannot lock anyone out.
-		// managers see every project, so these rules cannot lock them out.
 		r.With(ro.requirePerm("manage_projects")).Get("/api/projects/teams", ro.handleListProjectTeams)
 		projectTeams := r.With(ro.requirePerm("manage_projects"), requireUUIDParams("projectID"))
 		projectTeams.Get("/api/projects/{projectID}/teams", ro.handleGetProjectTeams)

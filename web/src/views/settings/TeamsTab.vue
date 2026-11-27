@@ -5,12 +5,11 @@ import { vClickable } from '@/directives/clickable'
 import { apiFetch, ApiError } from '@/api/client'
 import type { Team } from '@/api/types'
 import { useToast } from '@/composables/useToast'
-import { useConfirm } from '@/composables/useConfirm'
 import Icon from '@/components/Icon.vue'
-import { useTeams, usePermissions, useUsers } from './shared'
+import { useAlertImpactConfirm, useTeams, usePermissions, useUsers } from './shared'
 
 const { show: showToast } = useToast()
-const { confirm } = useConfirm()
+const confirmAlertImpact = useAlertImpactConfirm()
 const qc = useQueryClient()
 const { canManageUsers } = usePermissions()
 const { teams } = useTeams(canManageUsers)
@@ -89,9 +88,19 @@ const { mutate: saveTeam, isPending: saving } = useMutation({
   },
 })
 
-function submitSave(team: Team) {
+async function submitSave(team: Team) {
   const name = editName.value.trim()
-  if (name) saveTeam({ team, name, memberIds: editMembers.value })
+  if (!name) return
+  // Taking someone out of the team can take them off alert rules, so say so first.
+  const removesMembers = team.member_ids.some((id) => !editMembers.value.includes(id))
+  if (removesMembers) {
+    const ok = await confirmAlertImpact(`/api/teams/${team.id}/members`, 'PUT', { user_ids: editMembers.value }, {
+      title: `Save ${name}?`,
+      confirmLabel: 'Save team',
+    })
+    if (!ok) return
+  }
+  saveTeam({ team, name, memberIds: editMembers.value })
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
@@ -106,11 +115,12 @@ const { mutate: deleteTeam } = useMutation({
 })
 
 async function removeTeam(g: Team) {
-  const ok = await confirm({
+  const ok = await confirmAlertImpact(`/api/teams/${g.id}`, 'DELETE', undefined, {
     title: `Delete ${g.name}?`,
     message: 'Its members lose the access it gave them, and its projects are detached from it. Accounts are not affected.',
     confirmLabel: 'Delete team',
     danger: true,
+    alwaysAsk: true,
   })
   if (ok) deleteTeam(g)
 }

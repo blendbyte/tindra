@@ -5,7 +5,7 @@ import { apiFetch } from '@/api/client'
 import type { ProjectTeams } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import Icon from '@/components/Icon.vue'
-import { useTeams } from './shared'
+import { useAlertImpactConfirm, useTeams } from './shared'
 
 // Which teams a project belongs to. Members of those teams see the project, and so
 // does everyone with access to all projects, so a project can never become
@@ -16,6 +16,7 @@ const emit = defineEmits<{ close: [] }>()
 const { show: showToast } = useToast()
 const qc = useQueryClient()
 const { teams } = useTeams()
+const confirmAlertImpact = useAlertImpactConfirm()
 
 const { data: current } = useQuery({
   queryKey: ['project-teams', props.projectId],
@@ -43,10 +44,24 @@ const { mutate: save, isPending: saving } = useMutation({
   },
   onError: () => { error.value = 'Failed to save the project teams' },
 })
+
+async function submit() {
+  error.value = null
+  // Taking the project out of a team can take people off the alert rules that cover it.
+  const removesTeams = (current.value?.team_ids ?? []).some((id) => !teamIds.value.includes(id))
+  if (removesTeams) {
+    const ok = await confirmAlertImpact(`/api/projects/${props.projectId}/teams`, 'PUT', { team_ids: teamIds.value }, {
+      title: 'Save the project teams?',
+      confirmLabel: 'Save',
+    })
+    if (!ok) return
+  }
+  save()
+}
 </script>
 
 <template>
-  <form class="privacy-panel" @submit.prevent="error = null; save()">
+  <form class="privacy-panel" @submit.prevent="submit">
     <div class="privacy-panel__title">
       <Icon name="shield" :size="13" />
       Teams

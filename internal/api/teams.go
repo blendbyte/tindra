@@ -118,10 +118,38 @@ func (ro *router) handleRenameTeam(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, team)
 }
 
+// wantsPreview is true for a request that only asks what a change would do to alert
+// rules (?dry_run=true). It runs the same transaction as the real change and rolls it
+// back, so the admin sees who stops being notified before confirming.
+func wantsPreview(r *http.Request) bool {
+	return r.URL.Query().Get("dry_run") == "true"
+}
+
+// writePreview answers a preview: the impact on alert rules, or 404 when what the
+// change targets does not exist. Errors specific to the change are handled by the caller.
+func writePreview(w http.ResponseWriter, impact *storage.AlertImpact, err error, what string) {
+	if err != nil {
+		slog.Error("preview "+what, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if impact == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, impact)
+}
+
 // handleDeleteTeam removes a team. Its members lose the access it gave them, and its
-// projects are no longer attached to it. Requires manage_users.
+// projects are no longer attached to it. With ?dry_run=true it deletes nothing and
+// answers with the alert rules affected. Requires manage_users.
 func (ro *router) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "teamID")
+	if wantsPreview(r) {
+		impact, err := storage.PreviewDeleteTeam(r.Context(), ro.pool, id)
+		writePreview(w, impact, err, "delete team")
+		return
+	}
 	deleted, err := storage.DeleteTeam(r.Context(), ro.pool, id)
 	if err != nil {
 		slog.Error("delete team", "err", err)
@@ -141,7 +169,8 @@ func (ro *router) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSetTeamMembers replaces a team's members. Requires manage_users.
+// handleSetTeamMembers replaces a team's members. With ?dry_run=true it changes nothing
+// and answers with the alert rules affected. Requires manage_users.
 func (ro *router) handleSetTeamMembers(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "teamID")
 	var req struct {
@@ -149,6 +178,15 @@ func (ro *router) handleSetTeamMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validUUIDs(req.UserIDs) {
 		http.Error(w, "user_ids must be an array of user ids", http.StatusBadRequest)
+		return
+	}
+	if wantsPreview(r) {
+		impact, err := storage.PreviewTeamMembers(r.Context(), ro.pool, id, req.UserIDs)
+		if errors.Is(err, storage.ErrUnknownReference) {
+			http.Error(w, "unknown user", http.StatusBadRequest)
+			return
+		}
+		writePreview(w, impact, err, "team members")
 		return
 	}
 	team, err := storage.SetTeamMembers(r.Context(), ro.pool, id, req.UserIDs)
@@ -204,12 +242,22 @@ func (ro *router) handleGetProjectTeams(w http.ResponseWriter, r *http.Request) 
 
 // handleSetProjectTeams replaces the teams a project belongs to. Members of those
 // teams see the project, and users with access to all projects always do, so a
-// project can never become unreachable. Requires manage_projects.
+// project can never become unreachable. With ?dry_run=true it changes nothing and
+// answers with the alert rules affected. Requires manage_projects.
 func (ro *router) handleSetProjectTeams(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "projectID")
 	var req storage.ProjectTeams
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validUUIDs(req.TeamIDs) {
 		http.Error(w, "team_ids must be an array of team ids", http.StatusBadRequest)
+		return
+	}
+	if wantsPreview(r) {
+		impact, err := storage.PreviewProjectTeams(r.Context(), ro.pool, id, req.TeamIDs)
+		if errors.Is(err, storage.ErrUnknownReference) {
+			http.Error(w, "unknown team", http.StatusBadRequest)
+			return
+		}
+		writePreview(w, impact, err, "project teams")
 		return
 	}
 	teams, err := storage.SetProjectTeams(r.Context(), ro.pool, id, req.TeamIDs)

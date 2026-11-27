@@ -6,7 +6,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { ApiError, apiFetch } from '@/api/client'
 import type { Invite, ProjectAccessMode, User, UserPermissions } from '@/api/types'
 import Icon from '@/components/Icon.vue'
-import { useFormatDate, useTeams, usePermissions, useRowMenu, useServerSettings, useUsers } from './shared'
+import { useAlertImpactConfirm, useFormatDate, useTeams, usePermissions, useRowMenu, useServerSettings, useUsers } from './shared'
 
 const { show: showToast } = useToast()
 const { copy } = useClipboard()
@@ -16,6 +16,7 @@ const { me, canManageUsers } = usePermissions()
 const { users } = useUsers()
 const { settings } = useServerSettings()
 const { openMenuId, toggleUserMenu, closeUserMenus } = useRowMenu()
+const confirmAlertImpact = useAlertImpactConfirm()
 
 const userLimitReached = computed(() => {
   const limit = settings.value?.user_limit ?? 0
@@ -268,12 +269,21 @@ const { mutate: setAccess } = useMutation({
   },
 })
 
-function changeAccess(user: User, e: Event) {
+async function changeAccess(user: User, e: Event) {
   const select = e.target as HTMLSelectElement
   const projectAccess = select.value as ProjectAccessMode
   // Keep the select on the saved value until the save succeeds, like the permission boxes.
   select.value = user.project_access
-  if (projectAccess !== user.project_access) setAccess({ userID: user.id, projectAccess })
+  if (projectAccess === user.project_access) return
+  // Limiting someone to their teams can take them off alert rules, so say so first.
+  if (projectAccess === 'teams') {
+    const ok = await confirmAlertImpact(`/api/users/${user.id}/access`, 'PUT', { project_access: projectAccess }, {
+      title: `Limit ${user.email} to their teams' projects?`,
+      confirmLabel: 'Limit access',
+    })
+    if (!ok) return
+  }
+  setAccess({ userID: user.id, projectAccess })
 }
 
 function copyInviteURL(url: string) {

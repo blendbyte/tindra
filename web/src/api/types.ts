@@ -317,6 +317,16 @@ export interface ProjectTeams {
   team_ids: string[]
 }
 
+/**
+ * What a change of access does to alert rules, answered by the endpoints that take
+ * `?dry_run=true`: who stops being notified by which rule, and which push rules are
+ * paused because nobody is left to notify.
+ */
+export interface AlertImpact {
+  removed_recipients: { user_id: string; user_name: string; rule_id: string; rule_name: string }[]
+  paused_rules: { id: string; name: string }[]
+}
+
 export interface ProjectTeamEntry extends ProjectTeams {
   project_id: string
 }

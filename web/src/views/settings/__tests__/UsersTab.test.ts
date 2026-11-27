@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
-const { showToast } = vi.hoisted(() => ({ showToast: vi.fn() }))
+const { showToast, confirm } = vi.hoisted(() => ({ showToast: vi.fn(), confirm: vi.fn() }))
 
 vi.mock('vue-router', () => ({
   useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn() })),
@@ -12,6 +12,10 @@ vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
   useMutation: vi.fn(),
   useQueryClient: vi.fn(),
+}))
+
+vi.mock('@/composables/useConfirm', () => ({
+  useConfirm: vi.fn(() => ({ confirm })),
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -47,6 +51,7 @@ let qc: { invalidateQueries: ReturnType<typeof vi.fn>; setQueryData: ReturnType<
 
 beforeEach(() => {
   showToast.mockReset()
+  confirm.mockReset()
   qc = { invalidateQueries: vi.fn(), setQueryData: vi.fn() }
   vi.mocked(useQueryClient).mockReturnValue(qc as any)
   mutations = recordMutations()
@@ -793,6 +798,56 @@ describe('set password panel', () => {
       const wrapper = mountTab()
       await accessSelect(wrapper, 'bob@example.com').setValue('teams')
       expect(mutations[M.setAccess].mutate).not.toHaveBeenCalled()
+    })
+
+    describe('limiting a user to their teams', () => {
+      const everything = { ...restricted, project_access: 'all' }
+      const effect = {
+        removed_recipients: [{ user_id: 'user-2', user_name: 'Bob', rule_id: 'r-1', rule_name: 'Prod alerts' }],
+        paused_rules: [{ id: 'r-1', name: 'Prod alerts' }],
+      }
+
+      async function limit() {
+        mockQueries({ users: [adminUser, everything], teams: [ops] })
+        const wrapper = mountTab()
+        await accessSelect(wrapper, 'bob@example.com').setValue('teams')
+        await flushPromises()
+      }
+
+      it('previews the change and saves without asking when no alert rule is affected', async () => {
+        vi.mocked(apiFetch).mockResolvedValue({ removed_recipients: [], paused_rules: [] })
+        await limit()
+        expect(apiFetch).toHaveBeenCalledWith('/api/users/user-2/access?dry_run=true', {
+          method: 'PUT', body: JSON.stringify({ project_access: 'teams' }),
+        })
+        expect(confirm).not.toHaveBeenCalled()
+        expect(mutations[M.setAccess].mutate).toHaveBeenCalledWith({ userID: 'user-2', projectAccess: 'teams' })
+      })
+
+      it('says what happens to the alert rules and saves once confirmed', async () => {
+        vi.mocked(apiFetch).mockResolvedValue(effect)
+        confirm.mockResolvedValue(true)
+        await limit()
+        expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+          message: expect.stringContaining('This removes Bob from 1 alert rule. 1 push rule will be paused (Prod alerts)'),
+        }))
+        expect(mutations[M.setAccess].mutate).toHaveBeenCalledWith({ userID: 'user-2', projectAccess: 'teams' })
+      })
+
+      it('saves nothing when the admin cancels', async () => {
+        vi.mocked(apiFetch).mockResolvedValue(effect)
+        confirm.mockResolvedValue(false)
+        await limit()
+        expect(mutations[M.setAccess].mutate).not.toHaveBeenCalled()
+      })
+
+      it('does not preview when opening access up', async () => {
+        mockQueries({ users: [adminUser, restricted], teams: [ops] })
+        await accessSelect(mountTab(), 'bob@example.com').setValue('all')
+        await flushPromises()
+        expect(apiFetch).not.toHaveBeenCalled()
+        expect(mutations[M.setAccess].mutate).toHaveBeenCalled()
+      })
     })
 
     it('puts the access to /api/users/:id/access', async () => {

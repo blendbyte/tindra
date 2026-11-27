@@ -678,3 +678,140 @@ func TestAlertRuleRecipients_areDroppedWhenAUserIsLimitedToTheirTeams(t *testing
 	require.ElementsMatch(t, []string{user.ID, other.ID}, ruleRecipients(t, covered.ID))
 	require.Equal(t, []string{other.ID}, ruleRecipients(t, uncovered.ID))
 }
+
+// Each way of taking access away can be previewed first: the preview names who comes
+// off which rule and which push rule is paused, and leaves everything as it was. The
+// real change then does exactly what the preview said.
+func TestPreviewAccessChange_reportsAlertImpactWithoutChangingAnything(t *testing.T) {
+	ctx := context.Background()
+	everything := accessUser(t, storage.AccessAll)
+
+	type scenario struct {
+		preview func(member *storage.User, team *storage.Team, p *storage.Project) (*storage.AlertImpact, error)
+		apply   func(member *storage.User, team *storage.Team, p *storage.Project)
+	}
+	cases := map[string]scenario{
+		"the member leaves the team": {
+			preview: func(_ *storage.User, team *storage.Team, _ *storage.Project) (*storage.AlertImpact, error) {
+				return storage.PreviewTeamMembers(ctx, testPool, team.ID, nil)
+			},
+			apply: func(_ *storage.User, team *storage.Team, _ *storage.Project) {
+				_, err := storage.SetTeamMembers(ctx, testPool, team.ID, nil)
+				require.NoError(t, err)
+			},
+		},
+		"the project leaves the team": {
+			preview: func(_ *storage.User, _ *storage.Team, p *storage.Project) (*storage.AlertImpact, error) {
+				return storage.PreviewProjectTeams(ctx, testPool, p.ID, nil)
+			},
+			apply: func(_ *storage.User, _ *storage.Team, p *storage.Project) {
+				_, err := storage.SetProjectTeams(ctx, testPool, p.ID, nil)
+				require.NoError(t, err)
+			},
+		},
+		"the team is deleted": {
+			preview: func(_ *storage.User, team *storage.Team, _ *storage.Project) (*storage.AlertImpact, error) {
+				return storage.PreviewDeleteTeam(ctx, testPool, team.ID)
+			},
+			apply: func(_ *storage.User, team *storage.Team, _ *storage.Project) {
+				_, err := storage.DeleteTeam(ctx, testPool, team.ID)
+				require.NoError(t, err)
+			},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			member := accessUser(t, storage.AccessTeams)
+			team := accessTeam(t, member)
+			p := teamProject(t, team)
+			shared, err := storage.CreateAlertRule(ctx, testPool, recipientRule([]string{p.ID}, member.ID, everything.ID))
+			require.NoError(t, err)
+			alone, err := storage.CreateAlertRule(ctx, testPool, recipientRule([]string{p.ID}, member.ID))
+			require.NoError(t, err)
+
+			impact, err := c.preview(member, team, p)
+			require.NoError(t, err)
+			require.NotNil(t, impact)
+			require.ElementsMatch(t, []storage.RecipientRemoval{
+				{UserID: member.ID, UserName: member.Name, RuleID: shared.ID, RuleName: shared.Name},
+				{UserID: member.ID, UserName: member.Name, RuleID: alone.ID, RuleName: alone.Name},
+			}, impact.RemovedRecipients)
+			require.Equal(t, []storage.PausedRule{{ID: alone.ID, Name: alone.Name}}, impact.PausedRules)
+
+			// Nothing changed.
+			require.ElementsMatch(t, []string{member.ID, everything.ID}, ruleRecipients(t, shared.ID))
+			require.Equal(t, []string{member.ID}, ruleRecipients(t, alone.ID))
+			got, err := storage.GetAlertRule(ctx, testPool, alone.ID)
+			require.NoError(t, err)
+			require.True(t, got.Enabled)
+
+			c.apply(member, team, p)
+
+			require.Equal(t, []string{everything.ID}, ruleRecipients(t, shared.ID))
+			require.Empty(t, ruleRecipients(t, alone.ID))
+			got, err = storage.GetAlertRule(ctx, testPool, alone.ID)
+			require.NoError(t, err)
+			require.False(t, got.Enabled)
+		})
+	}
+}
+
+// A change that touches no alert rule previews as empty lists, not null.
+func TestPreviewAccessChange_nothingAffectedIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	member := accessUser(t, storage.AccessTeams)
+	team := accessTeam(t, member)
+
+	impact, err := storage.PreviewTeamMembers(ctx, testPool, team.ID, []string{member.ID})
+	require.NoError(t, err)
+	require.NotNil(t, impact)
+	require.NotNil(t, impact.RemovedRecipients)
+	require.Empty(t, impact.RemovedRecipients)
+	require.NotNil(t, impact.PausedRules)
+	require.Empty(t, impact.PausedRules)
+}
+
+// Limiting a user to their teams previews like the change itself, including its refusals.
+func TestPreviewUserProjectAccess(t *testing.T) {
+	ctx := context.Background()
+	user := accessUser(t, storage.AccessAll)
+	rule, err := storage.CreateAlertRule(ctx, testPool, recipientRule(nil, user.ID))
+	require.NoError(t, err)
+
+	impact, err := storage.PreviewUserProjectAccess(ctx, testPool, user.ID, storage.AccessTeams)
+	require.NoError(t, err)
+	require.Equal(t, []storage.RecipientRemoval{{UserID: user.ID, UserName: user.Name, RuleID: rule.ID, RuleName: rule.Name}}, impact.RemovedRecipients)
+	require.Equal(t, []storage.PausedRule{{ID: rule.ID, Name: rule.Name}}, impact.PausedRules)
+	require.Equal(t, []string{user.ID}, ruleRecipients(t, rule.ID))
+	got, err := storage.GetUserByID(ctx, testPool, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, storage.AccessAll, got.ProjectAccess)
+
+	_, err = storage.PreviewUserProjectAccess(ctx, testPool, user.ID, "everything")
+	require.ErrorIs(t, err, storage.ErrInvalidAccess)
+
+	admin := accessUser(t, storage.AccessAll)
+	_, err = storage.UpdateUserPermissions(ctx, testPool, admin.ID, storage.UserPermissions{ManageUsers: true})
+	require.NoError(t, err)
+	_, err = storage.PreviewUserProjectAccess(ctx, testPool, admin.ID, storage.AccessTeams)
+	require.ErrorIs(t, err, storage.ErrRestrictedUserPermissions)
+}
+
+// Previews of something that does not exist answer nil, like the changes do.
+func TestPreviewAccessChange_unknownTargetIsNil(t *testing.T) {
+	ctx := context.Background()
+	missing := uuid.NewString()
+
+	impact, err := storage.PreviewTeamMembers(ctx, testPool, missing, nil)
+	require.NoError(t, err)
+	require.Nil(t, impact)
+	impact, err = storage.PreviewProjectTeams(ctx, testPool, missing, nil)
+	require.NoError(t, err)
+	require.Nil(t, impact)
+	impact, err = storage.PreviewDeleteTeam(ctx, testPool, missing)
+	require.NoError(t, err)
+	require.Nil(t, impact)
+	impact, err = storage.PreviewUserProjectAccess(ctx, testPool, missing, storage.AccessTeams)
+	require.NoError(t, err)
+	require.Nil(t, impact)
+}

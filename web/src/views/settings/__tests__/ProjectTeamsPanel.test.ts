@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
-const { showToast } = vi.hoisted(() => ({ showToast: vi.fn() }))
+const { showToast, confirm } = vi.hoisted(() => ({ showToast: vi.fn(), confirm: vi.fn() }))
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(),
   useMutation: vi.fn(),
   useQueryClient: vi.fn(),
+}))
+
+vi.mock('@/composables/useConfirm', () => ({
+  useConfirm: vi.fn(() => ({ confirm })),
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -35,6 +39,7 @@ let qc: { invalidateQueries: ReturnType<typeof vi.fn> }
 
 beforeEach(() => {
   showToast.mockReset()
+  confirm.mockReset()
   vi.mocked(apiFetch).mockReset()
   qc = { invalidateQueries: vi.fn() }
   vi.mocked(useQueryClient).mockReturnValue(qc as any)
@@ -99,6 +104,56 @@ describe('ProjectTeamsPanel', () => {
       const wrapper = mountPanel({ 'project-teams': inOps })
       await wrapper.find('form').trigger('submit')
       expect(mutations[0].mutate).toHaveBeenCalledTimes(1)
+    })
+
+    describe('taking the project out of a team', () => {
+      const effect = {
+        removed_recipients: [{ user_id: 'u-1', user_name: 'Anna', rule_id: 'r-1', rule_name: 'Prod alerts' }],
+        paused_rules: [],
+      }
+
+      async function untick() {
+        const wrapper = mountPanel({ 'project-teams': inOps })
+        await wrapper.findAll('.rule__project-check input')[0].setValue(false)
+        await wrapper.find('form').trigger('submit')
+        await flushPromises()
+      }
+
+      it('previews the change and asks when alert recipients would lose access', async () => {
+        vi.mocked(apiFetch).mockResolvedValue(effect)
+        confirm.mockResolvedValue(true)
+        await untick()
+        expect(apiFetch).toHaveBeenCalledWith('/api/projects/p-1/teams?dry_run=true', {
+          method: 'PUT', body: JSON.stringify({ team_ids: [] }),
+        })
+        expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+          message: 'This removes Anna from 1 alert rule.',
+        }))
+        expect(mutations[0].mutate).toHaveBeenCalledTimes(1)
+      })
+
+      it('saves nothing when the admin cancels', async () => {
+        vi.mocked(apiFetch).mockResolvedValue(effect)
+        confirm.mockResolvedValue(false)
+        await untick()
+        expect(mutations[0].mutate).not.toHaveBeenCalled()
+      })
+
+      it('saves without asking when no alert rule is affected', async () => {
+        vi.mocked(apiFetch).mockResolvedValue({ removed_recipients: [], paused_rules: [] })
+        await untick()
+        expect(confirm).not.toHaveBeenCalled()
+        expect(mutations[0].mutate).toHaveBeenCalledTimes(1)
+      })
+
+      it('does not preview when only adding teams', async () => {
+        const wrapper = mountPanel({ 'project-teams': inOps })
+        await wrapper.findAll('.rule__project-check input')[1].setValue(true)
+        await wrapper.find('form').trigger('submit')
+        await flushPromises()
+        expect(apiFetch).not.toHaveBeenCalled()
+        expect(mutations[0].mutate).toHaveBeenCalledTimes(1)
+      })
     })
 
     it('puts the chosen teams', async () => {

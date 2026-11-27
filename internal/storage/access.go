@@ -161,28 +161,63 @@ func RenameTeam(ctx context.Context, pool *pgxpool.Pool, id, name string) (*Team
 // DeleteTeam removes a team. Its members and project links cascade, and the alert
 // recipients who only saw a rule's projects through it are dropped.
 func DeleteTeam(ctx context.Context, pool *pgxpool.Pool, id string) (bool, error) {
+	impact, err := deleteTeam(ctx, pool, id, false)
+	return impact != nil, err
+}
+
+// PreviewDeleteTeam reports what DeleteTeam would do to alert rules, without deleting
+// anything. It returns nil when the team does not exist.
+func PreviewDeleteTeam(ctx context.Context, pool *pgxpool.Pool, id string) (*AlertImpact, error) {
+	return deleteTeam(ctx, pool, id, true)
+}
+
+// deleteTeam runs DeleteTeam's transaction and commits it unless dryRun, so the preview
+// and the real change cannot disagree. A nil impact means the team does not exist.
+func deleteTeam(ctx context.Context, pool *pgxpool.Pool, id string, dryRun bool) (*AlertImpact, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin: %w", err)
+		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	tag, err := tx.Exec(ctx, `DELETE FROM teams WHERE id = $1`, id)
 	if err != nil {
-		return false, fmt.Errorf("delete team: %w", err)
+		return nil, fmt.Errorf("delete team: %w", err)
 	}
-	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
-		return false, err
+	impact, err := purgeIneligibleRecipients(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit: %w", err)
+	if !dryRun {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit: %w", err)
+		}
 	}
-	return tag.RowsAffected() > 0, nil
+	if tag.RowsAffected() == 0 {
+		return nil, nil
+	}
+	return impact, nil
 }
 
 // SetTeamMembers replaces a team's members and drops the alert recipients who no
 // longer see their rule's projects. It returns nil when the team does not
 // exist and ErrUnknownReference when a user id does not exist.
 func SetTeamMembers(ctx context.Context, pool *pgxpool.Pool, id string, userIDs []string) (*Team, error) {
+	impact, err := setTeamMembers(ctx, pool, id, userIDs, false)
+	if err != nil || impact == nil {
+		return nil, err
+	}
+	return GetTeam(ctx, pool, id)
+}
+
+// PreviewTeamMembers reports what SetTeamMembers would do to alert rules, without
+// changing anything. It returns nil when the team does not exist.
+func PreviewTeamMembers(ctx context.Context, pool *pgxpool.Pool, id string, userIDs []string) (*AlertImpact, error) {
+	return setTeamMembers(ctx, pool, id, userIDs, true)
+}
+
+// setTeamMembers runs SetTeamMembers' transaction and commits it unless dryRun. A nil
+// impact means the team does not exist.
+func setTeamMembers(ctx context.Context, pool *pgxpool.Pool, id string, userIDs []string, dryRun bool) (*AlertImpact, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
@@ -208,13 +243,16 @@ func SetTeamMembers(ctx context.Context, pool *pgxpool.Pool, id string, userIDs 
 		}
 		return nil, fmt.Errorf("insert members: %w", err)
 	}
-	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
+	impact, err := purgeIneligibleRecipients(ctx, tx)
+	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
+	if !dryRun {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit: %w", err)
+		}
 	}
-	return GetTeam(ctx, pool, id)
+	return impact, nil
 }
 
 // ProjectTeams lists the teams a project belongs to. Members of those teams see the
@@ -271,6 +309,22 @@ func ListProjectTeams(ctx context.Context, pool *pgxpool.Pool) ([]*ProjectTeamEn
 // recipients who no longer see their rule's projects. It returns nil when the
 // project does not exist and ErrUnknownReference when a team does not exist.
 func SetProjectTeams(ctx context.Context, pool *pgxpool.Pool, projectID string, teamIDs []string) (*ProjectTeams, error) {
+	impact, err := setProjectTeams(ctx, pool, projectID, teamIDs, false)
+	if err != nil || impact == nil {
+		return nil, err
+	}
+	return GetProjectTeams(ctx, pool, projectID)
+}
+
+// PreviewProjectTeams reports what SetProjectTeams would do to alert rules, without
+// changing anything. It returns nil when the project does not exist.
+func PreviewProjectTeams(ctx context.Context, pool *pgxpool.Pool, projectID string, teamIDs []string) (*AlertImpact, error) {
+	return setProjectTeams(ctx, pool, projectID, teamIDs, true)
+}
+
+// setProjectTeams runs SetProjectTeams' transaction and commits it unless dryRun. A
+// nil impact means the project does not exist.
+func setProjectTeams(ctx context.Context, pool *pgxpool.Pool, projectID string, teamIDs []string, dryRun bool) (*AlertImpact, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
@@ -295,13 +349,16 @@ func SetProjectTeams(ctx context.Context, pool *pgxpool.Pool, projectID string, 
 		}
 		return nil, fmt.Errorf("insert project teams: %w", err)
 	}
-	if err := purgeIneligibleRecipients(ctx, tx); err != nil {
+	impact, err := purgeIneligibleRecipients(ctx, tx)
+	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
+	if !dryRun {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit: %w", err)
+		}
 	}
-	return GetProjectTeams(ctx, pool, projectID)
+	return impact, nil
 }
 
 // uniqueIDs drops duplicates, keeping first occurrences. It always returns a

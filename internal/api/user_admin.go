@@ -224,7 +224,8 @@ func sendPasswordResetEmail(ctx context.Context, sender alerts.EmailSender, to, 
 
 // handleUpdateUserAccess sets which projects a user sees: all of them, or only those of
 // their teams. A user who holds manage_users or manage_projects cannot be restricted,
-// since those permissions administer the whole instance. Requires manage_users.
+// since those permissions administer the whole instance. With ?dry_run=true it changes
+// nothing and answers with the alert rules affected. Requires manage_users.
 func (ro *router) handleUpdateUserAccess(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userID")
 	var req struct {
@@ -232,6 +233,18 @@ func (ro *router) handleUpdateUserAccess(w http.ResponseWriter, r *http.Request)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if wantsPreview(r) {
+		impact, err := storage.PreviewUserProjectAccess(r.Context(), ro.pool, userID, req.ProjectAccess)
+		switch {
+		case errors.Is(err, storage.ErrInvalidAccess):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.Is(err, storage.ErrRestrictedUserPermissions):
+			http.Error(w, err.Error(), http.StatusConflict)
+		default:
+			writePreview(w, impact, err, "user project access")
+		}
 		return
 	}
 	u, err := storage.SetUserProjectAccess(r.Context(), ro.pool, userID, req.ProjectAccess)
