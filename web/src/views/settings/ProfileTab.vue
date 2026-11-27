@@ -362,7 +362,10 @@ function cancelMFASetup() {
           </form>
           <div v-if="mfaSetupError" id="mfa-replace-error" role="alert" class="profile-error">{{ mfaSetupError }}</div>
         </div>
-        <div v-if="!showDisableMFA" style="margin-top: 14px">
+        <p v-if="!me?.has_password" class="field__hint" style="margin-top: 14px">
+          To turn off two-factor authentication, ask an admin.
+        </p>
+        <div v-else-if="!showDisableMFA" style="margin-top: 14px">
           <button class="btn btn--ghost" style="color: var(--danger)" @click="showDisableMFA = true; mfaDisableError = null">
             Disable two-factor auth
           </button>

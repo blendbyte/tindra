@@ -12,7 +12,7 @@ for (const flow of ['password', 'SSO', 'required setup', 'settings setup', 'repl
         return route.fulfill({ status: 400, body: 'Invalid code or password' })
       }
       let json: unknown = []
-      if (path === '/api/me') json = { id: 'u1', email: 'dev@example.com', mfa_enabled: enabled, permissions: {} }
+      if (path === '/api/me') json = { id: 'u1', email: 'dev@example.com', mfa_enabled: enabled, has_password: true, permissions: {} }
       if (path === '/api/config') json = { require_mfa: flow === 'required setup' }
       if (path === '/api/auth/providers') json = { providers: [] }
       if (path === '/api/settings') json = {}
@@ -26,7 +26,10 @@ for (const flow of ['password', 'SSO', 'required setup', 'settings setup', 'repl
       await page.getByLabel('Password', { exact: true }).fill('example-password')
       await page.getByRole('button', { name: /Sign in/ }).click()
     }
-    if (flow === 'settings setup') await page.getByRole('button', { name: 'Enable two-factor auth', exact: true }).click()
+    if (flow === 'settings setup') {
+      await page.getByLabel('Confirm your password to enable 2FA', { exact: true }).fill('example-password')
+      await page.getByRole('button', { name: 'Enable two-factor auth', exact: true }).click()
+    }
     if (flow === 'replacement') await page.getByRole('button', { name: 'Replace authenticator', exact: true }).click()
     if (flow === 'disable') await page.getByRole('button', { name: 'Disable two-factor auth', exact: true }).click()
     const name = flow === 'replacement' ? 'Code from your current authenticator' : flow === 'disable' ? 'Confirm your password to disable 2FA' : 'Authenticator code'

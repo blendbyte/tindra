@@ -227,6 +227,16 @@ func (ro *router) handleMFADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user, err := storage.GetUserByID(r.Context(), ro.pool, userID)
+	if err != nil || user == nil {
+		slog.Error("get user for mfa disable", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !user.HasPassword {
+		http.Error(w, "your account has no password to confirm this change; ask an admin to remove two-factor authentication", http.StatusForbidden)
+		return
+	}
 	if _, ok := ro.reauthenticate(w, r, userID, req.Password, req.Code); !ok {
 		return
 	}

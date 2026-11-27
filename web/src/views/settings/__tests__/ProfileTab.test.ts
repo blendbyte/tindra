@@ -335,7 +335,7 @@ describe('ProfileTab', () => {
 
     it('calls disableMFA onSuccess when confirm clicked', async () => {
       mockMutations({ [M.disableMFA]: succeeds() })
-      mockQueries({ me: { ...adminUser, mfa_enabled: true } })
+      mockQueries({ me: { ...adminUser, mfa_enabled: true, has_password: true } })
       const wrapper = mountTab()
       await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
       await wrapper.find('#mfa-disable-password').setValue('mypassword123')
@@ -350,7 +350,7 @@ describe('ProfileTab', () => {
 
     it('sends the password and authenticator code to disable MFA', async () => {
       const recorded = recordMutations()
-      mockQueries({ me: { ...adminUser, mfa_enabled: true } })
+      mockQueries({ me: { ...adminUser, mfa_enabled: true, has_password: true } })
       const wrapper = mountTab()
       await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
       await wrapper.find('#mfa-disable-password').setValue('mypassword123')
@@ -363,9 +363,16 @@ describe('ProfileTab', () => {
       expect(JSON.parse((init as RequestInit).body as string)).toEqual({ password: 'mypassword123', code: '654321' })
     })
 
+    it('tells accounts without a password to ask an admin to turn off 2FA', () => {
+      mockQueries({ me: { ...adminUser, mfa_enabled: true, has_password: false } })
+      const wrapper = mountTab()
+      expect(wrapper.text()).toContain('To turn off two-factor authentication, ask an admin.')
+      expect(wrapper.findAll('button').some(b => b.text() === 'Disable two-factor auth')).toBe(false)
+    })
+
     it('calls disableMFA onError sets mfaDisableError', async () => {
       mockMutations({ [M.disableMFA]: fails(new Error('Bad password')) })
-      mockQueries({ me: { ...adminUser, mfa_enabled: true } })
+      mockQueries({ me: { ...adminUser, mfa_enabled: true, has_password: true } })
       const wrapper = mountTab()
       await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
       await wrapper.find('#mfa-disable-password').setValue('bad')
@@ -450,7 +457,7 @@ describe('ProfileTab', () => {
 
   describe('MFA enabled user - disable flow', () => {
     beforeEach(() => {
-      mockQueries({ me: { ...adminUser, mfa_enabled: true } })
+      mockQueries({ me: { ...adminUser, mfa_enabled: true, has_password: true } })
     })
 
     it('shows MFA enabled badge when user has MFA enabled', () => {
@@ -501,7 +508,7 @@ describe('ProfileTab', () => {
     })
 
     it('requires the current code before showing the replacement QR', async () => {
-      mockQueries({ me: { ...adminUser, mfa_enabled: true } })
+      mockQueries({ me: { ...adminUser, mfa_enabled: true, has_password: true } })
       runMutations()
       vi.mocked(apiFetch).mockResolvedValue({ secret: 'replacement', uri: 'otpauth://test', qr: 'data:image/png;base64,test' })
       const wrapper = mountTab()
@@ -520,7 +527,7 @@ describe('ProfileTab', () => {
   })
 
   it.each([new Error('incorrect code'), 'unavailable'])('keeps the active authenticator when replacement setup fails: %s', async (failure) => {
-    mockQueries({ me: { ...adminUser, mfa_enabled: true } })
+    mockQueries({ me: { ...adminUser, mfa_enabled: true, has_password: true } })
     runMutations()
     vi.mocked(apiFetch).mockRejectedValue(failure)
     const wrapper = mountTab()
