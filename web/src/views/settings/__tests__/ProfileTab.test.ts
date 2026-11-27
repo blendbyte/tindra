@@ -74,7 +74,7 @@ function findButton(wrapper: ReturnType<typeof mountTab>, selector: string, text
 }
 
 async function fillPasswords(wrapper: ReturnType<typeof mountTab>, current: string, next: string, confirm: string) {
-  const inputs = wrapper.findAll('input[type="password"]')
+  const inputs = passwordSection(wrapper).findAll('input[type="password"]')
   expect(inputs.length).toBe(3)
   await inputs[0].setValue(current)
   await inputs[1].setValue(next)
@@ -257,7 +257,7 @@ describe('ProfileTab', () => {
       const wrapper = mountTab()
       await fillPasswords(wrapper, 'currentpassword', 'newpassword1234', 'newpassword1234')
       await findButton(wrapper, '.btn--primary', 'Change password').trigger('click')
-      const values = wrapper.findAll<HTMLInputElement>('input[type="password"]').map(i => i.element.value)
+      const values = passwordSection(wrapper).findAll<HTMLInputElement>('input[type="password"]').map(i => i.element.value)
       expect(values).toEqual(['', '', ''])
       expect(wrapper.find('.profile-error').exists()).toBe(false)
       expect(showToast).toHaveBeenCalledWith('Password changed. Other devices are signed out and no longer get push notifications.')

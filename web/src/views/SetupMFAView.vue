@@ -23,14 +23,35 @@ const codeInput = ref<HTMLInputElement | null>(null)
 watch(codeInput, input => input?.focus(), { flush: 'post' })
 const confirmError = ref<string | null>(null)
 const confirming = ref(false)
+// Setup right after signing in needs nothing more. A session signed in a while
+// ago confirms the password first (400), or signs in again for SSO accounts.
+const needsPassword = ref(false)
+const password = ref('')
+const starting = ref(false)
 
-onMounted(async () => {
+async function startSetup() {
+  starting.value = true
   try {
-    setupData.value = await apiFetch<{ secret: string; uri: string; qr: string }>('/api/auth/mfa/setup', { method: 'POST' })
+    setupData.value = await apiFetch<{ secret: string; uri: string; qr: string }>('/api/auth/mfa/setup', {
+      method: 'POST',
+      ...(password.value ? { body: JSON.stringify({ password: password.value }) } : {}),
+    })
+    loadError.value = null
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : 'Failed to load setup'
+    if ((e as { status?: number }).status === 400) needsPassword.value = true
+  } finally {
+    password.value = ''
+    starting.value = false
   }
-})
+}
+
+onMounted(startSetup)
+
+async function signInAgain() {
+  await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+  window.location.href = '/login'
+}
 
 watch(code, (v) => {
   if (v.length === 6) submit()
@@ -161,13 +182,25 @@ function copySecret() {
 
       <!-- Load error -->
       <template v-else>
-        <div class="login__error-box" style="width: 100%">
+        <form v-if="needsPassword" class="mfa-gate" style="width: 100%" @submit.prevent="startSetup">
+          <div class="mfa-gate__title">Confirm it's you</div>
+          <div class="mfa-gate__hint">Enter your password to set up two-factor authentication.</div>
+          <label for="setup-mfa-password" class="field__label" style="margin-top: 12px">Password</label>
+          <input id="setup-mfa-password" v-model="password" class="field__input" type="password" autocomplete="current-password" required
+            :aria-describedby="loadError ? 'setup-mfa-load-error' : undefined" />
+          <div v-if="loadError" id="setup-mfa-load-error" role="alert" class="login__error-hint" style="margin-top: 8px">{{ loadError }}</div>
+          <button class="btn btn--primary" type="submit" :disabled="!password || starting" style="margin-top: 12px; width: 100%">
+            {{ starting ? 'Checking…' : 'Continue' }}
+          </button>
+        </form>
+        <div v-else class="login__error-box" style="width: 100%">
           <Icon name="alert-circle" :size="14" class="login__error-icon" />
           <div>
             <div class="login__error-title">Could not start setup</div>
             <div class="login__error-hint">{{ loadError }}</div>
           </div>
         </div>
+        <button class="btn btn--ghost" type="button" style="margin-top: 12px" @click="signInAgain">Sign in again</button>
       </template>
 
     </div>

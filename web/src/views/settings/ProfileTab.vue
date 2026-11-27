@@ -113,6 +113,7 @@ const mfaSetupData = ref<{ secret: string; uri: string; qr: string } | null>(nul
 const showMFASecret = ref(false)
 const showReplaceMFA = ref(false)
 const mfaCurrentCode = ref('')
+const mfaEnablePassword = ref('')
 const mfaCode = ref('')
 const mfaCodeInput = ref<HTMLInputElement | null>(null)
 watch(mfaCodeInput, input => input?.focus(), { flush: 'post' })
@@ -123,8 +124,11 @@ const mfaDisableCode = ref('')
 const mfaDisableError = ref<string | null>(null)
 
 const { mutate: startMFASetup, isPending: loadingMFASetup } = useMutation({
-  mutationFn: () => apiFetch<{ secret: string; uri: string; qr: string }>('/api/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ code: mfaCurrentCode.value }) }),
-  onSuccess: (data) => { mfaSetupData.value = data; mfaCode.value = ''; mfaCurrentCode.value = ''; showReplaceMFA.value = false; mfaSetupError.value = null },
+  mutationFn: () => apiFetch<{ secret: string; uri: string; qr: string }>('/api/auth/mfa/setup', {
+    method: 'POST',
+    body: JSON.stringify({ code: mfaCurrentCode.value, ...(mfaEnablePassword.value ? { password: mfaEnablePassword.value } : {}) }),
+  }),
+  onSuccess: (data) => { mfaSetupData.value = data; mfaCode.value = ''; mfaCurrentCode.value = ''; mfaEnablePassword.value = ''; showReplaceMFA.value = false; mfaSetupError.value = null },
   onError: (e) => { mfaSetupError.value = e instanceof Error ? e.message : 'Failed to start authenticator setup' },
 })
 
@@ -277,8 +281,12 @@ function cancelMFASetup() {
             </div>
           </div>
         </div>
+        <div v-if="me?.has_password" class="field" style="margin-top: 14px; max-width: 280px">
+          <label class="field__label" for="mfa-enable-password">Confirm your password to enable 2FA</label>
+          <input id="mfa-enable-password" v-model="mfaEnablePassword" class="field__input" type="password" autocomplete="current-password" />
+        </div>
         <div style="margin-top: 14px">
-          <button class="btn btn--primary" :disabled="loadingMFASetup" @click="startMFASetup()">
+          <button class="btn btn--primary" :disabled="loadingMFASetup || (me?.has_password && !mfaEnablePassword)" @click="startMFASetup()">
             {{ loadingMFASetup ? 'Generating…' : 'Enable two-factor auth' }}
           </button>
           <div v-if="mfaSetupError" class="profile-error">{{ mfaSetupError }}</div>

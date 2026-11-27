@@ -121,6 +121,29 @@ func TestMFAReplacementWrongCodesEndSession(t *testing.T) {
 	require.False(t, locked, "the owner's two-factor sign-in must stay open")
 }
 
+// A stolen session cannot enroll a first authenticator unless it was signed
+// in just now or confirms the password.
+func TestMFAFirstEnrollmentNeedsReauth(t *testing.T) {
+	pool := oauthDB(t)
+	user, err := storage.CreateUser(t.Context(), pool, uuid.NewString()+"@enroll.example.com", "enrollpassword1")
+	require.NoError(t, err)
+	session, err := storage.CreateSession(t.Context(), pool, user.ID)
+	require.NoError(t, err)
+	setup := func(body string) int {
+		req := httptest.NewRequest("POST", "/api/auth/mfa/setup", strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "tindra_session", Value: session.Token})
+		rec := httptest.NewRecorder()
+		NewRouter(Config{Pool: pool}).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusOK, setup(""), "just signed in")
+	_, err = pool.Exec(t.Context(), `UPDATE sessions SET created_at = NOW() - interval '1 hour' WHERE user_id = $1`, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, setup(""))
+	require.Equal(t, http.StatusForbidden, setup(`{"password":"wrong-password"}`))
+	require.Equal(t, http.StatusOK, setup(`{"password":"enrollpassword1"}`))
+}
+
 func TestMFAPendingSetupLifecycle(t *testing.T) {
 	pool := oauthDB(t)
 	user, err := storage.CreateOAuthUser(t.Context(), pool, uuid.NewString()+"@pending.example.com")
@@ -305,14 +328,17 @@ func TestMFASetupUnavailableAccountAndQRFailure(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			id := uuid.NewString()
+			req := httptest.NewRequest("POST", "/", nil)
 			if scenario.status != 404 {
 				user, err := storage.CreateOAuthUser(t.Context(), pool, id+"@qr.example.com")
 				require.NoError(t, err)
 				id = user.ID
 				_, err = pool.Exec(t.Context(), "UPDATE users SET email=$2 WHERE id=$1", id, scenario.email)
 				require.NoError(t, err)
+				session, err := storage.CreateSession(t.Context(), pool, id)
+				require.NoError(t, err)
+				req.AddCookie(&http.Cookie{Name: "tindra_session", Value: session.Token})
 			}
-			req := httptest.NewRequest("POST", "/", nil)
 			req = req.WithContext(context.WithValue(req.Context(), ctxUserID, id))
 			rec := httptest.NewRecorder()
 			(&router{pool: pool}).handleMFASetup(rec, req)

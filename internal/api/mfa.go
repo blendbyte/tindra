@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/pquerna/otp/totp"
 
@@ -66,14 +67,18 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The body is optional, so a decoding error just leaves the fields empty.
+	var req struct {
+		Code     string `json:"code"`
+		Password string `json:"password"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
 	// Replacing an enrolled factor requires proof of the current factor, which
 	// also works for SSO-only accounts without a local password.
 	var activeSecret *string
 	if user.MFAEnabled {
-		var req struct {
-			Code string `json:"code"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+		if req.Code == "" {
 			http.Error(w, "current authenticator code required", http.StatusUnauthorized)
 			return
 		}
@@ -81,6 +86,8 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		if activeSecret, ok = ro.reauthenticate(w, r, userID, "", req.Code); !ok {
 			return
 		}
+	} else if !ro.confirmMFAEnrollment(w, r, user, req.Password) {
+		return
 	}
 
 	key, err := totp.Generate(totp.GenerateOpts{
@@ -124,6 +131,43 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 		"uri":    key.URL(),
 		"qr":     qr,
 	})
+}
+
+// mfaEnrollmentWindow is how long after signing in a session may enroll a
+// first authenticator without confirming the password again.
+const mfaEnrollmentWindow = 10 * time.Minute
+
+// confirmMFAEnrollment stops a stolen session from enrolling its own
+// authenticator, which would lock the owner out of signing in and, on an
+// SSO-only account, let a code stand in for the owner. The holder confirms
+// the password, or signed in within mfaEnrollmentWindow, as the forced setup
+// right after sign-in does. It writes the error response and returns false
+// when enrollment must not proceed.
+func (ro *router) confirmMFAEnrollment(w http.ResponseWriter, r *http.Request, user *storage.User, password string) bool {
+	if password != "" {
+		_, ok := ro.reauthenticate(w, r, user.ID, password, "")
+		return ok
+	}
+	cookie, err := r.Cookie("tindra_session")
+	if err != nil {
+		http.Error(w, "session required", http.StatusUnauthorized)
+		return false
+	}
+	recent, err := storage.SessionSignedInSince(r.Context(), ro.pool, cookie.Value, mfaEnrollmentWindow)
+	if err != nil {
+		slog.Error("check session sign-in time", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if recent {
+		return true
+	}
+	if user.HasPassword {
+		http.Error(w, "enter your password to set up two-factor authentication", http.StatusBadRequest)
+	} else {
+		http.Error(w, "sign in again to set up two-factor authentication", http.StatusForbidden)
+	}
+	return false
 }
 
 // handleMFAConfirm activates MFA after the user verifies their first TOTP code.

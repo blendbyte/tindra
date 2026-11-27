@@ -115,8 +115,10 @@ func (ro *router) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 // non-empty and a current two-factor code when mfaCode is non-empty; callers
 // decide which are required. Wrong answers count against the session, not the
 // account: after storage.ReauthMaxFailures the session ends, so a stolen
-// session cannot keep guessing and cannot lock the owner out of signing in. It
-// returns the secret a code matched, so a caller can make its change conditional on that factor
+// session cannot keep guessing and cannot lock the owner out of signing in. A
+// code alone is refused when its authenticator was added during this session,
+// since it then proves only who holds the session. It returns the secret a
+// code matched, so a caller can make its change conditional on that factor
 // still being active. It writes the error response and returns false when the
 // change must not proceed.
 func (ro *router) reauthenticate(w http.ResponseWriter, r *http.Request, userID, password, mfaCode string) (mfaSecret *string, ok bool) {
@@ -130,13 +132,13 @@ func (ro *router) reauthenticate(w http.ResponseWriter, r *http.Request, userID,
 		return nil, false
 	}
 	ctx := r.Context()
-	claimed, err := storage.BeginReauth(ctx, ro.pool, cookie.Value, userID)
+	session, err := storage.BeginReauth(ctx, ro.pool, cookie.Value, userID)
 	if err != nil {
 		slog.Error("begin reauth", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return nil, false
 	}
-	if !claimed {
+	if session == nil {
 		// Out of attempts, or ended meanwhile. Make sure it is gone.
 		if _, err := storage.FinishReauth(ctx, ro.pool, cookie.Value, false); err != nil {
 			slog.Error("end reauth session", "err", err)
@@ -158,14 +160,18 @@ func (ro *router) reauthenticate(w http.ResponseWriter, r *http.Request, userID,
 		}
 	}
 	if failure == "" && mfaCode != "" {
-		mfaSecret, err = storage.GetMFASecret(ctx, ro.pool, userID)
-		if err != nil {
-			slog.Error("get mfa secret", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return nil, false
-		}
-		if mfaSecret == nil || !totp.Validate(mfaCode, *mfaSecret) {
-			failure = "the two-factor code you entered is incorrect"
+		if password == "" && session.MFAEnrolledInSession {
+			failure = "your authenticator was added after you signed in; sign in again to confirm with it"
+		} else {
+			mfaSecret, err = storage.GetMFASecret(ctx, ro.pool, userID)
+			if err != nil {
+				slog.Error("get mfa secret", "err", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return nil, false
+			}
+			if mfaSecret == nil || !totp.Validate(mfaCode, *mfaSecret) {
+				failure = "the two-factor code you entered is incorrect"
+			}
 		}
 	}
 

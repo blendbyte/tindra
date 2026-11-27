@@ -147,3 +147,18 @@ func TestUpdateMe_emailWithPendingInviteOrTakenIsConflict(t *testing.T) {
 		t.Errorf("taken email: expected 409, got %d", rec.Code)
 	}
 }
+
+// A code from an authenticator added during this session proves only who holds
+// the session, so it cannot confirm an email change for an SSO-only account.
+func TestUpdateMe_codeFromAuthenticatorAddedThisSessionIsRefused(t *testing.T) {
+	u, cookie := emailChangeUser(t, false)
+	const secret = "JBSWY3DPEHPK3PXP"
+	testPool.Exec(context.Background(), `UPDATE users SET mfa_enabled = true, mfa_secret = $1, mfa_confirmed_at = NOW() + interval '1 second' WHERE id = $2`, secret, u.ID)
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if rec := patchMe(t, cookie, map[string]any{"email": uuid.NewString() + "@new.example.com", "mfa_code": code}); rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := storedEmail(t, u.ID); got != u.Email {
+		t.Errorf("email changed to %s", got)
+	}
+}

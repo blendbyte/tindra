@@ -241,3 +241,15 @@ it('starts enrollment with POST', async () => {
   await mountReady()
   expect(apiFetch).toHaveBeenCalledWith('/api/auth/mfa/setup', { method: 'POST' })
 })
+
+it('asks for the password when the session signed in a while ago', async () => {
+  vi.mocked(apiFetch).mockRejectedValueOnce(Object.assign(new Error('enter your password to set up two-factor authentication'), { status: 400 }))
+  const wrapper = mount(SetupMFAView, { global: { stubs } })
+  await new Promise((r) => setTimeout(r, 0))
+  vi.mocked(apiFetch).mockResolvedValueOnce(mockSetupData)
+  await wrapper.get('#setup-mfa-password').setValue('my-password-123')
+  await wrapper.get('form').trigger('submit')
+  await new Promise((r) => setTimeout(r, 0))
+  expect(apiFetch).toHaveBeenLastCalledWith('/api/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ password: 'my-password-123' }) })
+  expect(wrapper.find('#setup-mfa-code').exists()).toBe(true)
+})

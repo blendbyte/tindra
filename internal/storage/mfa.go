@@ -169,7 +169,7 @@ func GetPendingMFASecret(ctx context.Context, pool *pgxpool.Pool, userID string)
 func ConfirmMFA(ctx context.Context, pool *pgxpool.Pool, userID, secret string) (bool, error) {
 	result, err := pool.Exec(ctx, `
 		UPDATE users SET mfa_secret = mfa_pending_secret, mfa_enabled = true,
-			mfa_pending_secret = NULL, mfa_pending_expires_at = NULL
+			mfa_pending_secret = NULL, mfa_pending_expires_at = NULL, mfa_confirmed_at = NOW()
 		WHERE id = $1 AND mfa_pending_secret = $2 AND mfa_pending_expires_at > NOW()
 	`, userID, secret)
 	if err != nil {
