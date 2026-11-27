@@ -122,7 +122,8 @@ func TestMFA_setupConfirmAndLogin(t *testing.T) {
 	}
 
 	// 5. Disable MFA so the test user is clean for other tests.
-	disableBody, _ := json.Marshal(map[string]string{"password": "testpassword"})
+	code3, _ := totp.GenerateCode(setupResp.Secret, time.Now())
+	disableBody, _ := json.Marshal(map[string]string{"password": "testpassword", "code": code3})
 	disableReq := httptest.NewRequest(http.MethodDelete, "/api/auth/mfa", bytes.NewBuffer(disableBody))
 	disableReq.AddCookie(authCookie())
 	disableReq.Header.Set("Content-Type", "application/json")

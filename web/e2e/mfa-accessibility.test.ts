@@ -37,6 +37,7 @@ for (const flow of ['password', 'SSO', 'required setup', 'settings setup', 'repl
       await expect(input).toHaveAccessibleDescription(/6-digit code/)
     }
     await input.fill(flow === 'disable' ? 'wrong-password' : '123456')
+    if (flow === 'disable') await page.getByLabel('Code from your authenticator', { exact: true }).fill('123456')
     if (flow === 'settings setup') await page.getByRole('button', { name: 'Confirm', exact: true }).click()
     if (flow === 'replacement') await page.getByRole('button', { name: 'Continue', exact: true }).click()
     if (flow === 'disable') await page.getByRole('button', { name: 'Disable 2FA', exact: true }).click()

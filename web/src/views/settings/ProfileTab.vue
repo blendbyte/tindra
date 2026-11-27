@@ -113,6 +113,7 @@ watch(mfaCodeInput, input => input?.focus(), { flush: 'post' })
 const mfaSetupError = ref<string | null>(null)
 const showDisableMFA = ref(false)
 const mfaDisablePassword = ref('')
+const mfaDisableCode = ref('')
 const mfaDisableError = ref<string | null>(null)
 
 const { mutate: startMFASetup, isPending: loadingMFASetup } = useMutation({
@@ -135,16 +136,17 @@ const { mutate: confirmMFASetup, isPending: confirmingMFA } = useMutation({
 })
 
 const { mutate: disableMFA, isPending: disablingMFA } = useMutation({
-  mutationFn: (password: string) =>
-    apiFetch('/api/auth/mfa', { method: 'DELETE', body: JSON.stringify({ password }) }),
+  mutationFn: ({ password, code }: { password: string; code: string }) =>
+    apiFetch('/api/auth/mfa', { method: 'DELETE', body: JSON.stringify({ password, code }) }),
   onSuccess: () => {
     showDisableMFA.value = false
     mfaDisablePassword.value = ''
+    mfaDisableCode.value = ''
     mfaDisableError.value = null
     qc.invalidateQueries({ queryKey: ['me'] })
     showToast('Two-factor authentication disabled')
   },
-  onError: (e) => { mfaDisableError.value = e instanceof Error ? e.message : 'Invalid password' },
+  onError: (e) => { mfaDisableError.value = e instanceof Error ? e.message : 'Incorrect password or code' },
 })
 
 function copyToClipboard(text: string, label: string) {
@@ -353,12 +355,17 @@ function cancelMFASetup() {
             <input id="mfa-disable-password" v-model="mfaDisablePassword" class="field__input" type="password" autocomplete="current-password"
               :aria-invalid="!!mfaDisableError || undefined" :aria-describedby="mfaDisableError ? 'mfa-disable-error' : undefined" />
           </div>
+          <div class="field">
+            <label class="field__label" for="mfa-disable-code">Code from your authenticator</label>
+            <input id="mfa-disable-code" v-model="mfaDisableCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+              :aria-invalid="!!mfaDisableError || undefined" :aria-describedby="mfaDisableError ? 'mfa-disable-error' : undefined" />
+          </div>
           <div v-if="mfaDisableError" id="mfa-disable-error" role="alert" class="profile-error">{{ mfaDisableError }}</div>
           <div style="display: flex; gap: 8px">
-            <button class="btn btn--primary" :disabled="!mfaDisablePassword || disablingMFA" @click="disableMFA(mfaDisablePassword)" style="background: var(--danger); border-color: var(--danger)">
+            <button class="btn btn--primary" :disabled="!mfaDisablePassword || mfaDisableCode.length !== 6 || disablingMFA" @click="disableMFA({ password: mfaDisablePassword, code: mfaDisableCode })" style="background: var(--danger); border-color: var(--danger)">
               {{ disablingMFA ? 'Disabling…' : 'Disable 2FA' }}
             </button>
-            <button class="btn btn--ghost btn--mfa-disable-cancel" @click="showDisableMFA = false; mfaDisablePassword = ''; mfaDisableError = null">Cancel</button>
+            <button class="btn btn--ghost btn--mfa-disable-cancel" @click="showDisableMFA = false; mfaDisablePassword = ''; mfaDisableCode = ''; mfaDisableError = null">Cancel</button>
           </div>
         </div>
       </template>

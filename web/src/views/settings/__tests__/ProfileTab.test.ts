@@ -338,11 +338,29 @@ describe('ProfileTab', () => {
       mockQueries({ me: { ...adminUser, mfa_enabled: true } })
       const wrapper = mountTab()
       await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
-      await wrapper.find('input[autocomplete="current-password"]').setValue('mypassword123')
-      await findButton(wrapper, '.btn--primary', 'Disable 2FA').trigger('click')
-      expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(false)
+      await wrapper.find('#mfa-disable-password').setValue('mypassword123')
+      const disableButton = findButton(wrapper, '.btn--primary', 'Disable 2FA')
+      expect(disableButton.attributes('disabled')).toBeDefined()
+      await wrapper.find('#mfa-disable-code').setValue('123456')
+      await disableButton.trigger('click')
+      expect(wrapper.find('#mfa-disable-password').exists()).toBe(false)
       expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['me'] })
       expect(showToast).toHaveBeenCalledWith('Two-factor authentication disabled')
+    })
+
+    it('sends the password and authenticator code to disable MFA', async () => {
+      const recorded = recordMutations()
+      mockQueries({ me: { ...adminUser, mfa_enabled: true } })
+      const wrapper = mountTab()
+      await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
+      await wrapper.find('#mfa-disable-password').setValue('mypassword123')
+      await wrapper.find('#mfa-disable-code').setValue('654321')
+      await findButton(wrapper, '.btn--primary', 'Disable 2FA').trigger('click')
+      const disable = recorded[M.disableMFA]
+      await disable.opts.mutationFn(disable.mutate.mock.calls[0][0])
+      const [path, init] = vi.mocked(apiFetch).mock.calls[0]!
+      expect(path).toBe('/api/auth/mfa')
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({ password: 'mypassword123', code: '654321' })
     })
 
     it('calls disableMFA onError sets mfaDisableError', async () => {
@@ -350,7 +368,8 @@ describe('ProfileTab', () => {
       mockQueries({ me: { ...adminUser, mfa_enabled: true } })
       const wrapper = mountTab()
       await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
-      await wrapper.find('input[autocomplete="current-password"]').setValue('bad')
+      await wrapper.find('#mfa-disable-password').setValue('bad')
+      await wrapper.find('#mfa-disable-code').setValue('123456')
       await findButton(wrapper, '.btn--primary', 'Disable 2FA').trigger('click')
       expect(wrapper.find('.profile-error').text()).toBe('Bad password')
     })
@@ -447,14 +466,14 @@ describe('ProfileTab', () => {
     it('shows disable MFA confirm form after clicking disable button', async () => {
       const wrapper = mountTab()
       await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
-      expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(true)
+      expect(wrapper.find('#mfa-disable-password').exists()).toBe(true)
     })
 
     it('clicking Cancel in disable MFA form hides the confirm form', async () => {
       const wrapper = mountTab()
       await findButton(wrapper, '.btn--ghost', 'Disable two-factor auth').trigger('click')
       await wrapper.find('.btn--mfa-disable-cancel').trigger('click')
-      expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(false)
+      expect(wrapper.find('#mfa-disable-password').exists()).toBe(false)
     })
   })
 

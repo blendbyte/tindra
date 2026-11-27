@@ -49,10 +49,12 @@ func TestMFAReplacementPreservesActiveFactor(t *testing.T) {
 		require.True(t, identity.MFAEnabled)
 	}
 	require.Equal(t, http.StatusMethodNotAllowed, request("GET", "/api/auth/mfa/setup", "").Code)
-	for _, body := range []string{"", `{}`, `{"code":"invalid"}`} {
+	for _, body := range []string{"", `{}`} {
 		require.Equal(t, 401, request("POST", "/api/auth/mfa/setup", body).Code)
 		assertActive(key.Secret())
 	}
+	require.Equal(t, 403, request("POST", "/api/auth/mfa/setup", `{"code":"invalid"}`).Code)
+	assertActive(key.Secret())
 	oldCode, err := totp.GenerateCode(key.Secret(), time.Now())
 	require.NoError(t, err)
 	rec := request("POST", "/api/auth/mfa/setup", `{"code":"`+oldCode+`"}`)
@@ -80,6 +82,43 @@ func TestMFAReplacementPreservesActiveFactor(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, secret)
 	require.Equal(t, 400, request("POST", "/api/auth/mfa/confirm", `{"code":"`+newCode+`"}`).Code)
+}
+
+// Wrong current codes on replacement end the session at the limit, so a stolen
+// session cannot guess its way to swapping in its own authenticator, and they
+// never lock the owner's own two-factor sign-in.
+func TestMFAReplacementWrongCodesEndSession(t *testing.T) {
+	pool := oauthDB(t)
+	user, err := storage.CreateOAuthUser(t.Context(), pool, uuid.NewString()+"@replacement-lock.example.com")
+	require.NoError(t, err)
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: "Tindra", AccountName: user.Email})
+	require.NoError(t, err)
+	require.NoError(t, storage.StoreMFASecret(t.Context(), pool, user.ID, key.Secret()))
+	require.NoError(t, storage.EnableMFA(t.Context(), pool, user.ID))
+	session, err := storage.CreateSession(t.Context(), pool, user.ID)
+	require.NoError(t, err)
+	replace := func(code string) int {
+		req := httptest.NewRequest("POST", "/api/auth/mfa/setup", strings.NewReader(`{"code":"`+code+`"}`))
+		req.AddCookie(&http.Cookie{Name: "tindra_session", Value: session.Token})
+		rec := httptest.NewRecorder()
+		NewRouter(Config{Pool: pool}).ServeHTTP(rec, req) // a new router each time: the limit lives in the database
+		return rec.Code
+	}
+	wrong, err := totp.GenerateCode(key.Secret(), time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	for range storage.ReauthMaxFailures - 1 {
+		require.Equal(t, http.StatusForbidden, replace(wrong))
+	}
+	require.Equal(t, http.StatusUnauthorized, replace(wrong))
+	current, err := totp.GenerateCode(key.Secret(), time.Now())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, replace(current))
+	pending, err := storage.GetPendingMFASecret(t.Context(), pool, user.ID)
+	require.NoError(t, err)
+	require.Nil(t, pending)
+	locked, err := storage.MFALocked(t.Context(), pool, user.ID)
+	require.NoError(t, err)
+	require.False(t, locked, "the owner's two-factor sign-in must stay open")
 }
 
 func TestMFAPendingSetupLifecycle(t *testing.T) {
@@ -134,6 +173,8 @@ func TestMFAReplacementDatabaseFailures(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, storage.StoreMFASecret(t.Context(), pool, user.ID, key.Secret()))
 	require.NoError(t, storage.EnableMFA(t.Context(), pool, user.ID))
+	session, err := storage.CreateSession(t.Context(), pool, user.ID)
+	require.NoError(t, err)
 	for _, scenario := range []struct {
 		query   string
 		confirm bool
@@ -155,6 +196,7 @@ func TestMFAReplacementDatabaseFailures(t *testing.T) {
 			code, err := totp.GenerateCode(secret, time.Now())
 			require.NoError(t, err)
 			req := httptest.NewRequest("POST", "/", strings.NewReader(`{"code":"`+code+`"}`))
+			req.AddCookie(&http.Cookie{Name: "tindra_session", Value: session.Token})
 			req = req.WithContext(context.WithValue(req.Context(), ctxUserID, user.ID))
 			rec := httptest.NewRecorder()
 			ro := &router{pool: failing}
@@ -210,7 +252,10 @@ func TestMFAReplacementConcurrentChanges(t *testing.T) {
 		require.NoError(t, err)
 		code, err := totp.GenerateCode(secret, time.Now())
 		require.NoError(t, err)
+		session, err := storage.CreateSession(t.Context(), pool, user.ID)
+		require.NoError(t, err)
 		req := httptest.NewRequest("POST", "/", strings.NewReader(`{"code":"`+code+`"}`))
+		req.AddCookie(&http.Cookie{Name: "tindra_session", Value: session.Token})
 		req = req.WithContext(context.WithValue(req.Context(), ctxUserID, user.ID))
 		rec := httptest.NewRecorder()
 		ro := &router{pool: raced}

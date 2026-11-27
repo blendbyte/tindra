@@ -110,6 +110,96 @@ func (ro *router) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, u)
 }
 
+// reauthenticate re-confirms the person holding the session before a
+// sensitive account change. It checks the current password when password is
+// non-empty and a current two-factor code when mfaCode is non-empty; callers
+// decide which are required. Wrong answers count against the session, not the
+// account: after storage.ReauthMaxFailures the session ends, so a stolen
+// session cannot keep guessing and cannot lock the owner out of signing in. It
+// returns the secret a code matched, so a caller can make its change conditional on that factor
+// still being active. It writes the error response and returns false when the
+// change must not proceed.
+func (ro *router) reauthenticate(w http.ResponseWriter, r *http.Request, userID, password, mfaCode string) (mfaSecret *string, ok bool) {
+	if password == "" && mfaCode == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return nil, false
+	}
+	cookie, err := r.Cookie("tindra_session")
+	if err != nil {
+		http.Error(w, "session required", http.StatusUnauthorized)
+		return nil, false
+	}
+	ctx := r.Context()
+	claimed, err := storage.BeginReauth(ctx, ro.pool, cookie.Value, userID)
+	if err != nil {
+		slog.Error("begin reauth", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return nil, false
+	}
+	if !claimed {
+		// Out of attempts, or ended meanwhile. Make sure it is gone.
+		if _, err := storage.FinishReauth(ctx, ro.pool, cookie.Value, false); err != nil {
+			slog.Error("end reauth session", "err", err)
+		}
+		ro.signOutAfterReauth(w)
+		return nil, false
+	}
+
+	var failure string
+	if password != "" {
+		matched, err := storage.VerifyUserPassword(ctx, ro.pool, userID, password)
+		if err != nil {
+			slog.Error("verify password", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return nil, false
+		}
+		if !matched {
+			failure = "the password you entered is incorrect"
+		}
+	}
+	if failure == "" && mfaCode != "" {
+		mfaSecret, err = storage.GetMFASecret(ctx, ro.pool, userID)
+		if err != nil {
+			slog.Error("get mfa secret", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return nil, false
+		}
+		if mfaSecret == nil || !totp.Validate(mfaCode, *mfaSecret) {
+			failure = "the two-factor code you entered is incorrect"
+		}
+	}
+
+	ended, err := storage.FinishReauth(ctx, ro.pool, cookie.Value, failure == "")
+	if err != nil {
+		slog.Error("finish reauth", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return nil, false
+	}
+	if ended {
+		storage.WriteAuditLog(ro.pool, storage.AuditEntry{
+			EventType: "auth.reauth_session_ended",
+			ActorID:   &userID,
+			IP:        r.RemoteAddr,
+		})
+		ro.signOutAfterReauth(w)
+		return nil, false
+	}
+	if failure != "" {
+		// 403, not 401: the web client treats 401 as an ended session.
+		http.Error(w, failure, http.StatusForbidden)
+		return nil, false
+	}
+	return mfaSecret, true
+}
+
+// signOutAfterReauth answers a request whose session ended after too many
+// wrong re-confirmations.
+func (ro *router) signOutAfterReauth(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: "tindra_session", Value: "", MaxAge: -1, Path: "/",
+		HttpOnly: true, Secure: ro.cookieSecure, SameSite: http.SameSiteStrictMode})
+	http.Error(w, "too many wrong attempts; you have been signed out", http.StatusUnauthorized)
+}
+
 // confirmEmailChange re-authenticates the user before their email changes, so a
 // hijacked session cannot redirect password resets to an attacker's address.
 // Users with a password confirm with it; SSO-only users confirm with a current
@@ -128,31 +218,12 @@ func (ro *router) confirmEmailChange(w http.ResponseWriter, r *http.Request, use
 		http.Error(w, "enter a two-factor code to change your email", http.StatusBadRequest)
 		return false
 	}
-	if ro.reauthRL != nil && !ro.reauthRL.allow(user.ID) {
-		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
-		return false
-	}
-
-	var confirmed bool
 	if user.HasPassword {
-		ok, err := storage.VerifyUserPassword(r.Context(), ro.pool, user.ID, password)
-		if err != nil {
-			slog.Error("verify password for email change", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return false
-		}
-		confirmed = ok
+		mfaCode = ""
 	} else {
-		secret, err := storage.GetMFASecret(r.Context(), ro.pool, user.ID)
-		if err != nil {
-			slog.Error("get mfa secret for email change", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return false
-		}
-		confirmed = secret != nil && totp.Validate(mfaCode, *secret)
+		password = ""
 	}
-	if !confirmed {
-		http.Error(w, "the confirmation you entered is incorrect", http.StatusForbidden)
+	if _, ok := ro.reauthenticate(w, r, user.ID, password, mfaCode); !ok {
 		return false
 	}
 
@@ -262,10 +333,15 @@ func (ro *router) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusUnauthorized)
 		return
 	}
+	if _, ok := ro.reauthenticate(w, r, userID, req.CurrentPassword, ""); !ok {
+		return
+	}
+	// The change checks the password again under its row lock, in case it
+	// changed since.
 	session, err := storage.ChangeUserPasswordWithSession(r.Context(), ro.pool, userID, req.CurrentPassword, req.NewPassword, cookie.Value, req.KeepPushEndpoint)
 	if err != nil {
 		if errors.Is(err, storage.ErrInvalidPassword) {
-			http.Error(w, "current password is incorrect", http.StatusUnauthorized)
+			http.Error(w, "current password is incorrect", http.StatusForbidden)
 			return
 		}
 		slog.Error("change password", "err", err)

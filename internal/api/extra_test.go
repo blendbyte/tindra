@@ -277,16 +277,47 @@ func TestChangePassword_success(t *testing.T) {
 	}
 }
 
-func TestChangePassword_wrongCurrentPassword(t *testing.T) {
-	body := bytes.NewBufferString(`{"current_password":"definitely-wrong","new_password":"newpassword99"}`)
-	req := httptest.NewRequest(http.MethodPatch, "/api/me/password", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	globalHandler().ServeHTTP(rec, req)
+// Wrong current passwords count against the session: after the limit it ends,
+// so a stolen session cannot keep guessing, while the owner can still sign in.
+func TestChangePassword_wrongPasswordsEndSession(t *testing.T) {
+	cookie := makeReadOnlyUser(t, "pwchange-reauth@example.com")
+	change := func(c *http.Cookie, current string) *httptest.ResponseRecorder {
+		body := bytes.NewBufferString(`{"current_password":"` + current + `","new_password":"newpassword99"}`)
+		req := httptest.NewRequest(http.MethodPatch, "/api/me/password", body)
+		req.AddCookie(c)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		globalHandler().ServeHTTP(rec, req) // a new router each time: the limit lives in the database
+		return rec
+	}
+	for i := range storage.ReauthMaxFailures - 1 {
+		if rec := change(cookie, "definitely-wrong"); rec.Code != http.StatusForbidden {
+			t.Fatalf("wrong guess %d: expected 403, got %d", i+1, rec.Code)
+		}
+	}
+	if rec := change(cookie, "definitely-wrong"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("last wrong guess: expected 401 (signed out), got %d", rec.Code)
+	}
+	if rec := change(cookie, "readonlypass123"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("right password on the ended session: expected 401, got %d", rec.Code)
+	}
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401 for wrong current password, got %d", rec.Code)
+	// The account itself is not locked: signing in and changing it works.
+	login := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"email":"pwchange-reauth@example.com","password":"readonlypass123"}`))
+	login.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	authHandler().ServeHTTP(rec, login)
+	var fresh *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "tindra_session" {
+			fresh = c
+		}
+	}
+	if fresh == nil {
+		t.Fatalf("login after ended session: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := change(fresh, "readonlypass123"); rec.Code != http.StatusOK {
+		t.Fatalf("right password on a new session: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

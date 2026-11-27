@@ -348,15 +348,17 @@ func TestHandleEnvelope_authorizationHeader(t *testing.T) {
 // --- MFA handler edge cases ---
 
 func TestMFADisable_wrongPassword(t *testing.T) {
-	body := bytes.NewBufferString(`{"password":"wrong-password-xyz"}`)
+	// A fresh user, since wrong passwords now count toward the login lockout.
+	cookie := makeReadOnlyUser(t, "mfa-disable-wrong-pw@example.com")
+	body := bytes.NewBufferString(`{"password":"wrong-password-xyz","code":"123456"}`)
 	req := httptest.NewRequest(http.MethodDelete, "/api/auth/mfa", body)
-	req.AddCookie(authCookie())
+	req.AddCookie(cookie)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	authHandler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401 for wrong password, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for wrong password, got %d", rec.Code)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/pquerna/otp/totp"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/blendbyte/tindra/internal/storage"
 )
@@ -78,14 +77,8 @@ func (ro *router) handleMFASetup(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "current authenticator code required", http.StatusUnauthorized)
 			return
 		}
-		activeSecret, err = storage.GetMFASecret(r.Context(), ro.pool, userID)
-		if err != nil {
-			slog.Error("get active mfa secret", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if activeSecret == nil || !totp.Validate(req.Code, *activeSecret) {
-			http.Error(w, "incorrect code", http.StatusUnauthorized)
+		var ok bool
+		if activeSecret, ok = ro.reauthenticate(w, r, userID, "", req.Code); !ok {
 			return
 		}
 	}
@@ -175,31 +168,22 @@ func (ro *router) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleMFADisable disables MFA after verifying the user's password.
+// handleMFADisable disables MFA after verifying the user's password and a
+// code from their current authenticator, so a stolen session that learns the
+// password still cannot remove the second factor.
 func (ro *router) handleMFADisable(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(ctxUserID).(string)
 
 	var req struct {
 		Password string `json:"password"`
+		Code     string `json:"code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" || req.Code == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
-	user, err := storage.GetUserByID(r.Context(), ro.pool, userID)
-	if err != nil {
-		slog.Error("get user", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if user == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
-		http.Error(w, "password is incorrect", http.StatusUnauthorized)
+	if _, ok := ro.reauthenticate(w, r, userID, req.Password, req.Code); !ok {
 		return
 	}
 

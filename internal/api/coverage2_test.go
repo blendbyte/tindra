@@ -625,8 +625,8 @@ func TestMFADisable_successCov2(t *testing.T) {
 		t.Fatalf("confirm: expected 200, got %d: %s", confirmRec.Code, confirmRec.Body.String())
 	}
 
-	// Now disable MFA with the correct password.
-	disableBody, _ := json.Marshal(map[string]string{"password": "disablepass1"})
+	// Now disable MFA with the correct password and code.
+	disableBody, _ := json.Marshal(map[string]string{"password": "disablepass1", "code": code})
 	disableReq := httptest.NewRequest(http.MethodDelete, "/api/auth/mfa", bytes.NewBuffer(disableBody))
 	disableReq.AddCookie(cookie)
 	disableReq.Header.Set("Content-Type", "application/json")

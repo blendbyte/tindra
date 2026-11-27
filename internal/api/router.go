@@ -73,7 +73,6 @@ type router struct {
 	requireMFA             bool
 	trustedProxies         []*net.IPNet
 	loginEmailRL           *rateLimiter
-	reauthRL               *rateLimiter // password or 2FA re-confirmation for sensitive profile changes
 	envelopeRL             *rateLimiter
 	cronPingRL             *rateLimiter
 	passwordResetActive    atomic.Int32
@@ -180,6 +179,9 @@ func NewRouter(cfg Config) *Handle {
 	loginRL := newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
 	resetRL := newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
 	pushRotateRL := newRateLimiter(30, 15*time.Minute)
+	// Re-confirmations get their own budget so users behind one address do not
+	// use up each other's sign-ins. Guessing is limited per session as well.
+	reauthIPRL := newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
 	ro.forwarder = ingest.NewForwarder(ro.passthroughClient, passthroughWorkers, passthroughQueueSize)
 	ro.projectKeys = newProjectKeyCache(10_000)
 	ro.monthlyCount = &monthlyCountCache{}
@@ -188,7 +190,6 @@ func NewRouter(cfg Config) *Handle {
 	ro.unknownKeyRL.maxKeys = 100_000
 	ro.envelopeRL = newRateLimiter(cfg.RateLimitEnvelope, time.Minute)
 	ro.loginEmailRL = newRateLimiter(cfg.RateLimitLogin, 15*time.Minute)
-	ro.reauthRL = newRateLimiter(10, 15*time.Minute)
 	ro.cronPingRL = newRateLimiter(5, time.Minute)
 	// Monitor IDs come from the URL, so cap how many distinct keys an attacker
 	// can make the limiter remember.
@@ -363,11 +364,11 @@ func NewRouter(cfg Config) *Handle {
 	r.Group(func(r chi.Router) {
 		r.Use(ro.requireSessionAuth)
 
-		r.Patch("/api/me/password", ro.handleChangePassword)
+		r.With(authBody, reauthIPRL.limitByIP()).Patch("/api/me/password", ro.handleChangePassword)
 
 		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/setup", ro.handleMFASetup)
 		r.With(authBody, loginRL.limitByIP()).Post("/api/auth/mfa/confirm", ro.handleMFAConfirm)
-		r.With(authBody).Delete("/api/auth/mfa", ro.handleMFADisable)
+		r.With(authBody, reauthIPRL.limitByIP()).Delete("/api/auth/mfa", ro.handleMFADisable)
 
 		// Web Push devices belong to a person, so bearer tokens cannot manage them.
 		r.Get("/api/push/subscriptions", ro.handleListPushSubscriptions)

@@ -215,16 +215,40 @@ func TestMFAConfirm_wrongCode(t *testing.T) {
 
 // --- MFA disable ---
 
-func TestMFADisable_success(t *testing.T) {
-	body := bytes.NewBufferString(`{"password":"testpassword"}`)
-	req := httptest.NewRequest(http.MethodDelete, "/api/auth/mfa", body)
-	req.AddCookie(authCookie())
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	authHandler().ServeHTTP(rec, req)
+// Disabling MFA needs a current authenticator code as well as the password,
+// so a stolen session that learns the password cannot remove the second factor.
+func TestMFADisable_requiresCurrentCode(t *testing.T) {
+	const secret = "JBSWY3DPEHPK3PXP"
+	ctx := context.Background()
+	cookie := makeReadOnlyUser(t, "mfa-disable-code@example.com")
+	var userID string
+	testPool.QueryRow(ctx, "UPDATE users SET mfa_enabled = true, mfa_secret = $1 WHERE email = 'mfa-disable-code@example.com' RETURNING id", secret).Scan(&userID)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200 for correct password, got %d: %s", rec.Code, rec.Body.String())
+	disable := func(body string) int {
+		req := httptest.NewRequest(http.MethodDelete, "/api/auth/mfa", bytes.NewBufferString(body))
+		req.AddCookie(cookie)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		authHandler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := disable(`{"password":"readonlypass123"}`); code != http.StatusBadRequest {
+		t.Errorf("password without code: expected 400, got %d", code)
+	}
+	wrong, _ := totp.GenerateCode(secret, time.Now().Add(-time.Hour))
+	if code := disable(`{"password":"readonlypass123","code":"` + wrong + `"}`); code != http.StatusForbidden {
+		t.Errorf("password with wrong code: expected 403, got %d", code)
+	}
+	if s, _ := storage.GetMFASecret(ctx, testPool, userID); s == nil {
+		t.Fatal("MFA was disabled without a valid code")
+	}
+
+	current, _ := totp.GenerateCode(secret, time.Now())
+	if code := disable(`{"password":"readonlypass123","code":"` + current + `"}`); code != http.StatusOK {
+		t.Fatalf("password with current code: expected 200, got %d", code)
+	}
+	if s, _ := storage.GetMFASecret(ctx, testPool, userID); s != nil {
+		t.Error("expected MFA disabled")
 	}
 }
 
