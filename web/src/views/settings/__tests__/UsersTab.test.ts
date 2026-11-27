@@ -26,7 +26,7 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: vi.fn() }))
 vi.mock('@/utils/formatters', () => ({ formatRel: vi.fn(() => '2m ago') }))
 
 import UsersTab from '../UsersTab.vue'
-import { ApiError } from '@/api/client'
+import { ApiError, apiFetch } from '@/api/client'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { adminUser, isEnabled, mockQueries, queryOptions, recordMutations, stubs, type RecordedMutation } from './harness'
 
@@ -149,6 +149,29 @@ describe('UsersTab', () => {
       mockQueries({ users: [adminUser, bob] })
       const wrapper = mountTab()
       expect(wrapper.findAll('.perm-check')).toHaveLength(8)
+    })
+
+    it('asks the admin to confirm before granting the Users permission', async () => {
+      mockQueries({ users: [adminUser, bob], me: { ...adminUser, has_password: true, mfa_enabled: true } })
+      const wrapper = mountTab()
+      await wrapper.findAll('.perm-check')[5].setValue(true) // Bob's Users box
+      expect(mutations[M.savePermissions].mutate).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('Let bob@example.com manage users?')
+      const submit = wrapper.findAll('.btn--primary').find(b => b.text() === 'Grant permission')!
+      expect(submit.attributes('disabled')).toBeDefined()
+      await wrapper.get('#grant-password').setValue('my-password-123')
+      await wrapper.get('#grant-code').setValue('123456')
+      await wrapper.get('form.team-action-panel').trigger('submit')
+      const args = mutations[M.savePermissions].mutate.mock.calls[0][0]
+      expect(args).toEqual({
+        userID: 'user-2',
+        perms: { ...bob.permissions, manage_users: true },
+        confirm: { current_password: 'my-password-123', mfa_code: '123456' },
+      })
+      await mutations[M.savePermissions].opts.mutationFn(args)
+      expect(JSON.parse((vi.mocked(apiFetch).mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+        ...bob.permissions, manage_users: true, current_password: 'my-password-123', mfa_code: '123456',
+      })
     })
 
     it('toggles invite form when Invite user button is clicked', async () => {
@@ -610,15 +633,13 @@ describe('UsersTab', () => {
     })
 
     // Four checkboxes per row: the admin row first (0-3), then userWithPerms (4-7).
-    it('toggles manage_users permission via second perm-check checkbox', async () => {
+    it('granting manage_users via the second perm-check opens the confirmation instead of saving', async () => {
       const wrapper = mountTab()
       const checks = wrapper.findAll('input.perm-check')
       expect(checks).toHaveLength(8)
       await checks[5].trigger('change')
-      expect(mutations[M.savePermissions].mutate).toHaveBeenCalledWith({
-        userID: 'user-perms',
-        perms: { ...userWithPerms.permissions, manage_users: true },
-      })
+      expect(mutations[M.savePermissions].mutate).not.toHaveBeenCalled()
+      expect(wrapper.find('form.team-action-panel').exists()).toBe(true)
     })
 
     it('toggles manage_alerts permission via third perm-check checkbox', async () => {

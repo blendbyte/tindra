@@ -265,3 +265,41 @@ func TestUpdateIssue_allowedWithPerm(t *testing.T) {
 		t.Errorf("expected 404 (past perm gate, issue not found), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Granting the Users permission re-confirms the admin, so a stolen admin
+// session cannot make an account of its own an admin and use it to reset the
+// owner's password and two-factor authentication.
+func TestGrantUserManagerNeedsReauth(t *testing.T) {
+	target := seedUser(t, "grant-users-perm@example.com")
+	grant := func(extra string) int {
+		body := `{"manage_projects":false,"manage_users":true,"manage_alerts":false,"manage_issues":false` + extra + `}`
+		req := httptest.NewRequest(http.MethodPut, "/api/users/"+target.ID+"/permissions", bytes.NewBufferString(body))
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		globalHandler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	hasUsersPerm := func() bool {
+		u, _ := storage.GetUserByID(context.Background(), testPool, target.ID)
+		return u.Permissions.ManageUsers
+	}
+	if code := grant(""); code != http.StatusBadRequest {
+		t.Errorf("no confirmation: expected 400, got %d", code)
+	}
+	if code := grant(`,"current_password":"wrong-password"`); code != http.StatusForbidden {
+		t.Errorf("wrong password: expected 403, got %d", code)
+	}
+	if hasUsersPerm() {
+		t.Fatal("Users permission granted without confirmation")
+	}
+	if code := grant(`,"current_password":"testpassword"`); code != http.StatusOK {
+		t.Fatalf("right password: expected 200, got %d", code)
+	}
+	if !hasUsersPerm() {
+		t.Fatal("Users permission not granted")
+	}
+	// Keeping a permission the user already has needs no confirmation.
+	if code := grant(""); code != http.StatusOK {
+		t.Errorf("unchanged Users permission: expected 200, got %d", code)
+	}
+}

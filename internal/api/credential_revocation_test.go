@@ -60,9 +60,12 @@ func TestCredentialChangesRevokeAccess(t *testing.T) {
 			code, err := totp.GenerateCode("JBSWY3DPEHPK3PXP", time.Now())
 			require.NoError(t, err)
 			method, path, body := "PATCH", "/api/me/password", `{"current_password":"original-password","new_password":"replacement-password","mfa_code":"`+code+`"}`
+			actor := f.sessions[0].Token
 			if kind == "admin" {
-				_, err := storage.UpdateUserPermissions(t.Context(), pool, f.user.ID, storage.UserPermissions{ManageUsers: true})
+				// Another admin: the admin routes refuse the admin's own account.
+				_, err := storage.UpdateUserPermissions(t.Context(), pool, other.user.ID, storage.UserPermissions{ManageUsers: true})
 				require.NoError(t, err)
+				actor = other.sessions[0].Token
 				method = "PUT"
 				path = "/api/users/" + f.user.ID + "/password"
 				body = `{"password":"replacement-password"}`
@@ -73,7 +76,7 @@ func TestCredentialChangesRevokeAccess(t *testing.T) {
 				body = `{"password":"replacement-password"}`
 			}
 			req := httptest.NewRequest(method, path, strings.NewReader(body))
-			req.AddCookie(&http.Cookie{Name: "tindra_session", Value: f.sessions[0].Token})
+			req.AddCookie(&http.Cookie{Name: "tindra_session", Value: actor})
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 			expected := 200

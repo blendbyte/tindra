@@ -30,13 +30,27 @@ const { mutate: deleteUser } = useMutation({
   },
 })
 
-const { mutate: savePermissions } = useMutation({
-  mutationFn: ({ userID, perms }: { userID: string; perms: UserPermissions }) =>
+// Granting the Users permission asks the admin to confirm it's them.
+const grantTarget = ref<{ user: User; perms: UserPermissions } | null>(null)
+const grantPassword = ref('')
+const grantCode = ref('')
+const grantError = ref<string | null>(null)
+
+function cancelGrant() {
+  grantTarget.value = null
+  grantPassword.value = ''
+  grantCode.value = ''
+  grantError.value = null
+}
+
+const { mutate: savePermissions, isPending: savingPerms } = useMutation({
+  mutationFn: ({ userID, perms, confirm }: { userID: string; perms: UserPermissions; confirm?: { current_password?: string; mfa_code?: string } }) =>
     apiFetch<User>(`/api/users/${userID}/permissions`, {
       method: 'PUT',
-      body: JSON.stringify(perms),
+      body: JSON.stringify({ ...perms, ...confirm }),
     }),
   onSuccess: (updated) => {
+    cancelGrant()
     qc.setQueryData(['users'], (old: User[] | undefined) =>
       old?.map((u) => (u.id === updated.id ? updated : u)) ?? [updated],
     )
@@ -46,6 +60,10 @@ const { mutate: savePermissions } = useMutation({
     showToast('Permissions saved')
   },
   onError: (e) => {
+    if (grantTarget.value) {
+      grantError.value = e instanceof Error ? e.message.trim() : 'Permissions not saved. Try again.'
+      return
+    }
     // 409: the change would leave nobody able to manage users.
     if (e instanceof ApiError && e.status === 409) showToast(e.message.trim(), 'error')
     else showToast('Permissions not saved. Try again.')
@@ -57,7 +75,25 @@ function togglePerm(user: User, perm: keyof UserPermissions, e?: Event) {
   // refused one must not leave it showing a change that never happened.
   if (e?.target instanceof HTMLInputElement) e.target.checked = user.permissions[perm]
   const updated: UserPermissions = { ...user.permissions, [perm]: !user.permissions[perm] }
+  if (perm === 'manage_users' && updated.manage_users) {
+    cancelGrant()
+    grantTarget.value = { user, perms: updated }
+    return
+  }
   savePermissions({ userID: user.id, perms: updated })
+}
+
+function submitGrant() {
+  if (!grantTarget.value) return
+  grantError.value = null
+  savePermissions({
+    userID: grantTarget.value.user.id,
+    perms: grantTarget.value.perms,
+    confirm: {
+      ...(me.value?.has_password ? { current_password: grantPassword.value } : {}),
+      ...(me.value?.mfa_enabled ? { mfa_code: grantCode.value } : {}),
+    },
+  })
 }
 
 // --- Admin user actions ---
@@ -425,6 +461,35 @@ function copyToClipboard(text: string, label: string) {
                 </button>
               </div>
             </div>
+          </td>
+        </tr>
+
+        <!-- Confirm granting the Users permission -->
+        <tr v-if="grantTarget?.user.id === u.id" class="team-action-row">
+          <td colspan="8">
+            <form class="team-action-panel" @submit.prevent="submitGrant">
+              <div class="team-action-panel__title">Let {{ u.email }} manage users?</div>
+              <div class="team-action-panel__body">They will be able to invite and remove people and reset passwords and two-factor authentication. Confirm it's you.</div>
+              <p v-if="!me?.has_password && !me?.mfa_enabled" class="team-action-panel__body">Set up two-factor authentication in your profile to grant this permission.</p>
+              <div v-else class="proj-config-grid" style="margin-top: 10px">
+                <div v-if="me?.has_password" class="field">
+                  <label class="field__label" for="grant-password">Your password</label>
+                  <input id="grant-password" v-model="grantPassword" type="password" class="field__input" autocomplete="current-password" />
+                </div>
+                <div v-if="me?.mfa_enabled" class="field">
+                  <label class="field__label" for="grant-code">Two-factor code</label>
+                  <input id="grant-code" v-model="grantCode" class="field__input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" />
+                </div>
+              </div>
+              <div v-if="grantError" role="alert" class="proj-form-error" style="margin-top: 8px">{{ grantError }}</div>
+              <div style="display: flex; gap: 8px; margin-top: 12px">
+                <button class="btn btn--primary" type="submit"
+                  :disabled="savingPerms || (!me?.has_password && !me?.mfa_enabled) || (me?.has_password && !grantPassword) || (me?.mfa_enabled && grantCode.length !== 6)">
+                  {{ savingPerms ? 'Saving…' : 'Grant permission' }}
+                </button>
+                <button class="btn btn--ghost" type="button" @click="cancelGrant">Cancel</button>
+              </div>
+            </form>
           </td>
         </tr>
 

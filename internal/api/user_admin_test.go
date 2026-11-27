@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blendbyte/tindra/internal/api"
@@ -103,7 +104,7 @@ func TestAdminSetPassword_success(t *testing.T) {
 func TestAdminSetPassword_missingPassword(t *testing.T) {
 	body := bytes.NewBufferString(`{"password":""}`)
 	req := httptest.NewRequest(http.MethodPut,
-		fmt.Sprintf("/api/users/%s/password", testUser.ID), body)
+		fmt.Sprintf("/api/users/%s/password", seedUser(t, "testadminsetpassword_missingpassword@example.com").ID), body)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
@@ -116,7 +117,7 @@ func TestAdminSetPassword_missingPassword(t *testing.T) {
 
 func TestAdminSetPassword_badJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
-		fmt.Sprintf("/api/users/%s/password", testUser.ID),
+		fmt.Sprintf("/api/users/%s/password", seedUser(t, "testadminsetpassword_badjson@example.com").ID),
 		bytes.NewBufferString("not json"))
 	req.AddCookie(authCookie())
 	rec := httptest.NewRecorder()
@@ -431,5 +432,41 @@ func TestDoPasswordReset_withMFAEnabled(t *testing.T) {
 	}
 	if u.MFAEnabled {
 		t.Error("expected MFA to be disabled after password reset")
+	}
+}
+
+// The admin credential actions refuse the admin's own account, which would
+// otherwise skip the re-confirmation the profile settings require.
+func TestAdminCredentialActionsRefuseSelf(t *testing.T) {
+	ctx := context.Background()
+	testPool.Exec(ctx, "UPDATE users SET mfa_enabled = true, mfa_secret = 'JBSWY3DPEHPK3PXP' WHERE id = $1", testUser.ID)
+	t.Cleanup(func() {
+		testPool.Exec(ctx, "UPDATE users SET mfa_enabled = false, mfa_secret = NULL WHERE id = $1", testUser.ID)
+	})
+	var resetsBefore int
+	testPool.QueryRow(ctx, "SELECT count(*) FROM password_reset_tokens WHERE user_id = $1", testUser.ID).Scan(&resetsBefore)
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodDelete, "/api/users/" + testUser.ID + "/mfa", ""},
+		{http.MethodDelete, "/api/users/" + strings.ToUpper(testUser.ID) + "/mfa", ""},
+		{http.MethodDelete, "/api/users/" + strings.ReplaceAll(testUser.ID, "-", "") + "/mfa", ""},
+		{http.MethodPut, "/api/users/" + testUser.ID + "/password", `{"password":"attackerpassword1"}`},
+		{http.MethodPost, "/api/users/" + testUser.ID + "/password-reset", ""},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body))
+		req.AddCookie(authCookie())
+		rec := httptest.NewRecorder()
+		globalHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s on self: expected 403, got %d", tc.method, tc.path, rec.Code)
+		}
+	}
+	var mfa bool
+	var resets int
+	testPool.QueryRow(ctx, "SELECT mfa_enabled, (SELECT count(*) FROM password_reset_tokens WHERE user_id = $1) FROM users WHERE id = $1", testUser.ID).Scan(&mfa, &resets)
+	if !mfa || resets != resetsBefore {
+		t.Errorf("after refused self actions: mfa_enabled=%v reset tokens %d -> %d", mfa, resetsBefore, resets)
+	}
+	if ok, _ := storage.VerifyUserPassword(ctx, testPool, testUser.ID, "testpassword"); !ok {
+		t.Error("password changed")
 	}
 }

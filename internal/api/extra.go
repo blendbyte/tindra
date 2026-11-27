@@ -254,9 +254,19 @@ const lastUserManagerMessage = "At least one user must keep the Users permission
 // Requires manage_users permission (enforced by router middleware).
 func (ro *router) handleUpdateUserPermissions(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userID")
-	var perms storage.UserPermissions
-	if err := json.NewDecoder(r.Body).Decode(&perms); err != nil {
+	var req struct {
+		storage.UserPermissions
+		// Required when the change grants the Users permission; see
+		// confirmUserManagerGrant.
+		CurrentPassword string `json:"current_password"`
+		MFACode         string `json:"mfa_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	perms := req.UserPermissions
+	if perms.ManageUsers && !ro.confirmUserManagerGrant(w, r, userID, req.CurrentPassword, req.MFACode) {
 		return
 	}
 	u, err := storage.UpdateUserPermissions(r.Context(), ro.pool, userID, perms)
@@ -281,6 +291,51 @@ func (ro *router) handleUpdateUserPermissions(w http.ResponseWriter, r *http.Req
 		Details:   map[string]any{"permissions": perms},
 	})
 	writeJSON(w, u)
+}
+
+// confirmUserManagerGrant re-authenticates an admin who gives someone the
+// Users permission. Without it a stolen admin session could invite an account
+// of its own, make it an admin, and from there reset the owner's password and
+// two-factor authentication. Keeping a permission the user already has needs
+// no confirmation. It writes the error response and returns false when the
+// change must not proceed.
+func (ro *router) confirmUserManagerGrant(w http.ResponseWriter, r *http.Request, userID, password, mfaCode string) bool {
+	target, err := storage.GetUserByID(r.Context(), ro.pool, userID)
+	if err != nil {
+		slog.Error("get user for permission grant", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if target == nil || target.Permissions.ManageUsers {
+		return true // not found is reported by the update; nothing is granted otherwise
+	}
+	actorID := actorFromContext(r.Context())
+	if actorID == nil {
+		http.Error(w, "session required", http.StatusUnauthorized)
+		return false
+	}
+	actor, err := storage.GetUserByID(r.Context(), ro.pool, *actorID)
+	if err != nil || actor == nil {
+		slog.Error("get actor for permission grant", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if !actor.HasPassword && !actor.MFAEnabled {
+		http.Error(w, "set up two-factor authentication to grant the Users permission", http.StatusForbidden)
+		return false
+	}
+	if (actor.HasPassword && password == "") || (actor.MFAEnabled && mfaCode == "") {
+		http.Error(w, "confirm it's you to grant the Users permission", http.StatusBadRequest)
+		return false
+	}
+	if !actor.HasPassword {
+		password = ""
+	}
+	if !actor.MFAEnabled {
+		mfaCode = ""
+	}
+	_, ok := ro.reauthenticate(w, r, actor.ID, password, mfaCode)
+	return ok
 }
 
 // handleDeleteUser removes a user. Cannot delete yourself.

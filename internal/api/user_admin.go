@@ -11,14 +11,36 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/blendbyte/tindra/internal/alerts"
 	"github.com/blendbyte/tindra/internal/storage"
 )
 
+// refuseSelfTarget stops an admin from using the admin credential actions on
+// their own account, which would skip the re-confirmation the profile
+// settings require. It writes the response and returns true when refused.
+func refuseSelfTarget(w http.ResponseWriter, r *http.Request, userID string) bool {
+	// Compare parsed UUIDs: Postgres also accepts uppercase, braced and
+	// unhyphenated spellings of the same ID.
+	target, err := uuid.Parse(userID)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return true
+	}
+	if actor := actorFromContext(r.Context()); actor != nil && uuid.MustParse(*actor) == target {
+		http.Error(w, "change your own password or two-factor authentication in your profile settings", http.StatusForbidden)
+		return true
+	}
+	return false
+}
+
 // handleAdminDisableMFA removes MFA from any user. Requires manage_users.
 func (ro *router) handleAdminDisableMFA(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userID")
+	if refuseSelfTarget(w, r, userID) {
+		return
+	}
 	u, err := storage.GetUserByID(r.Context(), ro.pool, userID)
 	if err != nil {
 		slog.Error("get user", "err", err)
@@ -47,6 +69,9 @@ func (ro *router) handleAdminDisableMFA(w http.ResponseWriter, r *http.Request) 
 // handleAdminSetPassword sets any user's password directly. Requires manage_users.
 func (ro *router) handleAdminSetPassword(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userID")
+	if refuseSelfTarget(w, r, userID) {
+		return
+	}
 	var req struct {
 		Password string `json:"password"`
 	}
@@ -80,6 +105,9 @@ func (ro *router) handleAdminSetPassword(w http.ResponseWriter, r *http.Request)
 // handleAdminSendPasswordReset emails a password reset link to a user. Requires manage_users.
 func (ro *router) handleAdminSendPasswordReset(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userID")
+	if refuseSelfTarget(w, r, userID) {
+		return
+	}
 	u, err := storage.GetUserByID(r.Context(), ro.pool, userID)
 	if err != nil {
 		slog.Error("get user for password reset", "err", err)
